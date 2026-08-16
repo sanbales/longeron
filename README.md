@@ -121,7 +121,19 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 # -> 'on'
 ```
 
-A complete walk-through lives in `examples/demo.py`:
+A complete walk-through lives in `examples/demo.py`, and five executable
+tutorials live in [`notebooks/`](notebooks/):
+
+| Notebook | Covers |
+|---|---|
+| `01_define_and_explore` | parsing, the object model, programmatic authoring, workspaces |
+| `02_export_and_interchange` | SysML/JSON round-trips, save/load, KerML, spec metamodel, API JSON |
+| `03_calculations_and_constraints` | expressions, calcs, instantiation, constraints, requirements, the full loop |
+| `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
+| `05_stdlib_and_validation` | the vendored standard library, `sysml2 lint` |
+
+The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
+can be refreshed with `pixi run notebooks`.
 
 ```bash
 python examples/demo.py
@@ -170,13 +182,13 @@ Directory loads merge all files under one root namespace, so cross-file
 imports (`private import Units::*;`) and qualified references resolve.
 Files load in sorted path order for determinism.
 
-Built models are cached (pickled) in `~/.cache/sysml2` (override with
-`$SYSML2_CACHE_DIR`), keyed by source content plus a fingerprint of the
-generated parser and builder code — edits, grammar regeneration, and package
-upgrades invalidate cleanly. Caching is on by default for directories, off
-for single files (`cache=` overrides; `sysml2.clear_cache()` wipes it).
-Warm directory loads are ~1000x faster than cold parses with the ANTLR
-Python runtime.
+Built models are cached (as JSON — the same lossless schema as `to_json`,
+never pickles) in `~/.cache/sysml2` (override with `$SYSML2_CACHE_DIR`),
+keyed by source content plus a fingerprint of the generated parser and
+builder code — edits, grammar regeneration, and package upgrades invalidate
+cleanly. Caching is on by default for directories, off for single files
+(`cache=` overrides; `sysml2.clear_cache()` wipes it). Warm directory loads
+are ~1000x faster than cold parses with the ANTLR Python runtime.
 
 ## Command line
 
@@ -271,7 +283,8 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
   definitions. A bundled prebuilt pickle makes loading instant; the KerML
   Kernel Libraries themselves are not loaded (KerML is parse-only), so
   inherited library defaults that need unimplemented kernel functions
-  degrade to `None` instead of failing.
+  degrade to `None` instead of failing. The prebuilt ships as plain JSON
+  (`_stdlib/prebuilt.json`) — inspectable text, no pickles anywhere.
 - Multiplicity expansion: exact bounds (`[4]`) expand fully; ranges
   populate their lower bound (`[0..*]` gives an empty list), which keeps
   the library's self-referential compositions finite.

@@ -12,10 +12,12 @@ Loading
 
 Caching
 =======
-Built models are pickled into a content-addressed cache
+Built models are cached as JSON in a content-addressed cache
 (``$SYSML2_CACHE_DIR``, ``$XDG_CACHE_HOME/sysml2``, or ``~/.cache/sysml2``).
-A cache entry's key is the SHA-256 of the source text plus a fingerprint of
-the generated parser, builder, model, and AST code -- editing a source file,
+Cache entries use the same lossless schema as :func:`sysml2.to_json` -- no
+pickles, so entries are inspectable text and never execute code on load.
+An entry's key is the SHA-256 of the source text plus a fingerprint of the
+generated parser, builder, model, and AST code -- editing a source file,
 regenerating the grammar, or upgrading the package all invalidate cleanly.
 Caching defaults to on for directories (where it pays off) and off for
 single files; pass ``cache=`` to override.
@@ -24,8 +26,8 @@ single files; pass ``cache=`` to override.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-import pickle
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -77,7 +79,10 @@ def clear_cache() -> int:
     if not root.is_dir():
         return 0
     removed = 0
-    for entry in root.glob("*.pkl"):
+    for entry in root.glob("*.json"):
+        entry.unlink(missing_ok=True)
+        removed += 1
+    for entry in root.glob("*.pkl"):  # entries from pre-JSON versions
         entry.unlink(missing_ok=True)
         removed += 1
     return removed
@@ -85,24 +90,29 @@ def clear_cache() -> int:
 
 def _cache_path(text: str) -> Path:
     key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
-    return cache_dir() / f"{key}-{_fingerprint()}.pkl"
+    return cache_dir() / f"{key}-{_fingerprint()}.json"
 
 
 def _cache_load(path: Path) -> M.Model | None:
+    from .importer import from_dict
+
     try:
-        with path.open("rb") as handle:
-            cached = pickle.load(handle)
+        with path.open(encoding="utf-8") as handle:
+            cached = from_dict(json.load(handle))
     except Exception:  # missing, corrupt, or stale-format entry
         return None
     return cached if isinstance(cached, M.Model) else None
 
 
 def _cache_store(path: Path, model: M.Model) -> None:
+    from .export import to_dict
+
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".tmp",
-                                         delete=False) as handle:
-            pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        with tempfile.NamedTemporaryFile("w", dir=path.parent,
+                                         suffix=".tmp", delete=False,
+                                         encoding="utf-8") as handle:
+            json.dump(to_dict(model), handle, separators=(",", ":"))
         os.replace(handle.name, path)  # atomic under concurrent writers
     except OSError:
         pass  # caching is best-effort
