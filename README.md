@@ -11,9 +11,10 @@ SysML v2 and KerML, taken from
 
 | Verb | What you get |
 |---|---|
-| **Define** | Parse SysML v2 textual notation into a fully-typed Python object model, import a model from its JSON export, or build models programmatically from dataclasses. |
-| **Export** | Serialize any model to JSON, back to parseable SysML v2 text, or project it onto KerML. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
-| **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions, check constraints and requirements, run `action` definitions, and simulate `state` machines. |
+| **Define** | Parse SysML v2 textual notation into a fully-typed Python object model, import a model from its JSON export, or build models programmatically from dataclasses. Multi-file workspaces merge under one root; a content-addressed cache makes warm loads ~1000x faster. |
+| **Export** | Serialize any model to JSON, back to parseable SysML v2 text, project it onto KerML, or emit OMG Systems-Modeling-API JSON records. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
+| **Validate** | `sysml2.validate()` / `sysml2 lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems. |
+| **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
 | **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
 
 The builder covers the full grammar: every construct the SysML grammar
@@ -28,8 +29,12 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-make check        # ruff + mypy + 216 tests
+make check        # ruff + mypy + 310 tests
 ```
+
+Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
+projection and API JSON (pyecore); `pre-commit install` wires ruff+mypy
+into every commit.
 
 The generated ANTLR parsers are committed under `src/sysml2/_gen/`, so no
 Java toolchain is needed to install or use the package. Java is only needed
@@ -185,10 +190,15 @@ src/sysml2/
     importer.py            JSON -> model (lossless round-trip)
     workspace.py           multi-file loading + content-addressed model cache
     kerml.py               model -> KerML projection
+    validation.py          sysml2 lint / validate()
+    stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt pickle)
+    ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
+    api.py                 OMG Systems Modeling API JSON interchange
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `sysml2` console command
 examples/                  drone.sysml + kernel.kerml + demo.py
-tests/                     216 pytest tests
+tests/                     310 pytest tests (84% coverage)
+.github/workflows/ci.yml   lint + mypy + tests (3.10-3.13) + grammar-regen check
 Makefile                   make check = ruff + mypy + pytest
 ```
 
@@ -245,6 +255,27 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
 - Multiplicity expansion: exact bounds (`[4]`) expand fully; ranges
   populate their lower bound (`[0..*]` gives an empty list), which keeps
   the library's self-referential compositions finite.
+
+## Spec-metamodel projection and API interchange
+
+With the `ecore` extra installed, models project onto the OMG abstract
+syntax (the pilot implementation's `SysML.ecore`, 175 metaclasses, vendored
+under `sysml2/_spec/`):
+
+```python
+from sysml2 import ecore, api
+
+spec = ecore.to_spec(model)      # reified memberships, FeatureTyping, ...
+spec.report                       # what was covered / skipped
+spec.save_xmi("model.xmi")       # EMF XMI
+
+api.to_api_json(model)            # OMG Systems Modeling API records
+api.from_api_json(text)           # records -> spec instances
+```
+
+Both are structural prototypes: names, flags, ownership, and
+specialization/typing relationships are mapped; expression trees are not
+(counted in `SpecReport`, never silently dropped).
 
 ## Grammar patches
 
