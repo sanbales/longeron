@@ -228,6 +228,7 @@ src/sysml2/
     ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
     api.py                 OMG Systems Modeling API JSON interchange
     diagrams.py            interactive ELK diagrams (ipyelk)
+    render.py + _js/       headless SVG/PNG export (vendored elkjs via node)
 vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `sysml2` console command
@@ -312,6 +313,18 @@ diagrams.on_select(widget, model, callback)        # clicks -> model elements
 Node ids are qualified names, so browser selections resolve straight back to
 model elements. Layout runs in the browser (elkjs), so diagrams also build
 headlessly (tests, nbclient).
+
+The same views export to images without a browser — `sysml2.render` runs
+the vendored elkjs (0.9.3, EPL-2.0, `sysml2/_js/`) in a node subprocess and
+draws styled SVG, with PNG via cairosvg (node + cairo ship in the pixi
+environments):
+
+```python
+from sysml2 import render
+
+render.to_svg(diagrams.state_diagram(machine), "machine.svg")
+render.to_png(model, "model.png")   # builds a view automatically
+```
 
 ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and
 installed editable (`pip install -e vendor/ipyelk`; pixi does this
