@@ -12,3 +12,4 @@ dist/
 
 # OS
 .DS_Store
+.pixi/

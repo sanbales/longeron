@@ -26,6 +26,20 @@ MAVEN_URL = (f"https://repo1.maven.org/maven2/org/antlr/antlr4/{ANTLR_VERSION}"
              f"/antlr4-{ANTLR_VERSION}-complete.jar")
 
 
+def find_antlr4() -> list[str] | None:
+    """An `antlr4` tool on PATH (e.g. conda-forge's `antlr`, via pixi)."""
+
+    tool = shutil.which("antlr4")
+    if tool is None:
+        return None
+    probe = subprocess.run([tool], capture_output=True, text=True)
+    banner = probe.stdout + probe.stderr
+    if ANTLR_VERSION not in banner:
+        print(f"warning: {tool} is not ANTLR {ANTLR_VERSION}; ignoring it")
+        return None
+    return [tool]
+
+
 def find_java() -> str:
     if os.environ.get("JAVA_HOME"):
         for sub in ("bin/java", "lib/jvm/bin/java"):
@@ -58,16 +72,22 @@ def find_jar() -> str:
 
 
 def main() -> None:
-    java, jar = find_java(), find_jar()
+    runner = find_antlr4()
+    if runner is None:
+        java, jar = find_java(), find_jar()
+        runner = [java, "-jar", jar]
     for grammar, subdir in GRAMMARS.items():
         out = ROOT / "src/sysml2/_gen" / subdir
         out.mkdir(parents=True, exist_ok=True)
         (out / "__init__.py").touch()
-        cmd = [java, "-jar", jar, "-Dlanguage=Python3", "-visitor",
+        cmd = [*runner, "-Dlanguage=Python3", "-visitor",
                "-no-listener", "-Xexact-output-dir", "-o", str(out),
-               str(ROOT / "grammars" / grammar)]
+               f"grammars/{grammar}"]
         print("$", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # run from the repo root with a relative grammar path so the header
+        # comment in generated files is machine-independent
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                cwd=ROOT)
         for line in result.stderr.splitlines():
             if "warning(154)" not in line:  # rule-can-match-empty warnings
                 print(line)

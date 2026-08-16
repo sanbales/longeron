@@ -36,6 +36,22 @@ Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
 projection and API JSON (pyecore); `pre-commit install` wires ruff+mypy
 into every commit.
 
+### With pixi (optional)
+
+The repo also carries `[tool.pixi]` config in `pyproject.toml` (dependency
+truth stays in `[project]`; pixi adds the locked toolchain on top):
+
+```bash
+pixi run check          # lint + mypy + tests in a locked environment
+pixi run -e py310 test  # oldest supported Python
+pixi run parsers        # regenerate ANTLR parsers -- no manual Java setup:
+                        # conda-forge's antlr 4.13.2 ships the tool + JDK
+pixi run stdlib | demo | coverage | format
+```
+
+The `parsers` task is input/output-cached (skips when the `.g4` files are
+unchanged) and produces byte-identical output to the committed parsers.
+
 The generated ANTLR parsers are committed under `src/sysml2/_gen/`, so no
 Java toolchain is needed to install or use the package. Java is only needed
 to regenerate the parsers after a grammar change:
