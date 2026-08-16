@@ -6,7 +6,7 @@ from ipywidgets.widgets.trait_types import TypedTuple
 from ..constants import EXTENSION_NAME, EXTENSION_SPEC_VERSION
 from . import flows as F
 from .base import SyncedPipe
-from .util import wait_for_change
+from .util import browser_roundtrip
 
 
 class ElkJS(SyncedPipe):
@@ -27,10 +27,7 @@ class ElkJS(SyncedPipe):
         if self.outlet is None:
             return
 
-        # signal to browser and wait for done
-        future_value = wait_for_change(self.outlet, "value")
-        self.send({"action": "run"})
-
-        # wait to return until
-        await future_value
+        # signal to browser (resending until a view answers -- LOCAL PATCH,
+        # see util.browser_roundtrip) and wait for done
+        await browser_roundtrip(self)
         self.outlet.persist()

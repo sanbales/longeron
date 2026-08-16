@@ -20,7 +20,7 @@ def test_notebook_executes(path):
     notebook = nbformat.read(path, as_version=4)
     client = nbclient.NotebookClient(
         notebook, timeout=600, kernel_name="python3",
-        resources={"metadata": {"path": str(ROOT)}})
+        resources={"metadata": {"path": str(ROOT / "notebooks")}})
     client.execute()  # raises CellExecutionError on any failing cell
 
 

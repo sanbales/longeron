@@ -98,9 +98,12 @@ def _to_elk_json(root: Any) -> dict:
             text = label.text or ""
             css = label.properties.cssClasses or ""
             width, height = _measure(text, css)
-            labels.append({"id": f"{owner}.l{index}", "text": text,
-                           "width": width, "height": height,
-                           "properties": {"cssClasses": css}})
+            data = {"id": f"{owner}.l{index}", "text": text,
+                    "width": width, "height": height,
+                    "properties": {"cssClasses": css}}
+            if label.layoutOptions:
+                data["layoutOptions"] = dict(label.layoutOptions)
+            labels.append(data)
         return labels
 
     def convert(node: Any) -> dict:
