@@ -57,6 +57,7 @@ from .parser import (
                      parse_kerml_text,
                      parse_sysml_text,
 )
+from .validation import Diagnostic, validate
 from .workspace import cache_dir, clear_cache, load, load_dir, load_file, load_many, merge_models
 
 __version__ = "0.2.0"
@@ -73,6 +74,8 @@ __all__ = [
     "cache_dir", "clear_cache",
     # exporting
     "to_dict", "to_json", "to_sysml", "to_kerml", "save",
+    # validating
+    "validate", "Diagnostic",
     # executing
     "Interpreter", "Instance", "EnumValue", "ConstraintResult",
     "RequirementResult", "ActionResult", "SimulationResult", "SentEvent",
