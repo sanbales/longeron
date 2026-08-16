@@ -54,6 +54,12 @@ def main(argv=None) -> int:
                    default="json")
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
+    p = sub.add_parser("lint", parents=[common],
+                       help="validate a model: dangling references, "
+                            "duplicate names, cycles")
+    p.add_argument("--strict", action="store_true",
+                   help="treat warnings as errors")
+
     p = sub.add_parser("calc", parents=[common],
                        help="invoke a calc def as a function")
     p.add_argument("name", help="qualified name, e.g. Pkg::MyCalc")
@@ -101,6 +107,18 @@ def main(argv=None) -> int:
         return 0
 
     model = load(ns.file, cache=False if ns.no_cache else None)
+    if ns.command == "lint":
+        from .validation import validate
+
+        diagnostics = validate(model)
+        for diagnostic in diagnostics:
+            print(diagnostic)
+        errors = sum(d.severity == "error" for d in diagnostics)
+        warnings = len(diagnostics) - errors
+        print(f"{errors} error(s), {warnings} warning(s)")
+        failed = errors or (ns.strict and warnings)
+        return 1 if failed else 0
+
     if ns.command == "export":
         renderers: dict[str, Callable[[Any], str]] = {
             "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
