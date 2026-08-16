@@ -11,12 +11,26 @@ bodies, flows, metadata usages, ...) are preserved verbatim as
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import ClassVar, Literal, cast
 
 from . import ast as A
 from . import model as M
 from .errors import BuildError
-from .parser import ParseResult, parse_file as _parse_file, parse_sysml_text
+from .parser import ParseResult, parse_sysml_text
+from .parser import parse_file as _parse_file
+
+_BodyStyle = Literal["definition", "action", "calculation", "state",
+                     "requirement", "case"]
+
+_CASE_USAGES: tuple[tuple[str, M.UsageKind], ...] = (
+    ("caseUsage", "case"), ("analysisCaseUsage", "analysis"),
+    ("verificationCaseUsage", "verification"), ("useCaseUsage", "use_case"),
+)
+
+_CONTROL_NODES: tuple[tuple[str, M.ControlNodeKind], ...] = (
+    ("mergeNode", "merge"), ("decisionNode", "decision"),
+    ("joinNode", "join"), ("forkNode", "fork"),
+)
 
 # ---------------------------------------------------------------------------
 # public API
@@ -39,8 +53,15 @@ def loads(text: str, source_name: str = "<text>") -> M.Model:
 
 
 def load(path) -> M.Model:
-    """Parse a ``.sysml`` file and build a model."""
+    """Load a model from a ``.sysml`` file or a ``.json`` export."""
 
+    from pathlib import Path
+
+    source = Path(path)
+    if source.suffix.lower() == ".json":
+        from .importer import from_json
+
+        return from_json(source.read_text(encoding="utf-8"))
     return build_model(_parse_file(path, language="sysml"))
 
 
@@ -91,7 +112,7 @@ class _Builder:
         """Exact original source text for a context."""
 
         stream = ctx.start.getInputStream()
-        return stream.getText(ctx.start.start, ctx.stop.stop)
+        return str(stream.getText(ctx.start.start, ctx.stop.stop))
 
     def unsupported(self, ctx, rule: str = "") -> M.Unsupported:
         return M.Unsupported(text=self.src(ctx), rule=rule or type(ctx).__name__)
@@ -100,15 +121,15 @@ class _Builder:
         return _unquote_name(terminal.getText() if hasattr(terminal, "getText")
                              else terminal.text)
 
-    def identification(self, ctx) -> Tuple[Optional[str], Optional[str]]:
+    def identification(self, ctx) -> tuple[str | None, str | None]:
         if ctx is None:
             return None, None
         short = self.name_of(ctx.declaredShortName) if ctx.declaredShortName else None
         name = self.name_of(ctx.declaredName) if ctx.declaredName else None
         return short, name
 
-    def qname_parts(self, ctx) -> Tuple[str, ...]:
-        parts: List[str] = []
+    def qname_parts(self, ctx) -> tuple[str, ...]:
+        parts: list[str] = []
         if ctx.DOLLAR():
             parts.append("$")
         parts.extend(self.name_of(tok) for tok in ctx.NAME())
@@ -134,13 +155,13 @@ class _Builder:
                             for c in ctx.ownedFeatureChaining())
         raise BuildError(f"cannot extract chain from {type(ctx).__name__}")
 
-    def visibility(self, member_prefix_ctx) -> Optional[str]:
+    def visibility(self, member_prefix_ctx) -> M.Visibility | None:
         if member_prefix_ctx is None:
             return None
         vis = member_prefix_ctx.visibility()
         if vis is None:
             return None
-        return vis.getText()
+        return cast("M.Visibility", vis.getText())
 
     # -- roots ---------------------------------------------------------------
 
@@ -166,7 +187,10 @@ class _Builder:
         elif ctx.import_() is not None:
             ns.add(self.import_(ctx.import_()))
         else:  # elementFilterMember
-            ns.add(self.unsupported(ctx, "elementFilterMember"))
+            m = ctx.elementFilterMember()
+            element = M.ElementFilter(condition=self.expr(m.ownedExpression()))
+            element.visibility = self.visibility(m.memberPrefix())
+            ns.add(element)
 
     # -- imports / aliases / annotations --------------------------------------
 
@@ -183,11 +207,26 @@ class _Builder:
         else:
             ni = decl.namespaceImport()
             if ni.filterPackage() is not None:
-                return self.unsupported(ctx, "filterPackage")  # type: ignore[return-value]
-            imp.target = self.qname(ni.qualifiedName())
-            imp.is_namespace = True
-            imp.is_recursive = ni.isRecursive is not None
+                self._apply_filter_package(imp, ni.filterPackage())
+            else:
+                imp.target = self.qname(ni.qualifiedName())
+                imp.is_namespace = True
+                imp.is_recursive = ni.isRecursive is not None
         return imp
+
+    def _apply_filter_package(self, imp: M.Import, ctx) -> None:
+        """``import X::*[<filter>]`` -- a filtered namespace import."""
+
+        if ctx.membershipImport() is not None:
+            mi = ctx.membershipImport()
+            imp.target = self.qname(mi.importedMembership)
+            imp.is_recursive = mi.isRecursive is not None
+        else:
+            imp.target = self.qname(ctx.qualifiedName())
+            imp.is_namespace = True
+            imp.is_recursive = ctx.isRecursive is not None
+        imp.filters = [self.expr(m.ownedExpression())
+                       for m in ctx.filterPackageMember()]
 
     def alias(self, ctx) -> M.Alias:
         alias = M.Alias()
@@ -217,24 +256,71 @@ class _Builder:
             return M.TextualRepresentation(
                 name=name, short_name=short,
                 language=_unquote_string(t.language.text), body=t.body.text)
-        return self.unsupported(ctx, "metadataFeature")
+        return self.metadata_feature(ctx.metadataFeature())
+
+    def metadata_feature(self, ctx) -> M.MetadataUsage:
+        """``@Safety { level = 3; }`` / ``metadata m : Safety about x;``"""
+
+        usage = M.MetadataUsage()
+        for kw in ctx.prefixMetadataMember():
+            usage.metadata.append(self.chain_str(
+                kw.prefixMetadataUsage().ownedFeatureTyping()))
+        decl = ctx.metadataFeatureDeclaration()
+        if decl.identification() is not None:
+            usage.short_name, usage.name = self.identification(
+                decl.identification())
+        usage.typed_by = self.chain_str(decl.ownedFeatureTyping())
+        usage.about = [self.qname(a.annotatedElement) for a in ctx.annotation()]
+        self._fill_metadata_body(usage, ctx.metadataBody())
+        return usage
+
+    def _fill_metadata_body(self, ns: M.Namespace, body_ctx) -> None:
+        if body_ctx is None or body_ctx.LBRACE() is None:
+            return
+        for child in body_ctx.getChildren():
+            rule = type(child).__name__
+            if rule == "DefinitionMemberContext":
+                element = self.definition_element(child.definitionElement())
+                element.visibility = self.visibility(child.memberPrefix())
+                ns.add(element)
+            elif rule == "MetadataBodyUsageMemberContext":
+                ns.add(self.metadata_body_usage(child.metadataBodyUsage()))
+            elif rule == "AliasMemberContext":
+                ns.add(self.alias(child))
+            elif rule == "Import_Context":
+                ns.add(self.import_(child))
+
+    def metadata_body_usage(self, ctx) -> M.MetadataValue:
+        value = M.MetadataValue(redefines=self.chain_str(ctx.ownedRedefinition()))
+        if ctx.valuePart() is not None:
+            value.value = self.feature_value(ctx.valuePart().featureValue())
+        body = ctx.metadataBody()
+        if body is not None and body.LBRACE() is not None:
+            for member in body.metadataBodyUsageMember():
+                value.nested.append(
+                    self.metadata_body_usage(member.metadataBodyUsage()))
+        return value
 
     def dependency(self, ctx) -> M.Element:
-        if ctx.prefixMetadataAnnotation():
-            return self.unsupported(ctx, "dependency")
         decl = ctx.dependencyDeclaration()
         short, name = self.identification(decl.identification())
         dep = M.Dependency(name=name, short_name=short)
+        for ann in ctx.prefixMetadataAnnotation():
+            dep.metadata.append(self.chain_str(
+                ann.prefixMetadataUsage().ownedFeatureTyping()))
         dep.clients = [self.qname(q) for q in decl.client]
         dep.suppliers = [self.qname(q) for q in decl.supplier]
         return dep
 
     # -- definitions -----------------------------------------------------------
 
-    _DEFINITION_DISPATCH = [
+    _DEFINITION_DISPATCH: ClassVar[tuple[
+        tuple[str, tuple[M.DefinitionKind, _BodyStyle] | None], ...]] = (
         # accessor -> (kind, body_style); None kind => special handler
         ("package", None), ("libraryPackage", None), ("annotatingElement", None),
         ("dependency", None), ("enumerationDefinition", None),
+        ("interfaceDefinition", None), ("viewDefinition", None),
+        ("extendedDefinition", None),
         ("attributeDefinition", ("attribute", "definition")),
         ("occurrenceDefinition", ("occurrence", "definition")),
         ("individualDefinition", ("individual", "definition")),
@@ -257,7 +343,7 @@ class _Builder:
         ("analysisCaseDefinition", ("analysis", "case")),
         ("verificationCaseDefinition", ("verification", "case")),
         ("useCaseDefinition", ("use_case", "case")),
-    ]
+    )
 
     def definition_element(self, ctx) -> M.Element:
         for accessor, spec in self._DEFINITION_DISPATCH:
@@ -274,15 +360,22 @@ class _Builder:
                 return self.dependency(sub)
             if accessor == "enumerationDefinition":
                 return self.enumeration_definition(sub)
+            if accessor == "interfaceDefinition":
+                return self.interface_definition(sub)
+            if accessor == "viewDefinition":
+                return self.view_definition(sub)
+            if accessor == "extendedDefinition":
+                return self.extended_definition(sub)
+            assert spec is not None
             kind, body_style = spec
             return self.standard_definition(sub, kind, body_style)
-        # interfaceDefinition, viewDefinition, extendedDefinition, ...
-        return self.unsupported(ctx, "definitionElement")
+        raise BuildError(f"unhandled definition element: {self.src(ctx)!r}")
 
     def package(self, ctx, library: bool) -> M.Element:
-        if ctx.prefixMetadataMember():
-            return self.unsupported(ctx, "package")
         pkg = M.Package(is_library=library)
+        for kw in ctx.prefixMetadataMember():
+            pkg.metadata.append(self.chain_str(
+                kw.prefixMetadataUsage().ownedFeatureTyping()))
         if library:
             pkg.is_standard = ctx.isStandard is not None
         short, name = self.identification(ctx.packageDeclaration().identification())
@@ -306,7 +399,8 @@ class _Builder:
             typing = kw.prefixMetadataMember().prefixMetadataUsage().ownedFeatureTyping()
             defn.metadata.append(self.chain_str(typing))
 
-    def standard_definition(self, ctx, kind: str, body_style: str) -> M.Element:
+    def standard_definition(self, ctx, kind: M.DefinitionKind,
+                            body_style: _BodyStyle) -> M.Element:
         defn = M.Definition(kind=kind)
         for prefix_accessor in ("occurrenceDefinitionPrefix", "definitionPrefix"):
             prefix = self._get(ctx, prefix_accessor)
@@ -373,6 +467,112 @@ class _Builder:
                     defn.add(literal)
         return defn
 
+    # -- interface / view / extended definitions --------------------------------
+
+    def interface_definition(self, ctx) -> M.Definition:
+        defn = M.Definition(kind="interface")
+        self._definition_prefix_flags(defn, ctx.occurrenceDefinitionPrefix())
+        self._apply_definition_declaration(defn, ctx.definitionDeclaration())
+        body = ctx.interfaceBody()
+        if body.LBRACE() is not None:
+            for item in body.interfaceBodyItem():
+                self._interface_body_item(defn, item)
+        return defn
+
+    def _interface_body_item(self, ns: M.Namespace, item) -> None:
+        if item.definitionMember() is not None:
+            m = item.definitionMember()
+            element = self.definition_element(m.definitionElement())
+            element.visibility = self.visibility(m.memberPrefix())
+            ns.add(element)
+        elif item.variantUsageMember() is not None:
+            m = item.variantUsageMember()
+            element = self.variant_usage_element(m.variantUsageElement())
+            if isinstance(element, M.Usage):
+                element.is_variant = True
+            ns.add(element)
+        elif item.interfaceNonOccurrenceUsageMember() is not None:
+            m = item.interfaceNonOccurrenceUsageMember()
+            sub = m.interfaceNonOccurrenceUsageElement()
+            usage = self._try_non_occurrence_usage(sub)
+            if usage is None:
+                raise BuildError(f"unhandled interface member: {self.src(sub)!r}")
+            usage.visibility = self.visibility(m.memberPrefix())
+            ns.add(usage)
+        elif item.interfaceOccurrenceUsageMember() is not None:
+            m = item.interfaceOccurrenceUsageMember()
+            sub = m.interfaceOccurrenceUsageElement()
+            if sub.defaultInterfaceEnd() is not None:
+                element = self._usage_from_usage_ctx(
+                    "feature", sub.defaultInterfaceEnd().usage(),
+                    {"is_end": True})
+            else:
+                element = self.occurrence_usage_element(sub)
+            element.visibility = self.visibility(m.memberPrefix())
+            ns.add(element)
+        elif item.aliasMember() is not None:
+            ns.add(self.alias(item.aliasMember()))
+        elif item.import_() is not None:
+            ns.add(self.import_(item.import_()))
+
+    def view_definition(self, ctx) -> M.Definition:
+        defn = M.Definition(kind="view")
+        self._definition_prefix_flags(defn, ctx.occurrenceDefinitionPrefix())
+        self._apply_definition_declaration(defn, ctx.definitionDeclaration())
+        body = ctx.viewDefinitionBody()
+        if body.LBRACE() is not None:
+            for item in body.viewDefinitionBodyItem():
+                if not self._view_body_common(defn, item):
+                    self._definition_body_item(
+                        defn, item.definitionBodyItem())
+        return defn
+
+    def _view_body_common(self, ns: M.Namespace, item) -> bool:
+        """Handle filter/render members shared by view defs and view usages."""
+
+        if self._get(item, "elementFilterMember") is not None:
+            m = item.elementFilterMember()
+            filter_el = M.ElementFilter(condition=self.expr(m.ownedExpression()))
+            filter_el.visibility = self.visibility(m.memberPrefix())
+            ns.add(filter_el)
+            return True
+        if self._get(item, "viewRenderingMember") is not None:
+            m = item.viewRenderingMember()
+            render_el = self.view_rendering_usage(m.viewRenderingUsage())
+            render_el.visibility = self.visibility(m.memberPrefix())
+            ns.add(render_el)
+            return True
+        return False
+
+    def view_rendering_usage(self, ctx) -> M.Usage:
+        usage = M.Usage(kind="render")
+        if ctx.ownedReferenceSubsetting() is not None:
+            usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
+            if ctx.featureSpecializationPart() is not None:
+                for fs in ctx.featureSpecializationPart().featureSpecialization():
+                    self._apply_feature_specialization(usage, fs)
+            self._fill_definition_body(usage, ctx.usageBody().definitionBody())
+        else:
+            usage.metadata = self._metadata_keywords(ctx)
+            inline = self._usage_from_usage_ctx("render", ctx.usage())
+            inline.metadata = usage.metadata
+            return inline
+        return usage
+
+    def extended_definition(self, ctx) -> M.Definition:
+        defn = M.Definition(kind="extended")
+        basic = ctx.basicDefinitionPrefix()
+        if basic is not None:
+            defn.is_abstract = basic.ABSTRACT() is not None
+            defn.is_variation = basic.VARIATION() is not None
+        for kw in ctx.definitionExtensionKeyword():
+            typing = kw.prefixMetadataMember().prefixMetadataUsage().ownedFeatureTyping()
+            defn.metadata.append(self.chain_str(typing))
+        inner = ctx.definition()
+        self._apply_definition_declaration(defn, inner.definitionDeclaration())
+        self._fill_definition_body(defn, inner.definitionBody())
+        return defn
+
     # -- definition bodies ------------------------------------------------------
 
     def _fill_definition_body(self, ns: M.Namespace, body_ctx) -> None:
@@ -418,9 +618,11 @@ class _Builder:
 
     def non_occurrence_usage_element(self, ctx) -> M.Element:
         element = self._try_non_occurrence_usage(ctx)
-        return element if element is not None else self.unsupported(ctx, "extendedUsage")
+        if element is None:
+            raise BuildError(f"unhandled usage element: {self.src(ctx)!r}")
+        return element
 
-    def _try_non_occurrence_usage(self, ctx) -> Optional[M.Element]:
+    def _try_non_occurrence_usage(self, ctx) -> M.Element | None:
         sub = self._get(ctx, "defaultReferenceUsage")
         if sub is not None:
             flags = self._ref_or_end_flags(sub)
@@ -444,6 +646,11 @@ class _Builder:
         sub = self._get(ctx, "successionAsUsage")
         if sub is not None:
             return self.succession_as_usage(sub)
+        sub = self._get(ctx, "extendedUsage")
+        if sub is not None:
+            flags = self._unextended_prefix_flags(sub.unextendedUsagePrefix())
+            flags["metadata"] = self._metadata_keywords(sub)
+            return self._usage_from_usage_ctx("extended", sub.usage(), flags)
         return None
 
     def occurrence_usage_element(self, ctx) -> M.Element:
@@ -451,7 +658,7 @@ class _Builder:
             return self.structure_usage_element(ctx.structureUsageElement())
         return self.behavior_usage_element(ctx.behaviorUsageElement())
 
-    _SIMPLE_OCCURRENCE_USAGES = {
+    _SIMPLE_OCCURRENCE_USAGES: ClassVar[dict[str, M.UsageKind]] = {
         "occurrenceUsage": "occurrence",
         "itemUsage": "item",
         "partUsage": "part",
@@ -460,10 +667,12 @@ class _Builder:
 
     def structure_usage_element(self, ctx) -> M.Element:
         element = self._try_structure_usage(ctx)
-        return element if element is not None else self.unsupported(
-            ctx, "structureUsageElement")
+        if element is None:
+            raise BuildError(
+                f"unhandled structure usage: {self.src(ctx)!r}")
+        return element
 
-    def _try_structure_usage(self, ctx) -> Optional[M.Element]:
+    def _try_structure_usage(self, ctx) -> M.Element | None:
         for accessor, kind in self._SIMPLE_OCCURRENCE_USAGES.items():
             sub = self._get(ctx, accessor)
             if sub is not None:
@@ -478,7 +687,8 @@ class _Builder:
         if sub is not None:
             flags = self._basic_usage_prefix_flags(sub.basicUsagePrefix())
             flags["is_individual"] = sub.INDIVIDUAL() is not None
-            flags["portion_kind"] = sub.portionKindToken().getText()
+            flags["portion_kind"] = cast("M.PortionKind",
+                                         sub.portionKindToken().getText())
             return self._usage_from_usage_ctx(flags["portion_kind"], sub.usage(), flags)
         sub = self._get(ctx, "eventOccurrenceUsage")
         if sub is not None:
@@ -486,6 +696,32 @@ class _Builder:
         sub = self._get(ctx, "connectionUsage")
         if sub is not None:
             return self.connection_usage(sub)
+        sub = self._get(ctx, "viewUsage")
+        if sub is not None:
+            return self.view_usage(sub)
+        sub = self._get(ctx, "renderingUsage")
+        if sub is not None:
+            flags = self._occurrence_usage_prefix_flags(sub.occurrenceUsagePrefix())
+            return self._usage_from_usage_ctx("rendering", sub.usage(), flags)
+        sub = self._get(ctx, "interfaceUsage")
+        if sub is not None:
+            return self.interface_usage(sub)
+        sub = self._get(ctx, "allocationUsage")
+        if sub is not None:
+            return self.allocation_usage(sub)
+        sub = self._get(ctx, "flowUsage")
+        if sub is not None:
+            return self.flow_usage(sub.flowDeclaration(), sub.definitionBody(),
+                                   sub.occurrenceUsagePrefix(), "flow")
+        sub = self._get(ctx, "successionFlowUsage")
+        if sub is not None:
+            flow = self.flow_usage(sub.flowDeclaration(), sub.definitionBody(),
+                                   sub.occurrenceUsagePrefix(), "flow")
+            flow.is_succession = True
+            return flow
+        sub = self._get(ctx, "message")
+        if sub is not None:
+            return self.message_usage(sub)
         return None
 
     def behavior_usage_element(self, ctx) -> M.Element:
@@ -497,8 +733,9 @@ class _Builder:
             return usage
         if ctx.calculationUsage() is not None:
             c = ctx.calculationUsage()
-            usage = self._behavioral_usage("calc", c.occurrenceUsagePrefix(),
-                                           c.calculationUsageDeclaration())
+            usage = self._behavioral_usage(
+                "calc", c.occurrenceUsagePrefix(),
+                c.calculationUsageDeclaration().actionUsageDeclaration())
             self._fill_calculation_body(usage, c.calculationBody())
             return usage
         if ctx.constraintUsage() is not None:
@@ -521,9 +758,7 @@ class _Builder:
                                            c.constraintUsageDeclaration())
             self._fill_requirement_body(usage, c.requirementBody())
             return usage
-        for accessor, kind in (("caseUsage", "case"), ("analysisCaseUsage", "analysis"),
-                               ("verificationCaseUsage", "verification"),
-                               ("useCaseUsage", "use_case")):
+        for accessor, kind in _CASE_USAGES:
             sub = getattr(ctx, accessor)()
             if sub is not None:
                 usage = self._behavioral_usage(kind, sub.occurrenceUsagePrefix(),
@@ -540,12 +775,213 @@ class _Builder:
             return usage
         if ctx.exhibitStateUsage() is not None:
             return self.exhibit_state_usage(ctx.exhibitStateUsage())
+        if ctx.viewpointUsage() is not None:
+            c = ctx.viewpointUsage()
+            usage = self._behavioral_usage("viewpoint", c.occurrenceUsagePrefix(),
+                                           c.constraintUsageDeclaration())
+            self._fill_requirement_body(usage, c.requirementBody())
+            return usage
         if ctx.performActionUsage() is not None:
             c = ctx.performActionUsage()
             return self.perform_action(c.performActionUsageDeclaration(),
                                        c.actionBody(),
                                        c.occurrenceUsagePrefix())
-        return self.unsupported(ctx, "behaviorUsageElement")
+        if ctx.includeUseCaseUsage() is not None:
+            return self.include_use_case_usage(ctx.includeUseCaseUsage())
+        if ctx.satisfyRequirementUsage() is not None:
+            return self.satisfy_requirement_usage(ctx.satisfyRequirementUsage())
+        raise BuildError(f"unhandled behavior usage: {self.src(ctx)!r}")
+
+    def include_use_case_usage(self, ctx) -> M.Usage:
+        usage = M.Usage(kind="include")
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        if ctx.ownedReferenceSubsetting() is not None:
+            usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
+            if ctx.featureSpecializationPart() is not None:
+                for fs in ctx.featureSpecializationPart().featureSpecialization():
+                    self._apply_feature_specialization(usage, fs)
+        elif ctx.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, ctx.usageDeclaration())
+        if ctx.valuePart() is not None:
+            usage.value = self.feature_value(ctx.valuePart().featureValue())
+        self._fill_case_body(usage, ctx.caseBody())
+        return usage
+
+    def satisfy_requirement_usage(self, ctx) -> M.SatisfyUsage:
+        usage = M.SatisfyUsage()
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        usage.is_assert = ctx.ASSERT() is not None
+        usage.is_negated = ctx.NOT() is not None
+        if ctx.ownedReferenceSubsetting() is not None:
+            usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
+            if ctx.featureSpecializationPart() is not None:
+                for fs in ctx.featureSpecializationPart().featureSpecialization():
+                    self._apply_feature_specialization(usage, fs)
+        elif ctx.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, ctx.usageDeclaration())
+        if ctx.valuePart() is not None:
+            usage.value = self.feature_value(ctx.valuePart().featureValue())
+        if ctx.satisfactionSubjectMember() is not None:
+            chain = (ctx.satisfactionSubjectMember().satisfactionParameter()
+                     .satisfactionFeatureValue().satisfactionReferenceExpression()
+                     .featureChainMember())
+            usage.by = self.chain_str(chain)
+        self._fill_requirement_body(usage, ctx.requirementBody())
+        return usage
+
+    def view_usage(self, ctx) -> M.Usage:
+        usage = M.Usage(kind="view")
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        if ctx.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, ctx.usageDeclaration())
+        if ctx.valuePart() is not None:
+            usage.value = self.feature_value(ctx.valuePart().featureValue())
+        body = ctx.viewBody()
+        if body.LBRACE() is not None:
+            for item in body.viewBodyItem():
+                self._view_usage_body_item(usage, item)
+        return usage
+
+    def _view_usage_body_item(self, ns: M.Namespace, item) -> None:
+        if self._view_body_common(ns, item):
+            return
+        if item.expose() is not None:
+            e = item.expose()
+            exp = M.Expose()
+            decl = (e.membershipExpose().membershipImport()
+                    if e.membershipExpose() is not None else None)
+            if decl is not None:
+                exp.target = self.qname(decl.importedMembership)
+                exp.is_recursive = decl.isRecursive is not None
+            else:
+                ni = e.namespaceExpose().namespaceImport()
+                exp.target = self.qname(ni.qualifiedName())
+                exp.is_namespace = True
+                exp.is_recursive = ni.isRecursive is not None
+            ns.add(exp)
+            return
+        if item.satisfyRequirementUsage() is not None:
+            ns.add(self.satisfy_requirement_usage(item.satisfyRequirementUsage()))
+            return
+        if item.requirementConstraintMember() is not None:
+            m = item.requirementConstraintMember()
+            kind = cast("M.ConstraintKind", m.requirementKind().getText())
+            usage = self.requirement_constraint_usage(
+                m.requirementConstraintUsage(), kind)
+            usage.visibility = self.visibility(m.memberPrefix())
+            ns.add(usage)
+            return
+        self._definition_body_item(ns, item.definitionBodyItem())
+
+    def interface_usage(self, ctx) -> M.InterfaceUsage:
+        usage = M.InterfaceUsage()
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        decl = ctx.interfaceUsageDeclaration()
+        if decl.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, decl.usageDeclaration())
+        if decl.valuePart() is not None:
+            usage.value = self.feature_value(decl.valuePart().featureValue())
+        part = decl.interfacePart()
+        if part is not None:
+            binary = part.binaryInterfacePart()
+            members = (binary.interfaceEndMember() if binary is not None
+                       else part.naryInterfacePart().interfaceEndMember())
+            usage.ends = [self.connector_end(m.interfaceEnd()) for m in members]
+        body = ctx.interfaceBody()
+        if body.LBRACE() is not None:
+            for item in body.interfaceBodyItem():
+                self._interface_body_item(usage, item)
+        return usage
+
+    def allocation_usage(self, ctx) -> M.AllocationUsage:
+        usage = M.AllocationUsage()
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        decl = ctx.allocationUsageDeclaration()
+        if decl.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, decl.usageDeclaration())
+        part = decl.connectorPart()
+        if part is not None:
+            binary = part.binaryConnectorPart()
+            members = (binary.connectorEndMember() if binary is not None
+                       else part.naryConnectorPart().connectorEndMember())
+            usage.ends = [self.connector_end(m.connectorEnd()) for m in members]
+        self._fill_definition_body(usage, ctx.usageBody().definitionBody())
+        return usage
+
+    def flow_usage(self, decl_ctx, body_ctx, prefix_ctx,
+                   kind: M.UsageKind) -> M.FlowUsage:
+        usage = M.FlowUsage(kind=kind)
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(prefix_ctx))
+        ends = decl_ctx.flowEndMember()
+        if decl_ctx.usageDeclaration() is not None or not ends:
+            if decl_ctx.usageDeclaration() is not None:
+                self._apply_usage_declaration(usage, decl_ctx.usageDeclaration())
+            if decl_ctx.valuePart() is not None:
+                usage.value = self.feature_value(
+                    decl_ctx.valuePart().featureValue())
+        if decl_ctx.flowPayloadFeatureMember() is not None:
+            payload = (decl_ctx.flowPayloadFeatureMember().flowPayloadFeature()
+                       .payloadFeature())
+            usage.payload = self._payload_text(payload)
+        if len(ends) == 2:
+            usage.source = self._flow_end(ends[0].flowEnd())
+            usage.target_end = self._flow_end(ends[1].flowEnd())
+        self._fill_definition_body(usage, body_ctx)
+        return usage
+
+    def _flow_end(self, ctx) -> str:
+        parts: list[str] = []
+        sub = ctx.flowEndSubsetting()
+        if sub is not None:
+            if sub.qualifiedName() is not None:
+                parts.append(self.qname(sub.qualifiedName()))
+            else:
+                prefix = sub.featureChainPrefix()
+                parts.extend(self.qname(c.qualifiedName())
+                             for c in prefix.ownedFeatureChaining())
+        feature = ctx.flowFeatureMember().flowFeature().flowFeatureRedefinition()
+        parts.append(self.qname(feature.redefinedFeature))
+        return ".".join(parts)
+
+    def _payload_text(self, payload_ctx) -> str:
+        """Canonical text for a flow payload feature (``x : T`` / ``T``)."""
+
+        probe = M.AcceptAction()
+        self._payload_feature_into(probe, payload_ctx)
+        bits: list[str] = []
+        if probe.payload_name:
+            bits.append(probe.payload_name)
+        if probe.payload_types:
+            joined = ", ".join(probe.payload_types)
+            bits.append(f": {joined}" if probe.payload_name else joined)
+        return " ".join(bits)
+
+    def message_usage(self, ctx) -> M.FlowUsage:
+        usage = M.FlowUsage(kind="message")
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
+            ctx.occurrenceUsagePrefix()))
+        decl = ctx.messageDeclaration()
+        if decl.usageDeclaration() is not None:
+            self._apply_usage_declaration(usage, decl.usageDeclaration())
+        if decl.valuePart() is not None:
+            usage.value = self.feature_value(decl.valuePart().featureValue())
+        if decl.flowPayloadFeatureMember() is not None:
+            payload = (decl.flowPayloadFeatureMember().flowPayloadFeature()
+                       .payloadFeature())
+            usage.payload = self._payload_text(payload)
+        events = decl.messageEventMember()
+        if len(events) == 2:
+            usage.source = self.chain_str(
+                events[0].messageEvent().ownedReferenceSubsetting())
+            usage.target_end = self.chain_str(
+                events[1].messageEvent().ownedReferenceSubsetting())
+        self._fill_definition_body(usage, ctx.definitionBody())
+        return usage
 
     def variant_usage_element(self, ctx) -> M.Element:
         if ctx.variantReference() is not None:
@@ -571,7 +1007,8 @@ class _Builder:
         if ctx is None:
             return flags
         if ctx.featureDirection() is not None:
-            flags["direction"] = ctx.featureDirection().getText()
+            flags["direction"] = cast("M.Direction",
+                                      ctx.featureDirection().getText())
         if ctx.DERIVED() is not None:
             flags["is_derived"] = True
         if ctx.ABSTRACT() is not None:
@@ -595,7 +1032,7 @@ class _Builder:
             return {"is_end": True}
         return self._basic_usage_prefix_flags(ctx.basicUsagePrefix())
 
-    def _metadata_keywords(self, ctx) -> List[str]:
+    def _metadata_keywords(self, ctx) -> list[str]:
         if ctx is None or not hasattr(ctx, "usageExtensionKeyword"):
             return []
         out = []
@@ -618,7 +1055,8 @@ class _Builder:
         if ctx.INDIVIDUAL() is not None:
             flags["is_individual"] = True
         if ctx.portionKindToken() is not None:
-            flags["portion_kind"] = ctx.portionKindToken().getText()
+            flags["portion_kind"] = cast("M.PortionKind",
+                                         ctx.portionKindToken().getText())
         flags["metadata"] = self._metadata_keywords(ctx)
         return flags
 
@@ -629,8 +1067,8 @@ class _Builder:
 
     # -- usage declaration / completion --------------------------------------------
 
-    def _usage_from_usage_ctx(self, kind: str, usage_ctx, flags: Optional[dict] = None
-                              ) -> M.Usage:
+    def _usage_from_usage_ctx(self, kind: M.UsageKind, usage_ctx,
+                              flags: dict | None = None) -> M.Usage:
         usage = M.Usage(kind=kind)
         self._apply_flags(usage, flags or {})
         self._apply_usage_declaration(usage, usage_ctx.usageDeclaration())
@@ -660,7 +1098,7 @@ class _Builder:
     def _apply_feature_specialization(self, usage: M.Usage, fs_ctx) -> None:
         if fs_ctx.typings() is not None:
             t = fs_ctx.typings()
-            typings = [t.typedBy().featureTyping()] + list(t.featureTyping())
+            typings = [t.typedBy().featureTyping(), *t.featureTyping()]
             for typing in typings:
                 if typing.ownedFeatureTyping() is not None:
                     usage.types.append(self.chain_str(typing.ownedFeatureTyping()))
@@ -669,7 +1107,7 @@ class _Builder:
                     usage.types.append("~" + self.qname(conj.qualifiedName()))
         elif fs_ctx.subsettings() is not None:
             s = fs_ctx.subsettings()
-            subs = [s.subsets().ownedSubsetting()] + list(s.ownedSubsetting())
+            subs = [s.subsets().ownedSubsetting(), *s.ownedSubsetting()]
             usage.subsets.extend(self.chain_str(x) for x in subs)
         elif fs_ctx.references() is not None:
             usage.references = self.chain_str(
@@ -678,7 +1116,7 @@ class _Builder:
             usage.crosses = self.chain_str(fs_ctx.crosses().ownedCrossSubsetting())
         elif fs_ctx.redefinitions() is not None:
             r = fs_ctx.redefinitions()
-            redefs = [r.redefines().ownedRedefinition()] + list(r.ownedRedefinition())
+            redefs = [r.redefines().ownedRedefinition(), *r.ownedRedefinition()]
             usage.redefines.extend(self.chain_str(x) for x in redefs)
 
     def _apply_multiplicity(self, usage: M.Usage, mp_ctx) -> None:
@@ -712,7 +1150,8 @@ class _Builder:
 
     # -- behavioral usages ------------------------------------------------------------
 
-    def _behavioral_usage(self, kind: str, prefix_ctx, decl_ctx) -> M.Usage:
+    def _behavioral_usage(self, kind: M.UsageKind, prefix_ctx,
+                          decl_ctx) -> M.Usage:
         """action/calc/constraint/requirement/case usages share this shape."""
 
         usage = M.Usage(kind=kind)
@@ -762,7 +1201,7 @@ class _Builder:
 
     def perform_action(self, decl_ctx, body_ctx, prefix_ctx=None) -> M.Element:
         target = None
-        inline: Optional[M.Usage] = None
+        inline: M.Usage | None = None
         if decl_ctx is not None and decl_ctx.ownedReferenceSubsetting() is not None:
             target = self.chain_str(decl_ctx.ownedReferenceSubsetting())
             if decl_ctx.featureSpecializationPart() is not None or (
@@ -884,7 +1323,7 @@ class _Builder:
             return
         # sourceSuccessionMember? actionBehaviorMember actionTargetSuccessionMember*
         member = item.actionBehaviorMember()
-        element: Optional[M.Element] = None
+        element: M.Element | None = None
         if member is not None:
             if member.behaviorUsageMember() is not None:
                 m = member.behaviorUsageMember()
@@ -927,7 +1366,7 @@ class _Builder:
             element.visibility = self.visibility(m.memberPrefix())
             ns.add(element)
 
-    def action_target_succession(self, ctx, source: Optional[str]) -> M.Succession:
+    def action_target_succession(self, ctx, source: str | None) -> M.Succession:
         if ctx.targetSuccession() is not None:
             t = ctx.targetSuccession()
             return M.Succession(
@@ -975,8 +1414,7 @@ class _Builder:
         return self.for_node(ctx.forLoopNode())
 
     def control_node(self, ctx) -> M.Element:
-        for accessor, kind in (("mergeNode", "merge"), ("decisionNode", "decision"),
-                               ("joinNode", "join"), ("forkNode", "fork")):
+        for accessor, kind in _CONTROL_NODES:
             sub = getattr(ctx, accessor)()
             if sub is not None:
                 node = M.ControlNode(kind=kind)
@@ -989,7 +1427,7 @@ class _Builder:
     def node_parameter(self, ctx) -> A.Expr:
         return self.expr(ctx.nodeParameter().featureBinding().ownedExpression())
 
-    def _decl_name(self, action_node_decl_ctx) -> Tuple[Optional[str], Optional[str]]:
+    def _decl_name(self, action_node_decl_ctx) -> tuple[str | None, str | None]:
         if action_node_decl_ctx is None:
             return None, None
         decl = action_node_decl_ctx.usageDeclaration()
@@ -1039,21 +1477,14 @@ class _Builder:
 
     def _apply_payload(self, accept: M.AcceptAction, ctx) -> None:
         if ctx.payloadFeature() is not None:
-            pf = ctx.payloadFeature()
-            if pf.identification() is not None:
-                _, accept.payload_name = self.identification(pf.identification())
-            if pf.ownedFeatureTyping() is not None:
-                accept.payload_types.append(self.chain_str(pf.ownedFeatureTyping()))
-            if pf.payloadFeatureSpecializationPart() is not None:
-                self._payload_types_from_fsp(
-                    accept, pf.payloadFeatureSpecializationPart())
+            self._payload_feature_into(accept, ctx.payloadFeature())
             return
         if ctx.identification() is not None:
             _, accept.payload_name = self.identification(ctx.identification())
         if ctx.payloadFeatureSpecializationPart() is not None:
             self._payload_types_from_fsp(accept, ctx.payloadFeatureSpecializationPart())
         trigger = ctx.triggerValuePart().triggerFeatureValue().triggerExpression()
-        accept.trigger_kind = trigger.kind.text
+        accept.trigger_kind = cast("M.TriggerKind", trigger.kind.text)
         if trigger.argumentMember() is not None:
             accept.trigger = self.expr(
                 trigger.argumentMember().argument().argumentValue().value)
@@ -1062,6 +1493,15 @@ class _Builder:
             accept.trigger = self.expr(
                 arg.argumentExpressionValue().ownedExpressionReference()
                 .ownedExpressionMember().ownedExpression())
+
+    def _payload_feature_into(self, accept: M.AcceptAction, pf) -> None:
+        if pf.identification() is not None:
+            _, accept.payload_name = self.identification(pf.identification())
+        if pf.ownedFeatureTyping() is not None:
+            accept.payload_types.append(self.chain_str(pf.ownedFeatureTyping()))
+        if pf.payloadFeatureSpecializationPart() is not None:
+            self._payload_types_from_fsp(
+                accept, pf.payloadFeatureSpecializationPart())
 
     def _payload_types_from_fsp(self, accept: M.AcceptAction, fsp_ctx) -> None:
         probe = M.Usage()
@@ -1101,7 +1541,7 @@ class _Builder:
                     ctx.ifNodeParameterMember().ifNode())
         return node
 
-    def action_body_parameter(self, member_ctx) -> List[M.Element]:
+    def action_body_parameter(self, member_ctx) -> list[M.Element]:
         body = member_ctx.actionBodyParameter()
         holder = M.Namespace()
         for item in body.actionBodyItem():
@@ -1132,7 +1572,8 @@ class _Builder:
 
     # -- calculation bodies --------------------------------------------------------------------
 
-    def _fill_calculation_body(self, ns, body_ctx) -> None:
+    def _fill_calculation_body(self, ns: M.Definition | M.Usage,
+                               body_ctx) -> None:
         if body_ctx is None or body_ctx.LBRACE() is None:
             return
         part = body_ctx.calculationBodyPart()
@@ -1167,7 +1608,7 @@ class _Builder:
             ns.add(usage)
         elif item.requirementConstraintMember() is not None:
             m = item.requirementConstraintMember()
-            kind = m.requirementKind().getText()  # 'assume' | 'require'
+            kind = cast("M.ConstraintKind", m.requirementKind().getText())
             usage = self.requirement_constraint_usage(
                 m.requirementConstraintUsage(), kind)
             usage.visibility = self.visibility(m.memberPrefix())
@@ -1184,9 +1625,47 @@ class _Builder:
             usage.visibility = self.visibility(m.memberPrefix())
             ns.add(usage)
         else:  # framedConcernMember / requirementVerificationMember
-            ns.add(self.unsupported(item, "requirementBodyItem"))
+            self._framed_or_verification(ns, item)
 
-    def requirement_constraint_usage(self, ctx, kind: str) -> M.Usage:
+    def _framed_or_verification(self, ns: M.Namespace, item) -> None:
+        if item.framedConcernMember() is not None:
+            m = item.framedConcernMember()
+            c = m.framedConcernUsage()
+            usage = M.Usage(kind="frame")
+            if c.ownedReferenceSubsetting() is not None:
+                usage.subsets.append(self.chain_str(c.ownedReferenceSubsetting()))
+                if c.featureSpecializationPart() is not None:
+                    for fs in c.featureSpecializationPart().featureSpecialization():
+                        self._apply_feature_specialization(usage, fs)
+            else:
+                usage.metadata = self._metadata_keywords(c)
+                decl = c.calculationUsageDeclaration().actionUsageDeclaration()
+                self._apply_usage_declaration(usage, decl.usageDeclaration())
+                if decl.valuePart() is not None:
+                    usage.value = self.feature_value(decl.valuePart().featureValue())
+            self._fill_calculation_body(usage, c.calculationBody())
+            usage.visibility = self.visibility(m.memberPrefix())
+            ns.add(usage)
+            return
+        m = item.requirementVerificationMember()
+        v = m.requirementVerificationUsage()
+        usage = M.Usage(kind="verify")
+        if v.ownedReferenceSubsetting() is not None:
+            usage.subsets.append(self.chain_str(v.ownedReferenceSubsetting()))
+            for fs in v.featureSpecialization():
+                self._apply_feature_specialization(usage, fs)
+        else:
+            usage.metadata = self._metadata_keywords(v)
+            decl = v.constraintUsageDeclaration()
+            self._apply_usage_declaration(usage, decl.usageDeclaration())
+            if decl.valuePart() is not None:
+                usage.value = self.feature_value(decl.valuePart().featureValue())
+        self._fill_requirement_body(usage, v.requirementBody())
+        usage.visibility = self.visibility(m.memberPrefix())
+        ns.add(usage)
+
+    def requirement_constraint_usage(self, ctx,
+                                     kind: M.ConstraintKind) -> M.Usage:
         usage = M.Usage(kind="constraint", constraint_kind=kind)
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
@@ -1203,7 +1682,7 @@ class _Builder:
             self._fill_calculation_body(usage, ctx.calculationBody())
         return usage
 
-    def _fill_case_body(self, ns: M.Namespace, body_ctx) -> None:
+    def _fill_case_body(self, ns: M.Definition | M.Usage, body_ctx) -> None:
         if body_ctx is None or body_ctx.LBRACE() is None:
             return
         for item in body_ctx.caseBodyItem():
@@ -1283,7 +1762,7 @@ class _Builder:
             ns.add(self.target_transition_usage(
                 tm.targetTransitionUsage(), source=element.name))
 
-    def state_action_usage(self, ctx) -> Optional[M.Element]:
+    def state_action_usage(self, ctx) -> M.Element | None:
         if ctx.emptyActionUsage() is not None:
             return None
         if ctx.statePerformActionUsage() is not None:
@@ -1320,7 +1799,7 @@ class _Builder:
             accept.via = self.node_parameter(part.nodeParameterMember())
         return accept
 
-    def effect_behavior(self, ctx) -> Optional[M.Element]:
+    def effect_behavior(self, ctx) -> M.Element | None:
         usage = ctx.effectBehaviorUsage()
         if usage.emptyActionUsage() is not None:
             return None
@@ -1353,7 +1832,7 @@ class _Builder:
         transition.target = self._transition_target(ctx.transitionSuccessionMember())
         return transition
 
-    def target_transition_usage(self, ctx, source: Optional[str]) -> M.TransitionUsage:
+    def target_transition_usage(self, ctx, source: str | None) -> M.TransitionUsage:
         transition = M.TransitionUsage(source=source)
         if ctx.triggerActionMember() is not None:
             transition.trigger = self._trigger_action(ctx.triggerActionMember())
@@ -1362,12 +1841,13 @@ class _Builder:
                 ctx.guardExpressionMember().ownedExpression())
         if ctx.effectBehaviorMember() is not None:
             transition.effect = self.effect_behavior(ctx.effectBehaviorMember())
-        transition.target = self._transition_target(ctx.transitionSuccessionMember())
+        transition.target = self._transition_target(
+            ctx.transitionSuccessionMember())
         return transition
 
-    # -- expressions --------------------------------------------------------------------------------
+    # -- expressions ---------------------------------------------------------
 
-    _BINARY_ACCESSORS = (
+    _BINARY_ACCESSORS: ClassVar[tuple[str, ...]] = (
         "exponentialOperator", "multiplicativeOperator", "additiveOperator",
         "rangeOperator", "relationalOperator", "equalityOperator",
         "bitwiseOperator", "conditionalBinaryOperator",
@@ -1381,14 +1861,16 @@ class _Builder:
         if ctx.primaryExpression() is not None:
             return self.primary(ctx.primaryExpression())
         if ctx.unaryOperator() is not None:
-            return A.Unary(ctx.unaryOperator().getText(),
+            return A.Unary(cast("A.UnaryOp", ctx.unaryOperator().getText()),
                            self.expr(ctx.ownedExpression(0)))
         if ctx.classificationTestOperator() is not None:
             type_ = self._type_ref(ctx.typeReferenceMember().typeReference())
             operand = (self.expr(ctx.ownedExpression(0))
                        if ctx.ownedExpression() else None)
-            return A.Classification(ctx.classificationTestOperator().getText(),
-                                    type_, operand)
+            return A.Classification(
+                cast("A.ClassificationOp",
+                     ctx.classificationTestOperator().getText()),
+                type_, operand)
         if ctx.castOperator() is not None:
             type_ = self._type_ref(ctx.typeResultMember().typeReference())
             operand = (self.expr(ctx.ownedExpression(0))
@@ -1409,12 +1891,12 @@ class _Builder:
         for accessor in self._BINARY_ACCESSORS:
             op_ctx = getattr(ctx, accessor)()
             if op_ctx is not None:
-                return A.Binary(op_ctx.getText(),
+                return A.Binary(cast("A.BinaryOp", op_ctx.getText()),
                                 self.expr(ctx.ownedExpression(0)),
                                 self.expr(ctx.ownedExpression(1)))
         raise BuildError(f"unhandled expression form: {self.src(ctx)!r}")
 
-    def _type_ref(self, type_reference_ctx) -> Tuple[str, ...]:
+    def _type_ref(self, type_reference_ctx) -> tuple[str, ...]:
         return self.qname_parts(
             type_reference_ctx.referenceTyping().qualifiedName())
 
@@ -1458,7 +1940,7 @@ class _Builder:
                    .functionReferenceMember().functionReference())
             arrow.func = self.qname_parts(ref.referenceTyping().qualifiedName())
         else:
-            args, named = self.argument_list(ctx.argumentList())
+            args, _named = self.argument_list(ctx.argumentList())
             arrow.args = tuple(args)
         return arrow
 
@@ -1473,7 +1955,7 @@ class _Builder:
         result = parse_expression_text(text)
         return _Builder(result).expr(result.tree)
 
-    def _sequence_items(self, list_ctx) -> Tuple[List[A.Expr], bool]:
+    def _sequence_items(self, list_ctx) -> tuple[list[A.Expr], bool]:
         """Flatten a sequenceExpressionList into items + had-comma flag."""
 
         if list_ctx.ownedExpression() is not None:
@@ -1483,7 +1965,7 @@ class _Builder:
         first = self.expr(op.ownedExpressionMember().ownedExpression())
         rest, _ = self._sequence_items(
             op.sequenceExpressionListMember().sequenceExpressionList())
-        return [first] + rest, True
+        return [first, *rest], True
 
     def _sequence_from_list(self, list_ctx) -> A.Expr:
         items, had_comma = self._sequence_items(list_ctx)
@@ -1517,15 +1999,15 @@ class _Builder:
             return A.Constructor(target, tuple(args), tuple(named))
         return self.body_expr(ctx.bodyExpression())
 
-    def _instantiated_type(self, ctx) -> Tuple[str, ...]:
+    def _instantiated_type(self, ctx) -> tuple[str, ...]:
         if ctx.instantiatedTypeReference() is not None:
             return self.qname_parts(ctx.instantiatedTypeReference().qualifiedName())
         chain = self.chain_str(ctx.ownedFeatureChainMember())
         return tuple(chain.split("."))
 
     def argument_list(self, ctx):
-        args: List[A.Expr] = []
-        named: List[Tuple[str, A.Expr]] = []
+        args: list[A.Expr] = []
+        named: list[tuple[str, A.Expr]] = []
         if ctx.positionalArgumentList() is not None:
             for member in ctx.positionalArgumentList().argumentMember():
                 args.append(self.expr(member.argument().argumentValue().value))
@@ -1542,18 +2024,19 @@ class _Builder:
         holder = M.Usage(kind="calc")
         self._fill_calculation_body_from_part(
             holder, expression_body.calculationBodyPart())
-        params: List[A.Param] = []
-        lets: List[Tuple[str, A.Expr]] = []
+        params: list[A.Param] = []
+        lets: list[tuple[str, A.Expr]] = []
         for member in holder.members:
-            if not isinstance(member, M.Usage):
+            if not isinstance(member, M.Usage) or member.name is None:
                 continue
-            if member.value is not None and member.name:
+            if member.value is not None:
                 lets.append((member.name, member.value.expr))
-            elif member.name:
+            elif member.direction != "return":
                 params.append(A.Param(member.name, member.direction))
         return A.BodyExpr(tuple(params), tuple(lets), holder.result)
 
-    def _fill_calculation_body_from_part(self, ns, part_ctx) -> None:
+    def _fill_calculation_body_from_part(self, ns: M.Definition | M.Usage,
+                                         part_ctx) -> None:
         for item in part_ctx.calculationBodyItem():
             if item.actionBodyItem() is not None:
                 self._action_body_item(ns, item.actionBodyItem())

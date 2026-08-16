@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 
 def _parse_value(text: str):
@@ -38,9 +40,11 @@ def main(argv=None) -> int:
     p.add_argument("--tree", action="store_true",
                    help="print the raw parse tree")
 
-    p = sub.add_parser("export", help="export a model to JSON or SysML text")
+    p = sub.add_parser("export", help="export a model to JSON, SysML, or "
+                                      "KerML (input may be .sysml or .json)")
     p.add_argument("file")
-    p.add_argument("--format", choices=["json", "sysml"], default="json")
+    p.add_argument("--format", choices=["json", "sysml", "kerml"],
+                   default="json")
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
     p = sub.add_parser("calc", help="invoke a calc def as a function")
@@ -67,7 +71,7 @@ def main(argv=None) -> int:
 
     ns = parser.parse_args(argv)
 
-    from . import (Interpreter, load, parse_file, to_json, to_sysml)
+    from . import Interpreter, load, parse_file, to_json, to_kerml, to_sysml
 
     if ns.command == "parse":
         result = parse_file(ns.file,
@@ -80,7 +84,9 @@ def main(argv=None) -> int:
 
     model = load(ns.file)
     if ns.command == "export":
-        text = to_json(model) if ns.format == "json" else to_sysml(model)
+        renderers: dict[str, Callable[[Any], str]] = {
+            "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
+        text = renderers[ns.format](model)
         if ns.output:
             Path(ns.output).write_text(text, encoding="utf-8")
         else:
@@ -96,33 +102,34 @@ def main(argv=None) -> int:
         instance = interp.instantiate(ns.name, **_kv_pairs(ns.args))
         print(json.dumps(instance.to_dict(), indent=2))
         failures = 0
-        for result in interp.check(instance):
-            status = {True: "PASS", False: "FAIL", None: "SKIP"}[result.passed]
-            failures += result.passed is False
-            print(f"[{status}] {result.kind} {result.name}: "
-                  f"{result.expression}{' -- ' + result.message if result.message else ''}")
+        for check in interp.check(instance):
+            status = {True: "PASS", False: "FAIL", None: "SKIP"}[check.passed]
+            failures += check.passed is False
+            message = f" -- {check.message}" if check.message else ""
+            print(f"[{status}] {check.kind} {check.name}: "
+                  f"{check.expression}{message}")
         return 1 if failures else 0
 
     if ns.command == "run":
         events = [e for e in (ns.events or "").split(",") if e]
-        result = interp.run_action(ns.name, inputs=_kv_pairs(ns.args),
-                                   events=events)
-        for line in result.trace:
+        run = interp.run_action(ns.name, inputs=_kv_pairs(ns.args),
+                                events=events)
+        for line in run.trace:
             print(f"  {line}")
         print("outputs:", json.dumps({k: _jsonable(v) for k, v in
-                                      result.outputs.items()}))
-        if result.sends:
-            print("sends:", [repr(s.payload) for s in result.sends])
+                                      run.outputs.items()}))
+        if run.sends:
+            print("sends:", [repr(s.payload) for s in run.sends])
         return 0
 
     if ns.command == "simulate":
         events = [e for e in ns.events.split(",") if e]
-        result = interp.simulate(ns.name, events=events)
-        for step in result.trace:
+        sim = interp.simulate(ns.name, events=events)
+        for step in sim.trace:
             print(f"  {step}")
-        print(f"final state: {result.final_state}")
-        if result.ignored_events:
-            print(f"ignored events: {result.ignored_events}")
+        print(f"final state: {sim.final_state}")
+        if sim.ignored_events:
+            print(f"ignored events: {sim.ignored_events}")
         return 0
 
     return 2  # pragma: no cover

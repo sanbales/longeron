@@ -1628,8 +1628,10 @@ flowEnd
 //     referencedFeature = [QualifiedName]
 //     | referencedFeature = FeatureChainPrefix
 //       { ownedRelatedElement += referencedFeature }
+// LOCAL PATCH (sysml2-experiments): the spec form is `QualifiedName '.'` --
+// upstream dropped the '.', so `flow from a.out to b.in` could not parse.
 flowEndSubsetting
-    : qualifiedName
+    : qualifiedName DOT
     | featureChainPrefix
     ;
 
@@ -3150,8 +3152,9 @@ prefixMetadataUsage
 //       ( ',' ownedRelationship += Annotation )*
 //     )?
 //     MetadataBody
+// LOCAL PATCH (sysml2-experiments): '@' is AT_SIGN in SysML ('at' is a keyword).
 metadataUsage
-    : usageExtensionKeyword* ( AT | METADATA )
+    : usageExtensionKeyword* ( AT_SIGN | METADATA )
       metadataUsageDeclaration
       ( ABOUT annotation ( COMMA annotation )* )?
       metadataBody
@@ -3224,9 +3227,10 @@ extendedUsage
 //       ( ',' ownedRelationship += Annotation )*
 //     )?
 //     MetadataBody
+// LOCAL PATCH (sysml2-experiments): '@' is AT_SIGN in SysML ('at' is a keyword).
 metadataFeature
     : prefixMetadataMember*
-      ( AT | METADATA )
+      ( AT_SIGN | METADATA )
       metadataFeatureDeclaration
       ( ABOUT annotation
         ( COMMA annotation )*
@@ -3374,10 +3378,11 @@ unaryOperator
 
 // ClassificationTestOperator =
 //     'istype' | 'hastype' | '@'
+// LOCAL PATCH (sysml2-experiments): '@' is AT_SIGN in SysML ('at' is a keyword).
 classificationTestOperator
     : ISTYPE
     | HASTYPE
-    | AT
+    | AT_SIGN
     ;
 
 // CastOperator =
@@ -3388,8 +3393,9 @@ castOperator
 
 // MetaclassificationTestOperator =
 //     '@@'
+// LOCAL PATCH (sysml2-experiments): '@@' is two AT_SIGNs, not two 'at' keywords.
 metaclassificationTestOperator
-    : AT AT
+    : AT_SIGN AT_SIGN
     ;
 
 // MetaCastOperator =

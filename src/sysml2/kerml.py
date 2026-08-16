@@ -1,0 +1,253 @@
+"""Best-effort projection of a SysML model onto KerML textual notation.
+
+SysML v2 is defined as an extension of KerML: every SysML definition kind
+maps to a kernel metatype (``part def`` -> ``struct``, ``calc def`` ->
+``function``, ``constraint`` -> ``inv``/``predicate``, ...).  ``to_kerml``
+renders that projection for the *structural* subset of a model.  It is
+one-way and lossy: behavioral statements (assignments, control flow,
+transitions), connections, views, and metadata have no kernel-level textual
+equivalent here and are emitted as ``/* omitted: ... */`` comments.
+
+The output is guaranteed parseable by the bundled KerML grammar (this is
+enforced by the test suite).
+"""
+
+from __future__ import annotations
+
+from . import model as M
+from .ast import expr_to_text
+from .export import fmt_name, fmt_qname
+
+#: SysML definition kind -> KerML classifier keyword
+_DEF_KEYWORDS: dict[str, str] = {
+    "part": "struct",
+    "item": "struct",
+    "occurrence": "class",
+    "individual": "struct",
+    "attribute": "datatype",
+    "enum": "datatype",
+    "port": "struct",
+    "connection": "assoc struct",
+    "interface": "assoc struct",
+    "allocation": "assoc",
+    "flow": "interaction",
+    "action": "behavior",
+    "state": "behavior",
+    "case": "behavior",
+    "analysis": "behavior",
+    "verification": "behavior",
+    "use_case": "behavior",
+    "calc": "function",
+    "constraint": "predicate",
+    "requirement": "predicate",
+    "concern": "predicate",
+    "viewpoint": "predicate",
+    "view": "struct",
+    "rendering": "struct",
+    "metadata": "metaclass",
+    "extended": "classifier",
+}
+
+#: usage kinds projected as plain kernel features
+_FEATURE_KINDS = frozenset(
+    "part item attribute port ref feature enum enum_literal occurrence "
+    "individual snapshot timeslice event event_occurrence subject actor "
+    "stakeholder extended".split())
+
+#: usage kinds projected as steps (behavioral features)
+_STEP_KINDS = frozenset(
+    "action calc state case analysis verification use_case".split())
+
+
+def to_kerml(element: M.Element, indent: str = "    ") -> str:
+    """Render a model element as KerML textual notation (see module doc)."""
+
+    printer = _KerMLPrinter(indent)
+    if isinstance(element, M.Model):
+        for member in element.members:
+            printer.emit(member, 0)
+    else:
+        printer.emit(element, 0)
+    return "\n".join(printer.lines) + "\n"
+
+
+class _KerMLPrinter:
+    def __init__(self, indent: str):
+        self.indent = indent
+        self.lines: list[str] = []
+
+    def line(self, level: int, text: str) -> None:
+        for piece in text.split("\n"):
+            self.lines.append(self.indent * level + piece if piece else "")
+
+    def omitted(self, level: int, what: str) -> None:
+        self.line(level, f"/* omitted (no KerML projection): {what} */")
+
+    # -- shared fragments ----------------------------------------------------
+
+    def names(self, el: M.Element) -> str:
+        bits = []
+        if el.short_name:
+            bits.append(f"<{fmt_name(el.short_name)}>")
+        if el.name:
+            bits.append(fmt_name(el.name))
+        return " ".join(bits)
+
+    def prefix(self, el: M.Element) -> str:
+        return f"{el.visibility} " if el.visibility else ""
+
+    def body(self, members: list[M.Element], level: int, head: str,
+             result=None) -> None:
+        if not members and result is None:
+            self.line(level, head.rstrip() + ";")
+            return
+        self.line(level, f"{head.rstrip()} {{")
+        for member in members:
+            self.emit(member, level + 1)
+        if result is not None:
+            self.line(level + 1, expr_to_text(result))
+        self.line(level, "}")
+
+    # -- dispatch ----------------------------------------------------------------
+
+    def emit(self, el: M.Element, level: int) -> None:
+        if isinstance(el, M.Package):
+            head = self.prefix(el)
+            if el.is_standard:
+                head += "standard "
+            if el.is_library:
+                head += "library "
+            head += f"package {self.names(el)}"
+            self.body(el.members, level, head)
+        elif isinstance(el, M.Import):
+            target = fmt_qname(el.target)
+            if el.is_namespace:
+                target += "::*"
+            if el.is_recursive:
+                target += "::**"
+            self.line(level, f"{self.prefix(el)}import {target};")
+        elif isinstance(el, M.Alias):
+            self.line(level, f"{self.prefix(el)}alias {self.names(el)} "
+                             f"for {fmt_qname(el.target)};")
+        elif isinstance(el, M.Documentation):
+            self.line(level, f"doc {el.body}")
+        elif isinstance(el, M.Comment):
+            self.line(level, el.body)
+        elif isinstance(el, M.Dependency):
+            head = f"{self.prefix(el)}dependency "
+            names = self.names(el)
+            if names:
+                head += f"{names} from "
+            head += ", ".join(fmt_qname(c) for c in el.clients)
+            head += " to " + ", ".join(fmt_qname(s) for s in el.suppliers)
+            self.line(level, head + ";")
+        elif isinstance(el, M.EnumerationDefinition):
+            self._definition(el, level)
+        elif isinstance(el, M.Definition):
+            self._definition(el, level)
+        elif isinstance(el, M.Usage):
+            self._usage(el, level)
+        elif isinstance(el, M.Unsupported):
+            self.omitted(level, el.rule or "unsupported element")
+        else:
+            self.omitted(level, type(el).__name__)
+
+    def _definition(self, el: M.Definition, level: int) -> None:
+        keyword = _DEF_KEYWORDS.get(el.kind, "classifier")
+        head = self.prefix(el)
+        if el.is_abstract:
+            head += "abstract "
+        head += f"{keyword} {self.names(el)}".rstrip()
+        if el.supers:
+            head += " specializes " + ", ".join(fmt_qname(s)
+                                                for s in el.supers)
+        if el.kind in ("calc", "constraint", "requirement", "concern",
+                       "viewpoint", "case", "analysis", "verification",
+                       "use_case"):
+            self.body(el.members, level, head, result=el.result)
+        else:
+            self.body(el.members, level, head)
+
+    def _usage(self, el: M.Usage, level: int) -> None:
+        if el.kind == "constraint":
+            self._invariant(el, level)
+            return
+        if el.kind in _STEP_KINDS:
+            head = self.prefix(el) + self._direction(el) + "step"
+            decl = self._feature_declaration(el)
+            if decl:
+                head += f" {decl}"
+            self.body(el.members, level, head,
+                      result=el.result if el.kind == "calc" else None)
+            return
+        if el.kind not in _FEATURE_KINDS:
+            self.omitted(level, f"{el.kind} usage"
+                                + (f" '{el.name}'" if el.name else ""))
+            return
+        head = self.prefix(el) + self._direction(el)
+        if el.is_derived:
+            head += "derived "
+        if el.is_abstract:
+            head += "abstract "
+        if el.is_readonly:
+            head += "const "
+        if el.is_end:
+            head += "end "
+        head += "feature"
+        decl = self._feature_declaration(el)
+        if decl:
+            head += f" {decl}"
+        self.body(el.members, level, head)
+
+    @staticmethod
+    def _direction(el: M.Usage) -> str:
+        if el.direction == "return":
+            return "return "
+        return f"{el.direction} " if el.direction else ""
+
+    def _feature_declaration(self, el: M.Usage) -> str:
+        bits = []
+        names = self.names(el)
+        if names:
+            bits.append(names)
+        if el.types:
+            types = [t for t in el.types if not t.startswith("~")]
+            if types:
+                bits.append(": " + ", ".join(fmt_qname(t) for t in types))
+        if el.subsets:
+            bits.append(":> " + ", ".join(fmt_qname(s) for s in el.subsets))
+        if el.redefines:
+            bits.append(":>> " + ", ".join(fmt_qname(r) for r in el.redefines))
+        if el.multiplicity is not None:
+            if (el.multiplicity.lower is not None
+                    and el.multiplicity.upper is not None):
+                bits.append(f"[{expr_to_text(el.multiplicity.lower)}.."
+                            f"{expr_to_text(el.multiplicity.upper)}]")
+            elif el.multiplicity.upper is not None:
+                bits.append(f"[{expr_to_text(el.multiplicity.upper)}]")
+            if el.multiplicity.is_ordered:
+                bits.append("ordered")
+            if el.multiplicity.is_nonunique:
+                bits.append("nonunique")
+        if el.value is not None:
+            op = ":=" if el.value.is_initial else "="
+            if el.value.is_default:
+                op = f"default {op}"
+            bits.append(f"{op} {expr_to_text(el.value.expr)}")
+        return " ".join(bits)
+
+    def _invariant(self, el: M.Usage, level: int) -> None:
+        head = self.prefix(el) + "inv"
+        if el.is_negated:
+            head += " false"
+        names = self.names(el)
+        if names:
+            head += f" {names}"
+        expr = el.result
+        if expr is None and el.value is not None:
+            expr = el.value.expr
+        if expr is None:
+            ref = fmt_qname(el.subsets[0]) if el.subsets else "true"
+            self.line(level, f"{head} {{ {ref} }}")
+            return
+        self.line(level, f"{head} {{ {expr_to_text(expr)} }}")

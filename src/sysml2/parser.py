@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from antlr4 import CommonTokenStream, InputStream, Token
 from antlr4.error.ErrorListener import ErrorListener
@@ -19,7 +18,7 @@ class _CollectingErrorListener(ErrorListener):
     def __init__(self) -> None:
         self.issues: list[SyntaxIssue] = []
 
-    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):  # noqa: N802
+    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
         self.issues.append(SyntaxIssue(line, column, msg))
 
 
@@ -36,7 +35,7 @@ class ParseResult:
     def tree_text(self) -> str:
         """Lisp-style rendering of the parse tree (for debugging)."""
 
-        return self.tree.toStringTree(recog=self.parser)
+        return str(self.tree.toStringTree(recog=self.parser))
 
 
 def _run_parser(text: str, lexer_cls, parser_cls, source_name: str, language: str,
@@ -76,7 +75,7 @@ def parse_kerml_text(text: str, source_name: str = "<text>") -> ParseResult:
     return _run_parser(text, KerMLLexer, KerMLParser, source_name, "kerml")
 
 
-def parse_file(path, language: Optional[str] = None) -> ParseResult:
+def parse_file(path, language: str | None = None) -> ParseResult:
     """Parse a ``.sysml`` or ``.kerml`` file (language inferred from suffix)."""
 
     path = Path(path)

@@ -26,27 +26,50 @@ Quick start::
 
 from . import ast, model
 from .builder import build_model, load, loads, parse_expression
-from .errors import (BuildError, EvaluationError, ExecutionError, ParseError,
-                     ResolutionError, SysMLError, SyntaxIssue)
-from .export import to_dict, to_json, to_sysml
-from .interpreter import (ActionResult, ConstraintResult, EnumValue, Instance,
-                          Interpreter, RequirementResult, SentEvent,
-                          SimulationResult, TransitionFired)
-from .model import *  # noqa: F401,F403 -- model element classes
-from .parser import (ParseResult, parse_expression_text, parse_file,
-                     parse_kerml_text, parse_sysml_text)
+from .errors import (
+                     BuildError,
+                     EvaluationError,
+                     ExecutionError,
+                     ParseError,
+                     ResolutionError,
+                     SyntaxIssue,
+                     SysMLError,
+)
+from .export import save, to_dict, to_json, to_sysml
+from .importer import from_dict, from_json
+from .interpreter import (
+                     ActionResult,
+                     ConstraintResult,
+                     EnumValue,
+                     Instance,
+                     Interpreter,
+                     RequirementResult,
+                     SentEvent,
+                     SimulationResult,
+                     TransitionFired,
+)
+from .kerml import to_kerml
+from .model import *
+from .parser import (
+                     ParseResult,
+                     parse_expression_text,
+                     parse_file,
+                     parse_kerml_text,
+                     parse_sysml_text,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
     # parsing
     "parse_sysml_text", "parse_kerml_text", "parse_file",
     "parse_expression_text", "ParseResult",
-    # building
+    # building / importing
     "build_model", "loads", "load", "parse_expression",
+    "from_dict", "from_json",
     # exporting
-    "to_dict", "to_json", "to_sysml",
+    "to_dict", "to_json", "to_sysml", "to_kerml", "save",
     # executing
     "Interpreter", "Instance", "EnumValue", "ConstraintResult",
     "RequirementResult", "ActionResult", "SimulationResult", "SentEvent",
@@ -56,4 +79,5 @@ __all__ = [
     "ResolutionError", "EvaluationError", "ExecutionError",
     # modules
     "ast", "model",
-] + model.__all__
+    *model.__all__,
+]

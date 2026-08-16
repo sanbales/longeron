@@ -113,20 +113,21 @@ def test_visibility_and_imports():
     assert imports[1].is_namespace
     hidden = pkg.find("Hidden")
     assert hidden.visibility == "protected"
-    alias = [m for m in pkg.members if isinstance(m, M.Alias)][0]
+    alias = next(m for m in pkg.members if isinstance(m, M.Alias))
     assert alias.target == "Hidden"
 
 
-def test_unsupported_preserved_verbatim():
+def test_interfaces_fully_modeled():
     model = sysml2.loads("""
         package P {
             interface def Plug { end p1 : Port1; end p2 : Port2; }
         }
     """)
-    unsupported = [m for m in model.find("P").members
-                   if isinstance(m, M.Unsupported)]
-    assert len(unsupported) == 1
-    assert "interface def Plug" in unsupported[0].text
+    plug = model.find("P::Plug")
+    assert isinstance(plug, M.Definition) and plug.kind == "interface"
+    ends = [m for m in plug.members if isinstance(m, M.Usage) and m.is_end]
+    assert [e.name for e in ends] == ["p1", "p2"]
+    assert not [e for e in model.iter_tree() if isinstance(e, M.Unsupported)]
 
 
 def test_connection_usage():

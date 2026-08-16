@@ -11,7 +11,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from typing import List, Optional
 
 from . import model as M
 from .ast import Expr, expr_to_dict, expr_to_text
@@ -98,6 +97,31 @@ def to_json(obj, indent: int = 2) -> str:
     return json.dumps(to_dict(obj), indent=indent)
 
 
+def save(element: M.Element, path, format: str | None = None) -> None:
+    """Write a model element to disk as ``.sysml``, ``.kerml``, or ``.json``.
+
+    The format is inferred from the file suffix unless given explicitly.
+    """
+
+    from pathlib import Path
+
+    target = Path(path)
+    if format is None:
+        format = {".json": "json", ".kerml": "kerml"}.get(
+            target.suffix.lower(), "sysml")
+    if format == "json":
+        text = to_json(element)
+    elif format == "kerml":
+        from .kerml import to_kerml
+
+        text = to_kerml(element)
+    elif format == "sysml":
+        text = to_sysml(element)
+    else:
+        raise ValueError(f"unknown format {format!r}")
+    target.write_text(text, encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Textual export
 # ---------------------------------------------------------------------------
@@ -106,11 +130,20 @@ _KIND_KEYWORDS = {
     "use_case": "use case",
     "enum_literal": "",
     "feature": "",
+    "extended": "",
     "event_occurrence": "event occurrence",
 }
 
 _CONTROL_KEYWORDS = {"merge": "merge", "decision": "decide",
                      "join": "join", "fork": "fork"}
+
+#: usage kinds with a reference form and an inline-declaration form
+_REF_OR_INLINE_KINDS = {
+    "render": ("render", "rendering"),
+    "include": ("include", "use case"),
+    "frame": ("frame", "concern"),
+    "verify": ("verify", "requirement"),
+}
 
 
 def to_sysml(element: M.Element, indent: str = "    ") -> str:
@@ -129,7 +162,7 @@ def to_sysml(element: M.Element, indent: str = "    ") -> str:
 class _Printer:
     def __init__(self, indent: str):
         self.indent = indent
-        self.lines: List[str] = []
+        self.lines: list[str] = []
 
     def line(self, level: int, text: str) -> None:
         for piece in text.split("\n"):
@@ -158,7 +191,7 @@ class _Printer:
         return f"{op} {expr_to_text(value.expr)}"
 
     def multiplicity_text(self, mult: M.Multiplicity) -> str:
-        if mult.lower is not None:
+        if mult.lower is not None and mult.upper is not None:
             text = f"[{expr_to_text(mult.lower)}..{expr_to_text(mult.upper)}]"
         elif mult.upper is not None:
             text = f"[{expr_to_text(mult.upper)}]"
@@ -194,7 +227,7 @@ class _Printer:
         return " ".join(bits)
 
     def body(self, ns: M.Namespace, level: int, head: str,
-             result: Optional[Expr] = None, parallel: bool = False) -> None:
+             result: Expr | None = None, parallel: bool = False) -> None:
         opener = "parallel {" if parallel else "{"
         if not ns.members and result is None:
             self.line(level, head.rstrip() + ";")
@@ -243,7 +276,7 @@ class _Printer:
         if el.payload_types:
             joined = ", ".join(fmt_qname(t) for t in el.payload_types)
             bits.append(f": {joined}" if el.payload_name else joined)
-        if el.trigger_kind:
+        if el.trigger_kind and el.trigger is not None:
             bits.append(f"{el.trigger_kind} {expr_to_text(el.trigger)}")
         if el.via is not None:
             bits.append(f"via {expr_to_text(el.via)}")
@@ -251,7 +284,7 @@ class _Printer:
 
     # -- dispatch ---------------------------------------------------------------
 
-    def emit(self, el: M.Element, level: int) -> None:  # noqa: C901
+    def emit(self, el: M.Element, level: int) -> None:
         handler = getattr(self, f"emit_{type(el).__name__}", None)
         if handler is None:
             raise TypeError(f"no printer for {type(el).__name__}")
@@ -275,8 +308,44 @@ class _Printer:
             target += "::*"
         if el.is_recursive:
             target += "::**"
+        for filter_expr in el.filters:
+            target += f"[{expr_to_text(filter_expr)}]"
         allkw = "all " if el.is_import_all else ""
         self.line(level, f"{self.prefix(el)}import {allkw}{target};")
+
+    def emit_ElementFilter(self, el: M.ElementFilter, level: int) -> None:
+        self.line(level,
+                  f"{self.prefix(el)}filter {expr_to_text(el.condition)};")
+
+    def emit_Expose(self, el: M.Expose, level: int) -> None:
+        target = fmt_qname(el.target)
+        if el.is_namespace:
+            target += "::*"
+        if el.is_recursive:
+            target += "::**"
+        self.line(level, f"expose {target};")
+
+    def emit_MetadataUsage(self, el: M.MetadataUsage, level: int) -> None:
+        head = self.prefix(el) + self.metadata(el) + "@"
+        names = self.names(el)
+        if names:
+            head += f" {names} : "
+        head += fmt_qname(el.typed_by)
+        if el.about:
+            head += " about " + ", ".join(fmt_qname(a) for a in el.about)
+        self.body(el, level, head)
+
+    def emit_MetadataValue(self, el: M.MetadataValue, level: int) -> None:
+        head = fmt_qname(el.redefines)
+        if el.value is not None:
+            head += f" {self.value_text(el.value)}"
+        if not el.nested:
+            self.line(level, head + ";")
+            return
+        self.line(level, head + " {")
+        for nested in el.nested:
+            self.emit_MetadataValue(nested, level + 1)
+        self.line(level, "}")
 
     def emit_Alias(self, el: M.Alias, level: int) -> None:
         self.line(level, f"{self.prefix(el)}alias {self.names(el)} "
@@ -316,7 +385,7 @@ class _Printer:
         self.line(level, el.body)
 
     def emit_Dependency(self, el: M.Dependency, level: int) -> None:
-        head = f"{self.prefix(el)}dependency "
+        head = f"{self.prefix(el)}{self.metadata(el)}dependency "
         names = self.names(el)
         if names:
             head += f"{names} from "
@@ -336,7 +405,7 @@ class _Printer:
             head += "individual "
         head += self.metadata(el)
         keyword = _KIND_KEYWORDS.get(el.kind, el.kind)
-        if el.kind == "individual":
+        if el.kind in ("individual", "extended"):
             head += "def"
         else:
             head += f"{keyword} def"
@@ -382,7 +451,7 @@ class _Printer:
         head += self.metadata(el)
         return head
 
-    def emit_Usage(self, el: M.Usage, level: int) -> None:  # noqa: C901
+    def emit_Usage(self, el: M.Usage, level: int) -> None:
         head = self._usage_head(el)
 
         if el.kind == "constraint" and el.constraint_kind:
@@ -422,6 +491,9 @@ class _Printer:
             # variant reference: 'variant <ref>;'
             self.body(el, level, f"{head}{fmt_qname(el.subsets[0])}")
             return
+        elif el.kind in _REF_OR_INLINE_KINDS:
+            self._emit_ref_or_inline(el, head, level)
+            return
         else:
             keyword = _KIND_KEYWORDS.get(el.kind, el.kind)
             if el.kind == "ref" and el.is_ref:
@@ -436,6 +508,24 @@ class _Printer:
         text = f"{head} {decl}".strip() if decl else head
         parallel = el.is_parallel if el.kind == "state" else False
         self.body(el, level, text, result=el.result, parallel=parallel)
+
+    def _emit_ref_or_inline(self, el: M.Usage, head: str, level: int) -> None:
+        """``render X;`` (reference form) vs ``render rendering x : R;``."""
+
+        keyword, inline_keyword = _REF_OR_INLINE_KINDS[el.kind]
+        head += keyword
+        if el.subsets and not el.name and not el.short_name and not el.types:
+            probe = M.Usage(kind=el.kind, subsets=el.subsets[1:],
+                            redefines=el.redefines,
+                            multiplicity=el.multiplicity, value=el.value)
+            rest = self.usage_declaration(probe)
+            text = f"{head} {fmt_qname(el.subsets[0])}"
+            if rest:
+                text += f" {rest}"
+        else:
+            decl = self.usage_declaration(el)
+            text = f"{head} {inline_keyword} {decl}".rstrip()
+        self.body(el, level, text, result=el.result)
 
     def emit_ConnectionUsage(self, el: M.ConnectionUsage, level: int) -> None:
         head = self._usage_head(el)
@@ -464,7 +554,76 @@ class _Printer:
         head = self._usage_head(el)
         if el.name or el.short_name:
             head += f"binding {self.names(el)} "
-        head += f"bind {self._end(el.source_end)} = {self._end(el.target_end)}"
+        head += (f"bind {self._end(el.source_end or M.ConnectorEnd())} "
+                 f"= {self._end(el.target_end or M.ConnectorEnd())}")
+        self.body(el, level, head)
+
+    def emit_SatisfyUsage(self, el: M.SatisfyUsage, level: int) -> None:
+        head = self._usage_head(el)
+        if el.is_assert:
+            head += "assert "
+        if el.is_negated:
+            head += "not "
+        head += "satisfy"
+        if el.subsets and not el.name and not el.short_name and not el.types:
+            head += f" {fmt_qname(el.subsets[0])}"
+            if el.value is not None:
+                head += f" {self.value_text(el.value)}"
+        else:
+            head += f" requirement {self.usage_declaration(el)}"
+        if el.by:
+            head += f" by {fmt_qname(el.by)}"
+        self.body(el, level, head)
+
+    def emit_InterfaceUsage(self, el: M.InterfaceUsage, level: int) -> None:
+        head = self._usage_head(el) + "interface"
+        decl = self.usage_declaration(el)
+        if decl:
+            head += f" {decl}"
+            if el.ends:
+                head += " connect "
+        elif el.ends:
+            head += " "
+        head += self._ends_text(el.ends)
+        self.body(el, level, head)
+
+    def emit_AllocationUsage(self, el: M.AllocationUsage, level: int) -> None:
+        head = self._usage_head(el)
+        decl = self.usage_declaration(el)
+        if decl:
+            head += f"allocation {decl}"
+            if el.ends:
+                head += " allocate "
+        else:
+            head += "allocate "
+        head += self._ends_text(el.ends)
+        self.body(el, level, head)
+
+    def _ends_text(self, ends: list[M.ConnectorEnd]) -> str:
+        if not ends:
+            return ""
+        if len(ends) == 2:
+            return f"{self._end(ends[0])} to {self._end(ends[1])}"
+        return "(" + ", ".join(self._end(e) for e in ends) + ")"
+
+    def emit_FlowUsage(self, el: M.FlowUsage, level: int) -> None:
+        head = self._usage_head(el)
+        if el.is_succession:
+            head += "succession "
+        head += "message" if el.kind == "message" else "flow"
+        decl = self.usage_declaration(el)
+        declared = bool(decl or el.payload)
+        if decl:
+            head += f" {decl}"
+        if el.payload:
+            head += f" of {el.payload}"
+        if el.source and el.target_end:
+            if declared:
+                head += (f" from {fmt_qname(el.source)}"
+                         f" to {fmt_qname(el.target_end)}")
+            else:
+                head += (f" {fmt_qname(el.source)}"
+                         f" to {fmt_qname(el.target_end)}")
         self.body(el, level, head)
 
     # -- action statements ----------------------------------------------------
@@ -579,7 +738,7 @@ class _Printer:
         names = self.names(el)
         if names:
             head += f"{names} "
-        head += f"first {fmt_qname(el.source)}"
+        head += f"first {fmt_qname(el.source or '')}"
         if el.trigger is not None:
             head += f" accept {self.accept_fragment(el.trigger)}"
         if el.guard is not None:
