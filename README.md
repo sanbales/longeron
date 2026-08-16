@@ -214,21 +214,27 @@ Makefile                   make check = ruff + mypy + pytest
 
 ## Execution semantics (and their limits)
 
-This is a modeling sandbox, not a full KerML semantic engine. The main
-simplifications:
+This is a modeling sandbox, not a full KerML semantic engine. What executes:
 
-- Actions execute in declaration order. Successions (`first a then b`) are
-  parsed and preserved, but they do not reorder execution. Fork/join/merge/
-  decision nodes are modeled, not executed.
-- `accept` pops the next event from the run's event queue and fails if the
-  event does not match; there is no blocking or timers (`after`/`at`
-  triggers parse but do not wait).
+- **Actions**: bodies without successions run in declaration order. Bodies
+  with explicit successions (`first start then a; first a then b;`) run as
+  a control-flow graph: unreachable steps do not execute, `decide` nodes
+  choose the first satisfied guard (with `else` fallback), guarded loops
+  back-edge, and `fork`/`join` branches run sequentially in declaration
+  order (no interleaving). `accept after d` / `accept at t` advance the
+  action's clock (`ActionResult.time`); `accept when c` raises on a false
+  condition (a would-be deadlock).
+- **State machines** are hierarchical: composite states enter through their
+  own `entry; then S;` transition, inner states get the first chance to
+  consume an event, and exits cascade innermost-first. `parallel` states
+  activate all child regions concurrently (`SimulationResult.active_states`).
+  Time triggers (`accept after`/`accept at`) fire when a plain number in the
+  event list advances the simulation clock; `accept when c` transitions fire
+  as soon as their condition holds.
 - Quantities evaluate to their magnitude: `10 [SI::m]` evaluates to `10`.
 - Standard-library types (`Real`, `Integer`, `Boolean`, `String`) are
   checked structurally against Python values; the KerML standard library is
   not loaded.
-- State machines are flat: nested states parse, and their transitions are
-  lifted to the top level of the enclosing state definition.
 - Multiplicity expansion happens only for exact bounds on parts
   (`part wheels : Wheel[4]` yields a list of 4 instances).
 

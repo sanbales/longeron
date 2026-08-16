@@ -156,6 +156,7 @@ class ActionResult:
     trace: list[str]
     env: dict[str, Any]
     terminated: bool = False
+    time: float = 0.0
 
 
 @dataclass
@@ -175,6 +176,8 @@ class SimulationResult:
     ignored_events: list[str]
     env: dict[str, Any]
     sends: list[SentEvent]
+    time: float = 0.0
+    active_states: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +572,13 @@ class Interpreter:
                  events: list[Any] | None = None,
                  inputs: dict[str, Any] | None = None,
                  max_steps: int = 1000) -> SimulationResult:
+        """Simulate a state machine.
+
+        ``events`` entries are event names (or ``(name, payload)`` tuples);
+        a plain number advances the simulation clock by that amount, firing
+        due ``accept after``/``accept at`` transitions.
+        """
+
         target = (self.resolver.resolve(state_machine)
                   if isinstance(state_machine, str) else state_machine)
         if not isinstance(target, (M.Definition, M.Usage)):
@@ -576,12 +586,17 @@ class Interpreter:
         sim = StateMachine(self, target, inputs or {})
         sim.start()
         for event in events or []:
-            sim.send(event)
+            if isinstance(event, (int, float)) and not isinstance(event, bool):
+                sim.advance(event)
+            else:
+                sim.send(event)
             if len(sim.trace) > max_steps:
                 raise ExecutionError("state machine exceeded max_steps")
         return SimulationResult(final_state=sim.current, trace=sim.trace,
                                 ignored_events=sim.ignored,
-                                env=dict(sim.env.frames[0]), sends=sim.sends)
+                                env=dict(sim.env.frames[0]), sends=sim.sends,
+                                time=sim.now,
+                                active_states=sim.active_states())
 
     # -- name-to-value resolution ----------------------------------------------
 
@@ -1169,14 +1184,91 @@ class _ActionExecutor:
             raise ExecutionError(
                 f"unknown input(s) {sorted(unknown)} for {action.label}")
         self.members = members
+        self.clock = 0.0
 
     def run(self) -> ActionResult:
-        self.execute_items(self.members)
+        plan = _succession_plan(self.members)
+        if plan is not None:
+            self.run_graph(plan)
+        else:
+            self.execute_items(self.members)
         outputs = {name: self.env.lookup(name) for name, p in self.params
                    if p.direction in ("out", "inout")}
         return ActionResult(outputs=outputs, sends=self.sends,
                             trace=self.trace, env=dict(self.env.frames[0]),
-                            terminated=self.terminated)
+                            terminated=self.terminated, time=self.clock)
+
+    # -- succession-graph execution ------------------------------------------
+
+    def run_graph(self, plan: _SuccessionPlan) -> None:
+        # declarations and value bindings first, in declaration order
+        for member in self.members:
+            if isinstance(member, (M.Succession, M.InitialNode)):
+                continue
+            if isinstance(member, M.Usage) and member.name in plan.steps:
+                continue
+            if id(member) in plan.step_ids:
+                continue
+            self.execute(member)
+        current = plan.initial
+        for _ in range(_MAX_LOOP_ITERATIONS):
+            if current is None or current == "done" or self.terminated:
+                return
+            node = plan.steps.get(current)
+            if node is None:
+                raise ExecutionError(f"succession targets unknown step "
+                                     f"{current!r}")
+            if isinstance(node, M.ControlNode) and node.kind == "fork":
+                current = self._run_fork(current, plan)
+                continue
+            if not isinstance(node, M.ControlNode):
+                self.trace.append(f"step {current}")
+                self.execute(node)
+            current = self._next_step(current, plan)
+        raise ExecutionError("action exceeded step limit")
+
+    def _next_step(self, current: str, plan: _SuccessionPlan
+                   ) -> str | None:
+        outgoing = [e for e in plan.edges if e.source == current]
+        if not outgoing:
+            return None
+        for edge in outgoing:
+            if edge.guard is not None and \
+                    self.interp.eval(edge.guard, self.env):
+                return edge.target
+        for edge in outgoing:
+            if edge.is_else:
+                return edge.target
+        for edge in outgoing:
+            if edge.guard is None and not edge.is_else:
+                return edge.target
+        self.trace.append(f"no successor guard satisfied after {current}")
+        return None
+
+    def _run_fork(self, fork_name: str, plan: _SuccessionPlan
+                  ) -> str | None:
+        self.trace.append(f"fork {fork_name}")
+        join: str | None = None
+        for edge in [e for e in plan.edges if e.source == fork_name]:
+            branch: str | None = edge.target
+            for _ in range(_MAX_LOOP_ITERATIONS):
+                if branch is None or branch == "done" or self.terminated:
+                    break
+                node = plan.steps.get(branch)
+                if node is None:
+                    raise ExecutionError(f"succession targets unknown step "
+                                         f"{branch!r}")
+                if isinstance(node, M.ControlNode) and node.kind == "join":
+                    join = branch
+                    break
+                if not isinstance(node, M.ControlNode):
+                    self.trace.append(f"step {branch}")
+                    self.execute(node)
+                branch = self._next_step(branch, plan)
+        if join is None:
+            return None
+        self.trace.append(f"join {join}")
+        return self._next_step(join, plan)
 
     def execute_items(self, items: list[M.Element]) -> None:
         for item in items:
@@ -1258,6 +1350,9 @@ class _ActionExecutor:
         # successions / control nodes / declarations: ordering metadata only
 
     def accept(self, item: M.AcceptAction) -> None:
+        if item.trigger_kind is not None:
+            self._accept_time_trigger(item)
+            return
         if not self.events:
             raise ExecutionError(
                 f"accept {item.payload_name or item.payload_types}: no more "
@@ -1273,6 +1368,24 @@ class _ActionExecutor:
             self.env.bind(item.payload_name, payload if payload is not None
                           else name)
         self.trace.append(f"accept {name}")
+
+    def _accept_time_trigger(self, item: M.AcceptAction) -> None:
+        value = (self.interp.eval(item.trigger, self.env)
+                 if item.trigger is not None else 0)
+        if item.trigger_kind == "after":
+            self.clock += value
+            self.trace.append(f"wait {value} (clock={self.clock})")
+        elif item.trigger_kind == "at":
+            self.clock = max(self.clock, float(value))
+            self.trace.append(f"wait until {value} (clock={self.clock})")
+        else:  # 'when'
+            if not value:
+                raise ExecutionError(
+                    "accept when: condition is false and no further "
+                    "progress is possible (deadlock)")
+            self.trace.append("when condition satisfied")
+        if item.payload_name:
+            self.env.bind(item.payload_name, self.clock)
 
     def perform(self, item: M.PerformAction) -> None:
         interp = self.interp
@@ -1317,66 +1430,245 @@ def _event_parts(event) -> tuple[str, Any]:
     return str(event), None
 
 
+@dataclass
+class _Edge:
+    source: str
+    target: str
+    guard: A.Expr | None
+    is_else: bool
+
+
+@dataclass
+class _SuccessionPlan:
+    steps: dict[str, M.Element]
+    step_ids: set[int]
+    edges: list[_Edge]
+    initial: str | None
+
+
+_STEP_TYPES = (M.AssignmentAction, M.SendAction, M.AcceptAction,
+               M.PerformAction, M.TerminateAction, M.IfAction, M.WhileLoop,
+               M.ForLoop, M.ControlNode)
+
+
+def _succession_plan(members: list[M.Element]) -> _SuccessionPlan | None:
+    """Build a control-flow graph from explicit successions.
+
+    Returns ``None`` when the body has no (usable) successions, in which
+    case execution falls back to declaration order.  A plan is usable when
+    every succession endpoint is a named step (or ``start``/``done``).
+    """
+
+    steps: dict[str, M.Element] = {}
+    step_ids: set[int] = set()
+    edges: list[_Edge] = []
+    initial: str | None = None
+    for member in members:
+        name = member.name
+        if isinstance(member, M.Usage) and member.kind == "action" and name:
+            steps[name] = member
+            step_ids.add(id(member))
+        elif isinstance(member, _STEP_TYPES) and name:
+            steps[name] = member
+            step_ids.add(id(member))
+        elif isinstance(member, M.InitialNode):
+            if member.target != "start":
+                initial = member.target
+        elif isinstance(member, M.Succession):
+            if member.source is None:
+                return None  # attached to an anonymous statement
+            edges.append(_Edge(member.source, member.target, member.guard,
+                               member.is_else))
+    if not edges and initial is None:
+        return None
+    known = set(steps) | {"start", "done"}
+    for edge in edges:
+        if edge.source not in known or edge.target not in known:
+            return None
+    if initial is None:
+        start_edges = [e for e in edges if e.source == "start"]
+        if not start_edges:
+            return None
+        initial = start_edges[0].target
+    if initial not in set(steps) | {"done"}:
+        return None
+    return _SuccessionPlan(steps, step_ids, edges, initial)
+
+
 # ---------------------------------------------------------------------------
 # State machine simulation
 # ---------------------------------------------------------------------------
 
 
+class _ActiveState:
+    """A node in the active-state configuration tree."""
+
+    def __init__(self, usage: M.Usage, container: M.Definition | M.Usage,
+                 parent: _ActiveState | None, entered_at: float):
+        self.usage = usage
+        self.container = container  # namespace owning this state's transitions
+        self.parent = parent
+        self.entered_at = entered_at
+        self.children: list[_ActiveState] = []
+
+    @property
+    def name(self) -> str:
+        return self.usage.name or "<anonymous>"
+
+    def path(self) -> str:
+        parts = []
+        node: _ActiveState | None = self
+        while node is not None:
+            parts.append(node.name)
+            node = node.parent
+        return ".".join(reversed(parts))
+
+    def leaves(self) -> list[_ActiveState]:
+        if not self.children:
+            return [self]
+        out: list[_ActiveState] = []
+        for child in self.children:
+            out.extend(child.leaves())
+        return out
+
+
 class StateMachine:
+    """Hierarchical state machine execution.
+
+    Supports nested (composite) states, ``parallel`` regions, event triggers,
+    guards, effects, entry/do/exit actions, eventless and ``when``-guarded
+    completion transitions, and ``after``/``at`` time triggers driven by
+    :meth:`advance`.
+    """
+
+    _MAX_FIRINGS = 10_000
+
     def __init__(self, interpreter: Interpreter,
                  definition: M.Definition | M.Usage,
                  inputs: dict[str, Any]):
         self.interp = interpreter
         self.definition = definition
-        members = interpreter.resolver.members_of(definition)
-        self.states: dict[str, M.Usage] = {}
-        self.transitions: list[M.TransitionUsage] = []
-        self.initial: str | None = None
         frame: dict[str, Any] = dict(inputs)
         self.env = Env(interpreter, definition, [frame])
         self.sends: list[SentEvent] = []
         self.trace: list[TransitionFired] = []
         self.ignored: list[str] = []
-        self.current: str | None = None
-
-        for member in members:
-            if isinstance(member, M.Usage) and member.kind == "state" \
-                    and member.name:
-                self.states[member.name] = member
-                self._collect_nested(member)
-            elif isinstance(member, M.TransitionUsage):
-                if member.source == M.ENTRY_SOURCE:
-                    if self.initial is None:
-                        self.initial = member.target
-                else:
-                    self.transitions.append(member)
-            elif isinstance(member, M.Usage) and member.name and \
-                    member.value is not None:
+        self.roots: list[_ActiveState] = []
+        self.now = 0.0
+        self._firings = 0
+        for member in interpreter.resolver.members_of(definition):
+            if isinstance(member, M.Usage) and member.name and \
+                    member.value is not None and \
+                    member.kind not in ("state",):
                 if member.name not in frame:  # inputs take precedence
                     frame[member.name] = interpreter.eval(member.value.expr,
                                                           self.env)
 
-    def _collect_nested(self, state: M.Usage) -> None:
-        for member in state.members:
-            if isinstance(member, M.TransitionUsage) and \
-                    member.source != M.ENTRY_SOURCE:
-                self.transitions.append(member)
+    # -- structure queries -------------------------------------------------------
 
-    # -- lifecycle -------------------------------------------------------------
+    def _members(self, container: M.Definition | M.Usage) -> list[M.Element]:
+        return self.interp.resolver.members_of(container)
+
+    def _states_of(self, container) -> dict[str, M.Usage]:
+        return {m.name: m for m in self._members(container)
+                if isinstance(m, M.Usage) and m.kind == "state" and m.name}
+
+    def _transitions_of(self, container) -> list[M.TransitionUsage]:
+        return [m for m in self._members(container)
+                if isinstance(m, M.TransitionUsage)]
+
+    def _initial_of(self, container) -> str | None:
+        for transition in self._transitions_of(container):
+            if transition.source != M.ENTRY_SOURCE:
+                continue
+            if transition.guard is not None and \
+                    not self.interp.eval(transition.guard, self.env):
+                continue
+            return transition.target
+        return None
+
+    # -- lifecycle ------------------------------------------------------------------
+
+    @property
+    def current(self) -> str | None:
+        """Dotted path of the first active leaf state (compatibility)."""
+
+        if not self.roots:
+            return None
+        return self.roots[0].leaves()[0].path()
+
+    def active_states(self) -> list[str]:
+        return [leaf.path() for root in self.roots for leaf in root.leaves()]
 
     def start(self) -> None:
-        if self.initial is None:
+        self.roots = self._enter_container(self.definition, parent=None,
+                                           require_entry=True)
+        self._completion_scan()
+
+    def _enter_container(self, container, parent: _ActiveState | None,
+                         require_entry: bool = False) -> list[_ActiveState]:
+        states = self._states_of(container)
+        if not states:
+            return []
+        parallel = getattr(container, "is_parallel", False)
+        if parallel:
+            targets = list(states)
+        else:
+            initial = self._initial_of(container)
+            if initial is None:
+                if require_entry:
+                    raise ExecutionError(
+                        f"{container.label} has no entry transition "
+                        f"('entry; then <state>;')")
+                return []
+            targets = [initial]
+        return [self._enter_state(name, container, parent)
+                for name in targets]
+
+    def _enter_state(self, name: str, container,
+                     parent: _ActiveState | None) -> _ActiveState:
+        states = self._states_of(container)
+        usage = states.get(name)
+        if usage is None:
             raise ExecutionError(
-                f"{self.definition.label} has no entry transition "
-                f"('entry; then <state>;')")
-        self._enter(self.initial)
+                f"transition targets unknown state {name!r} in "
+                f"{container.label}")
+        node = _ActiveState(usage, container, parent, self.now)
+        self._run_state_actions(usage, "entry")
+        self._run_state_actions(usage, "do")
+        node.children = self._enter_container(usage, parent=node)
+        return node
+
+    # -- event dispatch -----------------------------------------------------------------
 
     def send(self, event) -> None:
-        if self.current is None:
+        if not self.roots:
             raise ExecutionError("state machine not started")
         name, payload = _event_parts(event)
-        for transition in self.transitions:
-            if transition.source != self.current:
+        parallel = getattr(self.definition, "is_parallel", False)
+        if not self._dispatch(self.roots, parallel, name, payload):
+            self.ignored.append(name)
+        else:
+            self._completion_scan()
+
+    def _dispatch(self, nodes: list[_ActiveState], parallel: bool,
+                  name: str, payload: Any) -> bool:
+        if not nodes:
+            return False
+        if parallel:
+            results = [self._dispatch_node(node, name, payload)
+                       for node in list(nodes)]
+            return any(results)
+        return self._dispatch_node(nodes[0], name, payload)
+
+    def _dispatch_node(self, node: _ActiveState, name: str,
+                       payload: Any) -> bool:
+        # innermost states get the first chance to consume the event
+        if self._dispatch(node.children, node.usage.is_parallel,
+                          name, payload):
+            return True
+        for transition in self._transitions_of(node.container):
+            if transition.source != node.name:
                 continue
             if not self._trigger_matches(transition, name):
                 continue
@@ -1384,11 +1676,21 @@ class StateMachine:
             if transition.guard is not None and \
                     not self.interp.eval(transition.guard, local):
                 continue
-            self._fire(transition, name, payload)
-            return
-        self.ignored.append(name)
+            self._fire(node, transition, name, payload)
+            return True
+        return False
 
-    def _event_env(self, transition: M.TransitionUsage, name: str,
+    def _trigger_matches(self, transition: M.TransitionUsage,
+                         name: str) -> bool:
+        trigger = transition.trigger
+        if trigger is None or trigger.trigger_kind is not None:
+            return False  # eventless / time / when triggers
+        wanted = {t.split("::")[-1] for t in trigger.payload_types}
+        if trigger.payload_name and not wanted:
+            wanted = {trigger.payload_name}
+        return name in wanted if wanted else True
+
+    def _event_env(self, transition: M.TransitionUsage, name: str | None,
                    payload: Any) -> Env:
         frame: dict[str, Any] = {}
         if transition.trigger is not None and transition.trigger.payload_name:
@@ -1396,56 +1698,121 @@ class StateMachine:
                 payload if payload is not None else name)
         return self.env.child(frame)
 
-    def _trigger_matches(self, transition: M.TransitionUsage,
-                         name: str) -> bool:
-        trigger = transition.trigger
-        if trigger is None:
-            return False
-        wanted = {t.split("::")[-1] for t in trigger.payload_types}
-        if trigger.payload_name and not wanted:
-            wanted = {trigger.payload_name}
-        return name in wanted if wanted else True
+    # -- firing -------------------------------------------------------------------------
 
-    def _fire(self, transition: M.TransitionUsage, event_name: str | None,
-              payload: Any) -> None:
-        source = transition.source or self.current or "<start>"
-        self._run_state_actions(self.current, "exit")
+    def _fire(self, node: _ActiveState, transition: M.TransitionUsage,
+              event_name: str | None, payload: Any) -> None:
+        self._firings += 1
+        if self._firings > self._MAX_FIRINGS:
+            raise ExecutionError("state machine exceeded firing limit")
+        prefix = node.parent.path() + "." if node.parent else ""
+        self._exit_subtree(node)
         if transition.effect is not None:
             self._run_statement(transition.effect,
-                                self._event_env(transition, event_name or "",
+                                self._event_env(transition, event_name,
                                                 payload))
-        self.trace.append(TransitionFired(source, event_name,
-                                          transition.target))
-        self._enter(transition.target)
+        self.trace.append(TransitionFired(prefix + node.name, event_name,
+                                          prefix + transition.target))
+        replacement = self._enter_state(transition.target, node.container,
+                                        node.parent)
+        siblings = (node.parent.children if node.parent is not None
+                    else self.roots)
+        siblings[siblings.index(node)] = replacement
 
-    def _enter(self, state_name: str) -> None:
-        self.current = state_name
-        self._run_state_actions(state_name, "entry")
-        self._run_state_actions(state_name, "do")
-        # eventless (completion) transitions
+    def _exit_subtree(self, node: _ActiveState) -> None:
+        for child in reversed(node.children):
+            self._exit_subtree(child)
+        node.children = []
+        self._run_state_actions(node.usage, "exit")
+
+    # -- completion / time --------------------------------------------------------------
+
+    def _completion_scan(self) -> None:
         for _ in range(100):
-            fired = False
-            for transition in self.transitions:
-                if transition.source != self.current:
+            if not self._fire_one_completion():
+                return
+        raise ExecutionError("state machine livelock: completion "
+                             "transitions kept firing")
+
+    def _fire_one_completion(self) -> bool:
+        for node in self._all_nodes_innermost_first():
+            for transition in self._transitions_of(node.container):
+                if transition.source != node.name:
                     continue
-                if transition.trigger is not None:
+                trigger = transition.trigger
+                if trigger is None:
+                    pass  # plain completion transition
+                elif trigger.trigger_kind == "when":
+                    if trigger.trigger is None or \
+                            not self.interp.eval(trigger.trigger, self.env):
+                        continue
+                else:
                     continue
                 if transition.guard is not None and \
                         not self.interp.eval(transition.guard, self.env):
                     continue
-                self._fire(transition, None, None)
-                fired = True
-                break
-            if not fired:
-                return
-        raise ExecutionError("state machine livelock: eventless transitions "
-                             "kept firing")
+                self._fire(node, transition, None, None)
+                return True
+        return False
 
-    def _run_state_actions(self, state_name: str | None,
-                           kind: str) -> None:
-        state = self.states.get(state_name or "")
-        if state is None:
-            return
+    def _all_nodes_innermost_first(self) -> list[_ActiveState]:
+        out: list[_ActiveState] = []
+
+        def visit(node: _ActiveState) -> None:
+            for child in node.children:
+                visit(child)
+            out.append(node)
+
+        for root in list(self.roots):
+            visit(root)
+        return out
+
+    def advance(self, duration: float) -> None:
+        """Advance the simulation clock, firing due time-triggered
+        transitions (``accept after d`` / ``accept at t``) in deadline
+        order."""
+
+        if not self.roots:
+            raise ExecutionError("state machine not started")
+        target_time = self.now + float(duration)
+        for _ in range(self._MAX_FIRINGS):
+            due = self._earliest_due(target_time)
+            if due is None:
+                break
+            node, transition, deadline = due
+            self.now = max(self.now, deadline)
+            self._fire(node, transition, None, None)
+            self._completion_scan()
+        self.now = target_time
+
+    def _earliest_due(self, limit: float
+                      ) -> tuple[_ActiveState, M.TransitionUsage, float] | None:
+        best: tuple[_ActiveState, M.TransitionUsage, float] | None = None
+        for node in self._all_nodes_innermost_first():
+            for transition in self._transitions_of(node.container):
+                if transition.source != node.name:
+                    continue
+                trigger = transition.trigger
+                if trigger is None or trigger.trigger_kind not in ("after",
+                                                                   "at"):
+                    continue
+                if trigger.trigger is None:
+                    continue
+                offset = self.interp.eval(trigger.trigger, self.env)
+                deadline = (node.entered_at + offset
+                            if trigger.trigger_kind == "after" else offset)
+                if deadline > limit:
+                    continue
+                if transition.guard is not None and \
+                        not self.interp.eval(transition.guard, self.env):
+                    continue
+                if best is None or deadline < best[2]:
+                    best = (node, transition, deadline)
+        return best
+
+    # -- actions --------------------------------------------------------------------------
+
+    def _run_state_actions(self, state: M.Usage, kind: str) -> None:
         for member in state.members:
             if isinstance(member, M.StateAction) and member.kind == kind \
                     and member.action is not None:
@@ -1459,5 +1826,6 @@ class StateMachine:
         executor.sends = self.sends
         executor.trace = []
         executor.terminated = False
+        executor.clock = self.now
         executor.env = env
         executor.execute(statement)
