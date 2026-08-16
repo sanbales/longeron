@@ -57,6 +57,7 @@ from .parser import (
                      parse_kerml_text,
                      parse_sysml_text,
 )
+from .stdlib import add_standard_library, standard_library_model
 from .validation import Diagnostic, validate
 from .workspace import cache_dir, clear_cache, load, load_dir, load_file, load_many, merge_models
 
@@ -76,6 +77,8 @@ __all__ = [
     "to_dict", "to_json", "to_sysml", "to_kerml", "save",
     # validating
     "validate", "Diagnostic",
+    # standard library
+    "add_standard_library", "standard_library_model",
     # executing
     "Interpreter", "Instance", "EnumValue", "ConstraintResult",
     "RequirementResult", "ActionResult", "SimulationResult", "SentEvent",

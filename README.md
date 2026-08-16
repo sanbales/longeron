@@ -232,11 +232,19 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
   event list advances the simulation clock; `accept when c` transitions fire
   as soon as their condition holds.
 - Quantities evaluate to their magnitude: `10 [SI::m]` evaluates to `10`.
-- Standard-library types (`Real`, `Integer`, `Boolean`, `String`) are
-  checked structurally against Python values; the KerML standard library is
-  not loaded.
-- Multiplicity expansion happens only for exact bounds on parts
-  (`part wheels : Wheel[4]` yields a list of 4 instances).
+- **Standard library**: a curated subset of the official model library ships
+  with the package (all 21 Systems Library files + core Quantities/Units +
+  a KerML-kernel shim; see `sysml2/_stdlib/README.md`). Opt in with
+  `sysml2.add_standard_library(model)` or `--stdlib` on the CLI: library
+  types resolve (`Parts::Part`, `ISQ::mass`, `SI::kg`), `public import`
+  re-exports and aliases follow, and `istype` checks work against library
+  definitions. A bundled prebuilt pickle makes loading instant; the KerML
+  Kernel Libraries themselves are not loaded (KerML is parse-only), so
+  inherited library defaults that need unimplemented kernel functions
+  degrade to `None` instead of failing.
+- Multiplicity expansion: exact bounds (`[4]`) expand fully; ranges
+  populate their lower bound (`[0..*]` gives an empty list), which keeps
+  the library's self-referential compositions finite.
 
 ## Grammar patches
 

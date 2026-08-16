@@ -207,6 +207,8 @@ BUILTINS: dict[str, Any] = {
     "max": lambda *a: max(_flatten(a)), "min": lambda *a: min(_flatten(a)),
     "sum": lambda *a: sum(_flatten(a)),
     "size": lambda s: len(_seq(s)),
+    "isEmpty": lambda s: len(_seq(s)) == 0,
+    "notEmpty": lambda s: len(_seq(s)) > 0,
     "ToString": lambda v: ("true" if v is True else "false" if v is False
                            else str(v)),
     "ToInteger": int, "ToReal": float, "ToNatural": int,
@@ -242,13 +244,51 @@ _ARROW_OPS: dict[str, Callable] = {
 
 
 class Resolver:
+    """Qualified-name resolution with memoization.
+
+    The caches assume the model is not mutated while this resolver is in
+    use; create a new :class:`Interpreter` (or call :meth:`clear_cache`)
+    after structural changes such as ``add_standard_library``.
+    """
+
     def __init__(self, model: M.Model):
         self.model = model
         self._active_imports: set = set()
+        self._active_lookups: set[tuple[int, str]] = set()
+        self._resolve_cache: dict[tuple[tuple[str, ...], int],
+                                  M.Element | None] = {}
+        self._member_cache: dict[tuple[int, str, bool, bool],
+                                 M.Element | None] = {}
+        self._generals_cache: dict[int, list[M.Namespace]] = {}
+        self._members_of_cache: dict[int, list[M.Element]] = {}
+
+    def clear_cache(self) -> None:
+        self._resolve_cache.clear()
+        self._member_cache.clear()
+        self._generals_cache.clear()
+        self._members_of_cache.clear()
 
     def resolve(self, qname: str | tuple[str, ...],
                 context: M.Element | None = None) -> M.Element:
-        parts = list(qname.split("::") if isinstance(qname, str) else qname)
+        parts = tuple(qname.split("::") if isinstance(qname, str) else qname)
+        key = (parts, id(context))
+        if key in self._resolve_cache:
+            cached = self._resolve_cache[key]
+            if cached is None:
+                raise ResolutionError(f"cannot resolve name {parts[0]!r}")
+            return cached
+        try:
+            element = self._resolve_uncached(list(parts), context)
+        except ResolutionError:
+            if not self._active_imports and not self._active_lookups:
+                self._resolve_cache[key] = None
+            raise
+        if not self._active_imports and not self._active_lookups:
+            self._resolve_cache[key] = element
+        return element
+
+    def _resolve_uncached(self, parts: list[str],
+                          context: M.Element | None) -> M.Element:
         if parts and parts[0] == "$":
             parts = parts[1:]
             context = self.model
@@ -259,7 +299,8 @@ class Resolver:
                                      if context is not None and
                                      context.qualified_name else ""))
         for part in parts[1:]:
-            child = self._member(element, part)
+            child = self._member(element, part, include_imports=True,
+                                 only_public_imports=True)
             if child is None:
                 raise ResolutionError(
                     f"{element.qualified_name or element.label} has no member "
@@ -280,7 +321,35 @@ class Resolver:
         return self._member(self.model, name, include_imports=True)
 
     def _member(self, element: M.Element, name: str,
-                include_imports: bool = False) -> M.Element | None:
+                include_imports: bool = False,
+                only_public_imports: bool = False) -> M.Element | None:
+        """Find ``name`` in a namespace.
+
+        ``include_imports`` follows imports (in-scope lookup).  With
+        ``only_public_imports`` only ``public import`` re-exports are
+        followed -- the rule for qualified access from outside (`A::x`
+        finds `x` that `A` publicly imports).
+        """
+
+        key = (id(element), name, include_imports, only_public_imports)
+        if key in self._member_cache:
+            return self._member_cache[key]
+        lookup_key = (id(element), name)
+        if lookup_key in self._active_lookups:
+            return None  # already searching this namespace for this name
+        self._active_lookups.add(lookup_key)
+        try:
+            found = self._member_uncached(element, name, include_imports,
+                                          only_public_imports)
+        finally:
+            self._active_lookups.discard(lookup_key)
+        if not self._active_imports and not self._active_lookups:
+            self._member_cache[key] = found  # only cache top-level lookups
+        return found
+
+    def _member_uncached(self, element: M.Element, name: str,
+                         include_imports: bool,
+                         only_public_imports: bool) -> M.Element | None:
         if not isinstance(element, M.Namespace):
             return None
         for member in element.members:
@@ -304,32 +373,67 @@ class Resolver:
             for member in element.members:
                 if not isinstance(member, M.Import):
                     continue
+                if only_public_imports and member.visibility != "public":
+                    continue
                 key = (id(member), name)
                 if key in self._active_imports:
                     continue  # break import resolution cycles
                 self._active_imports.add(key)
                 try:
                     if member.is_namespace:
-                        target = self.resolve(member.target, element)
-                        found = self._member(target, name)
+                        target = self._resolve_import_target(
+                            member.target, element)
+                        found = self._member(
+                            target, name, include_imports=True,
+                            only_public_imports=True)
                         if found is not None:
                             return found
                     elif member.target.split("::")[-1] == name:
-                        return self.resolve(member.target, element)
+                        return self._resolve_import_target(
+                            member.target, element)
                 except ResolutionError:
                     continue
                 finally:
                     self._active_imports.discard(key)
         return None
 
+    def _resolve_import_target(self, qname: str, ns: M.Element) -> M.Element:
+        """Resolve an import's target.
+
+        The first segment is looked up among the importing namespace's own
+        members and then in its *enclosing* scopes -- never through the
+        namespace's own imports, which would make import chains cyclic.
+        """
+
+        parts = qname.split("::")
+        element: M.Element | None = self._member(ns, parts[0])
+        if element is None:
+            owner = ns.owner
+            element = self._resolve_first(parts[0],
+                                          owner if owner is not None
+                                          else self.model)
+        if element is None:
+            raise ResolutionError(f"cannot resolve import target {qname!r}")
+        for part in parts[1:]:
+            child = self._member(element, part, include_imports=True,
+                                 only_public_imports=True)
+            if child is None:
+                raise ResolutionError(
+                    f"import target {qname!r}: no member {part!r}")
+            element = child
+        return element
+
     def _generals(self, element: M.Element) -> list[M.Namespace]:
+        cached = self._generals_cache.get(id(element))
+        if cached is not None:
+            return cached
         names: list[str] = []
         if isinstance(element, M.Definition):
             names = element.supers
         elif isinstance(element, M.Usage):
             names = list(element.types) + list(element.subsets) + \
                 list(element.redefines)
-        out = []
+        out: list[M.Namespace] = []
         for name in names:
             if name.startswith("~"):
                 name = name[1:]
@@ -339,16 +443,25 @@ class Resolver:
                 continue
             if isinstance(general, M.Namespace):
                 out.append(general)
+        if not self._active_imports and not self._active_lookups:
+            self._generals_cache[id(element)] = out
         return out
 
     def members_of(self, element: M.Namespace) -> list[M.Element]:
         """Own + inherited members; redefinitions shadow inherited names."""
 
+        cached = self._members_of_cache.get(id(element))
+        if cached is not None:
+            return cached
         collected: dict[int, M.Element] = {}
         order: list[M.Element] = []
         shadowed: set = set()
+        visited: set[int] = set()
 
         def visit(ns: M.Namespace) -> None:
+            if id(ns) in visited:  # specialization cycles / diamonds
+                return
+            visited.add(id(ns))
             for member in ns.members:
                 key = member.name or member.short_name
                 if key is not None and key in shadowed:
@@ -365,6 +478,7 @@ class Resolver:
                 visit(general)
 
         visit(element)
+        self._members_of_cache[id(element)] = order
         return order
 
 
@@ -994,14 +1108,17 @@ class Interpreter:
         "allocation flow message render satisfy verify frame include".split())
 
     def _instantiate(self, defn, bindings: dict[str, Any],
-                     _depth: int = 0) -> Instance:
+                     _depth: int = 0,
+                     _active: tuple[int, ...] = ()) -> Instance:
         if _depth > 32:
             raise EvaluationError("instantiation recursion limit exceeded "
                                   "(cyclic part composition?)")
+        _active = (*_active, id(defn))
         instance = Instance(defn.qualified_name or defn.label, defn)
         members = [m for m in self.resolver.members_of(defn)
                    if isinstance(m, M.Usage)
-                   and m.kind not in self._NON_SLOT_KINDS]
+                   and m.kind not in self._NON_SLOT_KINDS
+                   and not m.is_abstract]
         pending: dict[str, M.Usage] = {}
         for member in members:
             name = member.name or (member.redefines[0].split("::")[-1]
@@ -1033,6 +1150,10 @@ class Interpreter:
             in_progress.add(name)
             try:
                 value = compute(member)
+            except EvaluationError:
+                if member.owner is defn:
+                    raise  # errors in the definition's own features surface
+                value = None  # inherited (library) defaults degrade gracefully
             finally:
                 in_progress.discard(name)
             instance.slots[name] = value
@@ -1046,17 +1167,22 @@ class Interpreter:
                 return self.eval(member.value.expr, lazy_env)
             if member.kind in ("part", "item", "occurrence") and member.types:
                 try:
-                    target = self.resolver.resolve(member.types[0], defn)
+                    target = self.resolver.resolve(member.types[0],
+                                                   member.owner or defn)
                 except ResolutionError:
                     return None
-                count = self._fixed_multiplicity(member, lazy_env)
+                if id(target) in _active:
+                    return None  # self-referential composition (Part in Part)
+                count = self._instance_count(member, lazy_env)
                 overrides = self._inline_overrides(member, lazy_env)
                 if count is None:
-                    return self._instantiate(target, overrides, _depth + 1)
-                return [self._instantiate(target, overrides, _depth + 1)
+                    return self._instantiate(target, overrides, _depth + 1,
+                                             _active)
+                return [self._instantiate(target, overrides, _depth + 1,
+                                          _active)
                         for _ in range(count)]
             if member.kind in ("part", "item") and member.members:
-                return self._instantiate(member, {}, _depth + 1)
+                return self._instantiate(member, {}, _depth + 1, _active)
             return None
 
         for name in list(pending):
@@ -1064,7 +1190,15 @@ class Interpreter:
                 materialize(name)
         return instance
 
-    def _fixed_multiplicity(self, member: M.Usage, env: Env) -> int | None:
+    def _instance_count(self, member: M.Usage, env: Env) -> int | None:
+        """How many nested instances to create.
+
+        ``None`` means a single instance (no multiplicity given).  Exact
+        bounds (``[4]``) expand fully; ranges (``[0..*]``, ``[1..8]``)
+        populate their *lower* bound -- which also keeps self-referential
+        library compositions (``Part`` containing ``Part[0..*]``) finite.
+        """
+
         mult = member.multiplicity
         if mult is None or mult.upper is None:
             return None
@@ -1072,10 +1206,12 @@ class Interpreter:
             upper = self.eval(mult.upper, env)
             lower = self.eval(mult.lower, env) if mult.lower is not None else upper
         except EvaluationError:
-            return None
+            return 0
         if isinstance(upper, int) and isinstance(lower, int) and lower == upper:
             return upper
-        return None
+        if isinstance(lower, int):
+            return lower
+        return 0
 
     def _inline_overrides(self, member: M.Usage, env: Env) -> dict[str, Any]:
         overrides: dict[str, Any] = {}
