@@ -14,3 +14,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^src/sysml2/.*\.py$
+      - id: nbstrip
+        name: strip notebook outputs
+        entry: .venv/bin/python scripts/run_notebooks.py --strip-only
+        language: system
+        pass_filenames: false
+        files: ^notebooks/.*\.ipynb$

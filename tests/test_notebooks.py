@@ -25,12 +25,17 @@ def test_notebook_executes(path):
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.stem)
-def test_notebook_committed_with_outputs(path):
-    """Committed notebooks should be readable on GitHub (outputs included)."""
+def test_notebook_committed_without_outputs(path):
+    """Committed notebooks are output-free so reruns never produce diffs."""
 
     notebook = nbformat.read(path, as_version=4)
-    code_cells = [c for c in notebook.cells if c.cell_type == "code"]
-    assert code_cells
-    executed = [c for c in code_cells if c.get("outputs") or
-                c.get("execution_count")]
-    assert executed, f"{path.name} has no executed cells"
+    for index, cell in enumerate(notebook.cells):
+        if cell.cell_type != "code":
+            continue
+        assert cell.get("outputs") == [], \
+            f"{path.name} cell {index} has committed outputs " \
+            f"(run scripts/run_notebooks.py --strip-only)"
+        assert cell.get("execution_count") is None
+        assert "execution" not in cell.get("metadata", {})
+    assert "widgets" not in notebook.metadata
+    assert "language_info" not in notebook.metadata
