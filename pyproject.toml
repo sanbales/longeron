@@ -13,7 +13,8 @@ authors = [{ name = "sysml2-experiments" }]
 dependencies = ["antlr4-python3-runtime==4.13.2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6"]
+dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6", "pyecore>=0.15"]
+ecore = ["pyecore>=0.15"]
 
 [project.scripts]
 sysml2 = "sysml2.cli:main"
@@ -22,7 +23,7 @@ sysml2 = "sysml2.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sysml2 = ["_gen/**/*.interp", "_gen/**/*.tokens"]
+sysml2 = ["_gen/**/*.interp", "_gen/**/*.tokens", "_spec/*.ecore", "_spec/README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -65,4 +66,8 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "antlr4.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pyecore.*"
 ignore_missing_imports = true
