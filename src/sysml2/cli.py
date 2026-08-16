@@ -51,8 +51,9 @@ def main(argv=None) -> int:
                    help="print the raw parse tree")
 
     p = sub.add_parser("export", parents=[common],
-                       help="export a model to JSON, SysML, or KerML")
-    p.add_argument("--format", choices=["json", "sysml", "kerml"],
+                       help="export a model to JSON, SysML, KerML, or the "
+                            "OMG API JSON (requires pyecore)")
+    p.add_argument("--format", choices=["json", "sysml", "kerml", "api"],
                    default="json")
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
@@ -126,9 +127,14 @@ def main(argv=None) -> int:
         return 1 if failed else 0
 
     if ns.command == "export":
-        renderers: dict[str, Callable[[Any], str]] = {
-            "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
-        text = renderers[ns.format](model)
+        if ns.format == "api":
+            from .api import to_api_json
+
+            text = to_api_json(model)
+        else:
+            renderers: dict[str, Callable[[Any], str]] = {
+                "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
+            text = renderers[ns.format](model)
         if ns.output:
             Path(ns.output).write_text(text, encoding="utf-8")
         else:
