@@ -47,7 +47,9 @@ pixi run check          # lint + mypy + tests in a locked environment
 pixi run -e py310 test  # any supported Python: py310 | py311 | py312 | py313
 pixi run parsers        # regenerate ANTLR parsers -- no manual Java setup:
                         # conda-forge's antlr 4.13.2 ships the tool + JDK
-pixi run stdlib | demo | coverage | format
+pixi run lab            # JupyterLab in notebooks/ (vendored ipyelk extension
+                        # pre-registered -- diagrams render interactively)
+pixi run stdlib | demo | coverage | format | notebooks
 ```
 
 CI runs entirely on pixi (`prefix-dev/setup-pixi`, cached by `pixi.lock`):

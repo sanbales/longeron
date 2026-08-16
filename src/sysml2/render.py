@@ -226,6 +226,20 @@ def _escape(text: str) -> str:
 def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
     parts: list[str] = []
 
+    # First pass: absolute origins of every node.  elkjs moves each edge to
+    # the common ancestor of its endpoints (the output's `container` field)
+    # and emits its coordinates relative to *that* node -- not relative to
+    # where the edge was declared.
+    origins: dict[str, tuple[float, float]] = {}
+
+    def index(node: dict, ox: float, oy: float) -> None:
+        x, y = ox + node.get("x", 0), oy + node.get("y", 0)
+        origins[str(node.get("id"))] = (x, y)
+        for child in node.get("children", []):
+            index(child, x, y)
+
+    index(graph, padding, padding)
+
     def draw_node(node: dict, ox: float, oy: float) -> None:
         x, y = ox + node.get("x", 0), oy + node.get("y", 0)
         width, height = node.get("width", 0), node.get("height", 0)
@@ -245,6 +259,13 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         for edge in node.get("edges", []):
             draw_edge(edge, x, y)
 
+    def edge_origin(edge: dict, default: tuple[float, float]
+                    ) -> tuple[float, float]:
+        container = edge.get("container")
+        if container is not None:
+            return origins.get(str(container), default)
+        return default
+
     def draw_label(label: dict, ox: float, oy: float) -> None:
         text = label.get("text", "")
         if not text:
@@ -260,7 +281,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
             f'{extra}>{_escape(text)}</text>')
 
-    def draw_edge(edge: dict, ox: float, oy: float) -> None:
+    def draw_edge(edge: dict, node_x: float, node_y: float) -> None:
+        ox, oy = edge_origin(edge, (node_x, node_y))
         css = edge.get("properties", {}).get("cssClasses", "")
         style = _style_for(css, _EDGE_STYLES, {"stroke": "#666666"})
         dashes = style.get("stroke-dasharray")
