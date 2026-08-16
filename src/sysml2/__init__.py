@@ -25,7 +25,7 @@ Quick start::
 """
 
 from . import ast, model
-from .builder import build_model, load, loads, parse_expression
+from .builder import build_model, loads, parse_expression
 from .errors import (
                      BuildError,
                      EvaluationError,
@@ -57,6 +57,7 @@ from .parser import (
                      parse_kerml_text,
                      parse_sysml_text,
 )
+from .workspace import cache_dir, clear_cache, load, load_dir, load_file, load_many, merge_models
 
 __version__ = "0.2.0"
 
@@ -68,6 +69,8 @@ __all__ = [
     # building / importing
     "build_model", "loads", "load", "parse_expression",
     "from_dict", "from_json",
+    "load_dir", "load_file", "load_many", "merge_models",
+    "cache_dir", "clear_cache",
     # exporting
     "to_dict", "to_json", "to_sysml", "to_kerml", "save",
     # executing

@@ -28,7 +28,7 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-make check        # ruff + mypy + 194 tests
+make check        # ruff + mypy + 216 tests
 ```
 
 The generated ANTLR parsers are committed under `src/sysml2/_gen/`, so no
@@ -133,19 +133,42 @@ print(sysml2.to_sysml(model))
 print(sysml2.to_kerml(model))         # kernel-language projection
 ```
 
+### Multi-file projects and caching
+
+`load()` accepts a single `.sysml` file, a `.json` export, or a directory:
+
+```python
+model = sysml2.load("models/")            # every *.sysml file, merged
+model = sysml2.load_many(["lib.sysml", "app.json"])   # explicit set
+```
+
+Directory loads merge all files under one root namespace, so cross-file
+imports (`private import Units::*;`) and qualified references resolve.
+Files load in sorted path order for determinism.
+
+Built models are cached (pickled) in `~/.cache/sysml2` (override with
+`$SYSML2_CACHE_DIR`), keyed by source content plus a fingerprint of the
+generated parser and builder code — edits, grammar regeneration, and package
+upgrades invalidate cleanly. Caching is on by default for directories, off
+for single files (`cache=` overrides; `sysml2.clear_cache()` wipes it).
+Warm directory loads are ~1000x faster than cold parses with the ANTLR
+Python runtime.
+
 ## Command line
 
 ```bash
-sysml2 parse examples/drone.sysml                      # syntax check (.kerml too)
+sysml2 parse examples/drone.sysml                      # syntax check (file or dir)
 sysml2 export examples/drone.sysml --format sysml      # json | sysml | kerml
 sysml2 export model.json --format sysml                # JSON in, SysML out
+sysml2 export models/ --format json                    # whole directory, merged
 sysml2 calc examples/drone.sysml Drone::HoverTime capacity=5200
 sysml2 check examples/drone.sysml Drone::QuadCopter payloadMass=0.9
 sysml2 run examples/drone.sysml Drone::PlanBattery distanceKm=20
 sysml2 simulate examples/drone.sysml Drone::FlightStates --events launch,airborne
 ```
 
-Every model-consuming command accepts `.sysml` or `.json` input.
+Every model-consuming command accepts `.sysml`, `.json`, or a directory;
+`--no-cache` bypasses the model cache.
 
 ## Project layout
 
@@ -160,11 +183,12 @@ src/sysml2/
     ast.py                 expression AST + precedence-aware printer
     export.py              model -> JSON / SysML text, save()
     importer.py            JSON -> model (lossless round-trip)
+    workspace.py           multi-file loading + content-addressed model cache
     kerml.py               model -> KerML projection
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `sysml2` console command
 examples/                  drone.sysml + kernel.kerml + demo.py
-tests/                     194 pytest tests
+tests/                     216 pytest tests
 Makefile                   make check = ruff + mypy + pytest
 ```
 

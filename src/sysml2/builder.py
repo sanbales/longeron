@@ -17,7 +17,6 @@ from . import ast as A
 from . import model as M
 from .errors import BuildError
 from .parser import ParseResult, parse_sysml_text
-from .parser import parse_file as _parse_file
 
 _BodyStyle = Literal["definition", "action", "calculation", "state",
                      "requirement", "case"]
@@ -50,19 +49,6 @@ def loads(text: str, source_name: str = "<text>") -> M.Model:
     """Parse SysML v2 text and build a model."""
 
     return build_model(parse_sysml_text(text, source_name))
-
-
-def load(path) -> M.Model:
-    """Load a model from a ``.sysml`` file or a ``.json`` export."""
-
-    from pathlib import Path
-
-    source = Path(path)
-    if source.suffix.lower() == ".json":
-        from .importer import from_json
-
-        return from_json(source.read_text(encoding="utf-8"))
-    return build_model(_parse_file(path, language="sysml"))
 
 
 def parse_expression(text: str) -> A.Expr:
