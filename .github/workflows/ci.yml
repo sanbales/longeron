@@ -20,6 +20,7 @@ jobs:
       - run: pixi run lint
       - run: pixi run typecheck
       - run: pixi run coverage
+      - run: pixi run test-vendor
 
   test-matrix:
     # the full test suite on every supported Python, from the same lockfile

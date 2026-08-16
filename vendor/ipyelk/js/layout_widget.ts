@@ -12,6 +12,7 @@ import { DOMWidgetModel } from '@jupyter-widgets/base';
 
 import { ElkNode } from './sprotty/json/elkgraph-json';
 import { ELK_DEBUG, IRunMessage, NAME, VERSION } from './tokens';
+import { layoutErrorMessage } from './layout_widget_util';
 
 import Worker from '!!worker-loader!elkjs/lib/elk-worker.js';
 
@@ -142,8 +143,9 @@ export class ELKLayoutModel extends DOMWidgetModel {
       // reapply properties
       applyProperties(result, propmap);
     } catch (error) {
-      result = {};
       console.error(error);
+      this.send(layoutErrorMessage(error));
+      return null;
     }
 
     outlet.set('value', { ...result });
