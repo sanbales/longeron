@@ -130,6 +130,19 @@ def _usage_title(element: M.Usage) -> str:
     return title
 
 
+_MARKER_LAYOUT = {
+    # place the 'start'/'done'/entry text below the dot, not on top of it
+    "nodeLabels.placement": "OUTSIDE H_CENTER V_BOTTOM",
+}
+
+
+def _marker_node(text: str | None = None) -> Node:
+    labels = [_label(text, "sysml-stereotype")] if text else []
+    return Node(width=14, height=14, labels=labels,
+                layoutOptions=dict(_MARKER_LAYOUT),
+                properties=NodeProperties(cssClasses="sysml-marker"))
+
+
 def _label(text: str, css: str = "") -> Label:
     label = Label(text=text)
     if css:
@@ -157,7 +170,9 @@ def _edge(source: Node, target: Node, css: str, text: str | None = None,
     if end:
         edge.properties.shape = EdgeShape(end=end)
     if text:
-        edge.labels = [_label(text)]
+        label = _label(text)
+        label.layoutOptions = {"edgeLabels.inline": "true"}
+        edge.labels = [label]
     return edge
 
 
@@ -384,9 +399,7 @@ def _fill_states(container_node: Node, container: M.Definition | M.Usage,
             continue
         if member.source == M.ENTRY_SOURCE:
             if marker is None:
-                marker = Node(width=14, height=14,
-                              properties=NodeProperties(
-                                  cssClasses="sysml-marker"))
+                marker = _marker_node()
                 container_node.children.append(marker)
             root.edges.append(_edge(
                 marker, target, "sysml-edge-transition", end="arrow",
@@ -416,9 +429,7 @@ def action_diagram(action: M.Definition | M.Usage) -> Any:
     steps: dict[str, Node] = {}
 
     def marker(name: str) -> Node:
-        node = Node(width=14, height=14,
-                    labels=[_label(name, "sysml-stereotype")],
-                    properties=NodeProperties(cssClasses="sysml-marker"))
+        node = _marker_node(name)
         root.children.append(node)
         return node
 

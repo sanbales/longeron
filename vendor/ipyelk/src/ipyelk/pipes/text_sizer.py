@@ -9,7 +9,7 @@ from ..elements import Label, index
 from ..styled_widget import StyledWidget
 from . import flows as F
 from .base import Pipe, SyncedPipe
-from .util import wait_for_change
+from .util import browser_roundtrip
 
 
 class TextSizer(Pipe):
@@ -81,13 +81,7 @@ class BrowserTextSizer(SyncedPipe, StyledWidget, TextSizer):
         if self.outlet is None:
             return
 
-        # signal to browser and wait for done
-        future_value = wait_for_change(self.outlet, "value")
-
-        self.send({"action": "run"})
-
-        # wait to return until
-        # TODO if there is no change to the input text the
-        # outlet value doesn't trigger
-        await future_value
+        # signal to browser (resending until a view answers -- LOCAL PATCH,
+        # see util.browser_roundtrip) and wait for done
+        await browser_roundtrip(self)
         self.outlet.persist()

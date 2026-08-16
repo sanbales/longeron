@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def run(path: Path) -> None:
     notebook = nbformat.read(path, as_version=4)
     client = NotebookClient(notebook, timeout=600, kernel_name="python3",
-                            resources={"metadata": {"path": str(ROOT)}})
+                            resources={"metadata": {"path": str(ROOT / "notebooks")}})
     client.execute()
     nbformat.write(notebook, path)
     print(f"executed {path.name}")
