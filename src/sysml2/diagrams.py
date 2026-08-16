@@ -94,6 +94,42 @@ _NODE_LAYOUT = {
 }
 
 
+def _stmt_text(statement: M.Element, limit: int = 28) -> str:
+    """A one-line rendering of an action statement (for labels)."""
+
+    from .export import _Printer
+
+    printer = _Printer("  ")
+    try:
+        text = printer.stmt_fragment(statement)
+    except TypeError:
+        if isinstance(statement, M.IfAction):
+            text = f"if {statement.condition.to_text()}"
+        elif isinstance(statement, M.WhileLoop):
+            text = ("loop" if statement.condition is None
+                    else f"while {statement.condition.to_text()}")
+        elif isinstance(statement, M.ForLoop):
+            text = f"for {statement.var} in {statement.seq.to_text()}"
+        else:
+            text = statement.label
+    if len(text) > limit:
+        text = text[:limit - 1] + "\u2026"
+    return text
+
+
+def _usage_title(element: M.Usage) -> str:
+    title = element.label
+    if element.types:
+        title += f" : {element.types[0]}"
+    if element.multiplicity is not None:
+        from .export import _Printer
+
+        mult = _Printer("  ").multiplicity_text(element.multiplicity)
+        if mult:
+            title += f" {mult}"
+    return title
+
+
 def _label(text: str, css: str = "") -> Label:
     label = Label(text=text)
     if css:
@@ -196,10 +232,8 @@ class _StructureBuilder:
             self._fill_features(node, element)
         elif isinstance(element, M.Usage) and element.kind in (
                 "part", "item", "port", "action", "state", "occurrence"):
-            title = element.label
-            if element.types:
-                title += f" : {element.types[0]}"
-            node = _node(element, title, "sysml-usage", element.kind)
+            node = _node(element, _usage_title(element), "sysml-usage",
+                         element.kind)
             self._fill_features(node, element)
         else:
             return None
@@ -208,16 +242,35 @@ class _StructureBuilder:
 
     def _fill_features(self, node: Node, element: M.Namespace) -> None:
         for member in element.members:
-            if isinstance(member, M.Usage) and member.kind == "attribute" \
-                    and self.show_attributes:
-                text = member.label
-                if member.types:
-                    text += f" : {member.types[0]}"
+            if not isinstance(member, M.Usage):
+                child = self._visit(member)
+                if child is not None:
+                    node.children.append(child)
+                continue
+            if member.kind == "attribute" and self.show_attributes:
+                text = _usage_title(member)
                 if member.value is not None:
                     text += f" = {member.value.expr.to_text()}"
                 node.labels.append(_label(text, "sysml-attribute"))
-            elif isinstance(member, M.Usage) and member.kind == "enum_literal":
+            elif member.kind == "enum_literal":
                 node.labels.append(_label(member.label, "sysml-attribute"))
+            elif member.direction is not None and self.show_attributes:
+                title = _usage_title(member) if member.name else \
+                    (f": {member.types[0]}" if member.types else "")
+                node.labels.append(_label(f"{member.direction} {title}".strip(),
+                                          "sysml-attribute"))
+            elif member.kind == "constraint" and self.show_attributes:
+                kind = member.constraint_kind or "constraint"
+                text = f"{kind} {member.name}" if member.name else kind
+                if member.result is not None:
+                    expr = member.result.to_text()
+                    if len(expr) > 30:
+                        expr = expr[:29] + "\u2026"
+                    text += f" {{{expr}}}"
+                node.labels.append(_label(text, "sysml-attribute"))
+            elif member.kind == "subject" and self.show_attributes:
+                node.labels.append(_label(f"subject {_usage_title(member)}",
+                                          "sysml-attribute"))
             else:
                 child = self._visit(member)
                 if child is not None:
@@ -306,7 +359,7 @@ def _transition_text(transition: M.TransitionUsage) -> str | None:
     if transition.guard is not None:
         bits.append(f"[{transition.guard.to_text()}]")
     if transition.effect is not None:
-        bits.append("/ \u2026")
+        bits.append(f"/ {_stmt_text(transition.effect)}")
     return " ".join(bits) or None
 
 
@@ -418,20 +471,7 @@ def action_diagram(action: M.Definition | M.Usage) -> Any:
 
 
 def _statement_title(member: M.Element) -> str:
-    from .export import _Printer
-
-    printer = _Printer("  ")
-    try:
-        return printer.stmt_fragment(member)
-    except TypeError:
-        if isinstance(member, M.IfAction):
-            return f"if {member.condition.to_text()}"
-        if isinstance(member, M.WhileLoop):
-            return ("loop" if member.condition is None
-                    else f"while {member.condition.to_text()}")
-        if isinstance(member, M.ForLoop):
-            return f"for {member.var} in {member.seq.to_text()}"
-        return member.label
+    return _stmt_text(member)
 
 
 # ---------------------------------------------------------------------------

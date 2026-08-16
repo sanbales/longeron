@@ -48,6 +48,46 @@ class TestSvg:
         assert graph["width"] > 0 and graph["height"] > 0
         assert all("x" in child for child in graph["children"])
 
+    def test_leaf_nodes_are_snug(self, drone_model):
+        """Regression: leaf boxes must hug their label stack, not balloon."""
+
+        widget = diagrams.structure_diagram(drone_model)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+
+        def find(node, identifier):
+            if node.get("id") == identifier:
+                return node
+            for child in node.get("children", []):
+                found = find(child, identifier)
+                if found is not None:
+                    return found
+            return None
+
+        hover = find(graph, "Drone::HoverTime")
+        assert hover is not None
+        assert hover["width"] < 200  # was ~290 with ELK-guessed sizing
+        assert hover["height"] < 110
+        # labels carry explicit stacked positions
+        ys = [label["y"] for label in hover["labels"]]
+        assert ys == sorted(ys) and len(set(ys)) == len(ys)
+
+    def test_container_wide_labels_fit(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+
+        def find(node, identifier):
+            if node.get("id") == identifier:
+                return node
+            for child in node.get("children", []):
+                found = find(child, identifier)
+                if found is not None:
+                    return found
+            return None
+
+        quad = find(graph, "Drone::QuadCopter")
+        widest = max(label["width"] for label in quad["labels"])
+        assert quad["width"] >= widest  # totalMass expression stays inside
+
     def test_escaping(self):
         model = sysml2.loads(
             'package P { part def A { attribute note : String = "<b>&"; } }')

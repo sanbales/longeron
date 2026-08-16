@@ -37,6 +37,33 @@ class TestStructure:
         texts = [label.text for label in battery.labels]
         assert any("capacity : Real = 5200.0" in t for t in texts)
 
+    def test_multiplicity_shown(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        rotors = next(n for n in _walk(widget.source.value)
+                      if n.id == "Drone::QuadCopter::rotors")
+        assert any("rotors : Rotor [4]" in label.text
+                   for label in rotors.labels)
+
+    def test_parameter_rows(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        hover = next(n for n in _walk(widget.source.value)
+                     if n.id == "Drone::HoverTime")
+        texts = [label.text for label in hover.labels]
+        assert "in capacity : Real" in texts
+        assert "return : Real" in texts
+
+    def test_requirement_and_constraint_rows(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        envelope = next(n for n in _walk(widget.source.value)
+                        if n.id == "Drone::FlightEnvelope")
+        texts = " | ".join(label.text for label in envelope.labels)
+        assert "subject drone : QuadCopter" in texts
+        assert "require hoverMargin" in texts
+        quad = next(n for n in _walk(widget.source.value)
+                    if n.id == "Drone::QuadCopter")
+        quad_texts = " | ".join(label.text for label in quad.labels)
+        assert "assert takeoffMassLimit" in quad_texts
+
     def test_typing_edges(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
         edges = widget.source.value.edges
@@ -94,6 +121,7 @@ class TestStates:
         texts = [label.text for e in widget.source.value.edges
                  for label in e.labels]
         assert "launch" in texts
+        assert 'low_battery / send "RTL"' in texts  # real effect, not '\u2026'
 
     def test_nested_states(self):
         model = sysml2.loads("""

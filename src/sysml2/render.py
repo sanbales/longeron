@@ -92,9 +92,9 @@ def _to_elk_json(root: Any) -> dict:
             return str(node.id)
         return generated.setdefault(id(node), f"_n{next(counter)}")
 
-    def convert_labels(element: Any, owner: str) -> list[dict]:
+    def convert_edge_labels(edge: Any, owner: str) -> list[dict]:
         labels = []
-        for index, label in enumerate(getattr(element, "labels", []) or []):
+        for index, label in enumerate(edge.labels or []):
             text = label.text or ""
             css = label.properties.cssClasses or ""
             width, height = _measure(text, css)
@@ -105,17 +105,54 @@ def _to_elk_json(root: Any) -> dict:
 
     def convert(node: Any) -> dict:
         identifier = node_id(node)
+        css = node.properties.cssClasses or ""
+        is_marker = "sysml-marker" in css
+        has_children = bool(node.children)
+
+        # place labels manually: a snug vertical stack (the browser pipeline
+        # measures real glyphs; headless we control the geometry ourselves)
+        labels = []
+        cursor = 5.0
+        max_width = 0.0
+        for index, label in enumerate(node.labels or []):
+            text = label.text or ""
+            label_css = label.properties.cssClasses or ""
+            width, height = _measure(text, label_css)
+            if is_marker:  # keep the dot small; hang the label below it
+                x, y = 0.0, (node.height or 14) + 2 + index * height
+            else:
+                x, y = 8.0, cursor
+                cursor += height
+                max_width = max(max_width, width)
+            labels.append({"id": f"{identifier}.l{index}", "text": text,
+                           "x": x, "y": y, "width": width, "height": height,
+                           "properties": {"cssClasses": label_css}})
+
+        layout_options = {
+            key: value for key, value in (node.layoutOptions or {}).items()
+            if not key.startswith(("nodeLabels", "nodeSize", "elk.padding"))
+        }
         data: dict[str, Any] = {
             "id": identifier,
-            "layoutOptions": dict(node.layoutOptions or {}),
-            "properties": {"cssClasses": node.properties.cssClasses or ""},
-            "labels": convert_labels(node, identifier),
+            "layoutOptions": layout_options,
+            "properties": {"cssClasses": css},
+            "labels": labels,
             "children": [convert(child) for child in node.children],
         }
-        if node.width:
-            data["width"] = node.width
-        if node.height:
-            data["height"] = node.height
+        if is_marker or node.width:
+            data["width"] = node.width or 14
+            data["height"] = node.height or 14
+        elif has_children:
+            # reserve the label block, then let ELK size around the children;
+            # a minimum width keeps wide labels inside the box
+            data["layoutOptions"]["elk.padding"] = (
+                f"[top={cursor + 8:.0f},left=12,bottom=12,right=12]")
+            data["layoutOptions"]["elk.nodeSize.constraints"] = "MINIMUM_SIZE"
+            data["layoutOptions"]["elk.nodeSize.minimum"] = (
+                f"({max_width + 20:.0f},{cursor + 20:.0f})")
+        else:  # leaf: snug fit around the label stack
+            data["width"] = max(max_width + 16, 40.0)
+            data["height"] = max(cursor + 5, 26.0)
         edges = []
         for index, edge in enumerate(node.edges):
             edge_id = f"{identifier}.e{index}"
@@ -123,7 +160,7 @@ def _to_elk_json(root: Any) -> dict:
                 "id": edge_id,
                 "sources": [node_id(edge.source)],
                 "targets": [node_id(edge.target)],
-                "labels": convert_labels(edge, edge_id),
+                "labels": convert_edge_labels(edge, edge_id),
                 "properties": {"cssClasses": edge.properties.cssClasses or ""},
             })
         if edges:
@@ -215,7 +252,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         css = label.get("properties", {}).get("cssClasses", "")
         style = _style_for(css, _LABEL_STYLES,
                            {"font-size": "11", "fill": "#222222"})
-        x = ox + label.get("x", 0) + 4
+        x = ox + label.get("x", 0)
         y = oy + label.get("y", 0) + float(style["font-size"])
         extra = ' font-style="italic"' if style.get("font-style") else ""
         parts.append(
