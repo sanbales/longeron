@@ -114,6 +114,7 @@ python = ">=3.10,<3.14"
 antlr = "==4.13.2"  # must match the antlr4-python3-runtime pin in [project]
 nodejs = ">=20"     # elkjs layout for headless diagram rendering
 cairosvg = ">=2.7"  # SVG -> PNG (bundles the native cairo library)
+jupyterlab = ">=4.1"
 
 [tool.pixi.pypi-dependencies]
 sysml2 = { path = ".", editable = true, extras = ["dev", "ecore"] }
@@ -147,6 +148,7 @@ coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"
 stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
 notebooks = "python scripts/run_notebooks.py"
+lab = { cmd = "jupyter lab", cwd = "notebooks" }
 check = { depends-on = ["lint", "typecheck", "test"] }
 
 [tool.pixi.tasks.parsers]
