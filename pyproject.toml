@@ -105,8 +105,21 @@ sysml2 = { path = ".", editable = true, extras = ["dev", "ecore"] }
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
 
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
 [tool.pixi.environments]
-py310 = ["py310"]  # oldest supported Python: `pixi run -e py310 test`
+# per-Python test environments; `pixi run -e py310 test` etc.
+py310 = ["py310"]
+py311 = ["py311"]
+py312 = ["py312"]
+py313 = ["py313"]
 
 [tool.pixi.tasks]
 test = "pytest -q"
