@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""End-to-end demo of the sysml2 package: define, export, execute.
+"""End-to-end demo of the sysml2 package: define, export, execute, full loop.
 
 Run:  python examples/demo.py
 """
 
+import tempfile
 from pathlib import Path
 
 import sysml2
@@ -84,6 +85,29 @@ def main() -> None:
     new_model = M.Model()
     new_model.add(pkg)
     print(sysml2.to_sysml(new_model))
+
+    # ----- 9. Full loop: run, write results back, save, reload -----------------------
+    banner("9. Full loop: run -> snapshot results into the model -> save -> reload")
+    out_dir = Path(tempfile.mkdtemp(prefix="sysml2-demo-"))
+    flown = interp.instantiate("Drone::QuadCopter", payloadMass=0.35)
+    snapshot = interp.snapshot(flown, name="asFlown")
+    model.find("Drone").add(snapshot)
+
+    sysml2.save(model, out_dir / "drone_with_results.sysml")
+    sysml2.save(model, out_dir / "drone_with_results.json")
+    print("saved:", *(str(p) for p in sorted(out_dir.iterdir())), sep="\n  ")
+
+    reloaded = sysml2.load(out_dir / "drone_with_results.json")
+    print("reloaded from JSON; snapshot mass =",
+          sysml2.Interpreter(reloaded)
+          .instantiate(reloaded.find("Drone::asFlown")).slots["totalMass"])
+
+    # ----- 10. KerML projection --------------------------------------------------------
+    banner("10. Project the model onto KerML (and re-parse it as KerML)")
+    kerml_text = sysml2.to_kerml(model)
+    print("\n".join(kerml_text.splitlines()[:14]))
+    sysml2.parse_kerml_text(kerml_text)
+    print("...\nKerML output re-parses cleanly.")
 
 
 if __name__ == "__main__":

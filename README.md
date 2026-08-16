@@ -1,29 +1,34 @@
 # sysml2-experiments
 
-A Python package that defines, exports, and executes SysML v2 models. The
-parsers are generated with ANTLR 4 from combined grammars for SysML v2 and
-KerML, taken from
+A Python package that defines, exports, imports, and executes SysML v2
+models. The parsers are generated with ANTLR 4 from combined grammars for
+SysML v2 and KerML, taken from
 [hivecore-dev/hcf-runtime](https://github.com/hivecore-dev/hcf-runtime)
-(`SysML.g4`, `KerML.g4`, with three local patches — see
+(`SysML.g4`, `KerML.g4`, with local patches — see
 [Grammar patches](#grammar-patches)).
 
 ## Capabilities
 
 | Verb | What you get |
 |---|---|
-| **Define** | Parse SysML v2 textual notation into a Python object model, or build the model programmatically from dataclasses. |
-| **Export** | Serialize any model to JSON or back to parseable SysML v2 text. Parse → print → parse round-trips preserve the model. |
+| **Define** | Parse SysML v2 textual notation into a fully-typed Python object model, import a model from its JSON export, or build models programmatically from dataclasses. |
+| **Export** | Serialize any model to JSON, back to parseable SysML v2 text, or project it onto KerML. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions, check constraints and requirements, run `action` definitions, and simulate `state` machines. |
+| **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
 
-KerML support is syntactic: `parse_kerml_text` validates KerML sources and
-returns a parse tree. Model building and execution operate on SysML.
+The builder covers the full grammar: every construct the SysML grammar
+accepts (interfaces, views, flows, allocations, metadata annotations,
+satisfy/verify/frame, filtered imports, ...) maps to a model class — there
+is no lossy fallback. KerML support is asymmetric by design:
+`parse_kerml_text` validates KerML sources syntactically, and `to_kerml`
+projects SysML models onto the kernel language.
 
 ## Installation
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest            # 152 tests
+make check        # ruff + mypy + 194 tests
 ```
 
 The generated ANTLR parsers are committed under `src/sysml2/_gen/`, so no
@@ -98,16 +103,49 @@ A complete walk-through lives in `examples/demo.py`:
 python examples/demo.py
 ```
 
+### The full loop: read → run → save
+
+```python
+model = sysml2.load("examples/drone.sysml")
+interp = sysml2.Interpreter(model)
+
+# run
+flown = interp.instantiate("Drone::QuadCopter", payloadMass=0.35)
+
+# write computed values back into the model as a bound part usage
+model.find("Drone").add(interp.snapshot(flown, name="asFlown"))
+
+# save in any format (inferred from the suffix)
+sysml2.save(model, "drone_with_results.sysml")
+sysml2.save(model, "drone_with_results.json")
+sysml2.save(model, "drone_with_results.kerml")
+
+# the JSON export is lossless: reload and keep executing
+again = sysml2.load("drone_with_results.json")
+sysml2.Interpreter(again).instantiate("Drone::QuadCopter")
+```
+
+SysML or KerML text can be generated from just the JSON definition:
+
+```python
+model = sysml2.from_json(json_text)   # or sysml2.from_dict(data)
+print(sysml2.to_sysml(model))
+print(sysml2.to_kerml(model))         # kernel-language projection
+```
+
 ## Command line
 
 ```bash
 sysml2 parse examples/drone.sysml                      # syntax check (.kerml too)
-sysml2 export examples/drone.sysml --format sysml      # or json
+sysml2 export examples/drone.sysml --format sysml      # json | sysml | kerml
+sysml2 export model.json --format sysml                # JSON in, SysML out
 sysml2 calc examples/drone.sysml Drone::HoverTime capacity=5200
 sysml2 check examples/drone.sysml Drone::QuadCopter payloadMass=0.9
 sysml2 run examples/drone.sysml Drone::PlanBattery distanceKm=20
 sysml2 simulate examples/drone.sysml Drone::FlightStates --events launch,airborne
 ```
+
+Every model-consuming command accepts `.sysml` or `.json` input.
 
 ## Project layout
 
@@ -118,13 +156,16 @@ src/sysml2/
     _gen/                  generated ANTLR lexers/parsers (committed)
     parser.py              text -> parse tree, error collection
     builder.py             parse tree -> model (the SysML front-end)
-    model.py               model element dataclasses
+    model.py               model element dataclasses (Literal-typed vocabularies)
     ast.py                 expression AST + precedence-aware printer
-    export.py              model -> JSON / SysML text
-    interpreter.py         evaluation, instantiation, actions, states
+    export.py              model -> JSON / SysML text, save()
+    importer.py            JSON -> model (lossless round-trip)
+    kerml.py               model -> KerML projection
+    interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `sysml2` console command
-examples/                  drone.sysml + demo.py
-tests/                     152 pytest tests
+examples/                  drone.sysml + kernel.kerml + demo.py
+tests/                     194 pytest tests
+Makefile                   make check = ruff + mypy + pytest
 ```
 
 ### How a model flows through the package
@@ -132,13 +173,20 @@ tests/                     152 pytest tests
 1. `parser.py` runs the generated ANTLR parser and collects syntax errors.
 2. `builder.py` walks the parse tree and produces `model.py` dataclasses.
    Expressions become compact AST nodes (`ast.py`), not parse-tree references.
-3. `export.py` renders the model to JSON or back to textual notation.
+3. `export.py` renders the model to JSON or textual notation; `importer.py`
+   reads the JSON back; `kerml.py` projects onto KerML.
 4. `interpreter.py` resolves qualified names (imports, aliases,
-   specialization) and executes the model.
+   specialization) and executes the model; `snapshot` converts runtime
+   instances back into model elements.
 
-Constructs outside the modeled subset (views, interfaces, flows, metadata
-usages) are preserved as `Unsupported` elements that carry their verbatim
-source text, so exports never silently drop content.
+## Code quality
+
+- **Typing**: modern PEP 585/604 annotations throughout; closed string
+  vocabularies (`kind`, `direction`, `visibility`, operators, ...) are
+  `typing.Literal` aliases (`model.UsageKind`, `ast.BinaryOp`, ...).
+  `mypy` runs clean over `src/sysml2` (generated code excluded).
+- **Linting**: `ruff` with `E, W, F, I, UP, B, C4, RUF` rules.
+- `make check` runs ruff + mypy + the full test suite.
 
 ## Execution semantics (and their limits)
 
@@ -162,8 +210,8 @@ simplifications:
 
 ## Grammar patches
 
-Three deviations from the upstream grammars, each marked with a
-`LOCAL PATCH` comment in the `.g4` files:
+Deviations from the upstream grammars, each marked with a ``LOCAL PATCH``
+comment in the `.g4` files:
 
 1. **`import` visibility (SysML.g4).** Upstream required a visibility
    keyword before every `import`, which rejects the spec's own examples
@@ -175,6 +223,13 @@ Three deviations from the upstream grammars, each marked with a
    as `-(3 + 1)` because the unary alternative sat below the binary
    alternatives with a non-rightmost recursion. The patch moves unary above
    the binary operators, so `-3 + 1` is `(-3) + 1`.
+4. **`@` vs `at` (SysML.g4, four sites).** In SysML, `AT` is the keyword
+   `at` (trigger times) and the `@` symbol is `AT_SIGN`; upstream used `AT`
+   in the metadata and classification rules copied from KerML (where `AT`
+   itself is `'@'`). Upstream therefore required `at Safety` instead of
+   `@Safety`, and `x at T` instead of `x @ T`.
+5. **Flow ends (SysML.g4).** `flowEndSubsetting` dropped the spec's `'.'`
+   after `QualifiedName`, so `flow from a.out to b.in` could not parse.
 
 One known deviation from the OMG spec remains, inherited from upstream: the
 grammar groups `??`/`or`/`and`/`implies` at one precedence level and

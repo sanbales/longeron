@@ -8,14 +8,27 @@ name parts, e.g. ``("ISQ", "mass")`` for ``ISQ::mass``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Optional, Tuple, Union
+from dataclasses import dataclass, fields
+from typing import Literal as L
 
 INF = float("inf")
 
-QName = Tuple[str, ...]
+QName = tuple[str, ...]
+
+UnaryOp = L["+", "-", "~", "not"]
+BinaryOp = L[
+    "??", "or", "and", "implies",              # conditional-binary
+    "|", "&", "xor",                            # bitwise
+    "==", "!=", "===", "!==",                   # equality
+    "<", ">", "<=", ">=",                       # relational
+    "..",                                       # range
+    "+", "-", "*", "/", "%", "**", "^",         # arithmetic
+]
+ClassificationOp = L["istype", "hastype", "@", "@@"]
+CastOp = L["as", "meta"]
 
 
+@dataclass
 class Expr:
     """Base class for all expression nodes."""
 
@@ -30,7 +43,7 @@ class Expr:
 class Literal(Expr):
     """``true`` / ``42`` / ``3.14`` / ``"hi"`` / ``null`` / ``*`` (infinity)."""
 
-    value: Union[bool, int, float, str, None]
+    value: bool | int | float | str | None
 
 
 @dataclass
@@ -56,13 +69,13 @@ class ChainAccess(Expr):
 
 @dataclass
 class Unary(Expr):
-    op: str  # '+', '-', '~', 'not'
+    op: UnaryOp
     operand: Expr
 
 
 @dataclass
 class Binary(Expr):
-    op: str  # arithmetic / comparison / logical / '..' / '??' etc.
+    op: BinaryOp
     left: Expr
     right: Expr
 
@@ -80,9 +93,9 @@ class Conditional(Expr):
 class Classification(Expr):
     """``x istype T`` / ``x hastype T`` / ``x @ T`` (operand may be implied)."""
 
-    op: str  # 'istype' | 'hastype' | '@' | '@@'
+    op: ClassificationOp
     type: QName
-    operand: Optional[Expr] = None
+    operand: Expr | None = None
 
 
 @dataclass
@@ -90,8 +103,8 @@ class Cast(Expr):
     """``x as T`` (operand may be implied) or ``x meta T``."""
 
     type: QName
-    operand: Optional[Expr] = None
-    op: str = "as"  # 'as' | 'meta'
+    operand: Expr | None = None
+    op: CastOp = "as"
 
 
 @dataclass
@@ -105,7 +118,7 @@ class AllOf(Expr):
 class SequenceExpr(Expr):
     """``(a, b, c)`` -- sequence construction."""
 
-    items: Tuple[Expr, ...]
+    items: tuple[Expr, ...]
 
 
 @dataclass
@@ -113,7 +126,7 @@ class IndexOp(Expr):
     """``seq#(i)`` -- 1-based indexing."""
 
     base: Expr
-    index: Tuple[Expr, ...]
+    index: tuple[Expr, ...]
 
 
 @dataclass
@@ -129,7 +142,7 @@ class Param(Expr):
     """A parameter of a body expression, e.g. ``in x``."""
 
     name: str
-    direction: Optional[str] = None
+    direction: L["in", "out", "inout"] | None = None
 
 
 @dataclass
@@ -139,9 +152,9 @@ class BodyExpr(Expr):
     ``lets`` are valued members declared in the body (name, expression).
     """
 
-    params: Tuple[Param, ...] = ()
-    lets: Tuple[Tuple[str, "Expr"], ...] = ()
-    result: Optional[Expr] = None
+    params: tuple[Param, ...] = ()
+    lets: tuple[tuple[str, Expr], ...] = ()
+    result: Expr | None = None
 
 
 @dataclass
@@ -149,8 +162,8 @@ class Invocation(Expr):
     """``Foo(a, b)`` or ``Foo(x = a, y = b)``."""
 
     target: QName
-    args: Tuple[Expr, ...] = ()
-    named: Tuple[Tuple[str, Expr], ...] = ()
+    args: tuple[Expr, ...] = ()
+    named: tuple[tuple[str, Expr], ...] = ()
 
 
 @dataclass
@@ -158,8 +171,8 @@ class Constructor(Expr):
     """``new Foo(a, b)``"""
 
     type: QName
-    args: Tuple[Expr, ...] = ()
-    named: Tuple[Tuple[str, Expr], ...] = ()
+    args: tuple[Expr, ...] = ()
+    named: tuple[tuple[str, Expr], ...] = ()
 
 
 @dataclass
@@ -168,9 +181,9 @@ class ArrowOp(Expr):
 
     base: Expr
     name: QName
-    args: Tuple[Expr, ...] = ()
-    body: Optional[BodyExpr] = None
-    func: Optional[QName] = None  # function-reference argument form
+    args: tuple[Expr, ...] = ()
+    body: BodyExpr | None = None
+    func: QName | None = None  # function-reference argument form
 
 
 @dataclass
@@ -309,7 +322,7 @@ def expr_to_text(expr: Expr, min_prec: int = 0) -> str:
     return text
 
 
-def _render(expr: Expr):  # noqa: C901 - a printer is naturally branchy
+def _render(expr: Expr) -> tuple[str, int]:
     if isinstance(expr, Param):
         direction = f"{expr.direction} " if expr.direction else ""
         return f"{direction}{_fmt_name(expr.name)}", _PREC_PRIMARY
@@ -336,6 +349,8 @@ def _render(expr: Expr):  # noqa: C901 - a printer is naturally branchy
     if isinstance(expr, Classification):
         type_text = fmt_qname(expr.type)
         if expr.operand is None:
+            if expr.op == "@":
+                return f"@{type_text}", _PREC_CLASSIFICATION
             return f"{expr.op} {type_text}", _PREC_CLASSIFICATION
         operand = expr_to_text(expr.operand, _PREC_CLASSIFICATION + 1)
         if expr.op == "@":
@@ -404,8 +419,86 @@ def _value_to_data(value):
         return expr_to_dict(value)
     if isinstance(value, tuple):
         if value and all(isinstance(v, str) for v in value):
+            if any("::" in v for v in value):
+                return list(value)  # keep segments distinct (feature chains)
             return "::".join(value)
         return [_value_to_data(v) for v in value]
     if isinstance(value, float) and value == INF:
         return "*"
     return value
+
+
+# ---------------------------------------------------------------------------
+# JSON -> AST
+# ---------------------------------------------------------------------------
+
+_NODE_TYPES: dict[str, type[Expr]] = {}
+
+#: fields that hold qualified names (serialized as "A::B" or a list of parts)
+_QNAME_FIELDS: dict[str, frozenset[str]] = {
+    "FeatureRef": frozenset({"parts"}),
+    "ChainAccess": frozenset({"parts"}),
+    "Classification": frozenset({"type"}),
+    "Cast": frozenset({"type"}),
+    "AllOf": frozenset({"type"}),
+    "Invocation": frozenset({"target"}),
+    "Constructor": frozenset({"type"}),
+    "ArrowOp": frozenset({"name", "func"}),
+    "MetadataAccess": frozenset({"target"}),
+}
+
+#: fields that hold (name, expression) pairs
+_PAIR_FIELDS = frozenset({"named", "lets"})
+
+
+def _decode_qname(value: str | list[str]) -> QName:
+    if isinstance(value, str):
+        return tuple(value.split("::"))
+    return tuple(value)
+
+
+def _decode_value(value: object) -> object:
+    if isinstance(value, dict) and "@expr" in value:
+        return expr_from_dict(value)
+    if isinstance(value, list):
+        return tuple(_decode_value(v) for v in value)
+    return value
+
+
+def expr_from_dict(data: dict | None) -> Expr | None:
+    """Rebuild an expression AST from :func:`expr_to_dict` output."""
+
+    if data is None:
+        return None
+    if not isinstance(data, dict) or "@expr" not in data:
+        raise ValueError(f"not a serialized expression: {data!r}")
+    type_name = data["@expr"]
+    cls = _NODE_TYPES.get(type_name)
+    if cls is None:
+        raise ValueError(f"unknown expression node type {type_name!r}")
+    qname_fields = _QNAME_FIELDS.get(type_name, frozenset())
+    kwargs: dict[str, object] = {}
+    for f in fields(cls):
+        if f.name not in data:
+            continue
+        value = data[f.name]
+        if value is None:
+            kwargs[f.name] = None
+        elif f.name in qname_fields:
+            kwargs[f.name] = _decode_qname(value)
+        elif f.name in _PAIR_FIELDS:
+            kwargs[f.name] = tuple((n, expr_from_dict(e)) for n, e in value)
+        else:
+            kwargs[f.name] = _decode_value(value)
+    if (type_name == "Literal" and kwargs.get("value") == "*"
+            and data.get("text") == "*"):
+        kwargs["value"] = INF  # bare '*' is infinity; '"*"' is a string
+    return cls(**kwargs)
+
+
+_NODE_TYPES.update({cls.__name__: cls for cls in (
+    Literal, FeatureRef, ChainAccess, Unary, Binary, Conditional,
+    Classification, Cast, AllOf, SequenceExpr, IndexOp, QuantityOp, Param,
+    BodyExpr, Invocation, Constructor, ArrowOp, CollectOp, SelectOp,
+    MetadataAccess,
+)})

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysml2"
-version = "0.1.0"
+version = "0.2.0"
 description = "Define, export, and execute SysML v2 models in Python, powered by ANTLR grammars for SysML v2 and KerML"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ authors = [{ name = "sysml2-experiments" }]
 dependencies = ["antlr4-python3-runtime==4.13.2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6"]
 
 [project.scripts]
 sysml2 = "sysml2.cli:main"
@@ -26,3 +26,43 @@ sysml2 = ["_gen/**/*.interp", "_gen/**/*.tokens"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["src/sysml2/_gen"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade (modern typing & syntax)
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/sysml2/__init__.py" = ["F403"]  # re-export of the model namespace
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/sysml2"]
+exclude = ["src/sysml2/_gen"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "sysml2._gen.*"
+follow_imports = "skip"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "antlr4.*"
+ignore_missing_imports = true
