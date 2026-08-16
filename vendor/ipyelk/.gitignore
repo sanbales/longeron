@@ -1,0 +1,15 @@
+__pycache__/
+.ipynb_checkpoints/
+.pixi/
+*.doit.*
+*.log
+build/
+dist/
+lib/
+node_modules/
+src/_d/
+
+# LOCAL PATCH (sysml2-experiments): the prebuilt labextension is vendored
+# deliberately (grafted from the 2.1.1 wheel; see README.vendor.md)
+!src/_d/
+!src/_d/**

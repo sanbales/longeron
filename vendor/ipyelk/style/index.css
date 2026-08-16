@@ -1,0 +1,10 @@
+/**
+ * Copyright (c) 2024 ipyelk contributors.
+ * Distributed under the terms of the Modified BSD License.
+ */
+
+@import url('./lab.css');
+@import url('./app.css');
+@import url('./view.css');
+@import url('./diagram.css');
+@import url('./pipe_status.css');

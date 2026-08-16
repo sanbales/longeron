@@ -1,0 +1,7 @@
+_d/
+.pixi/
+**/__pycache__/**/*
+**/.ipynb_checkpoints/**/*
+build/
+lib/
+node_modules/

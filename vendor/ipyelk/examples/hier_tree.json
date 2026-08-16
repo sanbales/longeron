@@ -1,0 +1,34 @@
+{
+  "directed": true,
+  "graph": {},
+  "links": [
+    {
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "source": "n1",
+      "target": "n2"
+    }
+  ],
+  "multigraph": false,
+  "nodes": [
+    {
+      "id": "n0",
+      "properties": {
+        "cssClasses": "example-data-node-class-from-tree"
+      }
+    },
+    {
+      "hidden": false,
+      "id": "n1"
+    },
+    {
+      "hidden": false,
+      "id": "n2"
+    },
+    {
+      "id": "n3"
+    }
+  ]
+}
