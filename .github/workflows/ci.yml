@@ -7,55 +7,50 @@ on:
 
 jobs:
   check:
+    # lint + type-check + tests with coverage, in the locked default env
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.67.0
+          cache: true
+
+      - run: pixi run lint
+      - run: pixi run typecheck
+      - run: pixi run coverage
+
+  test-matrix:
+    # the full test suite on every supported Python, from the same lockfile
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        environment: [py310, py311, py312, py313]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: prefix-dev/setup-pixi@v0.10.1
         with:
-          python-version: ${{ matrix.python-version }}
+          pixi-version: v0.67.0
+          cache: true
+          environments: ${{ matrix.environment }}
 
-      - name: Cache sysml2 model cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/sysml2
-          key: sysml2-models-${{ matrix.python-version }}-${{ hashFiles('src/sysml2/_stdlib/**/*.sysml', 'src/sysml2/_gen/sysml/SysMLParser.py') }}
-
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Lint (ruff)
-        run: ruff check src tests examples scripts
-
-      - name: Type-check (mypy)
-        run: mypy
-
-      - name: Test (pytest + coverage)
-        run: pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered
+      - run: pixi run -e ${{ matrix.environment }} test
 
   grammar-regen:
-    # verify the committed parsers match the grammars
+    # the committed parsers must match the grammars (antlr + JDK come from
+    # the lockfile; invoked directly to bypass the task's input/output cache)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: prefix-dev/setup-pixi@v0.10.1
         with:
-          python-version: "3.12"
+          pixi-version: v0.67.0
+          cache: true
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+      - run: pixi run python scripts/generate_parsers.py
 
-      - name: Regenerate parsers
-        run: python scripts/generate_parsers.py
-
-      - name: Diff against committed parsers
-        run: git diff --exit-code -- src/sysml2/_gen
+      - run: git diff --exit-code -- src/sysml2/_gen

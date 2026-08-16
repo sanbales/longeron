@@ -43,14 +43,17 @@ truth stays in `[project]`; pixi adds the locked toolchain on top):
 
 ```bash
 pixi run check          # lint + mypy + tests in a locked environment
-pixi run -e py310 test  # oldest supported Python
+pixi run -e py310 test  # any supported Python: py310 | py311 | py312 | py313
 pixi run parsers        # regenerate ANTLR parsers -- no manual Java setup:
                         # conda-forge's antlr 4.13.2 ships the tool + JDK
 pixi run stdlib | demo | coverage | format
 ```
 
-The `parsers` task is input/output-cached (skips when the `.g4` files are
-unchanged) and produces byte-identical output to the committed parsers.
+CI runs entirely on pixi (`prefix-dev/setup-pixi`, cached by `pixi.lock`):
+a `check` job (lint + mypy + coverage), a test matrix across the four
+Python environments, and a grammar-regen job that fails if the committed
+parsers drift from the `.g4` sources. The `parsers` task is
+input/output-cached locally and produces byte-identical output.
 
 The generated ANTLR parsers are committed under `src/sysml2/_gen/`, so no
 Java toolchain is needed to install or use the package. Java is only needed
@@ -214,8 +217,9 @@ src/sysml2/
     cli.py                 the `sysml2` console command
 examples/                  drone.sysml + kernel.kerml + demo.py
 tests/                     310 pytest tests (84% coverage)
-.github/workflows/ci.yml   lint + mypy + tests (3.10-3.13) + grammar-regen check
-Makefile                   make check = ruff + mypy + pytest
+.github/workflows/ci.yml   pixi-based: check + test matrix (3.10-3.13)
+                           + grammar-regen drift check (antlr/JDK from lock)
+Makefile                   make check = ruff + mypy + pytest (venv/pip route)
 ```
 
 ### How a model flows through the package
