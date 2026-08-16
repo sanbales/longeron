@@ -1,6 +1,6 @@
 """Multi-file workspace loading and the content-addressed model cache."""
 
-import pickle
+import json
 
 import pytest
 
@@ -103,7 +103,7 @@ class TestLoadMany:
 class TestCache:
     def test_cache_hit_creates_entry(self, workspace_dir, isolated_cache):
         sysml2.load_file(workspace_dir / "app.sysml", cache=True)
-        entries = list(isolated_cache.glob("*.pkl"))
+        entries = list(isolated_cache.glob("*.json"))
         assert len(entries) == 1
 
     def test_cached_model_equivalent(self, workspace_dir):
@@ -121,38 +121,45 @@ class TestCache:
         model = sysml2.load_file(path, cache=True)
         mass = model.find("App::Payload::mass")
         assert mass.value.expr.to_text() == "99.0"
-        assert len(list(isolated_cache.glob("*.pkl"))) == 2
+        assert len(list(isolated_cache.glob("*.json"))) == 2
 
     def test_corrupt_cache_entry_ignored(self, workspace_dir, isolated_cache):
         path = workspace_dir / "app.sysml"
         sysml2.load_file(path, cache=True)
-        entry = next(iter(isolated_cache.glob("*.pkl")))
-        entry.write_bytes(b"not a pickle")
+        entry = next(iter(isolated_cache.glob("*.json")))
+        entry.write_bytes(b"not json {{{")
         model = sysml2.load_file(path, cache=True)
         assert model.find("App::Payload") is not None
 
-    def test_wrong_pickle_type_ignored(self, workspace_dir, isolated_cache):
+    def test_wrong_payload_ignored(self, workspace_dir, isolated_cache):
         path = workspace_dir / "app.sysml"
         sysml2.load_file(path, cache=True)
-        entry = next(iter(isolated_cache.glob("*.pkl")))
-        entry.write_bytes(pickle.dumps({"not": "a model"}))
+        entry = next(iter(isolated_cache.glob("*.json")))
+        entry.write_text(json.dumps({"not": "a model"}))
         model = sysml2.load_file(path, cache=True)
         assert isinstance(model, M.Model)
+
+    def test_cache_entries_are_readable_json(self, workspace_dir,
+                                             isolated_cache):
+        sysml2.load_file(workspace_dir / "app.sysml", cache=True)
+        entry = next(iter(isolated_cache.glob("*.json")))
+        data = json.loads(entry.read_text())
+        assert data["@type"] == "Model"  # to_json schema, not a pickle
 
     def test_load_defaults(self, workspace_dir, isolated_cache):
         # single file: no cache by default
         sysml2.load(workspace_dir / "app.sysml")
-        assert not list(isolated_cache.glob("*.pkl"))
+        assert not list(isolated_cache.glob("*.json"))
         # directory: cached by default
         sysml2.load(workspace_dir)
-        assert list(isolated_cache.glob("*.pkl"))
+        assert list(isolated_cache.glob("*.json"))
 
     def test_clear_cache(self, workspace_dir, isolated_cache):
         sysml2.load_dir(workspace_dir)
-        assert list(isolated_cache.glob("*.pkl"))
+        assert list(isolated_cache.glob("*.json"))
         removed = sysml2.clear_cache()
         assert removed >= 1
-        assert not list(isolated_cache.glob("*.pkl"))
+        assert not list(isolated_cache.glob("*.json"))
 
     def test_fingerprint_stable(self):
         assert workspace._fingerprint() == workspace._fingerprint()
@@ -185,4 +192,4 @@ class TestCLI:
         from sysml2.cli import main
 
         assert main(["export", str(workspace_dir), "--no-cache"]) == 0
-        assert not list(isolated_cache.glob("*.pkl"))
+        assert not list(isolated_cache.glob("*.json"))

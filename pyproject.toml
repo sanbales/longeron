@@ -13,7 +13,11 @@ authors = [{ name = "sysml2-experiments" }]
 dependencies = ["antlr4-python3-runtime==4.13.2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "mypy>=1.11", "ruff>=0.6", "pyecore>=0.15"]
+dev = [
+    "pytest>=8", "pytest-cov>=5", "mypy>=1.11", "ruff>=0.6",
+    "pyecore>=0.15",
+    "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
+]
 ecore = ["pyecore>=0.15"]
 
 [project.scripts]
@@ -129,6 +133,7 @@ typecheck = "mypy"
 coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"
 stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
+notebooks = "python scripts/run_notebooks.py"
 check = { depends-on = ["lint", "typecheck", "test"] }
 
 [tool.pixi.tasks.parsers]

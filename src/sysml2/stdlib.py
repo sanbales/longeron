@@ -7,8 +7,10 @@ the complete Systems Library plus the core Quantities-and-Units files, and a
 small shim for the KerML kernel names (``ScalarValues::Real``, ...).
 
 Loading the library cold takes minutes with the ANTLR Python runtime, so a
-prebuilt pickle is bundled and the content-addressed workspace cache backs
-it up: after the first build, loads take milliseconds.
+prebuilt serialization ships alongside the sources and the content-addressed
+workspace cache backs it up: after the first build, loads take milliseconds.
+The prebuilt is plain JSON in the same lossless schema as
+:func:`sysml2.to_json` -- inspectable text, no pickles.
 
     model = sysml2.loads("...user model...")
     sysml2.add_standard_library(model)
@@ -20,21 +22,21 @@ it up: after the first build, loads take milliseconds.
 from __future__ import annotations
 
 import hashlib
-import pickle
+import json
 from pathlib import Path
 
 from . import model as M
 from .workspace import load_dir
 
 _STDLIB_DIR = Path(__file__).parent / "_stdlib"
-_PREBUILT = _STDLIB_DIR / "prebuilt.pkl"
+_PREBUILT = _STDLIB_DIR / "prebuilt.json"
 
-_raw_prebuilt: bytes | None = None
+_prebuilt_data: dict | None = None
 _fingerprint_cache: str | None = None
 
 
 def _stdlib_fingerprint() -> str:
-    """Hash of everything that affects the prebuilt pickle's validity:
+    """Hash of everything that affects the prebuilt JSON's validity:
     the model/AST class definitions and the vendored library sources.
     (Builder changes require ``make stdlib`` to refresh the prebuilt.)
     """
@@ -65,11 +67,13 @@ def standard_library_model(*, cache: bool = True) -> M.Model:
     Each call returns independent objects (safe to merge into user models).
     """
 
-    global _raw_prebuilt
-    if _raw_prebuilt is None:
-        _raw_prebuilt = _load_prebuilt_bytes()
-    if _raw_prebuilt:
-        model = pickle.loads(_raw_prebuilt)
+    from .importer import from_dict
+
+    global _prebuilt_data
+    if _prebuilt_data is None:
+        _prebuilt_data = _load_prebuilt_data()
+    if _prebuilt_data:
+        model = from_dict(_prebuilt_data)
         if isinstance(model, M.Model):
             return model
     model = load_dir(_STDLIB_DIR, cache=cache)
@@ -88,29 +92,32 @@ def add_standard_library(model: M.Model, *, cache: bool = True) -> M.Model:
     return model
 
 
-def _load_prebuilt_bytes() -> bytes:
-    """Return pickled model bytes when the bundled prebuilt is usable."""
+def _load_prebuilt_data() -> dict:
+    """The prebuilt's model dict, when the bundled JSON is usable."""
 
     try:
-        with _PREBUILT.open("rb") as handle:
-            header = pickle.load(handle)
-            if header == _stdlib_fingerprint():
-                return handle.read()
+        with _PREBUILT.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if payload.get("fingerprint") == _stdlib_fingerprint():
+            model_data = payload["model"]
+            if isinstance(model_data, dict):
+                return model_data
     except Exception:  # missing, corrupt, or stale
         pass
-    return b""
+    return {}
 
 
 def _store_prebuilt(model: M.Model) -> None:
-    """Best-effort refresh of the bundled prebuilt pickle."""
+    """Best-effort refresh of the bundled prebuilt JSON."""
 
-    global _raw_prebuilt
-    payload = pickle.dumps(model, protocol=pickle.HIGHEST_PROTOCOL)
-    _raw_prebuilt = payload
+    from .export import to_dict
+
+    global _prebuilt_data
+    data = to_dict(model)
+    _prebuilt_data = data
     try:
-        with _PREBUILT.open("wb") as handle:
-            pickle.dump(_stdlib_fingerprint(), handle,
-                        protocol=pickle.HIGHEST_PROTOCOL)
-            handle.write(payload)
+        with _PREBUILT.open("w", encoding="utf-8") as handle:
+            json.dump({"fingerprint": _stdlib_fingerprint(), "model": data},
+                      handle, indent=1)
     except OSError:  # read-only installation: the workspace cache still helps
         pass
