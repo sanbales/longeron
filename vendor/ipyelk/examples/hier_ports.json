@@ -1,0 +1,66 @@
+{
+  "directed": true,
+  "graph": {},
+  "links": [
+    {
+      "sourcePort": "x",
+      "targetPort": "x",
+      "source": "n1",
+      "target": "n2",
+      "key": 0
+    },
+    {
+      "port": "y",
+      "source": "n1",
+      "target": "n2",
+      "key": 1
+    },
+    {
+      "port": "y",
+      "source": "n1",
+      "target": "n3",
+      "key": 0
+    },
+    {
+      "port": "z",
+      "source": "n1",
+      "target": "n3",
+      "key": 1
+    },
+    {
+      "sourcePort": "z",
+      "targetPort": "x",
+      "source": "n2",
+      "target": "n3",
+      "key": 0,
+      "properties": {
+        "cssClasses": "example-data-edge-class-from-ports"
+      }
+    },
+    {
+      "port": "x",
+      "targetPort": "w",
+      "source": "n1",
+      "target": "n3",
+      "key": 1
+    }
+  ],
+  "multigraph": true,
+  "nodes": [
+    {
+      "id": "n0",
+      "properties": {
+        "cssClasses": "example-data-node-class-from-ports"
+      }
+    },
+    {
+      "id": "n1"
+    },
+    {
+      "id": "n2"
+    },
+    {
+      "id": "n3"
+    }
+  ]
+}

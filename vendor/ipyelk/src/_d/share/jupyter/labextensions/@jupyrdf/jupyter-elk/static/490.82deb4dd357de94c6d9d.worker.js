@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunk_jupyrdf_jupyter_elk=self.webpackChunk_jupyrdf_jupyter_elk||[]).push([[490],{490:(e,l,r)=>{r.r(l),r.d(l,{ELK_CSS:()=>k,ELK_DEBUG:()=>_,NAME:()=>p,VERSION:()=>E});const s=JSON.parse('{"UU":"@jupyrdf/jupyter-elk","rE":"2.1.1"}'),p=s.UU,E=s.rE,_=window.location.hash.indexOf("ELK_DEBUG")>-1,k={label:"elklabel",widget_class:"jp-ElkView",sizer_class:"jp-ElkSizer"}}}]);
+//# sourceMappingURL=490.82deb4dd357de94c6d9d.worker.js.map?v=82deb4dd357de94c6d9d

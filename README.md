@@ -15,6 +15,7 @@ SysML v2 and KerML, taken from
 | **Export** | Serialize any model to JSON, back to parseable SysML v2 text, project it onto KerML, or emit OMG Systems-Modeling-API JSON records. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
 | **Validate** | `sysml2.validate()` / `sysml2 lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems. |
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
+| **Visualize** | `sysml2.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. |
 | **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
 
 The builder covers the full grammar: every construct the SysML grammar
@@ -131,6 +132,7 @@ tutorials live in [`notebooks/`](notebooks/):
 | `03_calculations_and_constraints` | expressions, calcs, instantiation, constraints, requirements, the full loop |
 | `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
 | `05_stdlib_and_validation` | the vendored standard library, `sysml2 lint` |
+| `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
@@ -225,6 +227,8 @@ src/sysml2/
     stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt pickle)
     ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
     api.py                 OMG Systems Modeling API JSON interchange
+    diagrams.py            interactive ELK diagrams (ipyelk)
+vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `sysml2` console command
 examples/                  drone.sysml + kernel.kerml + demo.py
@@ -288,6 +292,38 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
 - Multiplicity expansion: exact bounds (`[4]`) expand fully; ranges
   populate their lower bound (`[0..*]` gives an empty list), which keeps
   the library's self-referential compositions finite.
+
+## Interactive diagrams
+
+`sysml2.diagrams` renders models as interactive ELK diagrams in JupyterLab
+(see `notebooks/06_interactive_diagrams.ipynb`):
+
+```python
+from sysml2 import diagrams
+
+diagrams.structure_diagram(model)                 # defs, compartments, edges
+diagrams.state_diagram(model.find("P::Machine"))  # hierarchical states
+diagrams.action_diagram(model.find("P::Flow"))    # the executed succession graph
+diagrams.diagram(element)                          # dispatch by kind
+
+diagrams.on_select(widget, model, callback)        # clicks -> model elements
+```
+
+Node ids are qualified names, so browser selections resolve straight back to
+model elements. Layout runs in the browser (elkjs), so diagrams also build
+headlessly (tests, nbclient).
+
+ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and
+installed editable (`pip install -e vendor/ipyelk`; pixi does this
+automatically) so it can be patched as needed. Current local fixes, all
+marked `LOCAL PATCH` and tracked by `git log -- vendor/ipyelk`:
+
+1. **Headless-safe scheduling** — `Pipe.schedule_run` raised
+   `RuntimeError: no running event loop` outside Jupyter (plain scripts,
+   pytest); it now no-ops cleanly when there is no frontend to lay out for.
+2. **Prebuilt labextension grafted** — the git tree only carries TypeScript
+   sources; the built JupyterLab extension from the 2.1.1 wheel is vendored
+   under `src/_d/` so the editable install renders without a node toolchain.
 
 ## Spec-metamodel projection and API interchange
 
