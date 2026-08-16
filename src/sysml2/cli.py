@@ -30,42 +30,48 @@ def _kv_pairs(pairs):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="sysml2",
-        description="Parse, export, and execute SysML v2 models.")
+        description="Parse, export, and execute SysML v2 models. "
+                    "Model inputs may be a .sysml file, a .json export, or "
+                    "a directory of .sysml files.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("parse", help="syntax-check a .sysml/.kerml file")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("file", help=".sysml file, .json export, or directory")
+    common.add_argument("--no-cache", action="store_true",
+                        help="bypass the model cache")
+
+    p = sub.add_parser("parse", help="syntax-check .sysml/.kerml files "
+                                     "(file or directory)")
     p.add_argument("file")
     p.add_argument("--kerml", action="store_true",
                    help="force KerML grammar")
     p.add_argument("--tree", action="store_true",
                    help="print the raw parse tree")
 
-    p = sub.add_parser("export", help="export a model to JSON, SysML, or "
-                                      "KerML (input may be .sysml or .json)")
-    p.add_argument("file")
+    p = sub.add_parser("export", parents=[common],
+                       help="export a model to JSON, SysML, or KerML")
     p.add_argument("--format", choices=["json", "sysml", "kerml"],
                    default="json")
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
-    p = sub.add_parser("calc", help="invoke a calc def as a function")
-    p.add_argument("file")
+    p = sub.add_parser("calc", parents=[common],
+                       help="invoke a calc def as a function")
     p.add_argument("name", help="qualified name, e.g. Pkg::MyCalc")
     p.add_argument("args", nargs="*", help="name=value arguments")
 
-    p = sub.add_parser("check", help="instantiate a part def and check its "
-                                     "constraints")
-    p.add_argument("file")
+    p = sub.add_parser("check", parents=[common],
+                       help="instantiate a part def and check its "
+                            "constraints")
     p.add_argument("name", help="qualified name of a part def")
     p.add_argument("args", nargs="*", help="name=value attribute bindings")
 
-    p = sub.add_parser("run", help="execute an action def")
-    p.add_argument("file")
+    p = sub.add_parser("run", parents=[common], help="execute an action def")
     p.add_argument("name")
     p.add_argument("args", nargs="*", help="name=value inputs")
     p.add_argument("--events", help="comma-separated event names")
 
-    p = sub.add_parser("simulate", help="simulate a state def")
-    p.add_argument("file")
+    p = sub.add_parser("simulate", parents=[common],
+                       help="simulate a state def")
     p.add_argument("name")
     p.add_argument("--events", help="comma-separated event names", default="")
 
@@ -74,6 +80,18 @@ def main(argv=None) -> int:
     from . import Interpreter, load, parse_file, to_json, to_kerml, to_sysml
 
     if ns.command == "parse":
+        target = Path(ns.file)
+        if target.is_dir():
+            pattern = "**/*.kerml" if ns.kerml else "**/*.sysml"
+            files = sorted(target.glob(pattern))
+            if not files:
+                print(f"no {pattern[3:]} files under {target}")
+                return 1
+            for path in files:
+                result = parse_file(path,
+                                    language="kerml" if ns.kerml else None)
+                print(f"OK: {path} parses as {result.language}")
+            return 0
         result = parse_file(ns.file,
                             language="kerml" if ns.kerml else None)
         if ns.tree:
@@ -82,7 +100,7 @@ def main(argv=None) -> int:
             print(f"OK: {ns.file} parses as {result.language}")
         return 0
 
-    model = load(ns.file)
+    model = load(ns.file, cache=False if ns.no_cache else None)
     if ns.command == "export":
         renderers: dict[str, Callable[[Any], str]] = {
             "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
