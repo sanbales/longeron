@@ -5,10 +5,13 @@
 
 VENV ?= .venv/bin
 
-check: lint typecheck test  ## lint + mypy + tests
+check: lint typecheck test test-vendor  ## lint + mypy + tests
 
 test:
 	$(VENV)/pytest -q
+
+test-vendor:  ## vendored ipyelk test suite (incl. ported F1-F6 fixes)
+	$(VENV)/pytest -c pyproject.toml -q vendor/ipyelk/tests
 
 coverage:
 	$(VENV)/pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered
