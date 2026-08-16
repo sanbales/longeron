@@ -39,6 +39,8 @@ def main(argv=None) -> int:
     common.add_argument("file", help=".sysml file, .json export, or directory")
     common.add_argument("--no-cache", action="store_true",
                         help="bypass the model cache")
+    common.add_argument("--stdlib", action="store_true",
+                        help="add the vendored SysML standard library")
 
     p = sub.add_parser("parse", help="syntax-check .sysml/.kerml files "
                                      "(file or directory)")
@@ -107,6 +109,10 @@ def main(argv=None) -> int:
         return 0
 
     model = load(ns.file, cache=False if ns.no_cache else None)
+    if ns.stdlib:
+        from .stdlib import add_standard_library
+
+        add_standard_library(model)
     if ns.command == "lint":
         from .validation import validate
 
