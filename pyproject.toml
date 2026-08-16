@@ -82,3 +82,43 @@ exclude_also = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+# ---------------------------------------------------------------------------
+# pixi (optional, hybrid): `pixi run check` etc. -- the venv/pip + Makefile
+# workflow keeps working unchanged. Dependency truth stays in [project];
+# pixi installs this package editable with its extras and only adds the
+# conda-forge *toolchain*: a pinned Python and the ANTLR tool (which brings
+# its own JDK, replacing manual Java setup for parser regeneration).
+# ---------------------------------------------------------------------------
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10,<3.14"
+antlr = "==4.13.2"  # must match the antlr4-python3-runtime pin in [project]
+
+[tool.pixi.pypi-dependencies]
+sysml2 = { path = ".", editable = true, extras = ["dev", "ecore"] }
+
+[tool.pixi.feature.py310.dependencies]
+python = "3.10.*"
+
+[tool.pixi.environments]
+py310 = ["py310"]  # oldest supported Python: `pixi run -e py310 test`
+
+[tool.pixi.tasks]
+test = "pytest -q"
+lint = "ruff check src tests examples scripts"
+format = "ruff check --fix src tests examples scripts"
+typecheck = "mypy"
+coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
+demo = "python examples/demo.py"
+stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
+check = { depends-on = ["lint", "typecheck", "test"] }
+
+[tool.pixi.tasks.parsers]
+cmd = "python scripts/generate_parsers.py"
+inputs = ["grammars/*.g4", "scripts/generate_parsers.py"]
+outputs = ["src/sysml2/_gen/sysml/SysMLParser.py", "src/sysml2/_gen/kerml/KerMLParser.py"]

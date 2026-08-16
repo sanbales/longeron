@@ -1,5 +1,8 @@
 .PHONY: check test lint format typecheck parsers demo
 
+# Equivalent pixi tasks exist (pixi run check|test|parsers|...): same
+# commands in a locked env, with antlr+JDK provided by conda-forge.
+
 VENV ?= .venv/bin
 
 check: lint typecheck test  ## lint + mypy + tests
