@@ -34,5 +34,5 @@ stdlib:  ## rebuild the prebuilt standard-library pickle
 demo:
 	$(VENV)/python examples/demo.py
 
-hooks:  ## enable the repo git hooks (blocks notebook outputs, >5MB blobs)
+hooks:  ## enable the repo git hooks (auto-strips staged notebook outputs; blocks >5MB blobs)
 	git config core.hooksPath scripts/git-hooks
