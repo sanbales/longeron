@@ -11,6 +11,7 @@ execution counts, and volatile metadata, so reruns never produce diffs.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -56,6 +57,9 @@ def process(path: Path, execute: bool) -> None:
 
 
 def main() -> int:
+    # Kernels inherit the environment: pin hashing so notebook executions
+    # are deterministic (set/dict iteration order) run to run.
+    os.environ["PYTHONHASHSEED"] = "0"
     execute = "--strip-only" not in sys.argv
     notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))
     if not notebooks:

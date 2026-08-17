@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""pre-commit: block notebook outputs and oversized blobs (stdlib only).
+"""pre-commit: auto-strip notebook outputs from STAGED blobs (stdlib only).
 
-Ported from earlier internal tooling (born there 2026-08-09 after a
-22 MB executed notebook landed in history). The convention in this repo:
-notebooks may carry outputs in the working tree while you explore, but
-commits are always stripped -- so this hook checks the STAGED blob
-(``git show :path``), never the working tree.
+Convention: notebooks may carry outputs in the working tree while you
+explore, but commits are always stripped. Refusal-era versions of this
+hook (ported from earlier internal tooling) made you re-run
+``scripts/run_notebooks.py --strip-only`` and re-stage by hand; this
+version (pattern from upstream tooling ``scripts/pre-commit``) instead
+rewrites only the INDEX entry (``git hash-object`` + ``git
+update-index``), so the commit is clean and the working tree -- including
+the outputs you are looking at -- survives untouched.
 
-Checks, in order:
-1. Every staged ``.ipynb`` must be stripped: no cell outputs, no
-   execution counts, no per-cell ``metadata.execution`` timestamps, no
-   ``metadata.widgets`` state blob.
-   Fix: ``python scripts/run_notebooks.py --strip-only && git add <nb>``
-2. No staged file may exceed MAX_STAGED_BYTES (5 MB). Deliberate large
-   assets are a conscious choice: bypass with ``git commit --no-verify``
-   and say why in the commit message.
+What gets stripped from every staged ``.ipynb``: cell outputs, execution
+counts, per-cell ``metadata.execution`` timestamps, and the
+``metadata.widgets`` state blob. Tutorials under ``notebooks/`` are
+additionally normalized exactly like ``scripts/run_notebooks.py::strip``
+(``language_info``, collapsed/scrolled flags, kernelspec name churn) so
+hook-stripped and script-stripped commits are byte-identical. Vendored
+notebooks (``vendor/``) only get the output strip, staying as close to
+upstream as possible.
+
+Also refuses any staged blob over MAX_STAGED_BYTES (5 MB, checked
+post-strip). Deliberate large assets are a conscious choice: bypass with
+``git commit --no-verify`` and say why in the commit message.
 
 Afterwards, if the pre-commit framework is available and configured, its
 hooks (ruff, mypy, nbstrip) run too.
@@ -31,6 +38,11 @@ import subprocess
 import sys
 
 MAX_STAGED_BYTES = 5 * 1024 * 1024
+
+#: notebook-level metadata keys that churn without carrying information
+#: (keep in sync with scripts/run_notebooks.py)
+_VOLATILE_NOTEBOOK_METADATA = ("widgets", "language_info")
+_VOLATILE_CELL_METADATA = ("execution", "collapsed", "scrolled")
 
 
 def staged_paths() -> list[str]:
@@ -49,27 +61,85 @@ def staged_blob(path: str) -> bytes:
     ).stdout
 
 
-def notebook_violations(path: str, blob: bytes) -> list[str]:
-    try:
-        nb = json.loads(blob)
-    except json.JSONDecodeError:
-        return [f"{path}: not valid JSON"]
-    problems = []
-    cells = nb.get("cells", [])
-    n_outputs = sum(len(c.get("outputs", [])) for c in cells)
-    n_counts = sum(1 for c in cells if c.get("execution_count") is not None)
+def staged_mode(path: str) -> str:
+    out = subprocess.run(
+        ["git", "ls-files", "--stage", "--", path],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return out.split()[0] if out else "100644"
+
+
+def strip_notebook(blob: bytes, full: bool) -> tuple[bytes, list[str]]:
+    """Return (stripped_json_bytes, human summary of what was stripped).
+
+    ``full`` applies the whole run_notebooks.py normalization (repo
+    tutorials); otherwise only outputs/execution state are removed
+    (vendored notebooks stay upstream-pristine).
+    """
+
+    nb = json.loads(blob)
+    stripped: list[str] = []
+    n_outputs = n_counts = n_meta = 0
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        if cell.get("outputs"):
+            n_outputs += len(cell["outputs"])
+            cell["outputs"] = []
+        if cell.get("execution_count") is not None:
+            n_counts += 1
+            cell["execution_count"] = None
+        meta = cell.get("metadata", {})
+        for key in _VOLATILE_CELL_METADATA if full else ("execution",):
+            if key in meta:
+                n_meta += 1
+                del meta[key]
     if n_outputs:
-        problems.append(f"{path}: {n_outputs} cell output(s) staged")
+        stripped.append(f"{n_outputs} output block(s)")
     if n_counts:
-        problems.append(f"{path}: {n_counts} execution_count(s) staged")
-    n_exec_meta = sum(1 for c in cells if "execution" in c.get("metadata", {}))
-    if n_exec_meta:
-        problems.append(
-            f"{path}: {n_exec_meta} cell(s) with metadata.execution "
-            f"timestamps staged")
-    if "widgets" in nb.get("metadata", {}):
-        problems.append(f"{path}: metadata.widgets state blob staged")
-    return problems
+        stripped.append(f"{n_counts} execution_count(s)")
+    if n_meta:
+        stripped.append(f"{n_meta} volatile cell metadata key(s)")
+    nb_meta = nb.get("metadata", {})
+    keys = _VOLATILE_NOTEBOOK_METADATA if full else ("widgets",)
+    for key in keys:
+        if key in nb_meta:
+            del nb_meta[key]
+            stripped.append(f"metadata.{key}")
+    kernelspec = nb_meta.get("kernelspec")
+    if full and kernelspec is not None:
+        if (kernelspec.get("display_name"), kernelspec.get("name")) != (
+            "Python 3",
+            "python3",
+        ):
+            kernelspec["display_name"] = "Python 3"
+            kernelspec["name"] = "python3"
+            stripped.append("kernelspec churn")
+    if not stripped:
+        return blob, []
+    # byte-identical to nbformat.write (indent=1, sorted, no ascii escapes)
+    text = json.dumps(
+        nb, indent=1, sort_keys=True, separators=(",", ": "), ensure_ascii=False
+    )
+    return (text + "\n").encode("utf-8"), stripped
+
+
+def restage(path: str, content: bytes) -> None:
+    """Replace the INDEX entry for *path* without touching the working tree."""
+
+    blob_hash = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        input=content,
+        capture_output=True,
+        check=True,
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "update-index", "--cacheinfo",
+         f"{staged_mode(path)},{blob_hash},{path}"],
+        check=True,
+    )
 
 
 def run_precommit_framework() -> int:
@@ -92,7 +162,18 @@ def main() -> int:
     for path in staged_paths():
         blob = staged_blob(path)
         if path.endswith(".ipynb"):
-            failures.extend(notebook_violations(path, blob))
+            try:
+                blob, what = strip_notebook(
+                    blob, full=not path.startswith("vendor/"))
+            except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+                failures.append(f"{path}: could not parse/strip notebook ({e!r})")
+                continue
+            if what:
+                restage(path, blob)
+                print(
+                    f"pre-commit: stripped {', '.join(what)} from staged "
+                    f"{path} (working tree untouched)"
+                )
         if len(blob) > MAX_STAGED_BYTES:
             failures.append(
                 f"{path}: staged blob is {len(blob) / 1e6:.1f} MB "
@@ -103,8 +184,6 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)
         print(
-            "\nnotebooks: python scripts/run_notebooks.py --strip-only "
-            "&& git add notebooks/*.ipynb"
             "\ndeliberate large asset: git commit --no-verify "
             "(say why in the message)",
             file=sys.stderr,
