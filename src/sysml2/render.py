@@ -159,12 +159,17 @@ def _to_elk_json(root: Any) -> dict:
         edges = []
         for index, edge in enumerate(node.edges):
             edge_id = f"{identifier}.e{index}"
+            # `event` rides through elkjs untouched (like cssClasses) and
+            # becomes the SVG data-event attribute (sysml2.replay matches
+            # fired transitions against it)
             edges.append({
                 "id": edge_id,
                 "sources": [node_id(edge.source)],
                 "targets": [node_id(edge.target)],
                 "labels": convert_edge_labels(edge, edge_id),
-                "properties": {"cssClasses": edge.properties.cssClasses or ""},
+                "properties": {"cssClasses": edge.properties.cssClasses or "",
+                               "event": getattr(edge.metadata, "event",
+                                                None) or ""},
             })
         if edges:
             data["edges"] = edges
@@ -226,6 +231,10 @@ def _escape(text: str) -> str:
             .replace(">", "&gt;"))
 
 
+def _escape_attr(text: str) -> str:
+    return _escape(text).replace('"', "&quot;")
+
+
 def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
     parts: list[str] = []
 
@@ -251,8 +260,11 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
             style = _style_for(css, _NODE_STYLES,
                                {"fill": "#ffffff", "stroke": "#999999",
                                 "rx": "2"})
+            # data-qname (the node id, a model qualified name for model
+            # nodes) makes states addressable from sysml2.replay
             parts.append(
-                f'<rect x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
+                f'<rect data-qname="{_escape_attr(str(node.get("id")))}" '
+                f'x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
                 f'height="{height:.1f}" rx="{style["rx"]}" '
                 f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>')
         for label in node.get("labels", []):
@@ -291,6 +303,15 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         dashes = style.get("stroke-dasharray")
         if "sysml-edge-guarded" in css:
             dashes = "6 2"
+        # a group per edge, addressable from sysml2.replay: data-edge is
+        # "<source id>-><target id>" (qualified names for model nodes),
+        # data-event the comma-joined accepted event names (or "")
+        sources, targets = edge.get("sources", []), edge.get("targets", [])
+        data_edge = (f"{sources[0]}->{targets[0]}"
+                     if sources and targets else "")
+        event = edge.get("properties", {}).get("event", "") or ""
+        parts.append(f'<g data-edge="{_escape_attr(data_edge)}" '
+                     f'data-event="{_escape_attr(event)}">')
         for section in edge.get("sections", []):
             points = [section["startPoint"],
                       *section.get("bendPoints", []),
@@ -309,6 +330,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
                 f'<rect x="{x - 1:.1f}" y="{y:.1f}" width="{width:.1f}" '
                 f'height="{height:.1f}" fill="#ffffff" opacity="0.85"/>')
             draw_label(label, ox, oy)
+        parts.append("</g>")
 
     draw_node(graph, padding, padding)
     width = graph.get("width", 0) + 2 * padding

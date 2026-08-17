@@ -164,6 +164,7 @@ class TransitionFired:
     source: str
     event: str | None
     target: str
+    time: float = 0.0  # StateMachine clock (`now`) when the transition fired
 
     def __repr__(self) -> str:
         return f"{self.source} --{self.event or 'auto'}--> {self.target}"
@@ -1692,6 +1693,11 @@ class StateMachine:
         self.roots: list[_ActiveState] = []
         self.now = 0.0
         self._firings = 0
+        #: observer hook (see sysml2.replay): called once after start()
+        #: completes the initial entry and once after each fired transition,
+        #: always AFTER the active configuration has been updated
+        self.on_step: Callable[[float, TransitionFired | None], None] | None \
+            = None
         for member in interpreter.resolver.members_of(definition):
             if isinstance(member, M.Usage) and member.name and \
                     member.value is not None and \
@@ -1739,6 +1745,8 @@ class StateMachine:
     def start(self) -> None:
         self.roots = self._enter_container(self.definition, parent=None,
                                            require_entry=True)
+        if self.on_step is not None:
+            self.on_step(self.now, None)
         self._completion_scan()
 
     def _enter_container(self, container, parent: _ActiveState | None,
@@ -1847,13 +1855,16 @@ class StateMachine:
             self._run_statement(transition.effect,
                                 self._event_env(transition, event_name,
                                                 payload))
-        self.trace.append(TransitionFired(prefix + node.name, event_name,
-                                          prefix + transition.target))
+        fired = TransitionFired(prefix + node.name, event_name,
+                                prefix + transition.target, time=self.now)
+        self.trace.append(fired)
         replacement = self._enter_state(transition.target, node.container,
                                         node.parent)
         siblings = (node.parent.children if node.parent is not None
                     else self.roots)
         siblings[siblings.index(node)] = replacement
+        if self.on_step is not None:
+            self.on_step(self.now, fired)
 
     def _exit_subtree(self, node: _ActiveState) -> None:
         for child in reversed(node.children):

@@ -328,6 +328,20 @@ render.to_svg(diagrams.state_diagram(machine), "machine.svg")
 render.to_png(model, "model.png")   # builds a view automatically
 ```
 
+State-machine simulations replay over that same diagram: `sysml2.replay`
+records a simulation (the `Interpreter.simulate` event protocol -- names
+send events, numbers advance the clock) and animates it in the notebook
+with play/pause, speed, and scrubbing. Active states light up green and
+fired transitions pulse orange. Needs the `replay` extra
+(`pip install "sysml2[replay]"`, anywidget):
+
+```python
+from sysml2 import replay
+
+replay.replay_widget(interp, "Machines::Player",
+                     events=["play", 3600.0, "play"])
+```
+
 ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and
 installed editable (`pip install -e vendor/ipyelk`; pixi does this
 automatically) so it can be patched as needed. Current local fixes, all

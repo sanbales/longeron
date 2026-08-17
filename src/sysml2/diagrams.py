@@ -33,6 +33,7 @@ try:
         Node,
         NodeProperties,
     )
+    from ipyelk.elements.elements import ElementMetadata
     from ipyelk.elements.symbol import SymbolSpec
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     raise ImportError(
@@ -164,16 +165,24 @@ def _node(element: M.Element | None, title: str, css: str,
 
 
 def _edge(source: Node, target: Node, css: str, text: str | None = None,
-          end: str | None = None) -> Edge:
+          end: str | None = None, event: str | None = None) -> Edge:
     edge = Edge(source=source, target=target,
                 properties=EdgeProperties(cssClasses=f"sysml-edge {css}"))
     if end:
         edge.properties.shape = EdgeShape(end=end)
+    if event:  # carried through to the SVG data-event (sysml2.replay)
+        edge.metadata = _EdgeMetadata(event=event)
     if text:
         label = _label(text)
         label.layoutOptions = {"edgeLabels.inline": "true"}
         edge.labels = [label]
     return edge
+
+
+class _EdgeMetadata(ElementMetadata):
+    """Layout-inert annotation: the event name(s) a transition accepts."""
+
+    event: str | None = None
 
 
 def _symbols() -> SymbolSpec:
@@ -378,6 +387,22 @@ def _transition_text(transition: M.TransitionUsage) -> str | None:
     return " ".join(bits) or None
 
 
+def _transition_event(transition: M.TransitionUsage) -> str | None:
+    """Comma-joined event names the transition accepts (or None).
+
+    Mirrors StateMachine._trigger_matches (interpreter.py): payload types
+    win over the payload name; time/when triggers accept no event.
+    """
+
+    trigger = transition.trigger
+    if trigger is None or trigger.trigger_kind is not None:
+        return None
+    names = [t.split("::")[-1] for t in trigger.payload_types]
+    if not names and trigger.payload_name:
+        names = [trigger.payload_name]
+    return ",".join(names) or None
+
+
 def _fill_states(container_node: Node, container: M.Definition | M.Usage,
                  root: Node) -> None:
     states: dict[str, Node] = {}
@@ -412,7 +437,8 @@ def _fill_states(container_node: Node, container: M.Definition | M.Usage,
             if member.guard is not None:
                 css += " sysml-edge-guarded"
             root.edges.append(_edge(source, target, css, end="arrow",
-                                    text=_transition_text(member)))
+                                    text=_transition_text(member),
+                                    event=_transition_event(member)))
 
 
 # ---------------------------------------------------------------------------
