@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""pre-commit: block notebook outputs and oversized blobs (stdlib only).
+
+Ported from ar-des/ARManipulationDESCommon (born there 2026-08-09 after a
+22 MB executed notebook landed in history). The convention in this repo:
+notebooks may carry outputs in the working tree while you explore, but
+commits are always stripped -- so this hook checks the STAGED blob
+(``git show :path``), never the working tree.
+
+Checks, in order:
+1. Every staged ``.ipynb`` must be stripped: no cell outputs, no
+   execution counts, no per-cell ``metadata.execution`` timestamps, no
+   ``metadata.widgets`` state blob.
+   Fix: ``python scripts/run_notebooks.py --strip-only && git add <nb>``
+2. No staged file may exceed MAX_STAGED_BYTES (5 MB). Deliberate large
+   assets are a conscious choice: bypass with ``git commit --no-verify``
+   and say why in the commit message.
+
+Afterwards, if the pre-commit framework is available and configured, its
+hooks (ruff, mypy, nbstrip) run too.
+
+Enable once per clone:  git config core.hooksPath scripts/git-hooks
+(or: make hooks / pixi run hooks)
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+
+MAX_STAGED_BYTES = 5 * 1024 * 1024
+
+
+def staged_paths() -> list[str]:
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [p for p in out.split("\0") if p]
+
+
+def staged_blob(path: str) -> bytes:
+    return subprocess.run(
+        ["git", "show", f":{path}"], capture_output=True, check=True
+    ).stdout
+
+
+def notebook_violations(path: str, blob: bytes) -> list[str]:
+    try:
+        nb = json.loads(blob)
+    except json.JSONDecodeError:
+        return [f"{path}: not valid JSON"]
+    problems = []
+    cells = nb.get("cells", [])
+    n_outputs = sum(len(c.get("outputs", [])) for c in cells)
+    n_counts = sum(1 for c in cells if c.get("execution_count") is not None)
+    if n_outputs:
+        problems.append(f"{path}: {n_outputs} cell output(s) staged")
+    if n_counts:
+        problems.append(f"{path}: {n_counts} execution_count(s) staged")
+    n_exec_meta = sum(1 for c in cells if "execution" in c.get("metadata", {}))
+    if n_exec_meta:
+        problems.append(
+            f"{path}: {n_exec_meta} cell(s) with metadata.execution "
+            f"timestamps staged")
+    if "widgets" in nb.get("metadata", {}):
+        problems.append(f"{path}: metadata.widgets state blob staged")
+    return problems
+
+
+def run_precommit_framework() -> int:
+    """Chain to the pre-commit framework (ruff/mypy/nbstrip) if present.
+
+    ``core.hooksPath`` bypasses ``.git/hooks``, so a ``pre-commit install``
+    hook would never fire; invoking the tool here keeps both systems live.
+    """
+
+    from pathlib import Path
+
+    for candidate in (".venv/bin/pre-commit", shutil.which("pre-commit")):
+        if candidate and Path(candidate).exists():
+            return subprocess.run([candidate, "run"]).returncode
+    return 0
+
+
+def main() -> int:
+    failures: list[str] = []
+    for path in staged_paths():
+        blob = staged_blob(path)
+        if path.endswith(".ipynb"):
+            failures.extend(notebook_violations(path, blob))
+        if len(blob) > MAX_STAGED_BYTES:
+            failures.append(
+                f"{path}: staged blob is {len(blob) / 1e6:.1f} MB "
+                f"(cap {MAX_STAGED_BYTES / 1e6:.0f} MB)"
+            )
+    if failures:
+        print("pre-commit: REFUSING the commit:", file=sys.stderr)
+        for failure in failures:
+            print(f"  - {failure}", file=sys.stderr)
+        print(
+            "\nnotebooks: python scripts/run_notebooks.py --strip-only "
+            "&& git add notebooks/*.ipynb"
+            "\ndeliberate large asset: git commit --no-verify "
+            "(say why in the message)",
+            file=sys.stderr,
+        )
+        return 1
+    return run_precommit_framework()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
