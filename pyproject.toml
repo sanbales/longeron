@@ -150,6 +150,7 @@ coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"
 stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
 notebooks = "python scripts/run_notebooks.py"
+hooks = "git config core.hooksPath scripts/git-hooks"
 # serve from the repo root so both notebooks/ (sysml2 tutorials) and
 # vendor/ipyelk/examples/ (ipyelk demos, incl. 07_Simulation) are browsable
 lab = "jupyter lab notebooks/"
