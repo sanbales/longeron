@@ -16,3 +16,6 @@ dist/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Session working notes (subagent scouting reports, handoffs)
+.handoff/
