@@ -18,8 +18,10 @@ dev = [
     "pyecore>=0.15",
     "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
     "pytest-asyncio>=0.23",  # vendored ipyelk tests
+    "anywidget>=0.9",  # replay widget
 ]
 ecore = ["pyecore>=0.15"]
+replay = ["anywidget>=0.9"]
 
 [project.scripts]
 sysml2 = "sysml2.cli:main"
