@@ -134,12 +134,22 @@ export class ELKLayoutModel extends DOMWidgetModel {
     if (rootNode == null || outlet == null) {
       return null;
     }
-    let propmap = collectProperties(rootNode);
+    // LOCAL PATCH (sysml2-experiments): collectProperties used to strip
+    // `properties` from the shared inlet value IN PLACE, re-applying them
+    // only onto the (worker-cloned) result. Any second `run` on the same
+    // inlet value -- the kernel resends run messages with backoff (see
+    // pipes/util.browser_roundtrip) and overlapping refresh() calls queue
+    // duplicates -- therefore collected `undefined` for every element and
+    // pushed a layout with no cssClasses: the diagram rendered styled, then
+    // went black-and-white. Deep-copying first keeps the inlet value intact
+    // and makes layout() re-entrant and idempotent.
+    const graph: ELK.ElkNode = JSON.parse(JSON.stringify(rootNode));
+    let propmap = collectProperties(graph);
     // strip properties out
     this.ensureElk();
     let result;
     try {
-      result = await this._elk.layout(rootNode);
+      result = await this._elk.layout(graph);
       // reapply properties
       applyProperties(result, propmap);
     } catch (error) {
