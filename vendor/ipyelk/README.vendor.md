@@ -45,3 +45,14 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    - the ported upstream tests live in `tests/` and run via
      `make test-vendor` / `pixi run test-vendor`
    - 07_Simulation example notebook fixes
+5. **Re-entrant `ELKLayoutModel.layout()`** (`js/layout_widget.ts` AND the
+   prebuilt bundle `src/_d/.../static/elklayout.*.js`, patched in place):
+   `collectProperties` stripped `properties` (incl. `cssClasses`) from the
+   shared inlet value IN PLACE, restoring them only onto the layout result.
+   Duplicate `run` messages -- the resend-with-backoff of patch 3, or
+   overlapping `refresh()` calls -- therefore re-laid-out an already
+   stripped graph and pushed a style-less layout: diagrams rendered styled,
+   then flipped to black-and-white boxes ~2 s later. The graph is now
+   deep-copied before stripping, making `layout()` idempotent. Headless
+   repro + fix proof: two consecutive `layout()` runs keep 14/14 styled
+   elements (previously run#2 kept 0).
