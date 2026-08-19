@@ -5,6 +5,7 @@
     "tsBuildInfoFile": "../build/tsc/.src.tsbuildinfo"
   },
   "extends": "../tsconfigbase.json",
+  "exclude": ["**/*.test.ts"],
   "include": ["./**/*"],
   "references": [{ "path": "../tsconfig.json" }]
 }

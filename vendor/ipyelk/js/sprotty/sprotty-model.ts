@@ -11,7 +11,6 @@ import {
   SNodeImpl,
   alignFeature,
   boundsFeature,
-  edgeLayoutFeature,
   editFeature,
   fadeFeature,
   hoverFeedbackFeature,
