@@ -78,6 +78,10 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
     " .sysml-edge-transition > path": {"stroke": "#b58900"},
     " .sysml-edge-succession > path": {"stroke": "#6c56a8"},
     " .sysml-edge-guarded > path": {"stroke-dasharray": "6 2"},
+    # halo so edge labels stay readable over crossings (browser-only path)
+    " .sysml-edge text": {"paint-order": "stroke", "stroke": "#ffffff",
+                          "stroke-width": "3px",
+                          "stroke-linejoin": "round"},
     " text": {"font-family": "sans-serif", "font-size": "11px"},
 }
 
@@ -86,6 +90,14 @@ _ROOT_LAYOUT = {
     "elk.hierarchyHandling": "INCLUDE_CHILDREN",
     "elk.spacing.nodeNode": "24",
     "elk.layered.spacing.nodeNodeBetweenLayers": "36",
+    # straighter edges, clearer labels (see .handoff forensics 2026-08-19):
+    # NETWORK_SIMPLEX aligns chains that BRANDES_KOEPF leaves stepped under
+    # INCLUDE_CHILDREN; edge/node clearance stops routes hugging borders
+    "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+    "elk.layered.nodePlacement.favorStraightEdges": "true",
+    "elk.spacing.edgeNode": "14",
+    "elk.layered.spacing.edgeNodeBetweenLayers": "16",
+    "elk.spacing.edgeLabel": "4",
 }
 
 _NODE_LAYOUT = {
@@ -138,7 +150,15 @@ _MARKER_LAYOUT = {
 
 
 def _marker_node(text: str | None = None) -> Node:
-    labels = [_label(text, "sysml-stereotype")] if text else []
+    labels = []
+    if text:
+        label = _label(text, "sysml-stereotype")
+        # ipyelk's Loader.apply_layout_defaults injects an INSIDE placement
+        # onto every label without layoutOptions, and the per-LABEL value
+        # overrides the node-level option -- so the outside placement must
+        # live on the label itself or the text lands on top of the dot
+        label.layoutOptions = dict(_MARKER_LAYOUT)
+        labels.append(label)
     return Node(width=14, height=14, labels=labels,
                 layoutOptions=dict(_MARKER_LAYOUT),
                 properties=NodeProperties(cssClasses="sysml-marker"))
@@ -173,9 +193,9 @@ def _edge(source: Node, target: Node, css: str, text: str | None = None,
     if event:  # carried through to the SVG data-event (sysml2.replay)
         edge.metadata = _EdgeMetadata(event=event)
     if text:
-        label = _label(text)
-        label.layoutOptions = {"edgeLabels.inline": "true"}
-        edge.labels = [label]
+        # not inline: inline labels sit ON the line (the sprotty renderer
+        # never interrupts it) and their dummy nodes add edge jogs
+        edge.labels = [_label(text)]
     return edge
 
 
