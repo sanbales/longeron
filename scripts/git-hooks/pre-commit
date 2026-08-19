@@ -23,9 +23,6 @@ Also refuses any staged blob over MAX_STAGED_BYTES (5 MB, checked
 post-strip). Deliberate large assets are a conscious choice: bypass with
 ``git commit --no-verify`` and say why in the commit message.
 
-Afterwards, if the pre-commit framework is available and configured, its
-hooks (ruff, mypy, nbstrip) run too.
-
 Enable once per clone:  git config core.hooksPath scripts/git-hooks
 (or: make hooks / pixi run hooks)
 """
@@ -33,7 +30,6 @@ Enable once per clone:  git config core.hooksPath scripts/git-hooks
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 
@@ -142,21 +138,6 @@ def restage(path: str, content: bytes) -> None:
     )
 
 
-def run_precommit_framework() -> int:
-    """Chain to the pre-commit framework (ruff/mypy/nbstrip) if present.
-
-    ``core.hooksPath`` bypasses ``.git/hooks``, so a ``pre-commit install``
-    hook would never fire; invoking the tool here keeps both systems live.
-    """
-
-    from pathlib import Path
-
-    for candidate in (".venv/bin/pre-commit", shutil.which("pre-commit")):
-        if candidate and Path(candidate).exists():
-            return subprocess.run([candidate, "run"]).returncode
-    return 0
-
-
 def main() -> int:
     failures: list[str] = []
     for path in staged_paths():
@@ -189,7 +170,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    return run_precommit_framework()
+    return 0
 
 
 if __name__ == "__main__":

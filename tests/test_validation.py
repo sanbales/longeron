@@ -254,6 +254,62 @@ class TestStructuralErrors:
         assert len(found) == 1
 
 
+class TestStrictImports:
+    """validate(strict_imports=True): flag bare stdlib names that resolve
+    only through the implicit library-visibility hop."""
+
+    BARE = "package P { part def A { attribute x : Real; } }"
+
+    def strict(self, source):
+        return [d for d in sysml2.validate(sysml2.loads(source),
+                                           strict_imports=True)
+                if d.code == "stdlib-implicit-name"]
+
+    def test_bare_stdlib_name_flagged(self):
+        found = self.strict(self.BARE)
+        assert [d.severity for d in found] == ["warning"]
+        assert "stdlib name 'Real' used without import" in found[0].message
+        assert found[0].element == "P::A::x"
+
+    def test_default_is_off(self):
+        assert diags(self.BARE, "stdlib-implicit-name") == []
+
+    def test_qualified_name_silent(self):
+        assert self.strict("""
+            package P { part def A { attribute x : ScalarValues::Real; } }
+        """) == []
+
+    def test_namespace_import_silences(self):
+        assert self.strict("""
+            package P {
+                public import ScalarValues::*;
+                part def A { attribute x : Real; }
+            }
+        """) == []
+
+    def test_membership_import_silences(self):
+        assert self.strict("""
+            package P {
+                import ScalarValues::Real;
+                part def A { attribute x : Real; }
+            }
+        """) == []
+
+    def test_expression_head_flagged(self):
+        found = self.strict(
+            "package P { part def A { attribute lo = parts; } }")
+        assert [d.message for d in found] == \
+            ["stdlib name 'parts' used without import"]
+
+    def test_user_names_never_flagged(self):
+        assert self.strict("""
+            package P {
+                part def Engine;
+                part def Car { part e : Engine; }
+            }
+        """) == []
+
+
 class TestCLI:
     def test_lint_clean(self, tmp_path, capsys):
         from sysml2.cli import main
@@ -295,6 +351,19 @@ class TestCLI:
         path = tmp_path / "bad.sysml"
         path.write_text("package P { part def X; part def X; }")
         assert main(["lint", str(path)]) == 1
+
+    def test_lint_strict_imports_flag(self, tmp_path, capsys):
+        from sysml2.cli import main
+
+        path = tmp_path / "m.sysml"
+        path.write_text("package P { part def V { attribute m : Real; } }")
+        assert main(["lint", "--strict-imports", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "warning[stdlib-implicit-name]" in out
+        assert "used without import" in out
+        # --strict promotes the warning to a failure
+        assert main(["lint", "--strict-imports", "--strict",
+                     str(path)]) == 1
 
 
 def test_diagnostics_sorted_errors_first():

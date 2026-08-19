@@ -15,8 +15,8 @@ nbformat = pytest.importorskip("nbformat")
 ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "scripts" / "git-hooks" / "pre-commit"
 
-#: minimal PATH so the hook's pre-commit-framework chaining finds nothing
-#: and the system git/python are still reachable
+#: minimal PATH (system git/python only) and no user git config, so the
+#: hook behaves identically on any machine
 _ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null"}
 

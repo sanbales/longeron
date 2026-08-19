@@ -336,15 +336,19 @@ render.to_png(model, "model.png")   # builds a view automatically
 State-machine simulations replay over that same diagram: `sysml2.replay`
 records a simulation (the `Interpreter.simulate` event protocol -- names
 send events, numbers advance the clock) and animates it in the notebook
-with play/pause, speed, and scrubbing. Active states light up green and
-fired transitions pulse orange. Needs the `replay` extra
-(`pip install "longeron[replay]"`, anywidget):
+with play/pause, speed, and scrubbing. Active states light up green,
+fired transitions pulse orange, and a readout line follows the scalar
+env values. Action executions replay the same way over the action
+diagram (`replay_widget` auto-detects action definitions, or pass
+`kind="action"`), scrubbing over the executed named steps. Needs the
+`replay` extra (`pip install "longeron[replay]"`, anywidget):
 
 ```python
 from sysml2 import replay
 
 replay.replay_widget(interp, "Machines::Player",
                      events=["play", 3600.0, "play"])
+replay.replay_widget(interp, "Ops::Deploy", inputs={"tested": True})
 ```
 
 ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and

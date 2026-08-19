@@ -110,9 +110,14 @@ class SpecReport:
 class SpecModel:
     """A model projected onto the OMG abstract syntax."""
 
-    def __init__(self, root: Any, report: SpecReport):
+    def __init__(self, root: Any, report: SpecReport,
+                 instances: dict[int, Any] | None = None):
         self.root = root
         self.report = report
+        #: ``id(model element) -> EObject`` for projections built by
+        #: :func:`to_spec` (``None`` for models rebuilt from API records);
+        #: only meaningful while the source model is alive
+        self.instances = instances
 
     def save_xmi(self, path) -> None:
         from pyecore.resources import URI
@@ -239,7 +244,7 @@ class _Projector:
         for index, member in enumerate(self.model.members):
             self._project_member(root, member, f"$root/{index}")
         self._project_relationships()
-        return SpecModel(root, self.report)
+        return SpecModel(root, self.report, self.instances)
 
     def _project_member(self, parent: Any, element: M.Element,
                         path: str) -> None:
