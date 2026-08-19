@@ -86,30 +86,33 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
     " .sysml-edge-connect > .elkarrow": {"stroke": "#555555"},
     " .sysml-edge-transition > .elkarrow": {"stroke": "#b58900"},
     " .sysml-edge-succession > .elkarrow": {"stroke": "#6c56a8"},
-    # pin the head size in every state (the theme bumps stroke-width to 3
-    # on selection, which both 'fills' the chevron and grows it)
+    # pin BOTH strokes in every state (the theme bumps the edge group's
+    # stroke-width to 3 on selection / 2 on hover, which the path inherits
+    # -- fat line, thin head): selection is a color change, not a weight
+    # change
+    " .sysml-edge > path": {"stroke-width": "var(--jp-elk-stroke-width)"},
     " .sysml-edge > .elkarrow": {"stroke-width": "1"},
-    # selection: the WHOLE edge takes the selection color, heads stay thin
+    # selection: the WHOLE edge takes the selection color, heads stay thin;
+    # fill is never touched -- unfilled heads stay unfilled, filled stay
+    # filled (user rule)
     " .elkedge.sysml-edge.selected > path": {
         "stroke": "var(--jp-elk-color-selected)"},
     " .elkedge.sysml-edge.selected > .elkarrow": {
-        "stroke": "var(--jp-elk-color-selected)", "stroke-width": "1",
-        "fill": "none"},
+        "stroke": "var(--jp-elk-color-selected)", "stroke-width": "1"},
     " .elkedge.sysml-edge.selected.mouseover > .elkarrow": {
         "stroke-width": "1"},
-    " .elkedge.sysml-edge.selected > .elkarrow.generalization": {
-        "fill": "var(--jp-elk-color-selected)"},
     # halo so edge labels stay readable over crossings (browser-only path)
     " .sysml-edge text": {"paint-order": "stroke", "stroke": "#ffffff",
                           "stroke-width": "3px",
                           "stroke-linejoin": "round"},
     " text": {"font-family": "sans-serif", "font-size": "11px"},
-    # the theme styles .elklabel with the Lab content font (higher
-    # specificity than ' text'), but label BOXES are sized for 11px
-    # sans-serif (pre-sized edge labels + the headless heuristic): render
-    # with the same font the layout assumed or glyphs overflow the box
-    " .elklabel": {"font-family": "Helvetica, Arial, sans-serif",
-                   "font-size": "11px"},
+    # the theme styles .elklabel with the Lab content font at (0,2,0)
+    # specificity, but label BOXES are sized for 11px sans-serif (pre-sized
+    # edge labels + the headless heuristic): render with the font the
+    # layout assumed or glyphs overflow the box. text.elklabel = (0,2,1),
+    # beats the theme outright (no tie-break needed).
+    " text.elklabel": {"font-family": "Helvetica, Arial, sans-serif",
+                       "font-size": "11px"},
 }
 
 _ROOT_LAYOUT = {
