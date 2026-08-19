@@ -88,3 +88,65 @@ def test_direction_survives_round_trip():
     param = next(o for o in spec.all_instances()
                  if getattr(o, "declaredName", None) == "x")
     assert str(param.direction) == "in"
+
+
+class TestImpliedSpecializations:
+    """to_api_records(implied=True): 'isImplied' Subclassification /
+    Subsetting records for the implied standard-library bases."""
+
+    MODEL = "package P { part def A; part b; part a1 : A; }"
+
+    def test_default_off(self, records):
+        assert not any(r.get("isImplied") for r in records)
+
+    def test_implied_records_emitted(self):
+        records = api.to_api_records(sysml2.loads(self.MODEL), implied=True)
+        implied = [r for r in records if r.get("isImplied")]
+        by_type = {r["@type"] for r in implied}
+        # part def A implies Parts::Part; the untyped usage b implies
+        # Parts::parts; a1 (explicitly typed by A) implies nothing
+        assert by_type == {"Subclassification", "Subsetting"}
+        assert len(implied) == 2
+        sub = next(r for r in implied if r["@type"] == "Subclassification")
+        a_record = next(r for r in records
+                        if r.get("declaredName") == "A")
+        assert sub["subclassifier"] == {"@id": a_record["@id"]}
+        # the library base is not part of the export: its @id is a
+        # deterministic UUID of the qualified name, dangling by design
+        exported_ids = {r["@id"] for r in records}
+        assert sub["superclassifier"]["@id"] not in exported_ids
+
+    def test_explicit_specializations_not_flagged(self):
+        records = api.to_api_records(
+            sysml2.loads("package P { part def A; part def B :> A; }"),
+            implied=True)
+        implied = [r for r in records if r.get("isImplied")]
+        # B specializes A explicitly -> only A gets an implied record
+        assert len(implied) == 1
+
+    def test_ids_stable_and_unique(self):
+        model_text = self.MODEL
+        first = api.to_api_records(sysml2.loads(model_text), implied=True)
+        second = api.to_api_records(sysml2.loads(model_text), implied=True)
+        assert sorted(r["@id"] for r in first) == \
+            sorted(r["@id"] for r in second)
+        assert len({r["@id"] for r in first}) == len(first)
+
+    def test_implied_records_reimport(self):
+        records = api.to_api_records(sysml2.loads(self.MODEL), implied=True)
+        spec = api.from_api_records(records)
+        implied = [o for o in spec.all_instances()
+                   if o.eClass.name in ("Subclassification", "Subsetting")]
+        assert len(implied) == 2
+        assert all(o.isImplied for o in implied)
+
+    def test_implied_json(self):
+        text = api.to_api_json(sysml2.loads(self.MODEL), implied=True)
+        assert '"isImplied": true' in text
+
+    def test_spec_model_input_rejected(self):
+        from sysml2.ecore import to_spec
+
+        spec = to_spec(sysml2.loads(self.MODEL))
+        with pytest.raises(sysml2.SysMLError, match="needs a sysml2 Model"):
+            api.to_api_records(spec, implied=True)

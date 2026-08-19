@@ -315,7 +315,16 @@ class Resolver:
         self._active_imports: set = set()
         self._active_lookups: set[tuple[int, str]] = set()
         self._resolve_cache: dict[tuple[tuple[str, ...], int],
-                                  M.Element | None] = {}
+                                  tuple[M.Element, str] | None] = {}
+        #: how the last successful :meth:`resolve` found its *first*
+        #: segment: ``"scope"`` (lexical scoping, incl. imports),
+        #: ``"library"`` (a standard-library root package, i.e. qualified
+        #: access), or ``"library-implicit"`` (a bare name found inside a
+        #: root library package without any import -- the KerML
+        #: global-namespace convenience; see
+        #: ``validate(strict_imports=True)``)
+        self.last_hop: str = "scope"
+        self._hop: str = "scope"
         self._member_cache: dict[tuple[int, str, bool, bool],
                                  M.Element | None] = {}
         self._generals_cache: dict[tuple[int, bool], list[M.Namespace]] = {}
@@ -337,15 +346,17 @@ class Resolver:
             cached = self._resolve_cache[key]
             if cached is None:
                 raise ResolutionError(f"cannot resolve name {parts[0]!r}")
-            return cached
+            element, self.last_hop = cached
+            return element
         try:
             element = self._resolve_uncached(list(parts), context)
         except ResolutionError:
             if not self._active_imports and not self._active_lookups:
                 self._resolve_cache[key] = None
             raise
+        self.last_hop = self._hop
         if not self._active_imports and not self._active_lookups:
-            self._resolve_cache[key] = element
+            self._resolve_cache[key] = (element, self._hop)
         return element
 
     def _resolve_uncached(self, parts: list[str],
@@ -359,6 +370,7 @@ class Resolver:
                                   + (f" from {context.qualified_name}"
                                      if context is not None and
                                      context.qualified_name else ""))
+        hop = self._hop  # first-segment hop, before deeper lookups clobber it
         for part in parts[1:]:
             child = self._member(element, part, include_imports=True,
                                  only_public_imports=True)
@@ -367,29 +379,38 @@ class Resolver:
                     f"{element.qualified_name or element.label} has no member "
                     f"{part!r}")
             element = child
+        self._hop = hop
         return element
 
     def _resolve_first(self, name: str, context: M.Element
                        ) -> M.Element | None:
+        # _hop is set at each RETURN point (nested lookups may recurse
+        # through this method; the last write before returning wins)
         node: M.Element | None = context
         while node is not None:
             if isinstance(node, M.Namespace):
                 found = self._member(node, name, include_imports=True)
                 if found is not None:
+                    self._hop = "scope"
                     return found
             node = node.owner
         # fall back to the model root
         found = self._member(self.model, name, include_imports=True)
         if found is not None or self.library is None:
+            self._hop = "scope"
             return found
         # library fallback: root packages, then their (implicitly
         # imported) contents -- see the class docstring
         found = self._member(self.library, name, include_imports=True)
         if found is not None:
+            self._hop = "library"
             return found
         package = self._library_packages().get(name)
         if package is not None:
-            return self._member(package, name, include_imports=False)
+            found = self._member(package, name, include_imports=False)
+            if found is not None:  # set AFTER the lookup (it may recurse)
+                self._hop = "library-implicit"
+            return found
         return None
 
     def _library_packages(self) -> dict[str, M.Namespace]:
@@ -1434,6 +1455,16 @@ def _is_shadow_free(env: Env, name: str) -> bool:
 
 
 class _ActionExecutor:
+    #: observer hook (see sysml2.replay): called as ``on_step(index,
+    #: element, phase)`` around every *named* action step (see
+    #: :func:`_is_named_step`) -- phase ``"enter"`` with the step's
+    #: ordinal (counted from 0 across the whole run), then
+    #: ``"complete"`` with the ordinal the *next* step would get.
+    #: Class-level defaults keep the bare instances built by
+    #: ``StateMachine._run_statement`` (via ``__new__``) safe.
+    on_step: Callable[[int, M.Element, str], None] | None = None
+    _step_index: int = 0
+
     def __init__(self, interpreter: Interpreter,
                  action: M.Definition | M.Usage,
                  inputs: dict[str, Any], events: deque,
@@ -1558,6 +1589,19 @@ class _ActionExecutor:
             self.execute(item)
 
     def execute(self, item: M.Element) -> None:
+        hook = self.on_step
+        if hook is None or not _is_named_step(item):
+            self._execute(item)
+            return
+        index = self._step_index
+        self._step_index = index + 1
+        hook(index, item, "enter")
+        try:
+            self._execute(item)
+        finally:
+            hook(self._step_index, item, "complete")
+
+    def _execute(self, item: M.Element) -> None:
         interp = self.interp
         if isinstance(item, M.AssignmentAction):
             value = interp.eval(item.expr, self.env)
@@ -1693,7 +1737,10 @@ class _ActionExecutor:
                 continue
         sub = _ActionExecutor(interp, target, inputs, self.events,
                               parent_env=self.env)
+        sub.on_step = self.on_step  # nested performs keep reporting steps
+        sub._step_index = self._step_index
         result = sub.run()
+        self._step_index = sub._step_index
         self.sends.extend(result.sends)
         self.trace.append(f"perform {ref}")
         self.trace.extend(f"  {t}" for t in result.trace)
@@ -1730,6 +1777,22 @@ class _SuccessionPlan:
 _STEP_TYPES = (M.AssignmentAction, M.SendAction, M.AcceptAction,
                M.PerformAction, M.TerminateAction, M.IfAction, M.WhileLoop,
                M.ForLoop, M.ControlNode)
+
+
+def _is_named_step(item: M.Element) -> bool:
+    """Named action steps the ``_ActionExecutor.on_step`` observer reports.
+
+    Mirrors what :func:`_succession_plan` collects as steps (minus control
+    nodes, which are never executed): named statements and named nested
+    action usages.
+    """
+
+    if item.name is None or isinstance(item, M.ControlNode):
+        return False
+    if isinstance(item, _STEP_TYPES):
+        return True
+    return (isinstance(item, M.Usage) and item.kind == "action"
+            and item.direction is None and bool(item.members or item.value))
 
 
 def _succession_plan(members: list[M.Element]) -> _SuccessionPlan | None:

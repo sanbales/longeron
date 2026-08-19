@@ -64,6 +64,9 @@ def main(argv=None) -> int:
                             "unless --no-stdlib")
     p.add_argument("--strict", action="store_true",
                    help="treat warnings as errors")
+    p.add_argument("--strict-imports", action="store_true",
+                   help="warn when bare stdlib names are used without "
+                        "an import (stdlib-implicit-name)")
     p.add_argument("--no-stdlib", action="store_true",
                    help="do not resolve names against the standard library")
 
@@ -121,7 +124,8 @@ def main(argv=None) -> int:
     if ns.command == "lint":
         from .validation import validate
 
-        diagnostics = validate(model, stdlib=False if ns.no_stdlib else None)
+        diagnostics = validate(model, stdlib=False if ns.no_stdlib else None,
+                               strict_imports=ns.strict_imports)
         for diagnostic in diagnostics:
             print(diagnostic)
         errors = sum(d.severity == "error" for d in diagnostics)

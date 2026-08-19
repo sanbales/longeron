@@ -38,13 +38,20 @@ class Diagnostic:
 
 
 def validate(model: M.Model, *,
-             stdlib: bool | None = None) -> list[Diagnostic]:
+             stdlib: bool | None = None,
+             strict_imports: bool = False) -> list[Diagnostic]:
     """Validate a model; returns diagnostics sorted errors-first.
 
     ``stdlib`` controls the standard-library fallback used for name
     resolution: ``None`` (default) auto-attaches the vendored library when
     it loads, ``True`` forces it, ``False`` disables it.  The library is
     only consulted by the resolver -- ``model`` is never mutated.
+
+    ``strict_imports`` additionally warns (``stdlib-implicit-name``) for
+    bare standard-library names that resolve *only* through the implicit
+    library-visibility hop -- the KerML global-namespace convenience for
+    standard library packages.  Qualified names (``ScalarValues::Real``)
+    and explicitly imported names stay silent.
     """
 
     library: M.Model | None = None
@@ -55,7 +62,7 @@ def validate(model: M.Model, *,
             library = None  # degrade to resolution without the library
     elif stdlib:
         library = stdlib_module.standard_library_model(cache=True)
-    checker = _Checker(model, library=library)
+    checker = _Checker(model, library=library, strict_imports=strict_imports)
     checker.check_all()
     order = {"error": 0, "warning": 1}
     return sorted(checker.diagnostics,
@@ -63,9 +70,12 @@ def validate(model: M.Model, *,
 
 
 class _Checker:
-    def __init__(self, model: M.Model, library: M.Model | None = None):
+    def __init__(self, model: M.Model, library: M.Model | None = None,
+                 strict_imports: bool = False):
         self.model = model
         self.resolver = Resolver(model, library=library)
+        self.strict_imports = strict_imports
+        self._used_implicit = False  # set by _resolves, read right after
         self.diagnostics: list[Diagnostic] = []
 
     def report(self, severity: Severity, code: str, element: M.Element,
@@ -143,13 +153,25 @@ class _Checker:
             self.check_target(element, ref, role)
 
     def check_target(self, element: M.Element, ref: str, role: str) -> None:
-        if not ref or self._resolves(ref, element):
+        if not ref:
+            return
+        if self._resolves(ref, element):
+            self._check_implicit(element, ref)
             return
         self.report("warning", "unresolved-reference", element,
                     f"{role} {ref!r} does not resolve")
 
+    def _check_implicit(self, element: M.Element, ref: str) -> None:
+        """stdlib-implicit-name: ``ref`` resolved, but only through the
+        resolver's implicit library-visibility hop (strict mode only)."""
+
+        if self.strict_imports and self._used_implicit:
+            self.report("warning", "stdlib-implicit-name", element,
+                        f"stdlib name {ref!r} used without import")
+
     def _resolves(self, ref: str, context: M.Element) -> bool:
         scope: M.Element = context.owner or self.model
+        implicit = False
         for segment in ref.split("."):
             if segment == "$":  # root escape: re-anchor at the model root
                 scope = self.model
@@ -157,7 +179,11 @@ class _Checker:
             try:
                 scope = self.resolver.resolve(segment, scope)
             except ResolutionError:
+                self._used_implicit = False
                 return False
+            implicit = implicit or \
+                self.resolver.last_hop == "library-implicit"
+        self._used_implicit = implicit
         return True
 
     def check_specialization_cycle(self, element: M.Definition | M.Usage
@@ -185,6 +211,7 @@ class _Checker:
                 if head in local_names or head in BUILTINS or head == "$":
                     continue
                 if self._resolves(head, owner):
+                    self._check_implicit(owner, head)
                     continue
                 if self._inherited_name(head, owner):
                     continue

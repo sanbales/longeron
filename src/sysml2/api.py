@@ -17,18 +17,32 @@ trees.  See :mod:`sysml2.ecore` for what is and is not projected.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from . import model as M
-from .ecore import SpecModel, spec_metamodel, to_spec
+from .ecore import _UUID_NAMESPACE, SpecModel, spec_metamodel, to_spec
 from .errors import SysMLError
+from .interpreter import Resolver
 
 #: structural features that never appear in API records
 _SKIP_FEATURES = frozenset({"elementId"})
 
 
-def to_api_records(model: M.Model | SpecModel) -> list[dict[str, Any]]:
-    """Flat API-style records for a model (or an existing projection)."""
+def to_api_records(model: M.Model | SpecModel, *,
+                   implied: bool = False) -> list[dict[str, Any]]:
+    """Flat API-style records for a model (or an existing projection).
+
+    With ``implied=True`` (requires a :class:`~sysml2.model.Model`), the
+    implied standard-library specializations
+    (``Resolver.implied_generals``: a plain ``part def`` specializes
+    ``Parts::Part``, a plain ``part`` usage subsets ``Parts::parts``, ...)
+    are emitted too, as additional ``Subclassification``/``Subsetting``
+    records flagged ``"isImplied": true``.  Off by default: the extra
+    records reference library elements that are not part of the export
+    (their ``@id`` is a deterministic UUID of the library element's
+    qualified name), which would break lossless round-trips.
+    """
 
     spec = model if isinstance(model, SpecModel) else to_spec(model)
     records = []
@@ -48,6 +62,62 @@ def to_api_records(model: M.Model | SpecModel) -> list[dict[str, Any]]:
             if encoded is not None:
                 record[name] = encoded
         records.append(record)
+    if implied:
+        if not isinstance(model, M.Model):
+            raise SysMLError("implied=True needs a sysml2 Model (an "
+                             "existing SpecModel no longer knows its "
+                             "source elements)")
+        records.extend(_implied_records(model, spec))
+    return records
+
+
+def _implied_records(model: M.Model,
+                     spec: SpecModel) -> list[dict[str, Any]]:
+    """``isImplied`` Subclassification/Subsetting records (see
+    :func:`to_api_records`).  Bases are resolved against the vendored
+    standard library; unresolvable bases are skipped silently (mirroring
+    ``Resolver.implied_generals``)."""
+
+    from . import stdlib as stdlib_module
+
+    try:
+        library = stdlib_module.standard_library_model(cache=True)
+    except Exception:
+        library = None
+    resolver = Resolver(model, library=library)
+    instances = spec.instances or {}
+    records: list[dict[str, Any]] = []
+    for element in model.iter_tree():
+        if not isinstance(element, (M.Definition, M.Usage)):
+            continue
+        instance = instances.get(id(element))
+        if instance is None:
+            continue  # element was not projected
+        if isinstance(element, M.Definition):
+            class_name = "Subclassification"
+            source_role, target_role = "subclassifier", "superclassifier"
+        else:
+            class_name = "Subsetting"
+            source_role, target_role = ("subsettingFeature",
+                                        "subsettedFeature")
+        for base in resolver.implied_generals(element):
+            base_qname = base.qualified_name or base.label
+            base_instance = instances.get(id(base))
+            base_id = (base_instance.elementId
+                       if base_instance is not None else
+                       str(uuid.uuid5(_UUID_NAMESPACE,
+                                      f"$library/{base_qname}")))
+            record_id = str(uuid.uuid5(
+                _UUID_NAMESPACE,
+                f"{instance.elementId}#Implied{class_name}/{base_qname}"))
+            records.append({
+                "@type": class_name,
+                "@id": record_id,
+                "elementId": record_id,
+                "isImplied": True,
+                source_role: {"@id": instance.elementId},
+                target_role: {"@id": base_id},
+            })
     return records
 
 
@@ -75,8 +145,9 @@ def _scalar(value: Any) -> Any:
     return str(value)  # enum literals and other EDataTypes
 
 
-def to_api_json(model: M.Model | SpecModel, indent: int = 2) -> str:
-    return json.dumps(to_api_records(model), indent=indent)
+def to_api_json(model: M.Model | SpecModel, indent: int = 2, *,
+                implied: bool = False) -> str:
+    return json.dumps(to_api_records(model, implied=implied), indent=indent)
 
 
 def from_api_records(records: list[dict[str, Any]]) -> SpecModel:
