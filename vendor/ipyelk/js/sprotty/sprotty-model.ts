@@ -68,7 +68,12 @@ export class ElkLabel extends SLabelImpl {
     boundsFeature,
     alignFeature,
     layoutableChildFeature,
-    edgeLayoutFeature,
+    // LOCAL PATCH (sysml2-experiments): edgeLayoutFeature removed. With it,
+    // sprotty's EdgeLayoutPostprocessor re-anchors edge labels along the
+    // route and treats ELK's ABSOLUTE label position as a relative offset,
+    // shifting every edge label by roughly the edge's own origin (measured
+    // +144px in a live diagram). ELK already placed the labels; without the
+    // feature they render exactly where elkjs put them.
     fadeFeature,
   ];
   properties: ElkProperties;
