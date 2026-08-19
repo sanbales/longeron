@@ -1,11 +1,16 @@
-# sysml2-experiments
+# Longeron
 
-A Python package that defines, exports, imports, and executes SysML v2
-models. The parsers are generated with ANTLR 4 from combined grammars for
-SysML v2 and KerML, taken from
+*The spine of your system model* — a Python package that defines,
+exports, imports, and **executes** SysML v2 models (import name:
+`sysml2`). The parsers are generated with ANTLR 4 from combined grammars
+for SysML v2 and KerML, taken from
 [hivecore-dev/hcf-runtime](https://github.com/hivecore-dev/hcf-runtime)
 (`SysML.g4`, `KerML.g4`, with local patches — see
 [Grammar patches](#grammar-patches)).
+
+> SysML® is a registered trademark of the Object Management Group. This
+> project is not affiliated with or endorsed by OMG, and is not a
+> conformance-certified implementation.
 
 ## Capabilities
 
@@ -333,7 +338,7 @@ records a simulation (the `Interpreter.simulate` event protocol -- names
 send events, numbers advance the clock) and animates it in the notebook
 with play/pause, speed, and scrubbing. Active states light up green and
 fired transitions pulse orange. Needs the `replay` extra
-(`pip install "sysml2[replay]"`, anywidget):
+(`pip install "longeron[replay]"`, anywidget):
 
 ```python
 from sysml2 import replay

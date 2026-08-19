@@ -3,14 +3,19 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sysml2"
+name = "longeron"
 version = "0.2.0"
-description = "Define, export, and execute SysML v2 models in Python, powered by ANTLR grammars for SysML v2 and KerML"
+description = "Define, execute, and replay SysML v2 models in Python: ANTLR-based parser, validator, interpreter, and diagram renderers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "sysml2-experiments" }]
+authors = [{ name = "sanbales" }]
+keywords = ["sysml", "sysml2", "kerml", "mbse", "systems-engineering", "modeling"]
 dependencies = ["antlr4-python3-runtime==4.13.2"]
+
+[project.urls]
+Homepage = "https://github.com/sanbales/longeron"
+Repository = "https://github.com/sanbales/longeron"
 
 [project.optional-dependencies]
 dev = [
@@ -30,7 +35,15 @@ sysml2 = "sysml2.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sysml2 = ["_gen/**/*.interp", "_gen/**/*.tokens", "_spec/*.ecore", "_spec/README.md"]
+sysml2 = [
+    "_gen/**/*.interp", "_gen/**/*.tokens", "_spec/*.ecore",
+    "_spec/README.md",
+    "_stdlib/prebuilt.json",  # stdlib-aware validation out of the box
+    "_stdlib/**/*.sysml", "_stdlib/*.sysml",  # sources: the prebuilt is
+    # fingerprinted against them and rebuilt from them when stale
+    "_stdlib/README.md",
+    "_js/elk.bundled.js",     # headless SVG/PNG layout (node still required)
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -120,7 +133,7 @@ cairosvg = ">=2.7"  # SVG -> PNG (bundles the native cairo library)
 jupyterlab = ">=4.1"
 
 [tool.pixi.pypi-dependencies]
-sysml2 = { path = ".", editable = true, extras = ["dev", "ecore"] }
+longeron = { path = ".", editable = true, extras = ["dev", "ecore"] }
 ipyelk = { path = "vendor/ipyelk", editable = true }  # vendored, with local TLC
 
 [tool.pixi.feature.py310.dependencies]

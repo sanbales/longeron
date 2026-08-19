@@ -9,7 +9,7 @@ diagrams and headless SVG use).
 
 :func:`replay_widget` bakes the state diagram to SVG (:mod:`sysml2.render`)
 and animates the timeline over it in the notebook front-end (anywidget,
-optional -- install with ``pip install "sysml2[replay]"``): active states
+optional -- install with ``pip install "longeron[replay]"``): active states
 light up green, fired transitions pulse orange, with play/pause, speed,
 and scrubbing controls.  Pure event cascades (no clock advance) replay in
 *step mode*, scrubbing over the step index instead of sim time.
@@ -451,7 +451,7 @@ def _widget_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise ImportError(
             "the replay widget needs anywidget; install the extra with "
-            "'pip install \"sysml2[replay]\"'") from err
+            "'pip install \"longeron[replay]\"'") from err
 
     class ReplayWidget(_anywidget.AnyWidget):
         """Animated replay of a recorded Timeline over the state SVG."""

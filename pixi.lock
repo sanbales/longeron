@@ -5035,6 +5035,25 @@ packages:
   purls: []
   size: 47822
   timestamp: 1785277049190
+- pypi: ./
+  name: longeron
+  version: 0.2.0
+  sha256: 668ec47ffc82917ac53c1de5155efa4c364d133cf7b75af4366bab53bda52472
+  requires_dist:
+  - antlr4-python3-runtime==4.13.2
+  - pytest>=8 ; extra == 'dev'
+  - pytest-cov>=5 ; extra == 'dev'
+  - mypy>=1.11 ; extra == 'dev'
+  - ruff>=0.6 ; extra == 'dev'
+  - pyecore>=0.15 ; extra == 'dev'
+  - nbformat>=5 ; extra == 'dev'
+  - nbclient>=0.10 ; extra == 'dev'
+  - ipykernel>=6 ; extra == 'dev'
+  - pytest-asyncio>=0.23 ; extra == 'dev'
+  - anywidget>=0.9 ; extra == 'dev'
+  - pyecore>=0.15 ; extra == 'ecore'
+  - anywidget>=0.9 ; extra == 'replay'
+  requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/08/f6/af32e23e563971ffb0fb86be52bc5be5c2c118858ffc119bf6a9039b173d/lxml-6.1.1-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
   name: lxml
   version: 6.1.1
@@ -7468,25 +7487,6 @@ packages:
   - pkg:pypi/stack-data?source=hash-mapping
   size: 26988
   timestamp: 1733569565672
-- pypi: ./
-  name: sysml2
-  version: 0.2.0
-  sha256: df44a456533ed78624e89c30c700350db037014717731a3661eba8ae4f2861d1
-  requires_dist:
-  - antlr4-python3-runtime==4.13.2
-  - pytest>=8 ; extra == 'dev'
-  - pytest-cov>=5 ; extra == 'dev'
-  - mypy>=1.11 ; extra == 'dev'
-  - ruff>=0.6 ; extra == 'dev'
-  - pyecore>=0.15 ; extra == 'dev'
-  - nbformat>=5 ; extra == 'dev'
-  - nbclient>=0.10 ; extra == 'dev'
-  - ipykernel>=6 ; extra == 'dev'
-  - pytest-asyncio>=0.23 ; extra == 'dev'
-  - anywidget>=0.9 ; extra == 'dev'
-  - pyecore>=0.15 ; extra == 'ecore'
-  - anywidget>=0.9 ; extra == 'replay'
-  requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/terminado-0.18.1-pyhc90fa1f_1.conda
   sha256: 6b6727a13d1ca6a23de5e6686500d0669081a117736a87c8abf444d60c1e40eb
   md5: 17b43cee5cc84969529d5d0b0309b2cb
