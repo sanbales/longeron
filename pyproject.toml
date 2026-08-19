@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Define, execute, and replay SysML v2 models in Python: ANTLR-based parser, validator, interpreter, and diagram renderers"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "sanbales" }]
 keywords = ["sysml", "sysml2", "kerml", "mbse", "systems-engineering", "modeling"]
 dependencies = ["antlr4-python3-runtime==4.13.2"]
