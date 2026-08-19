@@ -98,11 +98,20 @@ _ROOT_LAYOUT = {
     "elk.spacing.edgeNode": "14",
     "elk.layered.spacing.edgeNodeBetweenLayers": "16",
     "elk.spacing.edgeLabel": "4",
+    # center edge labels along the route (default MEDIAN_LAYER can put
+    # them at a segment end, half under the target node)
+    "elk.edgeLabels.centerLabelPlacementStrategy": "CENTER_LAYER",
+    # POLYLINE turns residual orthogonal stair-steps (reverse edges, entry
+    # markers, uneven node heights) into single diagonals
+    "elk.edgeRouting": "POLYLINE",
 }
 
 _NODE_LAYOUT = {
     "nodeSize.constraints": "NODE_LABELS PORTS MINIMUM_SIZE",
-    "nodeLabels.placement": "H_LEFT V_TOP INSIDE",
+    # H_CENTER: ipyelk's loader injects centered placement per label in the
+    # browser anyway (overriding any node-level value); declaring it keeps
+    # the headless SVG identical to what Lab shows
+    "nodeLabels.placement": "H_CENTER V_TOP INSIDE",
     "elk.padding": "[top=8,left=8,bottom=8,right=8]",
 }
 
