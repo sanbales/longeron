@@ -323,6 +323,8 @@ class _Printer:
             target += "::*"
         if el.is_recursive:
             target += "::**"
+        for filter_expr in el.filters:
+            target += f"[{expr_to_text(filter_expr)}]"
         self.line(level, f"expose {target};")
 
     def emit_MetadataUsage(self, el: M.MetadataUsage, level: int) -> None:

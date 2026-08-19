@@ -2711,8 +2711,11 @@ LINE_TERMINATOR
 
 // SINGLE_LINE_NOTE: '//' LINE_TEXT
 // Terminated by LINE_TERMINATOR (see note 3 in 8.2.2.1)
+// LOCAL PATCH (sysml2-experiments): must not start with '*', otherwise the
+// longest-match rule swallows a one-line `//* ... */ trailing` note as a
+// single-line note, eating the text after the '*/'.
 SINGLE_LINE_NOTE
-    : '//' ~[\r\n]* -> channel(HIDDEN)
+    : '//' ( ~[*\r\n] ~[\r\n]* )? -> channel(HIDDEN)
     ;
 
 // MULTILINE_NOTE: '//*' COMMENT_TEXT '*/'

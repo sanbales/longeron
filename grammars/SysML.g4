@@ -188,8 +188,11 @@ package
 //     ( isStandard ?= 'standard' ) 'library'
 //     ( ownedRelationship += PrefixMetadataMember )*
 //     PackageDeclaration PackageBody
+// LOCAL PATCH (sysml2-experiments): upstream made 'standard' mandatory, so a
+// plain `library package P { ... }` failed to parse; the spec marks it
+// optional (`( isStandard ?= 'standard' )` is a soft-optional match in KEBNF).
 libraryPackage
-    : isStandard=STANDARD LIBRARY
+    : (isStandard=STANDARD)? LIBRARY
       prefixMetadataMember*
       packageDeclaration packageBody
     ;
@@ -1012,8 +1015,11 @@ enumerationUsageMember
 
 // EnumeratedValue : EnumerationUsage =
 //     'enum'? Usage
+// LOCAL PATCH (sysml2-experiments): the pilot corpus prefixes enumerated
+// values with metadata keywords (`#Security enum secret : ...`), which the
+// release BNF omits; accept UsageExtensionKeyword* as usagePrefix does.
 enumeratedValue
-    : ENUM? usage
+    : usageExtensionKeyword* ENUM? usage
     ;
 
 // EnumerationUsage : EnumerationUsage =
@@ -1983,8 +1989,13 @@ argumentExpressionValue
 //     ( ownedRelationship += NodeParameterMember SenderReceiverPart?
 //     | ownedRelationship += EmptyParameterMember SendReceiverPart )?
 //     ActionBody
+// LOCAL PATCH (sysml2-experiments): the spec omits the 'action' keyword before
+// a named send node, but the pilot-implementation corpus writes
+// `action publish send X via p;` (mirroring acceptNode's
+// actionNodeUsageDeclaration). Accept both forms.
 sendNode
-    : occurrenceUsagePrefix actionUsageDeclaration? SEND
+    : occurrenceUsagePrefix
+      ( actionNodeUsageDeclaration | actionUsageDeclaration )? SEND
       ( nodeParameterMember senderReceiverPart?
       | emptyParameterMember senderReceiverPart
       )?
@@ -2435,8 +2446,12 @@ transitionUsage
 //     | ownedRelationship += GuardExpressionMember
 //       ( ownedRelationship += EffectBehaviorMember )?
 //     )?
-//     ActionBody
 //     'then' ownedRelationship += TransitionSuccessionMember
+//     ActionBody
+// LOCAL PATCH (sysml2-experiments): upstream put ActionBody before the 'then'
+// clause, so `accept s do action D then b;` and a bare `then b;` after a state
+// could not parse; the release BNF puts 'then' TransitionSuccessionMember
+// first and ActionBody last (matching transitionUsage above).
 targetTransitionUsage
     : emptyParameterMember
       ( TRANSITION
@@ -2448,8 +2463,8 @@ targetTransitionUsage
         effectBehaviorMember?
       | guardExpressionMember effectBehaviorMember?
       )?
-      actionBody
       THEN transitionSuccessionMember
+      actionBody
     ;
 
 // TriggerActionMember : TransitionFeatureMembership =
@@ -4111,8 +4126,11 @@ LINE_TERMINATOR
 
 // SINGLE_LINE_NOTE: '//' LINE_TEXT
 // Terminated by LINE_TERMINATOR (see note 3 in 8.2.2.1)
+// LOCAL PATCH (sysml2-experiments): must not start with '*', otherwise the
+// longest-match rule swallows a one-line `//* ... */ trailing` note as a
+// single-line note, eating the text after the '*/'.
 SINGLE_LINE_NOTE
-    : '//' ~[\r\n]* -> channel(HIDDEN)
+    : '//' ( ~[*\r\n] ~[\r\n]* )? -> channel(HIDDEN)
     ;
 
 // MULTILINE_NOTE: '//*' COMMENT_TEXT '*/'
