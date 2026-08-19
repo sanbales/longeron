@@ -116,20 +116,31 @@ def _to_elk_json(root: Any) -> dict:
         # measures real glyphs; headless we control the geometry ourselves)
         labels = []
         cursor = 5.0
-        max_width = 0.0
-        for index, label in enumerate(node.labels or []):
+        measured = []
+        for label in node.labels or []:
             text = label.text or ""
             label_css = label.properties.cssClasses or ""
-            width, height = _measure(text, label_css)
+            measured.append((text, label_css, *_measure(text, label_css)))
+        max_width = max((m[2] for m in measured), default=0.0)
+        for index, (text, label_css, width, height) in enumerate(measured):
+            entry: dict[str, Any] = {
+                "id": f"{identifier}.l{index}", "text": text,
+                "width": width, "height": height,
+                "properties": {"cssClasses": label_css}}
             if is_marker:  # keep the dot small; hang the label below it
-                x, y = 0.0, (node.height or 14) + 2 + index * height
-            else:
-                x, y = 8.0, cursor
+                entry["x"] = ((node.width or 14) - width) / 2
+                entry["y"] = (node.height or 14) + 2 + index * height
+            elif has_children:
+                # containers: leave x/y to ELK, which centers the title
+                # against the FINAL box (children decide the width)
                 cursor += height
-                max_width = max(max_width, width)
-            labels.append({"id": f"{identifier}.l{index}", "text": text,
-                           "x": x, "y": y, "width": width, "height": height,
-                           "properties": {"cssClasses": label_css}})
+            else:
+                # leaves: center each line against the widest line, which
+                # the box wraps with an 8px margin either side
+                entry["x"] = 8.0 + (max_width - width) / 2
+                entry["y"] = cursor
+                cursor += height
+            labels.append(entry)
 
         layout_options = {
             key: value for key, value in (node.layoutOptions or {}).items()
@@ -146,16 +157,20 @@ def _to_elk_json(root: Any) -> dict:
             data["width"] = node.width or 14
             data["height"] = node.height or 14
         elif has_children:
-            # reserve the label block, then let ELK size around the children;
-            # a minimum width keeps wide labels inside the box
-            data["layoutOptions"]["elk.padding"] = (
-                f"[top={cursor + 8:.0f},left=12,bottom=12,right=12]")
-            data["layoutOptions"]["elk.nodeSize.constraints"] = "MINIMUM_SIZE"
+            # reserve the label block, then let ELK size around the children
+            # and center the title labels; a minimum width keeps wide labels
+            # inside the box
+            data["layoutOptions"]["elk.nodeLabels.placement"] = \
+                "H_CENTER V_TOP INSIDE"
+            data["layoutOptions"]["elk.padding"] = "[top=8,left=12,bottom=12,right=12]"
+            data["layoutOptions"]["elk.nodeSize.constraints"] = \
+                "NODE_LABELS MINIMUM_SIZE"
             data["layoutOptions"]["elk.nodeSize.minimum"] = (
                 f"({max_width + 20:.0f},{cursor + 20:.0f})")
-        else:  # leaf: snug fit around the label stack
+        else:  # leaf: snug width, uniform height (aligned boxes route
+            # straighter: edges between equal-height siblings stay level)
             data["width"] = max(max_width + 16, 40.0)
-            data["height"] = max(cursor + 5, 26.0)
+            data["height"] = max(cursor + 5, 44.0)
         edges = []
         for index, edge in enumerate(node.edges):
             edge_id = f"{identifier}.e{index}"

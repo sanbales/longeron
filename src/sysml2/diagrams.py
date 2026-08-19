@@ -89,7 +89,9 @@ _ROOT_LAYOUT = {
     "elk.algorithm": "layered",
     "elk.hierarchyHandling": "INCLUDE_CHILDREN",
     "elk.spacing.nodeNode": "24",
-    "elk.layered.spacing.nodeNodeBetweenLayers": "36",
+    # room for centered edge labels between layers (browser-measured text
+    # is wider than the headless heuristic)
+    "elk.layered.spacing.nodeNodeBetweenLayers": "52",
     # straighter edges, clearer labels (see .handoff forensics 2026-08-19):
     # NETWORK_SIMPLEX aligns chains that BRANDES_KOEPF leaves stepped under
     # INCLUDE_CHILDREN; edge/node clearance stops routes hugging borders
@@ -101,9 +103,6 @@ _ROOT_LAYOUT = {
     # center edge labels along the route (default MEDIAN_LAYER can put
     # them at a segment end, half under the target node)
     "elk.edgeLabels.centerLabelPlacementStrategy": "CENTER_LAYER",
-    # POLYLINE turns residual orthogonal stair-steps (reverse edges, entry
-    # markers, uneven node heights) into single diagonals
-    "elk.edgeRouting": "POLYLINE",
 }
 
 _NODE_LAYOUT = {
@@ -112,6 +111,9 @@ _NODE_LAYOUT = {
     # browser anyway (overriding any node-level value); declaring it keeps
     # the headless SVG identical to what Lab shows
     "nodeLabels.placement": "H_CENTER V_TOP INSIDE",
+    # uniform, slightly taller boxes: edges between equal-height siblings
+    # attach at matching heights and route straight instead of jogging
+    "elk.nodeSize.minimum": "(60, 44)",
     "elk.padding": "[top=8,left=8,bottom=8,right=8]",
 }
 
