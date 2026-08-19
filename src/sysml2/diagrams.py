@@ -206,7 +206,17 @@ def _edge(source: Node, target: Node, css: str, text: str | None = None,
     if text:
         # not inline: inline labels sit ON the line (the sprotty renderer
         # never interrupts it) and their dummy nodes add edge jogs
-        edge.labels = [_label(text)]
+        label = _label(text)
+        # pre-size edge labels: in the live pipeline they reach elkjs
+        # unmeasured (the browser text-sizer path loses them), so ELK
+        # "centers" a zero-width box and the text overflows right of the
+        # midpoint. Pre-sized labels skip the browser sizer entirely and
+        # match the headless renderer's geometry (same heuristic).
+        from .render import _measure
+
+        shape = label.properties.get_shape()
+        shape.width, shape.height = _measure(text)
+        edge.labels = [label]
     return edge
 
 
