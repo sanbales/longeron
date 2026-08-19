@@ -56,3 +56,12 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    deep-copied before stripping, making `layout()` idempotent. Headless
    repro + fix proof: two consecutive `layout()` runs keep 14/14 styled
    elements (previously run#2 kept 0).
+6. **Edge labels honor ELK positions** (`js/sprotty/sprotty-model.ts` AND
+   the prebuilt bundle `src/_d/.../static/elkdisplay.*.js`, patched in
+   place): `ElkLabel.DEFAULT_FEATURES` included sprotty's
+   `edgeLayoutFeature`, so the EdgeLayoutPostprocessor re-anchored edge
+   labels along the route and treated ELK's ABSOLUTE label coordinates as
+   a relative offset -- every edge label rendered shifted by roughly its
+   edge's origin (+144 px measured live). ELK already places labels;
+   dropping the feature makes the browser render them exactly where
+   elkjs put them, matching the headless SVG.
