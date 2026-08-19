@@ -393,14 +393,32 @@ export default { render };
 # override the SVG's baked presentation attributes (no inline styles).
 _CSS = """
 .sysml2-replay { font-family: Helvetica, Arial, sans-serif; }
-.sysml2-replay-stage { border: 1px solid #dddddd; }
+.sysml2-replay-stage {
+  border: 1px solid #e2e2e2; border-radius: 8px; overflow: hidden;
+  background: #ffffff;
+}
 .sysml2-replay-stage svg { display: block; width: 100%; height: auto; }
 .sysml2-replay-bar {
-  display: flex; gap: 8px; align-items: center; margin-top: 6px;
+  display: flex; gap: 10px; align-items: center; margin-top: 8px;
 }
-.sysml2-replay-bar input[type="range"] { flex: 1; }
+.sysml2-replay-bar button {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid #d4d4d4; border-radius: 6px; background: #ffffff;
+  color: #333333; font-size: 13px; line-height: 1;
+  padding: 6px 12px; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sysml2-replay-bar button:hover { background: #f5f5f5; }
+.sysml2-replay-bar button:active { background: #ececec; }
+.sysml2-replay-bar select {
+  border: 1px solid #d4d4d4; border-radius: 6px; background: #ffffff;
+  color: #333333; font-size: 12px; padding: 5px 8px; cursor: pointer;
+}
+.sysml2-replay-bar input[type="range"] {
+  flex: 1; accent-color: #3f7a1f; cursor: pointer;
+}
 .sysml2-replay-clock {
-  font-variant-numeric: tabular-nums; font-size: 12px; color: #333333;
+  font-variant-numeric: tabular-nums; font-size: 12px; color: #555555;
   white-space: nowrap;
 }
 .sysml2-replay [data-qname] { transition: fill 0.15s, stroke 0.15s; }
@@ -410,8 +428,11 @@ _CSS = """
 .sysml2-replay .sysml2-active-branch {
   fill: #eef7e2; stroke: #6a9a48; stroke-width: 1.6px;
 }
+/* fired transitions: recolor stroke AND the arrowhead (marker swap; the
+   markers use userSpaceOnUse so the wider stroke does not scale them) */
 .sysml2-replay .sysml2-fired path {
   stroke: #e05a00; stroke-width: 2.4px;
+  marker-end: url(#arrow-e05a00);
 }
 """
 

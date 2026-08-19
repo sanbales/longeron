@@ -57,6 +57,32 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-succession": {"stroke": "#6c56a8"},
 }
 
+#: replay highlight (sysml2.replay swaps fired edges to this marker)
+_FIRED_STROKE = "#e05a00"
+
+
+def _arrow_id(stroke: str) -> str:
+    return "arrow-" + stroke.lstrip("#")
+
+
+def _arrow_defs() -> str:
+    """One marker per edge color, arrowhead matching its edge.
+
+    ``userSpaceOnUse`` keeps the head a constant size when a stylesheet
+    widens the path stroke (e.g. the replay fired-edge highlight).
+    """
+
+    strokes = sorted({style["stroke"] for style in _EDGE_STYLES.values()}
+                     | {"#666666", _FIRED_STROKE})
+    markers = [
+        f'<marker id="{_arrow_id(stroke)}" viewBox="0 0 10 10" refX="9" '
+        f'refY="5" markerWidth="10" markerHeight="10" '
+        f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M 0 1 L 9 5 L 0 9 z" fill="{stroke}"/></marker>'
+        for stroke in strokes
+    ]
+    return "<defs>" + "".join(markers) + "</defs>"
+
 _LABEL_STYLES: dict[str, dict[str, str]] = {
     "sysml-stereotype": {"font-size": "9", "fill": "#888888",
                          "font-style": "italic"},
@@ -362,7 +388,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
             dash = f' stroke-dasharray="{dashes}"' if dashes else ""
             parts.append(
                 f'<path d="{path}" fill="none" stroke="{style["stroke"]}" '
-                f'stroke-width="1.4"{dash} marker-end="url(#arrow)"/>')
+                f'stroke-width="1.4"{dash} '
+                f'marker-end="url(#{_arrow_id(style["stroke"])})"/>')
         for label in edge.get("labels", []):
             draw_label(label, ox, oy, on_edge=True)
         parts.append("</g>")
@@ -373,10 +400,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
         f'height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">'
-        '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" '
-        'markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
-        '<path d="M 0 1 L 9 5 L 0 9 z" fill="#555555"/></marker></defs>'
-        f'<rect width="100%" height="100%" fill="white"/>'
+        + _arrow_defs() +
+        '<rect width="100%" height="100%" fill="white"/>'
         + "".join(parts) + "</svg>")
 
 

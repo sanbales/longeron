@@ -30,7 +30,8 @@ class TestSvg:
         svg = render.to_svg(
             diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
         assert "launch" in svg and "touchdown" in svg
-        assert 'marker-end="url(#arrow)"' in svg
+        assert 'marker-end="url(#arrow-b58900)"' in svg  # gold arrowheads
+        assert 'markerUnits="userSpaceOnUse"' in svg  # constant-size heads
         assert "#b58900" in svg  # state/transition styling applied
 
     def test_action_svg(self, drone_model):
