@@ -243,31 +243,91 @@ _ARROW_OPS: dict[str, Callable] = {
 # Name resolution
 # ---------------------------------------------------------------------------
 
+#: Implied specializations (SysML v2 spec clause 7: every definition/usage
+#: kind must directly or indirectly specialize a base element of the
+#: Systems Model Library, e.g. ``checkPartDefinitionSpecialization``).  A
+#: definition or usage that declares *no* explicit specializations
+#: implicitly specializes (definitions) / subsets (usages) these library
+#: elements: kind -> (definition base, usage base).
+IMPLIED_SPECIALIZATIONS: dict[str, tuple[str | None, str | None]] = {
+    "part": ("Parts::Part", "Parts::parts"),
+    "item": ("Items::Item", "Items::items"),
+    # KerML's Base::DataValue lives in the vendored ScalarValues shim; the
+    # kernel's Base::dataValues usage is not vendored, so attribute/enum
+    # usages get no implied subsetting here.
+    "attribute": ("ScalarValues::DataValue", None),
+    "enum": ("ScalarValues::DataValue", None),
+    "action": ("Actions::Action", "Actions::actions"),
+    "calc": ("Calculations::Calculation", "Calculations::calculations"),
+    "constraint": ("Constraints::ConstraintCheck",
+                   "Constraints::constraintChecks"),
+    "requirement": ("Requirements::RequirementCheck",
+                    "Requirements::requirementChecks"),
+    "state": ("States::StateAction", "States::stateActions"),
+    "connection": ("Connections::Connection", "Connections::connections"),
+    "port": ("Ports::Port", "Ports::ports"),
+    "interface": ("Interfaces::Interface", "Interfaces::interfaces"),
+    "allocation": ("Allocations::Allocation", "Allocations::allocations"),
+    "occurrence": ("Occurrences::Occurrence", "Occurrences::occurrences"),
+}
+
+
+def _in_library_package(element: M.Element) -> bool:
+    """True when ``element`` lives inside a (standard) library package.
+
+    Library elements declare their generalizations explicitly; implying
+    bases onto the library's own roots would fabricate specialization
+    cycles (``Anything -> Item -> ... -> Anything``).
+    """
+
+    node: M.Element | None = element
+    while node is not None:
+        if isinstance(node, M.Package) and (node.is_library or
+                                            node.is_standard):
+            return True
+        node = node.owner
+    return False
+
 
 class Resolver:
     """Qualified-name resolution with memoization.
+
+    Resolution follows KerML-style scoping: inner scopes shadow outer
+    ones, and within a scope own members are found before inherited ones,
+    which are found before imported ones.  When a ``library`` model is
+    supplied, names that fail to resolve in the user model's root
+    namespace fall back to the library -- first to the library's root
+    packages themselves (so ``ScalarValues::Real`` resolves) and then to
+    their contents as if implicitly imported (so a bare ``Real`` resolves
+    without an explicit import).  That last hop is the KerML
+    global-namespace convenience for *standard library packages*: a
+    deliberate leniency so existing models that never import
+    ``ScalarValues`` stay warning-free.  The user model is never mutated.
 
     The caches assume the model is not mutated while this resolver is in
     use; create a new :class:`Interpreter` (or call :meth:`clear_cache`)
     after structural changes such as ``add_standard_library``.
     """
 
-    def __init__(self, model: M.Model):
+    def __init__(self, model: M.Model, library: M.Model | None = None):
         self.model = model
+        self.library = library
         self._active_imports: set = set()
         self._active_lookups: set[tuple[int, str]] = set()
         self._resolve_cache: dict[tuple[tuple[str, ...], int],
                                   M.Element | None] = {}
         self._member_cache: dict[tuple[int, str, bool, bool],
                                  M.Element | None] = {}
-        self._generals_cache: dict[int, list[M.Namespace]] = {}
-        self._members_of_cache: dict[int, list[M.Element]] = {}
+        self._generals_cache: dict[tuple[int, bool], list[M.Namespace]] = {}
+        self._members_of_cache: dict[tuple[int, bool], list[M.Element]] = {}
+        self._library_index: dict[str, M.Namespace] | None = None
 
     def clear_cache(self) -> None:
         self._resolve_cache.clear()
         self._member_cache.clear()
         self._generals_cache.clear()
         self._members_of_cache.clear()
+        self._library_index = None
 
     def resolve(self, qname: str | tuple[str, ...],
                 context: M.Element | None = None) -> M.Element:
@@ -319,7 +379,46 @@ class Resolver:
                     return found
             node = node.owner
         # fall back to the model root
-        return self._member(self.model, name, include_imports=True)
+        found = self._member(self.model, name, include_imports=True)
+        if found is not None or self.library is None:
+            return found
+        # library fallback: root packages, then their (implicitly
+        # imported) contents -- see the class docstring
+        found = self._member(self.library, name, include_imports=True)
+        if found is not None:
+            return found
+        package = self._library_packages().get(name)
+        if package is not None:
+            return self._member(package, name, include_imports=False)
+        return None
+
+    def _library_packages(self) -> dict[str, M.Namespace]:
+        """Bare name -> root library package that directly declares it.
+
+        Built once per resolver: only DIRECT members of the library's root
+        packages participate (no import following), which keeps both the
+        build and every miss O(1).  Import re-exports are deliberately
+        excluded from the bare-name convenience -- they remain reachable
+        through qualified names.  Without this index, a miss explored the
+        whole stdlib import graph with caching disabled (the _active_*
+        guards), which effectively hung validation on any typo.
+        """
+
+        index = self._library_index
+        if index is None:
+            index = {}
+            assert self.library is not None
+            for package in self.library.members:
+                if not isinstance(package, M.Namespace):
+                    continue
+                for member in package.members:
+                    names = (member.name,
+                             getattr(member, "short_name", None))
+                    for nm in names:
+                        if nm and nm not in index:
+                            index[nm] = package
+            self._library_index = index
+        return index
 
     def _member(self, element: M.Element, name: str,
                 include_imports: bool = False,
@@ -424,8 +523,44 @@ class Resolver:
             element = child
         return element
 
-    def _generals(self, element: M.Element) -> list[M.Namespace]:
-        cached = self._generals_cache.get(id(element))
+    def implied_generals(self, element: M.Element) -> list[M.Namespace]:
+        """The implied standard-library base of ``element``.
+
+        Implied specializations apply only when the element declares *no*
+        explicit supers/types/subsets/redefines (see
+        :data:`IMPLIED_SPECIALIZATIONS`).  The base is resolved against
+        the model plus the library fallback; unresolvable bases yield
+        ``[]`` silently.
+        """
+
+        if isinstance(element, M.Definition):
+            if element.supers:
+                return []
+            index = 0
+        elif isinstance(element, M.Usage):
+            if element.types or element.subsets or element.redefines:
+                return []
+            index = 1
+        else:
+            return []
+        if _in_library_package(element):
+            return []
+        bases = IMPLIED_SPECIALIZATIONS.get(element.kind)
+        qname = bases[index] if bases is not None else None
+        if qname is None:
+            return []
+        try:
+            base = self.resolve(qname, self.model)
+        except ResolutionError:
+            return []
+        if isinstance(base, M.Namespace) and base is not element:
+            return [base]
+        return []
+
+    def _generals(self, element: M.Element, *,
+                  implied: bool = False) -> list[M.Namespace]:
+        key = (id(element), implied)
+        cached = self._generals_cache.get(key)
         if cached is not None:
             return cached
         names: list[str] = []
@@ -444,14 +579,23 @@ class Resolver:
                 continue
             if isinstance(general, M.Namespace):
                 out.append(general)
+        if implied:
+            for general in self.implied_generals(element):
+                if general not in out:
+                    out.append(general)
         if not self._active_imports and not self._active_lookups:
-            self._generals_cache[id(element)] = out
+            self._generals_cache[key] = out
         return out
 
-    def members_of(self, element: M.Namespace) -> list[M.Element]:
-        """Own + inherited members; redefinitions shadow inherited names."""
+    def members_of(self, element: M.Namespace, *,
+                   implied: bool = False) -> list[M.Element]:
+        """Own + inherited members; redefinitions shadow inherited names.
 
-        cached = self._members_of_cache.get(id(element))
+        With ``implied=True`` the implied standard-library bases (see
+        :meth:`implied_generals`) contribute inherited members too.
+        """
+
+        cached = self._members_of_cache.get((id(element), implied))
         if cached is not None:
             return cached
         collected: dict[int, M.Element] = {}
@@ -475,11 +619,11 @@ class Resolver:
                 if id(member) not in collected:
                     collected[id(member)] = member
                     order.append(member)
-            for general in self._generals(ns):
+            for general in self._generals(ns, implied=implied):
                 visit(general)
 
         visit(element)
-        self._members_of_cache[id(element)] = order
+        self._members_of_cache[(id(element), implied)] = order
         return order
 
 

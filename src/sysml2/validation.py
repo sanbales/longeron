@@ -1,10 +1,15 @@
 """Model validation: dangling references, duplicate names, cycles.
 
-``validate`` walks a model and returns :class:`Diagnostic` records.  Because
-the KerML/SysML standard library is not implied, unresolved references are
-*warnings* (a small builtin whitelist -- ``Real``, ``Integer``, ... -- is
-silent); structural problems (duplicate names, specialization cycles,
-transitions to unknown states) are *errors*.
+``validate`` walks a model and returns :class:`Diagnostic` records.  Name
+resolution is stdlib-aware: unless disabled (``stdlib=False``), references
+resolve against the vendored standard library as a fallback, so
+``ScalarValues::Real`` -- or a bare ``Real``, without any import --
+validates silently while a misspelled ``Reall`` warns.  Implied
+specializations are honored too: a plain ``action def`` implicitly
+specializes ``Actions::Action``, so inherited names like ``start`` and
+``done`` resolve in expressions.  Unresolved references are *warnings*;
+structural problems (duplicate names, specialization cycles, transitions
+to unknown states) are *errors*.
 """
 
 from __future__ import annotations
@@ -14,22 +19,11 @@ from typing import Literal
 
 from . import ast as A
 from . import model as M
+from . import stdlib as stdlib_module
 from .errors import ResolutionError
 from .interpreter import BUILTINS, Resolver
 
 Severity = Literal["error", "warning"]
-
-#: names assumed to come from the (unloaded) standard library
-BUILTIN_NAMES = frozenset("""
-Real Integer Natural Positive Boolean String Number Complex Rational
-ScalarValues Base Anything Occurrence Occurrences Life Object Objects
-Performance Performances Item Items Part Parts Action Actions State States
-Requirement Requirements Constraint Constraints Connection Connections
-Interface Interfaces Port Ports Attribute Attributes Calculation Calculations
-Case Cases View Views Metadata MetadataItem AnnotatedElement SysML KerML
-Collections Collection List OrderedCollection Quantities QuantityValue ISQ SI
-USCustomaryUnits Time TimeOf Clock Clocks start done
-""".split())
 
 
 @dataclass
@@ -43,10 +37,25 @@ class Diagnostic:
         return f"{self.severity}[{self.code}] {self.element}: {self.message}"
 
 
-def validate(model: M.Model) -> list[Diagnostic]:
-    """Validate a model; returns diagnostics sorted errors-first."""
+def validate(model: M.Model, *,
+             stdlib: bool | None = None) -> list[Diagnostic]:
+    """Validate a model; returns diagnostics sorted errors-first.
 
-    checker = _Checker(model)
+    ``stdlib`` controls the standard-library fallback used for name
+    resolution: ``None`` (default) auto-attaches the vendored library when
+    it loads, ``True`` forces it, ``False`` disables it.  The library is
+    only consulted by the resolver -- ``model`` is never mutated.
+    """
+
+    library: M.Model | None = None
+    if stdlib is None:
+        try:
+            library = stdlib_module.standard_library_model(cache=True)
+        except Exception:
+            library = None  # degrade to resolution without the library
+    elif stdlib:
+        library = stdlib_module.standard_library_model(cache=True)
+    checker = _Checker(model, library=library)
     checker.check_all()
     order = {"error": 0, "warning": 1}
     return sorted(checker.diagnostics,
@@ -54,9 +63,9 @@ def validate(model: M.Model) -> list[Diagnostic]:
 
 
 class _Checker:
-    def __init__(self, model: M.Model):
+    def __init__(self, model: M.Model, library: M.Model | None = None):
         self.model = model
-        self.resolver = Resolver(model)
+        self.resolver = Resolver(model, library=library)
         self.diagnostics: list[Diagnostic] = []
 
     def report(self, severity: Severity, code: str, element: M.Element,
@@ -140,16 +149,15 @@ class _Checker:
                     f"{role} {ref!r} does not resolve")
 
     def _resolves(self, ref: str, context: M.Element) -> bool:
-        head = ref.split(".")[0].split("::")[0]
-        if head in BUILTIN_NAMES or head == "$":
-            return True
-        scope = context.owner or self.model
+        scope: M.Element = context.owner or self.model
         for segment in ref.split("."):
+            if segment == "$":  # root escape: re-anchor at the model root
+                scope = self.model
+                continue
             try:
-                found = self.resolver.resolve(segment, scope)
+                scope = self.resolver.resolve(segment, scope)
             except ResolutionError:
                 return False
-            scope = found
         return True
 
     def check_specialization_cycle(self, element: M.Definition | M.Usage
@@ -161,7 +169,7 @@ class _Checker:
             if id(node) in seen:
                 continue
             seen.add(id(node))
-            for general in self.resolver._generals(node):
+            for general in self.resolver._generals(node, implied=True):
                 if general is element:
                     self.report("error", "specialization-cycle", element,
                                 "specialization hierarchy is cyclic")
@@ -174,13 +182,28 @@ class _Checker:
         local_names = self._local_names(element)
         for owner, expr in self._owned_expressions(element):
             for head in _expression_heads(expr):
-                if head in local_names or head in BUILTINS or \
-                        head in BUILTIN_NAMES or head == "$":
+                if head in local_names or head in BUILTINS or head == "$":
                     continue
-                if not self._resolves(head, owner):
-                    self.report(
-                        "warning", "unresolved-name", owner,
-                        f"expression name {head!r} does not resolve")
+                if self._resolves(head, owner):
+                    continue
+                if self._inherited_name(head, owner):
+                    continue
+                self.report(
+                    "warning", "unresolved-name", owner,
+                    f"expression name {head!r} does not resolve")
+
+    def _inherited_name(self, name: str, context: M.Element) -> bool:
+        """True when ``name`` is a member inherited through an *implied*
+        specialization (e.g. ``start``/``done`` via ``Actions::Action``)."""
+
+        node: M.Element | None = context
+        while node is not None:
+            if isinstance(node, (M.Definition, M.Usage)):
+                for member in self.resolver.members_of(node, implied=True):
+                    if name in (member.name, member.short_name):
+                        return True
+            node = node.owner
+        return False
 
     def _local_names(self, element: M.Namespace) -> set[str]:
         names: set[str] = set()
