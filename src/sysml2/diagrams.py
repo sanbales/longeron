@@ -104,6 +104,12 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
                           "stroke-width": "3px",
                           "stroke-linejoin": "round"},
     " text": {"font-family": "sans-serif", "font-size": "11px"},
+    # the theme styles .elklabel with the Lab content font (higher
+    # specificity than ' text'), but label BOXES are sized for 11px
+    # sans-serif (pre-sized edge labels + the headless heuristic): render
+    # with the same font the layout assumed or glyphs overflow the box
+    " .elklabel": {"font-family": "Helvetica, Arial, sans-serif",
+                   "font-size": "11px"},
 }
 
 _ROOT_LAYOUT = {
