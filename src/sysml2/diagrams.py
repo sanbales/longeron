@@ -106,13 +106,15 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
                           "stroke-width": "3px",
                           "stroke-linejoin": "round"},
     " text": {"font-family": "sans-serif", "font-size": "11px"},
-    # the theme styles .elklabel with the Lab content font at (0,2,0)
-    # specificity, but label BOXES are sized for 11px sans-serif (pre-sized
-    # edge labels + the headless heuristic): render with the font the
-    # layout assumed or glyphs overflow the box. text.elklabel = (0,2,1),
-    # beats the theme outright (no tie-break needed).
-    " text.elklabel": {"font-family": "Helvetica, Arial, sans-serif",
-                       "font-size": "11px"},
+    # the theme (and fast-foundation constructed stylesheets, which sit
+    # late in the cascade) style .elklabel with the UI font, but label
+    # BOXES are sized for 11px sans-serif (pre-sized edge labels + the
+    # headless heuristic): if the glyph font is wider than the layout
+    # font, text overflows its centered box. !important, scoped to this
+    # widget, wins against any theme regardless of load order.
+    " text.elklabel": {
+        "font-family": "Helvetica, Arial, sans-serif !important",
+        "font-size": "11px !important"},
 }
 
 _ROOT_LAYOUT = {
