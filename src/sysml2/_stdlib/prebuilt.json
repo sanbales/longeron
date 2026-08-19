@@ -1,5 +1,5 @@
 {
- "fingerprint": "083fef6230d53a6e",
+ "fingerprint": "11668023d60e3e14",
  "model": {
   "@type": "Model",
   "members": [
@@ -38098,6 +38098,6 @@
     "is_standard": true
    }
   ],
-  "source_name": "/Users/sanbales/workplace/sysml2-experiments/src/sysml2/_stdlib"
+  "source_name": "/Users/sanbales/workplace/longeron-wt-grammar/src/sysml2/_stdlib"
  }
 }

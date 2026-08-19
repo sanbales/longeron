@@ -35,7 +35,7 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-make check        # ruff + mypy + 310 tests
+make check        # ruff + mypy + 388 tests
 ```
 
 Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
@@ -406,6 +406,32 @@ comment in the `.g4` files:
    `@Safety`, and `x at T` instead of `x @ T`.
 5. **Flow ends (SysML.g4).** `flowEndSubsetting` dropped the spec's `'.'`
    after `QualifiedName`, so `flow from a.out to b.in` could not parse.
+6. **Target transition clause order (SysML.g4).** Upstream put `ActionBody`
+   before the `then` clause in `targetTransitionUsage`, so state-body
+   transitions like `accept s : Sig then b;` or a bare `then off;` after a
+   nested state could not parse. The release BNF (and `transitionUsage`
+   itself) put `'then' TransitionSuccessionMember` first and `ActionBody`
+   last.
+7. **Optional `standard` (SysML.g4).** Upstream required the full
+   `standard library package`, rejecting a plain `library package P;`. The
+   spec marks `standard` as optional (`isStandard ?= 'standard'`).
+8. **Named send nodes (SysML.g4).** The spec declares a send node as
+   `ActionUsageDeclaration? 'send' ...` with no `action` keyword, but the
+   pilot-implementation corpus writes `action publish send X() via p;`
+   (mirroring `acceptNode`, whose `action x accept ...` form is spec-blessed)
+   — and this library's own exporter prints named send actions that way. Here
+   the release BNF contradicts the corpus; we follow the corpus and accept
+   both forms.
+9. **One-line multiline notes (both grammars).** `SINGLE_LINE_NOTE`
+   (`'//' ~[\r\n]*`) out-competed `MULTILINE_NOTE` (`'//*' .*? '*/'`) via
+   ANTLR's longest-match rule whenever the note closed on the same line, so
+   `x = ( //* elided */ 4 );` swallowed everything after `*/`. Single-line
+   notes now exclude a leading `*`.
+10. **Metadata prefixes on enumerated values (SysML.g4).** The release BNF
+    declares `EnumeratedValue = 'enum'? Usage` with no extension keywords,
+    but the pilot corpus writes `#Security enum secret : Level = 2;` inside
+    enum bodies. We follow the corpus and accept `UsageExtensionKeyword*`
+    there, as `usagePrefix` already does.
 
 One known deviation from the OMG spec remains, inherited from upstream: the
 grammar groups `??`/`or`/`and`/`implies` at one precedence level and

@@ -167,3 +167,37 @@ def test_programmatic_definition():
     reparsed = sysml2.loads(text)
     size = reparsed.find("Prog::Widget::size")
     assert size.value.expr.to_text() == "2 + 3"
+
+
+def test_library_package_standard_flag():
+    # regression: 'library package' without 'standard' failed to parse
+    model = sysml2.loads("library package L { part def X; }")
+    assert model.find("L").is_standard is False
+    model2 = sysml2.loads("standard library package L2 { part def X; }")
+    assert model2.find("L2").is_standard is True
+
+
+def test_named_send_action_keeps_name():
+    # regression: the 'action <name> send ...' corpus form dropped the name
+    model = sysml2.loads(
+        "package P { action def A {"
+        " action publish send new Publish(t) via p; } }")
+    sends = [m for m in model.find("P::A").members
+             if isinstance(m, M.SendAction)]
+    assert sends[0].name == "publish"
+    assert sends[0].via.to_text() == "p"
+
+
+def test_metadata_prefixed_enum_value():
+    # regression: '#Security enum secret : ...' inside an enum body
+    model = sysml2.loads("""
+        package P {
+            metadata def Security;
+            enum def Level {
+                uncl : Level = 0;
+                #Security enum secret : Level = 2;
+            }
+        }
+    """)
+    literal = model.find("P::Level::secret")
+    assert literal.metadata == ["Security"]

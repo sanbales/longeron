@@ -449,6 +449,8 @@ class _Builder:
                 elif rule == "EnumerationUsageMemberContext":
                     literal = self._usage_from_usage_ctx(
                         "enum_literal", child.enumeratedValue().usage())
+                    literal.metadata = self._metadata_keywords(
+                        child.enumeratedValue())
                     literal.visibility = self.visibility(child.memberPrefix())
                     defn.add(literal)
         return defn
@@ -844,9 +846,23 @@ class _Builder:
                 exp.is_recursive = decl.isRecursive is not None
             else:
                 ni = e.namespaceExpose().namespaceImport()
-                exp.target = self.qname(ni.qualifiedName())
-                exp.is_namespace = True
-                exp.is_recursive = ni.isRecursive is not None
+                if ni.filterPackage() is not None:
+                    # `expose X::**[@M];` -- mirror _apply_filter_package
+                    fp = ni.filterPackage()
+                    if fp.membershipImport() is not None:
+                        mi = fp.membershipImport()
+                        exp.target = self.qname(mi.importedMembership)
+                        exp.is_recursive = mi.isRecursive is not None
+                    else:
+                        exp.target = self.qname(fp.qualifiedName())
+                        exp.is_namespace = True
+                        exp.is_recursive = fp.isRecursive is not None
+                    exp.filters = [self.expr(m.ownedExpression())
+                                   for m in fp.filterPackageMember()]
+                else:
+                    exp.target = self.qname(ni.qualifiedName())
+                    exp.is_namespace = True
+                    exp.is_recursive = ni.isRecursive is not None
             ns.add(exp)
             return
         if item.satisfyRequirementUsage() is not None:
@@ -1423,7 +1439,11 @@ class _Builder:
 
     def send_node(self, ctx) -> M.SendAction:
         send = M.SendAction()
-        if ctx.actionUsageDeclaration() is not None:
+        if ctx.actionNodeUsageDeclaration() is not None:
+            # LOCAL PATCH form: `action publish send ...` (see grammar patch 8)
+            send.short_name, send.name = self._decl_name(
+                ctx.actionNodeUsageDeclaration())
+        elif ctx.actionUsageDeclaration() is not None:
             decl = ctx.actionUsageDeclaration()
             short, name = self.identification(
                 decl.usageDeclaration().identification())

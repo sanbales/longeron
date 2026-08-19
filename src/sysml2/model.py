@@ -504,6 +504,7 @@ class Expose(Element):
     target: str = ""
     is_namespace: bool = False
     is_recursive: bool = False
+    filters: list[Expr] = field(default_factory=list)  # 'expose X::**[@F];'
 
 
 @dataclass(eq=False)

@@ -32,6 +32,7 @@ FULL_COVERAGE_SOURCES = [
         view myView : TreeView {
             expose Pkg::*;
             expose Other::Thing;
+            expose Deep::**[@Safety];
             filter @Safety and @Critical;
             render asTree;
         }
@@ -75,6 +76,10 @@ FULL_COVERAGE_SOURCES = [
         #command def RunIt;
         #command runIt2;
         #Safety dependency Client from a to b;
+        enum def Level {
+            uncl : Level = 0;
+            #Safety enum secret : Level = 2;
+        }
     }
     """,
     """
@@ -174,3 +179,15 @@ def test_filtered_import():
                if isinstance(m, M.Import)]
     assert imports[0].filters and imports[0].filters[0].to_text() == "@Safety"
     assert imports[1].is_recursive
+
+
+def test_filtered_expose():
+    # regression: 'expose X::**[@F];' crashed the builder (filterPackage
+    # alternative was only handled for regular imports)
+    model = sysml2.loads(FULL_COVERAGE_SOURCES[1])
+    view = model.find("Views::myView")
+    exposes = [m for m in view.members if isinstance(m, M.Expose)]
+    assert exposes[0].is_namespace and not exposes[0].filters
+    assert exposes[2].is_recursive and not exposes[2].is_namespace
+    assert exposes[2].target == "Deep"
+    assert exposes[2].filters[0].to_text() == "@Safety"
