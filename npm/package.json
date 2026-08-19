@@ -5,5 +5,5 @@
   "repository": { "type": "git", "url": "git+https://github.com/sanbales/longeron.git" },
   "homepage": "https://github.com/sanbales/longeron",
   "keywords": ["sysml", "sysml2", "kerml", "mbse", "systems-engineering"],
-  "license": "MIT"
+  "license": "Apache-2.0"
 }
