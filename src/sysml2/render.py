@@ -281,16 +281,38 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
             return origins.get(str(container), default)
         return default
 
-    def draw_label(label: dict, ox: float, oy: float) -> None:
+    def draw_label(label: dict, ox: float, oy: float,
+                   on_edge: bool = False) -> None:
         text = label.get("text", "")
         if not text:
             return
         css = label.get("properties", {}).get("cssClasses", "")
         style = _style_for(css, _LABEL_STYLES,
                            {"font-size": "11", "fill": "#222222"})
-        x = ox + label.get("x", 0)
-        y = oy + label.get("y", 0) + float(style["font-size"])
+        size = float(style["font-size"])
         extra = ' font-style="italic"' if style.get("font-style") else ""
+        if on_edge:
+            # center the text in the label box ELK reserved; a halo lifts it
+            # from the artwork instead of an opaque background rectangle
+            # (which looked wrong over filled nodes). Drawn as a separate
+            # under-text because cairosvg ignores paint-order.
+            x = ox + label.get("x", 0) + label.get("width", 0) / 2
+            y = oy + label.get("y", 0) + label.get("height", 12) / 2 \
+                + size * 0.36
+            common = (f'x="{x:.1f}" y="{y:.1f}" '
+                      f'font-size="{style["font-size"]}" '
+                      f'font-family="Helvetica,Arial,sans-serif" '
+                      f'text-anchor="middle"{extra}')
+            parts.append(
+                f'<text {common} fill="#ffffff" stroke="#ffffff" '
+                f'stroke-width="3" stroke-linejoin="round">'
+                f'{_escape(text)}</text>')
+            parts.append(
+                f'<text {common} fill="{style["fill"]}">'
+                f'{_escape(text)}</text>')
+            return
+        x = ox + label.get("x", 0)
+        y = oy + label.get("y", 0) + size
         parts.append(
             f'<text x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
@@ -324,12 +346,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
                 f'<path d="{path}" fill="none" stroke="{style["stroke"]}" '
                 f'stroke-width="1.4"{dash} marker-end="url(#arrow)"/>')
         for label in edge.get("labels", []):
-            width, height = label.get("width", 0), label.get("height", 12)
-            x, y = ox + label.get("x", 0), oy + label.get("y", 0)
-            parts.append(
-                f'<rect x="{x - 1:.1f}" y="{y:.1f}" width="{width:.1f}" '
-                f'height="{height:.1f}" fill="#ffffff" opacity="0.85"/>')
-            draw_label(label, ox, oy)
+            draw_label(label, ox, oy, on_edge=True)
         parts.append("</g>")
 
     draw_node(graph, padding, padding)
