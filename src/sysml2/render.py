@@ -311,12 +311,15 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
                 f'<text {common} fill="{style["fill"]}">'
                 f'{_escape(text)}</text>')
             return
-        x = ox + label.get("x", 0)
+        # anchor node labels at the middle of the box ELK reserved: the
+        # width heuristic overestimates for most strings, so start-anchored
+        # text drifts left of where the (centered) box actually sits
+        x = ox + label.get("x", 0) + label.get("width", 0) / 2
         y = oy + label.get("y", 0) + size
         parts.append(
             f'<text x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
-            f'{extra}>{_escape(text)}</text>')
+            f' text-anchor="middle"{extra}>{_escape(text)}</text>')
 
     def draw_edge(edge: dict, node_x: float, node_y: float) -> None:
         ox, oy = edge_origin(edge, (node_x, node_y))
