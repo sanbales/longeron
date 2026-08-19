@@ -15,7 +15,9 @@ class TestCleanModels:
     def test_valid_model_no_diagnostics(self, vehicle_model):
         assert sysml2.validate(vehicle_model) == []
 
-    def test_builtin_types_whitelisted(self):
+    def test_builtin_types_resolve_against_stdlib(self):
+        # no import anywhere: Real/Integer/String resolve through the
+        # standard-library fallback (implicit library visibility)
         assert diags("""
             package P {
                 part def V { attribute m : Real = 1.0;
@@ -23,7 +25,7 @@ class TestCleanModels:
             }
         """) == []
 
-    def test_builtin_functions_whitelisted(self):
+    def test_builtin_functions_resolve(self):
         assert diags("""
             package P { calc def C { in x : Real;
                                      return : Real = sqrt(abs(x)); } }
@@ -33,6 +35,76 @@ class TestCleanModels:
         assert diags("""
             package P { part def V { attribute d : Real = 10.0 [furlongs]; } }
         """) == []
+
+
+class TestStdlibResolution:
+    """Stage C: names really resolve against the vendored stdlib."""
+
+    def test_qualified_stdlib_reference(self):
+        assert diags("""
+            package P { part def V { attribute s : ScalarValues::Real; } }
+        """) == []
+
+    def test_stdlib_typo_warns(self):
+        found = diags("package P { part def W { attribute bad : Reall; } }",
+                      "unresolved-reference")
+        assert len(found) == 1
+        assert "Reall" in found[0].message
+
+    def test_stdlib_disabled_restores_old_warnings(self):
+        model = sysml2.loads(
+            "package P { part def V { attribute m : Real; } }")
+        assert sysml2.validate(model) == []
+        found = [d for d in sysml2.validate(model, stdlib=False)
+                 if d.code == "unresolved-reference"]
+        assert len(found) == 1
+
+
+class TestImpliedSpecializations:
+    """Stage C: plain defs/usages imply standard-library bases."""
+
+    @staticmethod
+    def resolver(model):
+        from sysml2.interpreter import Resolver
+        from sysml2.stdlib import standard_library_model
+
+        return Resolver(model, library=standard_library_model())
+
+    def test_part_def_implies_parts_part(self):
+        model = sysml2.loads("package P { part def V; part v : V; }")
+        resolver = self.resolver(model)
+        v = resolver.resolve("P::V", model)
+        assert [g.qualified_name for g in resolver.implied_generals(v)] == \
+            ["Parts::Part"]
+        # an explicit type suppresses the implied base
+        assert resolver.implied_generals(resolver.resolve("P::v", model)) == []
+
+    def test_bare_part_usage_implies_parts(self):
+        model = sysml2.loads("package P { part v; }")
+        resolver = self.resolver(model)
+        usage = resolver.resolve("P::v", model)
+        assert [g.qualified_name for g in resolver.implied_generals(usage)] \
+            == ["Parts::parts"]
+
+    def test_explicit_supers_suppress_implied(self):
+        model = sysml2.loads("package P { part def A; part def B :> A; }")
+        resolver = self.resolver(model)
+        assert resolver.implied_generals(resolver.resolve("P::B", model)) == []
+
+    def test_action_inherits_start_done_when_implied(self):
+        model = sysml2.loads("package P { action def A { action s1; } }")
+        resolver = self.resolver(model)
+        target = resolver.resolve("P::A", model)
+        names = {m.name for m in resolver.members_of(target, implied=True)}
+        assert {"start", "done"} <= names
+        # default (implied=False) stays library-free
+        plain = {m.name for m in resolver.members_of(target)}
+        assert "start" not in plain
+
+    def test_instantiation_unchanged_by_implied_bases(self):
+        interp = sysml2.Interpreter(sysml2.loads(
+            "package P { part def V { attribute m : Real = 1.0; } }"))
+        assert set(interp.instantiate("P::V").slots) == {"m"}
 
 
 class TestUnresolvedReferences:
@@ -199,6 +271,16 @@ class TestCLI:
         assert main(["lint", str(path)]) == 0
         out = capsys.readouterr().out
         assert "warning[unresolved-reference]" in out
+
+    def test_lint_no_stdlib_flag(self, tmp_path, capsys):
+        from sysml2.cli import main
+
+        path = tmp_path / "m.sysml"
+        path.write_text("package P { part def V { attribute m : Real; } }")
+        assert main(["lint", str(path)]) == 0
+        assert "0 error(s), 0 warning(s)" in capsys.readouterr().out
+        assert main(["lint", "--no-stdlib", str(path)]) == 0
+        assert "warning[unresolved-reference]" in capsys.readouterr().out
 
     def test_lint_strict_fails_on_warnings(self, tmp_path):
         from sysml2.cli import main

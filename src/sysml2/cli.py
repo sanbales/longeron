@@ -59,9 +59,13 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("lint", parents=[common],
                        help="validate a model: dangling references, "
-                            "duplicate names, cycles")
+                            "duplicate names, cycles; names resolve "
+                            "against the vendored standard library "
+                            "unless --no-stdlib")
     p.add_argument("--strict", action="store_true",
                    help="treat warnings as errors")
+    p.add_argument("--no-stdlib", action="store_true",
+                   help="do not resolve names against the standard library")
 
     p = sub.add_parser("calc", parents=[common],
                        help="invoke a calc def as a function")
@@ -117,7 +121,7 @@ def main(argv=None) -> int:
     if ns.command == "lint":
         from .validation import validate
 
-        diagnostics = validate(model)
+        diagnostics = validate(model, stdlib=False if ns.no_stdlib else None)
         for diagnostic in diagnostics:
             print(diagnostic)
         errors = sum(d.severity == "error" for d in diagnostics)
