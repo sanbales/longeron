@@ -78,6 +78,27 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
     " .sysml-edge-transition > path": {"stroke": "#b58900"},
     " .sysml-edge-succession > path": {"stroke": "#6c56a8"},
     " .sysml-edge-guarded > path": {"stroke-dasharray": "6 2"},
+    # arrowheads (the <use class="elkarrow"> child) must be recolored
+    # separately: they inherit the theme gray from the edge <g>, not the
+    # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics)
+    " .sysml-edge-specializes > .elkarrow": {"stroke": "#4878a8"},
+    " .sysml-edge-typed > .elkarrow": {"stroke": "#6a9a48"},
+    " .sysml-edge-connect > .elkarrow": {"stroke": "#555555"},
+    " .sysml-edge-transition > .elkarrow": {"stroke": "#b58900"},
+    " .sysml-edge-succession > .elkarrow": {"stroke": "#6c56a8"},
+    # pin the head size in every state (the theme bumps stroke-width to 3
+    # on selection, which both 'fills' the chevron and grows it)
+    " .sysml-edge > .elkarrow": {"stroke-width": "1"},
+    # selection: the WHOLE edge takes the selection color, heads stay thin
+    " .elkedge.sysml-edge.selected > path": {
+        "stroke": "var(--jp-elk-color-selected)"},
+    " .elkedge.sysml-edge.selected > .elkarrow": {
+        "stroke": "var(--jp-elk-color-selected)", "stroke-width": "1",
+        "fill": "none"},
+    " .elkedge.sysml-edge.selected.mouseover > .elkarrow": {
+        "stroke-width": "1"},
+    " .elkedge.sysml-edge.selected > .elkarrow.generalization": {
+        "fill": "var(--jp-elk-color-selected)"},
     # halo so edge labels stay readable over crossings (browser-only path)
     " .sysml-edge text": {"paint-order": "stroke", "stroke": "#ffffff",
                           "stroke-width": "3px",
