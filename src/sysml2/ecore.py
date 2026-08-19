@@ -11,7 +11,7 @@ Scope (prototype): element skeletons, names, common flags, reified
 memberships, and Specialization / FeatureTyping / Subsetting / Redefinition
 relationships for targets that resolve inside the model.  Expression trees
 and unresolved (standard-library) references are counted in the report, not
-mapped.  Requires the ``ecore`` extra: ``pip install sysml2[ecore]``.
+mapped.  Requires the ``ecore`` extra: ``pip install longeron[ecore]``.
 """
 
 from __future__ import annotations
@@ -141,7 +141,7 @@ def spec_metamodel() -> Any:
         rset = _resource_set()
     except ImportError as exc:  # pragma: no cover
         raise SysMLError("the spec metamodel requires pyecore: "
-                         "pip install 'sysml2[ecore]'") from exc
+                         "pip install 'longeron[ecore]'") from exc
     resource = rset.get_resource(str(_ECORE_PATH))
     package = resource.contents[0]
     rset.metamodel_registry[package.nsURI] = package

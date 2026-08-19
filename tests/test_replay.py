@@ -250,5 +250,5 @@ def test_replay_widget_missing_extra(monkeypatch, flat_interp):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    with pytest.raises(ImportError, match=r"sysml2\[replay\]"):
+    with pytest.raises(ImportError, match=r"longeron\[replay\]"):
         replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"])
