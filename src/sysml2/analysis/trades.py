@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from itertools import product
 from math import ceil, floor, lcm
 from typing import Any, ClassVar
 
@@ -486,6 +487,39 @@ class TradeStudy:
         return member.types[0]
 
     # -- public API -----------------------------------------------------------
+
+    def evaluate(self, selection: dict[str, str]) -> Architecture:
+        """Interpreter-exact metrics for any mix, feasible or not.
+
+        ``selection`` maps every variation-point name to a variant name;
+        the returned ``verified`` flag reports whether all constraints
+        hold.  No solver runs -- this needs only the interpreter.
+        """
+
+        for pname, point in self.points.items():
+            if pname not in selection:
+                raise AnalysisError(f"selection is missing point {pname!r}")
+            if selection[pname] not in point.variants:
+                raise AnalysisError(
+                    f"unknown variant {selection[pname]!r} for point "
+                    f"{pname!r} (have: {sorted(point.variants)})")
+        extra = set(selection) - set(self.points)
+        if extra:
+            raise AnalysisError(f"unknown variation point(s) {sorted(extra)}")
+        return self._architecture({p: selection[p] for p in self.points})
+
+    def all_architectures(self) -> list[Architecture]:
+        """Every candidate mix (the full Cartesian product), exact metrics.
+
+        Unlike :meth:`enumerate`, infeasible mixes are included (with
+        ``verified=False``) -- the raw material for views that show the
+        frontier inside the whole candidate space.
+        """
+
+        names = list(self.points)
+        return [self._architecture(dict(zip(names, combo, strict=True)))
+                for combo in product(*(self.points[n].variants
+                                       for n in names))]
 
     def enumerate(self) -> list[Architecture]:
         """All feasible architectures, interpreter-verified."""

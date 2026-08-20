@@ -111,3 +111,40 @@ class TestErrors:
     def test_unknown_metric(self, study):
         with pytest.raises(sysml2.analysis.AnalysisError):
             study.minimize("nope")
+
+
+class TestExactEvaluation:
+    """evaluate()/all_architectures() need only the interpreter."""
+
+    def test_evaluate_feasible_mix(self, study):
+        arch = study.evaluate({"motors": "sunnySky2212", "props": "hq5x43",
+                               "battery": "lipo3s2200", "esc": "esc20"})
+        assert arch.verified
+        assert arch.metrics["totalCost"] == pytest.approx(118.0)
+
+    def test_evaluate_infeasible_mix(self, study):
+        arch = study.evaluate({"motors": "tmotorF60", "props": "hq5x43",
+                               "battery": "lipo6s1300", "esc": "esc45"})
+        assert not arch.verified  # fails enduranceReq (4.875 min)
+        assert arch.metrics["hoverMinutes"] == pytest.approx(4.875)
+
+    def test_evaluate_validates_selection(self, study):
+        with pytest.raises(sysml2.analysis.AnalysisError):
+            study.evaluate({"motors": "emax2306"})  # missing points
+        with pytest.raises(sysml2.analysis.AnalysisError):
+            study.evaluate({"motors": "nope", "props": "hq5x43",
+                            "battery": "lipo4s1500", "esc": "esc45"})
+        with pytest.raises(sysml2.analysis.AnalysisError):
+            study.evaluate({"motors": "emax2306", "props": "hq5x43",
+                            "battery": "lipo4s1500", "esc": "esc45",
+                            "extra": "x"})
+
+    def test_all_architectures_is_the_candidate_space(self, study):
+        archs = study.all_architectures()
+        assert len(archs) == 54  # 3 * 3 * 3 * 2
+        feasible = [a for a in archs if a.verified]
+        assert len(feasible) == 8  # matches enumerate()
+        enumerated = {tuple(sorted(a.selection.items()))
+                      for a in study.enumerate()}
+        assert {tuple(sorted(a.selection.items()))
+                for a in feasible} == enumerated

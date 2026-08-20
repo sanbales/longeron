@@ -1,0 +1,623 @@
+"""Views of trade-study results: figures and a parallel-coordinates widget.
+
+Two kinds of output over the mix tables produced by
+:mod:`sysml2.analysis.trades`:
+
+* static, publication-styled matplotlib figures --
+  :func:`pareto_figure` (the frontier inside the full candidate space),
+  :func:`margin_sweep_figure` (requirement margins across a design-variable
+  sweep of an OpenMDAO problem), and :func:`interval_figure` (an exact
+  feasibility interval on a number line, e.g. from
+  :meth:`sysml2.analysis.smt.SmtSystem.maximize`);
+* an interactive parallel-coordinates anywidget -- :func:`parcoords` --
+  following the house widget pattern (:mod:`sysml2.replay`): Python bakes
+  the whole payload (axis specs, tick labels, normalized line positions)
+  into one JSON-string traitlet, the inline vanilla-JS front-end only
+  paints.  Axis brushing filters lines, hovering shows the full mix, and
+  the brushed subset syncs back through the ``selected`` traitlet.
+
+Requires the ``viz`` extra: ``pip install "longeron[viz]"`` (matplotlib
+for the figures, anywidget for the widget; both import lazily).
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+
+from ._expr import AnalysisError
+from .trades import Architecture, TradeStudy
+
+if TYPE_CHECKING:
+    import anywidget
+
+__all__ = ["interval_figure", "margin_sweep_figure", "mix_table",
+           "parcoords", "parcoords_payload", "pareto_figure"]
+
+# Shared palette (restrained: one accent, grays for scaffolding).  The
+# accent family varies lightness, never hue -- see the categorical /
+# single-series guidance the figures follow.
+INK = "#2b2d31"
+MUTE = "#9aa0a8"
+FAINT = "#d9dbdf"
+ACCENT = "#2f6b8f"       # petrol blue: frontier / brushed lines
+ACCENT_RAMP = ("#2f6b8f", "#5b8dad", "#8fb2c7", "#b7cedd")
+WARM = "#c2603e"         # terracotta: the one warm highlight
+
+
+def _plt() -> Any:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as err:  # pragma: no cover - exercised without extra
+        raise ImportError(
+            "sysml2.analysis.viz figures need matplotlib; install the extra "
+            "with 'pip install \"longeron[viz]\"'") from err
+    return plt
+
+
+# ---------------------------------------------------------------------------
+# mix tables
+# ---------------------------------------------------------------------------
+
+
+def mix_table(study: TradeStudy,
+              architectures: Sequence[Architecture] | None = None,
+              derived: Mapping[str, Callable[[Architecture], Any]] | None = None,
+              ) -> list[dict[str, Any]]:
+    """Flat rows (selection + metrics + ``feasible``) for plotting.
+
+    ``derived`` adds computed columns, e.g. ``{"thrustToWeight":
+    lambda a: a.metrics["totalThrust"] / (a.metrics["totalMass"] * 9.81)}``.
+    Defaults to the full candidate space
+    (:meth:`~sysml2.analysis.trades.TradeStudy.all_architectures`).
+    """
+
+    archs = (study.all_architectures() if architectures is None
+             else architectures)
+    rows: list[dict[str, Any]] = []
+    for arch in archs:
+        row: dict[str, Any] = dict(arch.selection)
+        row.update(arch.metrics)
+        for name, fn in (derived or {}).items():
+            row[name] = fn(arch)
+        row["feasible"] = arch.verified
+        rows.append(row)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# parallel coordinates: payload (pure) + widget (anywidget)
+# ---------------------------------------------------------------------------
+
+
+def _fmt(value: float) -> str:
+    magnitude = abs(value)
+    if magnitude >= 100 or value == int(value):
+        return f"{value:.0f}"
+    return f"{value:.2f}" if magnitude < 10 else f"{value:.1f}"
+
+
+def parcoords_payload(rows: Sequence[Mapping[str, Any]],
+                      axes: Sequence[str] | None = None) -> dict[str, Any]:
+    """The baked parallel-coordinates payload (house pattern: Python owns
+    the schema, JS only paints).
+
+    Per axis: a name and tick marks ``{t, label}`` in normalized [0, 1]
+    coordinates (1 = top).  Per line: normalized positions ``t`` per axis,
+    display strings ``v`` per axis, a hover label, and the feasible flag.
+    Categorical axes place categories in first-appearance order; constant
+    numeric axes pin to the middle.
+    """
+
+    if not rows:
+        raise AnalysisError("parcoords needs at least one row")
+    names = list(axes) if axes is not None else \
+        [k for k in rows[0] if k != "feasible"]
+    missing = [n for n in names if n not in rows[0]]
+    if missing:
+        raise AnalysisError(f"rows have no column(s) {missing!r} "
+                            f"(have: {sorted(rows[0])})")
+
+    specs: list[dict[str, Any]] = []
+    positions: list[list[float]] = []  # per axis, per row
+    displays: list[list[str]] = []
+    for name in names:
+        values = [row[name] for row in rows]
+        if any(isinstance(v, str) for v in values):
+            categories = list(dict.fromkeys(str(v) for v in values))
+            t_of = {c: (i / (len(categories) - 1) if len(categories) > 1
+                        else 0.5)
+                    for i, c in enumerate(categories)}
+            specs.append({"name": name,
+                          "ticks": [{"t": round(t_of[c], 4), "label": c}
+                                    for c in categories]})
+            positions.append([t_of[str(v)] for v in values])
+            displays.append([str(v) for v in values])
+        else:
+            lo, hi = min(values), max(values)
+            span = hi - lo
+            specs.append({"name": name,
+                          "ticks": [{"t": 0.0, "label": _fmt(lo)},
+                                    {"t": 1.0, "label": _fmt(hi)}]})
+            positions.append([(v - lo) / span if span else 0.5
+                              for v in values])
+            displays.append([_fmt(float(v)) for v in values])
+
+    lines = []
+    for index, row in enumerate(rows):
+        cats = [str(row[n]) for n in names if isinstance(row[n], str)]
+        lines.append({
+            "label": row.get("label") or " / ".join(cats) or f"mix {index}",
+            "t": [round(positions[a][index], 4) for a in range(len(names))],
+            "v": [displays[a][index] for a in range(len(names))],
+            "feasible": bool(row.get("feasible", True)),
+        })
+    return {"axes": specs, "lines": lines}
+
+
+# Conventions follow sysml2.replay: DOM built once, per-interaction work is
+# class toggles + one tooltip move; payload is pre-normalized so the JS
+# never sees raw metric values (only t in [0,1] and baked display strings).
+_PC_ESM = r"""
+function render({ model, el }) {
+  const table = JSON.parse(model.get("table_json"));
+  const axes = table.axes;
+  const lines = table.lines;
+  el.classList.add("sysml2-parcoords");
+  el.innerHTML = "";
+
+  const W = model.get("width_px");
+  const H = model.get("height_px");
+  const M = { top: 30, right: 56, bottom: 14, left: 56 };
+  const plotW = W - M.left - M.right;
+  const plotH = H - M.top - M.bottom;
+  const xs = axes.map((a, i) => M.left +
+    (axes.length > 1 ? (i * plotW) / (axes.length - 1) : plotW / 2));
+  const yOf = (t) => M.top + (1 - t) * plotH;
+
+  const NS = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs, parent) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    parent.appendChild(node);
+    return node;
+  };
+  const svg = make("svg", { viewBox: `0 0 ${W} ${H}` }, el);
+  svg.style.maxWidth = W + "px";
+  const lineLayer = make("g", {}, svg);
+  const axisLayer = make("g", {}, svg);
+  const brushLayer = make("g", {}, svg);
+  const hitLayer = make("g", {}, svg);
+
+  // --- tooltip (plain div; the container is position:relative)
+  const tip = document.createElement("div");
+  tip.className = "sysml2-pc-tip";
+  tip.style.display = "none";
+  el.appendChild(tip);
+
+  // --- one path per mix (built once; only classes toggle afterwards)
+  const paths = lines.map((ln) => {
+    const d = ln.t.map(
+      (t, i) => (i ? "L" : "M") + xs[i] + "," + yOf(t)).join("");
+    const path = make("path", { d, class: "sysml2-pc-line" }, lineLayer);
+    if (!ln.feasible) path.classList.add("infeasible");
+    return path;
+  });
+
+  // --- axes: line, halo title, baked tick labels
+  axes.forEach((axis, i) => {
+    make("line", { x1: xs[i], y1: M.top, x2: xs[i], y2: M.top + plotH,
+                   class: "sysml2-pc-axis" }, axisLayer);
+    const title = make("text", { x: xs[i], y: M.top - 12,
+                                 class: "sysml2-pc-title" }, axisLayer);
+    title.textContent = axis.name;
+    for (const tick of axis.ticks) {
+      make("line", { x1: xs[i] - 3, y1: yOf(tick.t), x2: xs[i] + 3,
+                     y2: yOf(tick.t), class: "sysml2-pc-axis" }, axisLayer);
+      const label = make("text", { x: xs[i] - 6, y: yOf(tick.t) + 3,
+                                   class: "sysml2-pc-tick" }, axisLayer);
+      label.textContent = tick.label;
+    }
+  });
+
+  // --- brushing: one optional [t0, t1] interval per axis
+  const brushes = axes.map(() => null);
+  const brushRects = axes.map((a, i) =>
+    make("rect", { x: xs[i] - 7, width: 14, rx: 3, y: 0, height: 0,
+                   class: "sysml2-pc-brush", display: "none" }, brushLayer));
+
+  function update(sync) {
+    const brushing = brushes.some((b) => b !== null);
+    const active = [];
+    lines.forEach((ln, index) => {
+      const pass = brushes.every(
+        (b, a) => !b || (ln.t[a] >= b[0] && ln.t[a] <= b[1]));
+      if (pass) active.push(index);
+      paths[index].classList.toggle("on", brushing && pass);
+      paths[index].classList.toggle("dim", brushing && !pass);
+    });
+    if (sync) {
+      model.set("selected", JSON.stringify(active));
+      model.save_changes();
+    }
+  }
+
+  axes.forEach((axis, i) => {
+    const hit = make("rect", { x: xs[i] - 12, width: 24, y: M.top - 4,
+                               height: plotH + 8, fill: "transparent",
+                               style: "cursor: crosshair" }, hitLayer);
+    let t0 = null;
+    const tAt = (event) => {
+      const box = svg.getBoundingClientRect();
+      const y = ((event.clientY - box.top) * H) / box.height;
+      return Math.min(1, Math.max(0, (M.top + plotH - y) / plotH));
+    };
+    hit.addEventListener("pointerdown", (event) => {
+      t0 = tAt(event);
+      hit.setPointerCapture(event.pointerId);
+    });
+    hit.addEventListener("pointermove", (event) => {
+      if (t0 === null) return;
+      const t1 = tAt(event);
+      brushes[i] = [Math.min(t0, t1), Math.max(t0, t1)];
+      const rect = brushRects[i];
+      rect.setAttribute("display", "");
+      rect.setAttribute("y", yOf(brushes[i][1]));
+      rect.setAttribute("height",
+        Math.max(1, yOf(brushes[i][0]) - yOf(brushes[i][1])));
+      update(false);
+    });
+    hit.addEventListener("pointerup", (event) => {
+      if (t0 === null) return;
+      if (Math.abs(tAt(event) - t0) * plotH < 3) {  // click: clear brush
+        brushes[i] = null;
+        brushRects[i].setAttribute("display", "none");
+      }
+      t0 = null;
+      update(true);
+    });
+  });
+
+  // --- hover: fat invisible twin paths for hit area; tooltip follows
+  lines.forEach((ln, index) => {
+    const hit = make("path", {
+      d: paths[index].getAttribute("d"), class: "sysml2-pc-hit" }, hitLayer);
+    hit.addEventListener("mouseenter", () => {
+      paths[index].classList.add("hover");
+      tip.innerHTML = "<b>" + ln.label + "</b>" + (ln.feasible ? ""
+        : " <i>(infeasible)</i>") + "<br>" +
+        axes.map((a, k) => a.name + " = " + ln.v[k]).join("<br>");
+      tip.style.display = "block";
+    });
+    hit.addEventListener("mousemove", (event) => {
+      const box = el.getBoundingClientRect();
+      tip.style.left = Math.min(event.clientX - box.left + 14,
+                                W - 170) + "px";
+      tip.style.top = event.clientY - box.top + 12 + "px";
+    });
+    hit.addEventListener("mouseleave", () => {
+      paths[index].classList.remove("hover");
+      tip.style.display = "none";
+    });
+  });
+
+  update(true);
+}
+export default { render };
+"""
+
+_PC_CSS = """
+.sysml2-parcoords { font-family: Helvetica, Arial, sans-serif;
+  position: relative; }
+.sysml2-parcoords svg { display: block; width: 100%; height: auto; }
+.sysml2-pc-line { fill: none; stroke: #8fa6b4; stroke-width: 1;
+  opacity: 0.6; transition: stroke 0.12s, opacity 0.12s; }
+.sysml2-pc-line.infeasible { stroke: #c9ccd2; stroke-dasharray: 3 3;
+  opacity: 0.45; }
+.sysml2-pc-line.on { stroke: #2f6b8f; stroke-width: 1.4; opacity: 0.9; }
+.sysml2-pc-line.dim { stroke: #d9dbdf; opacity: 0.18; }
+.sysml2-pc-line.hover { stroke: #20303c; stroke-width: 2; opacity: 1; }
+.sysml2-pc-hit { fill: none; stroke: transparent; stroke-width: 9; }
+.sysml2-pc-axis { stroke: #c4c7cc; stroke-width: 1; }
+.sysml2-pc-title { fill: #2b2d31; font-size: 11px; font-weight: 600;
+  text-anchor: middle; paint-order: stroke; stroke: #ffffff;
+  stroke-width: 3px; }
+.sysml2-pc-tick { fill: #6b7078; font-size: 9px; text-anchor: end;
+  font-variant-numeric: tabular-nums; paint-order: stroke;
+  stroke: #ffffff; stroke-width: 3px; }
+.sysml2-pc-brush { fill: rgba(47, 107, 143, 0.14); stroke: #2f6b8f;
+  stroke-width: 1; }
+.sysml2-pc-tip { position: absolute; pointer-events: none;
+  background: #ffffff; border: 1px solid #d4d4d4; border-radius: 6px;
+  padding: 6px 9px; font-size: 11px; line-height: 1.5; color: #2b2d31;
+  box-shadow: 0 2px 8px rgba(20, 24, 28, 0.12); max-width: 190px;
+  font-variant-numeric: tabular-nums; }
+"""
+
+_PC_CLS: type[anywidget.AnyWidget] | None = None
+
+
+def _parcoords_class() -> type[anywidget.AnyWidget]:
+    """Define the widget lazily -- anywidget is an optional extra."""
+
+    global _PC_CLS
+    if _PC_CLS is not None:
+        return _PC_CLS
+    try:
+        import anywidget as _anywidget
+        import traitlets
+    except ImportError as err:
+        raise ImportError(
+            "the parallel-coordinates widget needs anywidget; install the "
+            "extra with 'pip install \"longeron[viz]\"'") from err
+
+    class ParCoordsWidget(_anywidget.AnyWidget):
+        """Brushable parallel coordinates over a baked mix table."""
+
+        _esm = _PC_ESM
+        _css = _PC_CSS
+        table_json = traitlets.Unicode("").tag(sync=True)
+        #: JSON list of row indices passing every axis brush (JS -> Python)
+        selected = traitlets.Unicode("[]").tag(sync=True)
+        width_px = traitlets.Int(920).tag(sync=True)
+        height_px = traitlets.Int(380).tag(sync=True)
+
+        def selected_indices(self) -> list[int]:
+            return list(json.loads(self.selected or "[]"))
+
+    _PC_CLS = ParCoordsWidget
+    return ParCoordsWidget
+
+
+def parcoords(rows: Sequence[Mapping[str, Any]],
+              axes: Sequence[str] | None = None, *,
+              width_px: int = 920,
+              height_px: int = 380) -> anywidget.AnyWidget:
+    """A brushable parallel-coordinates widget over :func:`mix_table` rows.
+
+    Drag along an axis to brush a range (lines outside any brush fade);
+    click a brushed axis to clear it; hover a line for the full mix.  The
+    indices of rows passing every brush sync back through the ``selected``
+    traitlet (``widget.selected_indices()``).
+    """
+
+    cls = _parcoords_class()
+    payload = parcoords_payload(rows, axes)
+    return cls(table_json=json.dumps(payload),
+               selected=json.dumps(list(range(len(payload["lines"])))),
+               width_px=width_px, height_px=height_px)
+
+
+# ---------------------------------------------------------------------------
+# figures
+# ---------------------------------------------------------------------------
+
+
+def _style_axes(ax: Any) -> None:
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(MUTE)
+        ax.spines[side].set_linewidth(0.8)
+    ax.tick_params(colors=MUTE, labelsize=8, length=3, width=0.8)
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_color(INK)
+    ax.xaxis.label.set(color=INK, size=9)
+    ax.yaxis.label.set(color=INK, size=9)
+    ax.set_axisbelow(True)
+
+
+def pareto_figure(architectures: Iterable[Architecture],
+                  front: Iterable[Architecture], *,
+                  x: str, y: str, panel_y: str | None = None,
+                  xlabel: str | None = None, ylabel: str | None = None,
+                  panel_ylabel: str | None = None,
+                  annotate: Mapping[str, Architecture] | None = None,
+                  title: str | None = None) -> Any:
+    """The Pareto frontier inside the full candidate space.
+
+    ``architectures`` is every evaluated mix (feasible or not, e.g. from
+    :meth:`~sysml2.analysis.trades.TradeStudy.all_architectures`);
+    ``front`` the non-dominated subset (:func:`~sysml2.analysis.trades
+    .pareto`).  Dominated mixes are muted, infeasible ones pale crosses,
+    the frontier is the accent + a step line; ``annotate`` puts named
+    call-outs on chosen mixes.  ``panel_y`` adds a small-multiple panel
+    tracking a second metric over the same x axis.
+    """
+
+    plt = _plt()
+    front_keys = {tuple(sorted(a.selection.items())) for a in front}
+    groups: dict[str, list[Architecture]] = {
+        "front": [], "dominated": [], "infeasible": []}
+    for arch in architectures:
+        key = tuple(sorted(arch.selection.items()))
+        groups["front" if key in front_keys else
+               "dominated" if arch.verified else "infeasible"].append(arch)
+
+    if panel_y is not None:
+        fig, (ax, panel) = plt.subplots(
+            2, 1, figsize=(7.0, 5.4), sharex=True,
+            height_ratios=(3.0, 1.25), layout="constrained")
+    else:
+        fig, ax = plt.subplots(figsize=(7.0, 4.2), layout="constrained")
+        panel = None
+
+    def scatter(target: Any, metric_y: str, labeled: bool) -> None:
+        styles: dict[str, dict[str, Any]] = {
+            "infeasible": {"marker": "x", "c": FAINT, "s": 18,
+                           "linewidths": 1.0,
+                           "label": "infeasible" if labeled else None},
+            "dominated": {"marker": "o", "c": "#c3c7cd", "s": 24,
+                          "label": "feasible, dominated" if labeled
+                          else None},
+            "front": {"marker": "o", "c": ACCENT, "s": 46,
+                      "edgecolors": "white", "linewidths": 0.7, "zorder": 4,
+                      "label": "Pareto frontier" if labeled else None},
+        }
+        for name, archs in groups.items():
+            if archs:
+                target.scatter([a.metrics[x] for a in archs],
+                               [a.metrics[metric_y] for a in archs],
+                               **styles[name])
+
+    scatter(ax, y, labeled=True)
+    steps = sorted(groups["front"], key=lambda a: a.metrics[x])
+    if len(steps) > 1:
+        ax.plot([a.metrics[x] for a in steps],
+                [a.metrics[y] for a in steps], drawstyle="steps-post",
+                color=ACCENT, linewidth=1.4, alpha=0.85, zorder=3)
+
+    x_mid = (min(a.metrics[x] for a in groups["front"] or steps or [])
+             + max(a.metrics[x] for a in groups["front"])) / 2 \
+        if groups["front"] else 0.0
+    for name, arch in (annotate or {}).items():
+        left = arch.metrics[x] <= x_mid
+        ax.annotate(
+            name, (arch.metrics[x], arch.metrics[y]),
+            xytext=(14 if left else -14, -18), textcoords="offset points",
+            ha="left" if left else "right", fontsize=8.5, color=INK,
+            arrowprops={"arrowstyle": "-",
+                        "connectionstyle": "arc3,rad=-0.2",
+                        "color": MUTE, "linewidth": 0.8})
+
+    ax.grid(axis="y", color=FAINT, linewidth=0.5)
+    ax.set_ylabel(ylabel or y)
+    if title:
+        ax.set_title(title, fontsize=10, color=INK, loc="left")
+    ax.legend(frameon=False, fontsize=8, loc="best", labelcolor=INK,
+              handletextpad=0.4)
+    _style_axes(ax)
+
+    if panel is not None:
+        scatter(panel, panel_y, labeled=False)  # type: ignore[arg-type]
+        panel.grid(axis="y", color=FAINT, linewidth=0.5)
+        panel.set_ylabel(panel_ylabel or panel_y)
+        panel.set_xlabel(xlabel or x)
+        _style_axes(panel)
+    else:
+        ax.set_xlabel(xlabel or x)
+    return fig
+
+
+def margin_sweep_figure(problem: Any, var: str, values: Sequence[float],
+                        margins: Mapping[str, str] | Sequence[str], *,
+                        xlabel: str | None = None,
+                        title: str | None = None) -> Any:
+    """Requirement margins across a design-variable sweep.
+
+    Re-runs ``problem`` (an OpenMDAO ``Problem``, duck-typed:
+    ``set_val``/``run_model``/``get_val``) for each entry of ``values``,
+    plotting every margin output (>= 0 iff the constraint holds, per
+    :mod:`sysml2.analysis.mdao`).  The first zero crossing of the tightest
+    margin -- the binding constraint -- is marked, and the infeasible
+    region beyond it shaded.  Restores the original value afterwards.
+    """
+
+    named = (dict(margins) if isinstance(margins, Mapping)
+             else {m: m for m in margins})
+    if not named:
+        raise AnalysisError("margin_sweep_figure needs at least one margin")
+    baseline = float(problem.get_val(var)[0])
+    curves: dict[str, list[float]] = {label: [] for label in named}
+    for value in values:
+        problem.set_val(var, value)
+        problem.run_model()
+        for label, output in named.items():
+            curves[label].append(float(problem.get_val(output)[0]))
+    problem.set_val(var, baseline)
+    problem.run_model()
+
+    plt = _plt()
+    fig, ax = plt.subplots(figsize=(7.0, 3.6), layout="constrained")
+    span = values[-1] - values[0]
+    colors = dict(zip(curves, ACCENT_RAMP * (1 + len(named) // 4),
+                      strict=False))
+    for label, ys in curves.items():
+        ax.plot(values, ys, color=colors[label], linewidth=1.6)
+    # direct end labels, pushed apart where curves converge
+    y_all = [y for ys in curves.values() for y in ys]
+    min_gap = 0.06 * ((max(y_all) - min(y_all)) or 1.0)
+    slot = None
+    for final, label in sorted((ys[-1], label)
+                               for label, ys in curves.items()):
+        slot = final if slot is None else max(final, slot + min_gap)
+        ax.annotate(label.split("::")[-1].removesuffix("_margin"),
+                    (values[-1], slot), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=8,
+                    color=colors[label])
+    ax.axhline(0.0, color=MUTE, linewidth=0.9, linestyle=(0, (4, 3)))
+
+    mins = [min(column) for column in zip(*curves.values(), strict=True)]
+    crossing = None
+    binding = None
+    for i in range(1, len(values)):
+        if mins[i - 1] >= 0 > mins[i]:
+            frac = mins[i - 1] / (mins[i - 1] - mins[i])
+            crossing = values[i - 1] + frac * (values[i] - values[i - 1])
+            binding = min(named, key=lambda label: curves[label][i])
+            break
+    if crossing is not None and binding is not None:
+        ax.axvspan(crossing, values[-1], color=FAINT, alpha=0.35,
+                   linewidth=0)
+        ax.axvline(crossing, color=WARM, linewidth=1.0)
+        ax.annotate(
+            f"{binding.split('::')[-1].removesuffix('_margin')} binds at "
+            f"{crossing:.2f}", (crossing, ax.get_ylim()[1]),
+            xytext=(5, -4), textcoords="offset points", va="top",
+            fontsize=8, color=WARM)
+
+    ax.set_xlim(values[0], values[-1] + 0.22 * span)
+    ax.set_xlabel(xlabel or var)
+    ax.set_ylabel("margin (>= 0 holds)")
+    if title:
+        ax.set_title(title, fontsize=10, color=INK, loc="left")
+    ax.grid(axis="y", color=FAINT, linewidth=0.5)
+    _style_axes(ax)
+    return fig
+
+
+def interval_figure(lo: float, hi: float, *,
+                    span: tuple[float, float] | None = None,
+                    xlabel: str | None = None,
+                    bound_text: str | None = None,
+                    witness: float | None = None,
+                    witness_label: str = "witness",
+                    title: str | None = None) -> Any:
+    """A feasibility interval on an annotated number line.
+
+    Draws ``[lo, hi]`` as a thick accent segment with closed endpoints,
+    an optional exact-bound call-out at ``hi`` (e.g. Z3's rational bound),
+    and an optional ``witness`` dot -- the shape of an
+    :meth:`~sysml2.analysis.smt.SmtSystem.maximize` answer.
+    """
+
+    plt = _plt()
+    fig, ax = plt.subplots(figsize=(7.0, 1.8), layout="constrained")
+    a, b = span if span is not None else (lo - 0.15 * (hi - lo or 1.0),
+                                          hi + 0.35 * (hi - lo or 1.0))
+    ax.hlines(0.5, a, b, color=FAINT, linewidth=1.5, zorder=1)
+    ax.hlines(0.5, lo, hi, color=ACCENT, linewidth=7, zorder=2,
+              capstyle="butt")
+    ax.plot([lo, hi], [0.5, 0.5], "o", color=ACCENT, markersize=7,
+            zorder=3)
+    if bound_text:
+        ax.annotate(bound_text, (hi, 0.5), xytext=(0, 16),
+                    textcoords="offset points", ha="center", fontsize=9,
+                    color=INK)
+    if witness is not None:
+        ax.plot([witness], [0.5], "o", color=WARM, markersize=5, zorder=4)
+        ax.annotate(witness_label, (witness, 0.5), xytext=(0, -20),
+                    textcoords="offset points", ha="center", fontsize=8,
+                    color=WARM)
+    ax.set_xlim(a, b)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_yticks([])
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xlabel(xlabel or "")
+    if title:
+        ax.set_title(title, fontsize=10, color=INK, loc="left")
+    _style_axes(ax)
+    ax.spines["left"].set_visible(False)
+    return fig
