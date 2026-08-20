@@ -129,7 +129,7 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 # -> 'on'
 ```
 
-A complete walk-through lives in `examples/demo.py`, and five executable
+A complete walk-through lives in `examples/demo.py`, and seven executable
 tutorials live in [`notebooks/`](notebooks/):
 
 | Notebook | Covers |
@@ -140,6 +140,7 @@ tutorials live in [`notebooks/`](notebooks/):
 | `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
 | `05_stdlib_and_validation` | the vendored standard library, `sysml2 lint` |
 | `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
+| `07_analysis_and_trades` | CP-SAT architecture trade studies, OpenMDAO sizing/optimization, Z3 requirement consistency |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
