@@ -23,15 +23,20 @@ dev = [
     "pyecore>=0.15",
     "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
     "pytest-asyncio>=0.23",  # vendored ipyelk tests
-    "anywidget>=0.9",  # replay widget
+    "anywidget>=0.9",  # replay widget + analysis viz widgets
+    "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
     # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
+    # cadquery ([cad]) stays OUT of dev: the OCC kernel is ~1 GB and the
+    # notebook's cadquery cell degrades to a printed note without it
 ]
 ecore = ["pyecore>=0.15"]
 replay = ["anywidget>=0.9"]
 mdao = ["openmdao>=3.30"]
 trades = ["ortools>=9.8"]
 smt = ["z3-solver>=4.12"]
+viz = ["matplotlib>=3.8", "anywidget>=0.9"]
+cad = ["cadquery>=2.5"]
 
 [project.scripts]
 sysml2 = "sysml2.cli:main"
@@ -109,6 +114,12 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["openmdao.*", "ortools.*", "z3.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# lazy imports behind the [viz]/[cad] extras
+module = ["matplotlib.*", "cadquery.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
