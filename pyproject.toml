@@ -24,9 +24,14 @@ dev = [
     "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
     "pytest-asyncio>=0.23",  # vendored ipyelk tests
     "anywidget>=0.9",  # replay widget
+    "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
+    # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
 ]
 ecore = ["pyecore>=0.15"]
 replay = ["anywidget>=0.9"]
+mdao = ["openmdao>=3.30"]
+trades = ["ortools>=9.8"]
+smt = ["z3-solver>=4.12"]
 
 [project.scripts]
 sysml2 = "sysml2.cli:main"
@@ -69,7 +74,7 @@ select = [
 "src/sysml2/__init__.py" = ["F403"]  # re-export of the model namespace
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 files = ["src/sysml2"]
 exclude = ["src/sysml2/_gen"]
 check_untyped_defs = true
@@ -101,6 +106,18 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "cairosvg.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["openmdao.*", "ortools.*", "z3.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# numpy stubs (via openmdao) use `type` statements needing py>=3.12,
+# but we typecheck at python_version 3.10
+module = "numpy.*"
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.coverage.run]
 source = ["sysml2"]
