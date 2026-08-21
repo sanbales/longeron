@@ -140,7 +140,7 @@ tutorials live in [`notebooks/`](notebooks/):
 | `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
 | `05_stdlib_and_validation` | the vendored standard library, `sysml2 lint` |
 | `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
-| `07_analysis_and_trades` | CP-SAT architecture trade studies, OpenMDAO sizing/optimization, Z3 requirement consistency |
+| `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.

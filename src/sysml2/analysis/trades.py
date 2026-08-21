@@ -22,12 +22,23 @@ reported :class:`Architecture` is then re-evaluated *exactly* by the
 interpreter (metrics + a ``verified`` constraint re-check), so fixed-point
 rounding can never misreport a design.
 
-Requires the ``trades`` extra: ``pip install "longeron[trades]"``.
+The CP-SAT mapper covers linear-ish catalogs (``+ - * /``).  Models whose
+derived attributes lean on real physics -- ``sqrt``/``pow``, conditionals,
+calc invocations (e.g. ``examples/uav_missions.sysml``) -- are *not*
+encodable and the solver methods raise :class:`AnalysisError`.  The honest
+pattern at catalog scale is then :meth:`TradeStudy.all_architectures` /
+:meth:`TradeStudy.evaluate`: walk the (small) Cartesian candidate space and
+let the interpreter evaluate every mix exactly, ``violations`` naming the
+constraints an infeasible mix breaks.
+
+Requires the ``trades`` extra: ``pip install "longeron[trades]"``
+(:meth:`TradeStudy.evaluate` and :meth:`TradeStudy.all_architectures` run
+on the interpreter alone).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import product
 from math import ceil, floor, lcm
@@ -70,11 +81,14 @@ class VariationPoint:
 
 @dataclass
 class Architecture:
-    """One feasible component mix, with interpreter-exact metrics."""
+    """One component mix, with interpreter-exact metrics."""
 
     selection: dict[str, str]  # point name -> variant name
     metrics: dict[str, float]  # derived attribute -> exact value
     verified: bool = True  # all constraints re-checked by the interpreter
+    #: names of the constraints the interpreter found violated (the
+    #: mix-level answer to "why is this one infeasible?")
+    violations: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         mix = ", ".join(f"{k}={v}" for k, v in self.selection.items())
@@ -277,8 +291,14 @@ class _Encoder:
 
     def _new_var(self, lo: Fraction, hi: Fraction, scale: int) -> Any:
         self._aux += 1
-        return self.model.new_int_var(floor(lo * scale), ceil(hi * scale),
-                                      f"aux_{self._aux}")
+        lo_i, hi_i = floor(lo * scale), ceil(hi * scale)
+        if max(abs(lo_i), abs(hi_i)) >= 2**62:  # CP-SAT domain is int64
+            raise AnalysisError(
+                f"fixed-point encoding overflows CP-SAT's integer domain "
+                f"(scale {scale}): this model's arithmetic is beyond the "
+                "linear mapper -- evaluate mixes exactly with "
+                "all_architectures()/evaluate() instead")
+        return self.model.new_int_var(lo_i, hi_i, f"aux_{self._aux}")
 
 
 def _path(expr: A.Expr) -> QName:
@@ -355,17 +375,46 @@ class TradeStudy:
         return points
 
     def _derived_attributes(self) -> list[tuple[str, A.Expr]]:
-        """Assembly attributes whose values depend on variant selections."""
+        """Assembly attributes whose values depend on variant selections.
 
-        out: list[tuple[str, A.Expr]] = []
-        derived: set[str] = set()
+        Detection runs to a fixed point and the result is ordered by
+        dependency (an attribute comes after every derived attribute it
+        references), so a specialization's own metrics may reference
+        inherited ones -- and vice versa -- regardless of member order.
+        """
+
+        exprs: dict[str, A.Expr] = {}
+        refs: dict[str, set[str]] = {}
+        order: list[str] = []
         for attr in named_members(self.interp, self.assembly, ("attribute",)):
             if attr.value is None or attr.name is None:
                 continue
-            refs = free_refs(attr.value.expr)
-            if any(p[0] in self.points or p[0] in derived for p in refs):
-                out.append((attr.name, attr.value.expr))
-                derived.add(attr.name)
+            exprs[attr.name] = attr.value.expr
+            refs[attr.name] = {p[0] for p in free_refs(attr.value.expr)}
+            order.append(attr.name)
+
+        derived: set[str] = set()
+        changed = True
+        while changed:  # fixed point: member order must not matter
+            changed = False
+            for name in order:
+                if name not in derived and \
+                        refs[name] & (set(self.points) | derived):
+                    derived.add(name)
+                    changed = True
+
+        out: list[tuple[str, A.Expr]] = []
+        placed: set[str] = set()
+        remaining = [n for n in order if n in derived]
+        while remaining:  # Kahn's algorithm, stable on member order
+            ready = [n for n in remaining if refs[n] & derived <= placed]
+            if not ready:
+                raise AnalysisError("cyclic derived attributes: "
+                                    + ", ".join(sorted(remaining)))
+            for name in ready:
+                out.append((name, exprs[name]))
+                placed.add(name)
+            remaining = [n for n in remaining if n not in placed]
         return out
 
     # -- CP-SAT build -----------------------------------------------------------
@@ -462,15 +511,15 @@ class TradeStudy:
             value = self.interp.evaluate(expr, self.assembly, **bindings)
             metrics[name] = float(value)
             bindings[name] = value
-        verified = True
+        violations: list[str] = []
         for con in named_members(self.interp, self.assembly, ("constraint",)):
             body = constraint_expr(self.interp, con)
             if body is None:
                 continue
             if not bool(self.interp.evaluate(body, self.assembly, **bindings)):
-                verified = False
-        return Architecture(selection=dict(selection),
-                            metrics=metrics, verified=verified)
+                violations.append(con.name or con.label)
+        return Architecture(selection=dict(selection), metrics=metrics,
+                            verified=not violations, violations=violations)
 
     @staticmethod
     def _namespace(element: M.Element) -> M.Definition | M.Usage:

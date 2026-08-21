@@ -124,6 +124,168 @@ class TestDroneGeometry:
         assert 0.06 < length < 0.09 and length > width > height
 
 
+class TestNewPrimitives:
+    def test_loft_frustum_volume(self):
+        # 1x1 square to 0.5x0.5 square over length 2: V = h/3 (A0+A1+sqrt)
+        vertices, faces = geometry._loft(
+            (0, 0, 0), (0.5, 0, 0), (0, 0.5, 0),
+            (0, 0, 2), (0.25, 0, 0), (0, 0.25, 0))
+        assert _volume(vertices, faces) == pytest.approx(2 / 3 * 1.75)
+        assert _watertight(vertices, faces)
+
+    def test_tube_volume_and_orientation(self):
+        for rings in ([(0.0, 0.5), (2.0, 0.5)], [(2.0, 0.5), (0.0, 0.5)]):
+            vertices, faces = geometry._tube(rings, segments=24)
+            exact = pi * 0.25 * 2.0
+            assert 0.95 * exact < _volume(vertices, faces) < exact
+            assert _watertight(vertices, faces)
+
+    def test_tube_validates(self):
+        with pytest.raises(AnalysisError):
+            geometry._tube([(0.0, 0.5)])
+        with pytest.raises(AnalysisError):
+            geometry._tube([(0.0, 0.5), (1.0, 0.0)])
+
+
+WINGED = {"wing_span": 2.6, "wing_chord": 0.24, "taper": 0.6,
+          "fuselage_length": 0.95, "prop_diameter": 0.24,
+          "motor_mass": 0.092, "battery_mass": 1.95}
+DART = {"body_length": 1.25, "wing_span": 1.05, "wing_chord": 0.17,
+        "taper": 0.5, "prop_diameter": 0.24, "motor_mass": 0.15,
+        "battery_mass": 0.5}
+
+
+class TestWingedVtolGeometry:
+    def test_parts_and_solidity(self):
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        assert [p["name"] for p in mesh["parts"]] == [
+            "frame", "wing", "tail", "motors", "props", "battery"]
+        assert len({p["color"] for p in mesh["parts"]}) == 6
+        for part in mesh["parts"]:
+            assert _volume(part["vertices"], part["faces"]) > 0
+
+    def test_to_scale_span(self):
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        lo, hi = mesh["bounds"]
+        # z extent: wing tips plus the wingtip-prop disks (radius 0.12)
+        assert hi[2] == pytest.approx(2.6 / 2 + 0.12, abs=1e-3)
+        assert lo[2] == pytest.approx(-(2.6 / 2 + 0.12), abs=1e-3)
+        # the 2.6 m wing dwarfs the quad frame
+        quad = geometry.drone_geometry(prop_diameter_in=0.33 / geometry.IN,
+                                       motor_mass=0.092, battery_mass=0.98,
+                                       esc_mass=0.014)
+        assert (hi[2] - lo[2]) > 2.5 * (quad["bounds"][1][2]
+                                        - quad["bounds"][0][2])
+
+    def test_four_props_two_sizes(self):
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        assert props["opacity"] < 1.0  # spinning disks stay translucent
+        # wingtip disks face forward (span the YZ plane at |z| = half span)
+        zs = props["vertices"][2::3]
+        assert max(zs) == pytest.approx(1.3 + 0.12, abs=1e-3)
+
+    def test_validates_dimensions(self):
+        with pytest.raises(AnalysisError):
+            geometry.winged_vtol_geometry(**{**WINGED, "wing_span": 0.0})
+
+
+class TestInterceptorGeometry:
+    def test_parts_and_solidity(self):
+        mesh = geometry.interceptor_geometry(**DART)
+        assert [p["name"] for p in mesh["parts"]] == [
+            "frame", "wing", "tail", "motors", "props", "battery"]
+        for part in mesh["parts"]:
+            assert _volume(part["vertices"], part["faces"]) > 0
+
+    def test_slender_to_scale(self):
+        mesh = geometry.interceptor_geometry(**DART)
+        lo, hi = mesh["bounds"]
+        length = hi[0] - lo[0]
+        assert length > 1.25  # body plus pusher prop
+        assert hi[2] - lo[2] == pytest.approx(1.05, abs=1e-3)  # wing span
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        ys = frame["vertices"][1::3]
+        assert max(ys) - min(ys) < 0.2 * length  # genuinely slender
+
+    def test_pusher_prop_at_the_stern(self):
+        mesh = geometry.interceptor_geometry(**DART)
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        assert max(props["vertices"][0::3]) < 0  # aft of the midpoint
+
+    def test_validates_dimensions(self):
+        with pytest.raises(AnalysisError):
+            geometry.interceptor_geometry(**{**DART, "body_length": 0.0})
+
+
+@pytest.fixture(scope="module")
+def mission_study():
+    from sysml2.analysis import trades
+
+    catalog = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return trades.TradeStudy(catalog, "UavMissions::InterceptUav")
+
+
+class TestMissionBridge:
+    def test_family_dispatch(self, mission_study):
+        def mix(airframe):
+            return mission_study.evaluate({
+                "airframe": airframe, "motors": "stdMotor",
+                "props": "slimProp", "battery": "packMid"})
+
+        quad = geometry.mission_geometry(mission_study, mix("boxQuad"))
+        assert [p["name"] for p in quad["parts"]] == [
+            "frame", "motors", "props", "battery", "esc"]
+        winged = geometry.mission_geometry(mission_study, mix("vtolWing"))
+        assert any(p["name"] == "wing" for p in winged["parts"])
+        dart = geometry.mission_geometry(mission_study,
+                                         mix("dartInterceptor"))
+        span_z = dart["bounds"][1][2] - dart["bounds"][0][2]
+        assert span_z == pytest.approx(1.05, abs=1e-3)
+
+    def test_params_read_the_selected_variants(self, mission_study):
+        arch = mission_study.evaluate({
+            "airframe": "vtolWing", "motors": "ecoMotor",
+            "props": "lifterProp", "battery": "packLite"})
+        params = geometry.mission_params(mission_study, arch)
+        assert params["wing_span"] == 2.6
+        assert params["prop_diameter"] == 0.51
+        assert params["motor_mass"] == 0.058
+        assert params["battery_mass"] == 0.5
+
+    def test_missing_point_is_loud(self, mission_study):
+        arch = mission_study.evaluate({
+            "airframe": "boxQuad", "motors": "stdMotor",
+            "props": "slimProp", "battery": "packMid"})
+        arch.selection.pop("battery")
+        with pytest.raises(AnalysisError):
+            geometry.mission_params(mission_study, arch)
+
+
+class TestLineup:
+    def test_side_by_side_at_true_scale(self):
+        winged = geometry.winged_vtol_geometry(**WINGED)
+        dart = geometry.interceptor_geometry(**DART)
+        scene = geometry.lineup([winged, dart], labels=["isr", "dash"])
+        assert len(scene["parts"]) == 12
+        assert {p["name"].split(":")[0] for p in scene["parts"]} == \
+            {"isr", "dash"}
+        # widths are preserved, meshes do not overlap, ground is shared
+        width = sum(m["bounds"][1][0] - m["bounds"][0][0]
+                    for m in (winged, dart)) + 0.25
+        assert scene["bounds"][1][0] - scene["bounds"][0][0] == \
+            pytest.approx(width, abs=1e-3)
+        assert scene["bounds"][0][1] == pytest.approx(
+            min(m["bounds"][0][1] for m in (winged, dart)), abs=1e-3)
+
+    def test_validates(self):
+        with pytest.raises(AnalysisError):
+            geometry.lineup([])
+        with pytest.raises(AnalysisError):
+            geometry.lineup([geometry.interceptor_geometry(**DART)],
+                            labels=["a", "b"])
+
+
 class TestArchitectureBridge:
     def test_params_from_mix(self, study):
         arch = study.evaluate({"motors": "sunnySky2212", "props": "apc1045",
