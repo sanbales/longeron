@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2.analysis import AnalysisError, trades
+import longeron
+from longeron.analysis import AnalysisError, trades
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -26,7 +26,7 @@ MISSIONS = {
 
 @pytest.fixture(scope="module")
 def model():
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +60,7 @@ def base_mix(arch):
 
 class TestModelShape:
     def test_example_is_clean(self, model):
-        assert sysml2.validate(model) == []
+        assert longeron.validate(model) == []
 
     def test_mission_points(self, studies):
         shared = {"airframe", "motors", "props", "battery", "material"}
@@ -90,7 +90,7 @@ class TestModelShape:
             seen = set()
             names = [n for n, _ in study.derived_order]
             for name, expr in study.derived_order:
-                from sysml2.analysis._expr import free_refs
+                from longeron.analysis._expr import free_refs
 
                 for ref in free_refs(expr):
                     if ref[0] in names:

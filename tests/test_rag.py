@@ -1,21 +1,21 @@
 """RAG substrate: deterministic chunking, neighborhoods, keyword search.
 
-No third-party dependencies -- :mod:`sysml2.rag` is stdlib only.
+No third-party dependencies -- :mod:`longeron.rag` is stdlib only.
 """
 
 from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2 import rag
+import longeron
+from longeron import rag
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def model():
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -39,14 +39,14 @@ def test_every_chunk_reparses_as_sysml(chunks):
     must parse standalone (references may dangle; syntax may not)."""
 
     for chunk in chunks:
-        sysml2.loads(chunk["text"])  # raises ParseError on bad syntax
+        longeron.loads(chunk["text"])  # raises ParseError on bad syntax
 
 
 def test_oversized_definitions_split_and_still_reparse(model):
     tight = rag.model_chunks(model, max_chars=400)
     assert len(tight) > len(rag.model_chunks(model))
     for chunk in tight:
-        sysml2.loads(chunk["text"])
+        longeron.loads(chunk["text"])
     nested = [c for c in tight if c["id"].startswith("UavMissions::MissionUAV::")]
     assert any(c["id"] == "UavMissions::MissionUAV::armWall" for c in nested)
 
@@ -124,7 +124,7 @@ def test_neighborhood_resolves_member_names_to_their_chunk(model):
 
 
 def test_neighborhood_unknown_name_raises(model):
-    with pytest.raises(sysml2.SysMLError):
+    with pytest.raises(longeron.SysMLError):
         rag.neighborhood(model, "NoSuch::Thing")
 
 

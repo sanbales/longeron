@@ -1,4 +1,4 @@
-// An architecture trade-study model for the sysml2.analysis spikes:
+// An architecture trade-study model for the longeron.analysis spikes:
 // a quad-copter component catalog captured with variation/variant,
 // assembly-level derived attributes, compatibility rules, and system
 // requirements.  Each variation point selects ONE variant (homogeneous

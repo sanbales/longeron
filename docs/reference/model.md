@@ -1,13 +1,13 @@
 # Object model
 
-## `sysml2.model`
+## `longeron.model`
 
 ```{eval-rst}
-.. automodule:: sysml2.model
+.. automodule:: longeron.model
 ```
 
-## `sysml2.ast`
+## `longeron.ast`
 
 ```{eval-rst}
-.. automodule:: sysml2.ast
+.. automodule:: longeron.ast
 ```

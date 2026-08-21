@@ -4,18 +4,18 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
+import longeron
 
 rdflib = pytest.importorskip("rdflib")
 
-from sysml2 import rdf  # noqa: E402  (import after the rdflib guard)
+from longeron import rdf  # noqa: E402  (import after the rdflib guard)
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def model():
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -195,7 +195,7 @@ def test_graph_is_reproducible(model):
 
 
 def test_evaluated_values():
-    model = sysml2.loads(
+    model = longeron.loads(
         """
         package P {
             part def V {
@@ -213,13 +213,13 @@ def test_evaluated_values():
 
 
 def test_custom_element_base():
-    model = sysml2.loads("package P { part def X; }")
+    model = longeron.loads("package P { part def X; }")
     graph = rdf.to_graph(model, base="urn:demo:")
     assert (rdflib.URIRef("urn:demo:P/X"), rdflib.RDF.type, SYSML.PartDefinition) in graph
 
 
 def test_names_needing_quotes_are_percent_encoded():
-    model = sysml2.loads("package 'My Pkg' { part def 'X Y'; }")
+    model = longeron.loads("package 'My Pkg' { part def 'X Y'; }")
     graph = rdf.to_graph(model)
     subject = rdflib.URIRef(rdf.ELEMENT_BASE + "My%20Pkg/X%20Y")
     assert (subject, rdflib.RDF.type, SYSML.PartDefinition) in graph

@@ -37,15 +37,21 @@ jobs:
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install --quiet dist/*.whl
           cd /tmp && /tmp/smoke/bin/python - <<'EOF'
-          import sysml2
-          from sysml2.validation import validate
+          import longeron
+          from longeron.validation import validate
 
-          model = sysml2.loads(
+          model = longeron.loads(
               "package P { part def V { attribute m : Real = 1.0; }"
               " part def W { attribute bad : Reall; } }")
           diagnostics = validate(model)  # stdlib must resolve from the wheel
           assert len(diagnostics) == 1 and "Reall" in diagnostics[0].message
-          assert sysml2.Interpreter(model).instantiate("P::V").slots["m"] == 1.0
+          assert longeron.Interpreter(model).instantiate("P::V").slots["m"] == 1.0
+
+          # the bundled sysml2 compatibility shim: same objects, both names
+          import sysml2
+          import sysml2.rdf
+          assert sysml2.loads is longeron.loads
+          assert sysml2.rdf is longeron.rdf
           print("wheel smoke OK")
           EOF
       - uses: actions/upload-artifact@v4

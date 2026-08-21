@@ -1,5 +1,5 @@
 // A small KerML (kernel modeling language) example.
-// The sysml2 package parses and validates KerML; model building targets SysML.
+// The longeron package parses and validates KerML; model building targets SysML.
 package Kernel {
     doc /* Minimal kernel library sketch. */
 

@@ -1,51 +1,51 @@
 # Interchange
 
-## `sysml2.export`
+## `longeron.export`
 
 ```{eval-rst}
-.. automodule:: sysml2.export
+.. automodule:: longeron.export
 ```
 
-## `sysml2.importer`
+## `longeron.importer`
 
 ```{eval-rst}
-.. automodule:: sysml2.importer
+.. automodule:: longeron.importer
 ```
 
-## `sysml2.kerml`
+## `longeron.kerml`
 
 ```{eval-rst}
-.. automodule:: sysml2.kerml
+.. automodule:: longeron.kerml
 ```
 
-## `sysml2.ecore`
+## `longeron.ecore`
 
 Requires the `ecore` extra (`pip install "longeron[ecore]"`).
 
 ```{eval-rst}
-.. automodule:: sysml2.ecore
+.. automodule:: longeron.ecore
 ```
 
-## `sysml2.api`
+## `longeron.api`
 
 Requires the `ecore` extra (`pip install "longeron[ecore]"`).
 
 ```{eval-rst}
-.. automodule:: sysml2.api
+.. automodule:: longeron.api
 ```
 
-## `sysml2.rdf`
+## `longeron.rdf`
 
 Requires the `rdf` extra (`pip install "longeron[rdf]"`).
 
 ```{eval-rst}
-.. automodule:: sysml2.rdf
+.. automodule:: longeron.rdf
 ```
 
-## `sysml2.rag`
+## `longeron.rag`
 
 No extra required — the retrieval substrate is stdlib only.
 
 ```{eval-rst}
-.. automodule:: sysml2.rag
+.. automodule:: longeron.rag
 ```

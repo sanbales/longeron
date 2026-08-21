@@ -4,9 +4,9 @@ import pytest
 
 pytest.importorskip("ipyelk")
 
-import sysml2
-from sysml2 import diagrams
-from sysml2 import model as M
+import longeron
+from longeron import diagrams
+from longeron import model as M
 
 
 def _walk(node):
@@ -17,7 +17,7 @@ def _walk(node):
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return sysml2.load("examples/drone.sysml")
+    return longeron.load("examples/drone.sysml")
 
 
 class TestStructure:
@@ -66,7 +66,7 @@ class TestStructure:
         assert any("sysml-edge-typed" in c for c in classes)
 
     def test_specialization_edges(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 part def Base;
                 part def Derived :> Base;
@@ -78,7 +78,7 @@ class TestStructure:
         assert "sysml-edge-specializes" in edges[0].properties.cssClasses
 
     def test_connection_edges(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 part sys {
                     part a;
@@ -116,7 +116,7 @@ class TestStates:
         assert 'low_battery / send "RTL"' in texts  # real effect, not '\u2026'
 
     def test_nested_states(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 state def M {
                     entry; then outer;
@@ -134,7 +134,7 @@ class TestStates:
 
 class TestActions:
     def test_succession_graph(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 action def Pipeline {
                     action a { assign x := 1; }

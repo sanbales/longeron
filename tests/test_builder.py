@@ -1,7 +1,7 @@
 """Model builder tests: parse tree -> model elements."""
 
-import sysml2
-from sysml2 import model as M
+import longeron
+from longeron import model as M
 
 
 def test_package_structure(vehicle_model):
@@ -97,7 +97,7 @@ def test_state_machine_structure(state_model):
 
 
 def test_visibility_and_imports():
-    model = sysml2.loads("""
+    model = longeron.loads("""
         package P {
             private import Other::Thing;
             public import Everything::*;
@@ -117,7 +117,7 @@ def test_visibility_and_imports():
 
 
 def test_interfaces_fully_modeled():
-    model = sysml2.loads("""
+    model = longeron.loads("""
         package P {
             interface def Plug { end p1 : Port1; end p2 : Port2; }
         }
@@ -130,7 +130,7 @@ def test_interfaces_fully_modeled():
 
 
 def test_connection_usage():
-    model = sysml2.loads("""
+    model = longeron.loads("""
         package P {
             part def System {
                 part a;
@@ -148,7 +148,7 @@ def test_connection_usage():
 
 
 def test_quoted_names():
-    model = sysml2.loads("package 'My Package' { part def 'Two Words'; }")
+    model = longeron.loads("package 'My Package' { part def 'Two Words'; }")
     pkg = model.members[0]
     assert pkg.name == "My Package"
     assert pkg.find("Two Words") is not None
@@ -162,29 +162,31 @@ def test_programmatic_definition():
             kind="attribute",
             name="size",
             types=["Real"],
-            value=M.FeatureValue(sysml2.parse_expression("2 + 3")),
+            value=M.FeatureValue(longeron.parse_expression("2 + 3")),
         )
     )
     pkg.add(part)
     model = M.Model()
     model.add(pkg)
-    text = sysml2.to_sysml(model)
-    reparsed = sysml2.loads(text)
+    text = longeron.to_sysml(model)
+    reparsed = longeron.loads(text)
     size = reparsed.find("Prog::Widget::size")
     assert size.value.expr.to_text() == "2 + 3"
 
 
 def test_library_package_standard_flag():
     # regression: 'library package' without 'standard' failed to parse
-    model = sysml2.loads("library package L { part def X; }")
+    model = longeron.loads("library package L { part def X; }")
     assert model.find("L").is_standard is False
-    model2 = sysml2.loads("standard library package L2 { part def X; }")
+    model2 = longeron.loads("standard library package L2 { part def X; }")
     assert model2.find("L2").is_standard is True
 
 
 def test_named_send_action_keeps_name():
     # regression: the 'action <name> send ...' corpus form dropped the name
-    model = sysml2.loads("package P { action def A { action publish send new Publish(t) via p; } }")
+    model = longeron.loads(
+        "package P { action def A { action publish send new Publish(t) via p; } }"
+    )
     sends = [m for m in model.find("P::A").members if isinstance(m, M.SendAction)]
     assert sends[0].name == "publish"
     assert sends[0].via.to_text() == "p"
@@ -192,7 +194,7 @@ def test_named_send_action_keeps_name():
 
 def test_metadata_prefixed_enum_value():
     # regression: '#Security enum secret : ...' inside an enum body
-    model = sysml2.loads("""
+    model = longeron.loads("""
         package P {
             metadata def Security;
             enum def Level {

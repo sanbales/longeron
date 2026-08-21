@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from sysml2.analysis import geometry, viewer3d
+from longeron.analysis import geometry, viewer3d
 
 MESH = geometry.drone_geometry(
     prop_diameter_in=5.0, motor_mass=0.033, battery_mass=0.19, esc_mass=0.012
@@ -65,7 +65,7 @@ class TestMeshViewer:
             "shiftKey",
             "button === 2",
             "setPointerCapture",
-            "sysml2-viewer3d-hint",
+            "longeron-viewer3d-hint",
         ):
             assert token in widget._esm, token
         for word in ("orbit", "pan", "zoom", "fit"):

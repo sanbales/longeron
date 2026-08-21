@@ -8,20 +8,20 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2.analysis import structure, trades
+import longeron
+from longeron.analysis import structure, trades
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def model():
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
 def build(model):
-    mdao = pytest.importorskip("sysml2.analysis.mdao")
+    mdao = pytest.importorskip("longeron.analysis.mdao")
     pytest.importorskip("openmdao")
     return mdao.build_problem(
         model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
@@ -224,8 +224,8 @@ class TestWidgets:
             "mouseenter",
             "click",
             "pinned",
-            "sysml2-n2-feedback-ring",
-            "sysml2-n2-group",
+            "longeron-n2-feedback-ring",
+            "longeron-n2-group",
         ):
             assert token in widget._esm, token
 

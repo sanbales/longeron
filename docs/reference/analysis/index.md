@@ -1,7 +1,7 @@
 # Analysis
 
 ```{eval-rst}
-.. automodule:: sysml2.analysis
+.. automodule:: longeron.analysis
 ```
 
 ```{toctree}

@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2.analysis import AnalysisError, dashboard
+import longeron
+from longeron.analysis import AnalysisError, dashboard
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def model():
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -152,7 +152,7 @@ class TestDashboardData:
         """apply_thresholds at the model's own defaults must agree with
         the interpreter's constraint verdicts, mission by mission."""
 
-        from sysml2.analysis import trades
+        from longeron.analysis import trades
 
         live = dashboard.apply_thresholds(
             data["candidates"],

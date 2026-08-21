@@ -2,8 +2,8 @@
 
 import pytest
 
-import sysml2
-from sysml2.errors import ExecutionError
+import longeron
+from longeron.errors import ExecutionError
 
 
 class TestTrafficLight:
@@ -37,8 +37,8 @@ class TestTrafficLight:
 
 @pytest.fixture(scope="module")
 def thermostat_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 item def Overheat;
                 state def Thermostat {
@@ -93,8 +93,8 @@ class TestRichStateMachine:
 
 
 def test_eventless_transitions():
-    interp = sysml2.Interpreter(
-        sysml2.loads("""
+    interp = longeron.Interpreter(
+        longeron.loads("""
         package P {
             state def AutoAdvance {
                 attribute ready : Boolean := true;
@@ -112,8 +112,8 @@ def test_eventless_transitions():
 
 
 def test_missing_entry_transition():
-    interp = sysml2.Interpreter(
-        sysml2.loads("""
+    interp = longeron.Interpreter(
+        longeron.loads("""
         package P { state def NoEntry { state a; } }
     """)
     )

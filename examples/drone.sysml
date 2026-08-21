@@ -1,7 +1,7 @@
-// A demonstration SysML v2 model exercising the sysml2 package:
+// A demonstration SysML v2 model exercising the longeron package:
 // structure, calculations, constraints, requirements, actions, and states.
 package Drone {
-    doc /* A small quad-copter drone, modeled for the sysml2 demo. */
+    doc /* A small quad-copter drone, modeled for the longeron demo. */
 
     // ----- structure ---------------------------------------------------
 

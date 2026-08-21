@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""End-to-end demo of the sysml2 package: define, export, execute, full loop.
+"""End-to-end demo of the longeron package: define, export, execute, full loop.
 
 Run:  python examples/demo.py
 """
@@ -7,7 +7,7 @@ Run:  python examples/demo.py
 import tempfile
 from pathlib import Path
 
-import sysml2
+import longeron
 
 HERE = Path(__file__).parent
 
@@ -18,14 +18,14 @@ def banner(title: str) -> None:
 
 def main() -> None:
     # ----- 1. Define: parse a textual model --------------------------------
-    model = sysml2.load(HERE / "drone.sysml")
-    interp = sysml2.Interpreter(model)
+    model = longeron.load(HERE / "drone.sysml")
+    interp = longeron.Interpreter(model)
 
     banner("1. Parsed model, re-exported as SysML v2 text (excerpt)")
-    print("\n".join(sysml2.to_sysml(model).splitlines()[:24]))
+    print("\n".join(longeron.to_sysml(model).splitlines()[:24]))
 
     banner("2. JSON export (excerpt)")
-    print("\n".join(sysml2.to_json(model).splitlines()[:20]))
+    print("\n".join(longeron.to_json(model).splitlines()[:20]))
 
     # ----- 3. Instantiate & check ------------------------------------------
     banner("3. Instantiate QuadCopter and check constraints")
@@ -78,7 +78,7 @@ def main() -> None:
 
     # ----- 8. Programmatic definition ----------------------------------------------
     banner("8. Define a model programmatically and export it")
-    from sysml2 import model as M
+    from longeron import model as M
 
     pkg = M.Package(name="Generated")
     sensor = M.Definition(kind="part", name="Sensor")
@@ -87,38 +87,38 @@ def main() -> None:
             kind="attribute",
             name="rate",
             types=["Real"],
-            value=M.FeatureValue(sysml2.parse_expression("100.0 * 2")),
+            value=M.FeatureValue(longeron.parse_expression("100.0 * 2")),
         )
     )
     pkg.add(sensor)
     new_model = M.Model()
     new_model.add(pkg)
-    print(sysml2.to_sysml(new_model))
+    print(longeron.to_sysml(new_model))
 
     # ----- 9. Full loop: run, write results back, save, reload -----------------------
     banner("9. Full loop: run -> snapshot results into the model -> save -> reload")
-    out_dir = Path(tempfile.mkdtemp(prefix="sysml2-demo-"))
+    out_dir = Path(tempfile.mkdtemp(prefix="longeron-demo-"))
     flown = interp.instantiate("Drone::QuadCopter", payloadMass=0.35)
     snapshot = interp.snapshot(flown, name="asFlown")
     model.find("Drone").add(snapshot)
 
-    sysml2.save(model, out_dir / "drone_with_results.sysml")
-    sysml2.save(model, out_dir / "drone_with_results.json")
+    longeron.save(model, out_dir / "drone_with_results.sysml")
+    longeron.save(model, out_dir / "drone_with_results.json")
     print("saved:", *(str(p) for p in sorted(out_dir.iterdir())), sep="\n  ")
 
-    reloaded = sysml2.load(out_dir / "drone_with_results.json")
+    reloaded = longeron.load(out_dir / "drone_with_results.json")
     print(
         "reloaded from JSON; snapshot mass =",
-        sysml2.Interpreter(reloaded)
+        longeron.Interpreter(reloaded)
         .instantiate(reloaded.find("Drone::asFlown"))
         .slots["totalMass"],
     )
 
     # ----- 10. KerML projection --------------------------------------------------------
     banner("10. Project the model onto KerML (and re-parse it as KerML)")
-    kerml_text = sysml2.to_kerml(model)
+    kerml_text = longeron.to_kerml(model)
     print("\n".join(kerml_text.splitlines()[:14]))
-    sysml2.parse_kerml_text(kerml_text)
+    longeron.parse_kerml_text(kerml_text)
     print("...\nKerML output re-parses cleanly.")
 
 

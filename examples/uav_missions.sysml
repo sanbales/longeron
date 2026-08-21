@@ -1,4 +1,4 @@
-// A multi-mission UAV catalog for the sysml2.analysis trade machinery.
+// A multi-mission UAV catalog for the longeron.analysis trade machinery.
 //
 // One component catalog (airframes, motors, props, batteries, mission
 // equipment) is evaluated against THREE mission contexts, each a part
@@ -38,7 +38,7 @@ package UavMissions {
     // Declares that a calc def's in/out parameters are the I/O contract of
     // a higher-fidelity tool wrapped as an OpenMDAO component.  `component`
     // is an entry-point path 'module:attr' (a Component subclass or a
-    // factory callable).  sysml2.analysis.mdao.build_problem validates the
+    // factory callable).  longeron.analysis.mdao.build_problem validates the
     // declared parameters against the component's actual I/O and can swap
     // fidelity per calc (candidate for a shared library package later).
 
@@ -50,7 +50,7 @@ package UavMissions {
 
     // ----- discipline packages ----------------------------------------------
     // The physics calc defs live in one package per discipline.  This is
-    // not cosmetic: sysml2.analysis.mdao reads an attribute's calc
+    // not cosmetic: longeron.analysis.mdao reads an attribute's calc
     // invocations and groups the generated OpenMDAO components by the
     // owning package, so the N2 diagram shows Aerodynamics / Propulsion /
     // Structures / Performance blocks because the MODEL says so.

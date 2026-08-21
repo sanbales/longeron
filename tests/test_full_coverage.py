@@ -5,8 +5,8 @@ filtered imports.  All of them must build (no Unsupported) and round-trip.
 
 import pytest
 
-import sysml2
-from sysml2 import model as M
+import longeron
+from longeron import model as M
 
 FULL_COVERAGE_SOURCES = [
     """
@@ -115,24 +115,24 @@ FULL_COVERAGE_SOURCES = [
 
 @pytest.mark.parametrize("source", FULL_COVERAGE_SOURCES)
 def test_no_unsupported(source):
-    model = sysml2.loads(source)
+    model = longeron.loads(source)
     leftovers = [e for e in model.iter_tree() if isinstance(e, M.Unsupported)]
     assert not leftovers, f"unsupported: {[u.rule for u in leftovers]}"
 
 
 @pytest.mark.parametrize("source", FULL_COVERAGE_SOURCES)
 def test_round_trip(source):
-    model1 = sysml2.loads(source)
-    text = sysml2.to_sysml(model1)
-    model2 = sysml2.loads(text, source_name="<reprint>")
-    d1, d2 = sysml2.to_dict(model1), sysml2.to_dict(model2)
+    model1 = longeron.loads(source)
+    text = longeron.to_sysml(model1)
+    model2 = longeron.loads(text, source_name="<reprint>")
+    d1, d2 = longeron.to_dict(model1), longeron.to_dict(model2)
     d1.pop("source_name", None)
     d2.pop("source_name", None)
     assert d1 == d2, f"round-trip mismatch for:\n{text}"
 
 
 def test_interface_structure():
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[0])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[0])
     i1 = model.find("Interfaces::sys::i1")
     assert isinstance(i1, M.InterfaceUsage)
     assert i1.types == ["Plug"]
@@ -140,7 +140,7 @@ def test_interface_structure():
 
 
 def test_flow_structure():
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[2])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[2])
     sys_part = model.find("Flows::sys")
     flows = [m for m in sys_part.members if isinstance(m, M.FlowUsage)]
     assert flows[0].payload == "fluid : Water"
@@ -151,7 +151,7 @@ def test_flow_structure():
 
 
 def test_metadata_structure():
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[4])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[4])
     pkg = model.find("Meta")
     annotations = [m for m in pkg.members if isinstance(m, M.MetadataUsage)]
     assert annotations[0].typed_by == "Safety"
@@ -163,7 +163,7 @@ def test_metadata_structure():
 
 
 def test_satisfy_structure():
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[5])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[5])
     system = model.find("Reqs::system")
     satisfies = [m for m in system.members if isinstance(m, M.SatisfyUsage)]
     assert satisfies[0].subsets == ["R1"]
@@ -173,7 +173,7 @@ def test_satisfy_structure():
 
 
 def test_filtered_import():
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[6])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[6])
     imports = [m for m in model.find("Filtered").members if isinstance(m, M.Import)]
     assert imports[0].filters and imports[0].filters[0].to_text() == "@Safety"
     assert imports[1].is_recursive
@@ -182,7 +182,7 @@ def test_filtered_import():
 def test_filtered_expose():
     # regression: 'expose X::**[@F];' crashed the builder (filterPackage
     # alternative was only handled for regular imports)
-    model = sysml2.loads(FULL_COVERAGE_SOURCES[1])
+    model = longeron.loads(FULL_COVERAGE_SOURCES[1])
     view = model.find("Views::myView")
     exposes = [m for m in view.members if isinstance(m, M.Expose)]
     assert exposes[0].is_namespace and not exposes[0].filters

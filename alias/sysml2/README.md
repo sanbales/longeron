@@ -1,15 +1,20 @@
 # sysml2 (alias)
 
 This distribution is an **alias for
-[`longeron`](https://pypi.org/project/longeron/)**, whose import name is
-`sysml2`:
+[`longeron`](https://pypi.org/project/longeron/)**:
 
 ```bash
 pip install sysml2   # equivalent to: pip install longeron
 ```
 
+The primary import name is `longeron`, but the historical name keeps
+working — longeron ships a built-in `sysml2` compatibility shim, so **both**
+imports below work whether you installed `sysml2` or plain `longeron`
+(this alias distribution stays metadata-only):
+
 ```python
-import sysml2
+import longeron   # the real package
+import sysml2     # compatibility alias, same module objects
 ```
 
 Longeron defines, executes, and replays SysML v2 models in Python:

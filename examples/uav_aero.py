@@ -4,7 +4,7 @@
 component through its ``@ExternalAnalysis`` annotation: the calc def's
 ``in`` parameters are the I/O contract, its body is the first-order model
 (parasite CdA + span-efficiency induced drag), and this module is the tool
-that refines it.  ``sysml2.analysis.mdao.build_problem`` validates the
+that refines it.  ``longeron.analysis.mdao.build_problem`` validates the
 declared parameter names against the component's actual inputs/outputs
 and swaps it in per calc with ``fidelity={"CruisePower": "external"}``.
 

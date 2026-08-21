@@ -6,13 +6,13 @@ pytest.importorskip("pyecore")
 
 from conftest import VEHICLE_MODEL
 
-import sysml2
-from sysml2 import ecore
+import longeron
+from longeron import ecore
 
 
 @pytest.fixture(scope="module")
 def spec(vehicle_model=None):
-    model = sysml2.loads(VEHICLE_MODEL)
+    model = longeron.loads(VEHICLE_MODEL)
     return ecore.to_spec(model)
 
 
@@ -40,7 +40,7 @@ class TestMetamodel:
         } <= names
 
     def test_unknown_class_raises(self):
-        with pytest.raises(sysml2.SysMLError, match="no metaclass"):
+        with pytest.raises(longeron.SysMLError, match="no metaclass"):
             ecore.spec_class("NoSuchMetaclass")
 
 
@@ -110,7 +110,7 @@ class TestProjection:
         assert str(param.direction) == "in"
 
     def test_element_ids_stable(self):
-        model = sysml2.loads(VEHICLE_MODEL)
+        model = longeron.loads(VEHICLE_MODEL)
         first = ecore.to_spec(model)
         second = ecore.to_spec(model)
         ids1 = sorted(o.elementId for o in first.all_instances())
@@ -140,7 +140,7 @@ class TestXMI:
 
 
 def test_statements_projected():
-    model = sysml2.loads("""
+    model = longeron.loads("""
         package P {
             action def Go {
                 in n : Integer;

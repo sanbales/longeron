@@ -1,8 +1,8 @@
-"""Shared fixtures for the sysml2 test suite."""
+"""Shared fixtures for the longeron test suite."""
 
 import pytest
 
-import sysml2
+import longeron
 
 VEHICLE_MODEL = """
 package Vehicles {
@@ -108,29 +108,29 @@ package Machines {
 
 @pytest.fixture(scope="session")
 def vehicle_model():
-    return sysml2.loads(VEHICLE_MODEL)
+    return longeron.loads(VEHICLE_MODEL)
 
 
 @pytest.fixture(scope="session")
 def action_model():
-    return sysml2.loads(ACTION_MODEL)
+    return longeron.loads(ACTION_MODEL)
 
 
 @pytest.fixture(scope="session")
 def state_model():
-    return sysml2.loads(STATE_MODEL)
+    return longeron.loads(STATE_MODEL)
 
 
 @pytest.fixture()
 def vehicle_interp(vehicle_model):
-    return sysml2.Interpreter(vehicle_model)
+    return longeron.Interpreter(vehicle_model)
 
 
 @pytest.fixture()
 def action_interp(action_model):
-    return sysml2.Interpreter(action_model)
+    return longeron.Interpreter(action_model)
 
 
 @pytest.fixture()
 def state_interp(state_model):
-    return sysml2.Interpreter(state_model)
+    return longeron.Interpreter(state_model)

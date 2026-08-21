@@ -7,16 +7,16 @@ import pytest
 
 pytest.importorskip("z3")
 
-import sysml2
-from sysml2 import model as M
-from sysml2.analysis import smt
+import longeron
+from longeron import model as M
+from longeron.analysis import smt
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture()
 def drone():
-    return sysml2.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
 
 
 class TestConsistency:
@@ -44,7 +44,7 @@ class TestConflictCore:
                 kind="constraint",
                 name="bigPayload",
                 constraint_kind="require",
-                result=sysml2.parse_expression("drone.payloadMass >= 0.6"),
+                result=longeron.parse_expression("drone.payloadMass >= 0.6"),
             )
         )
         pkg.add(req)
