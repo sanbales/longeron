@@ -4,14 +4,14 @@ import math
 
 import pytest
 
-import sysml2
-from sysml2.errors import EvaluationError
+import longeron
+from longeron.errors import EvaluationError
 
 
 @pytest.fixture(scope="module")
 def interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
         package Lib {
             attribute gravity : Real = 9.81;
             enum def Color { red; green; blue; }
@@ -102,7 +102,7 @@ def test_namespace_constant(interp):
 
 def test_enum_literal(interp):
     value = interp.evaluate("Color::green", context="Lib")
-    assert isinstance(value, sysml2.EnumValue)
+    assert isinstance(value, longeron.EnumValue)
     assert value.name == "green"
     assert interp.evaluate("Color::green == Color::green", context="Lib") is True
     assert interp.evaluate("Color::green == Color::red", context="Lib") is False
@@ -125,5 +125,5 @@ def test_index_out_of_range(interp):
 
 
 def test_evaluate_ast_directly(interp):
-    expr = sysml2.parse_expression("2 + 2")
+    expr = longeron.parse_expression("2 + 2")
     assert interp.evaluate(expr) == 4

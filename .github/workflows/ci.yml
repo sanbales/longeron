@@ -54,4 +54,4 @@ jobs:
 
       - run: pixi run python scripts/generate_parsers.py
 
-      - run: git diff --exit-code -- src/sysml2/_gen
+      - run: git diff --exit-code -- src/longeron/_gen

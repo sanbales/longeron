@@ -14,7 +14,7 @@ map, 3D viewer, and dashboard in tutorial 7; the replay player in
 tutorial 4) are live browser applications and cannot run on a static
 site — those cells show a textual placeholder here. Run the notebooks in
 JupyterLab (`pixi run lab`) for the full experience. Static SVG/PNG
-exports ({mod}`sysml2.render`) and matplotlib figures render normally
+exports ({mod}`longeron.render`) and matplotlib figures render normally
 below.
 :::
 
@@ -30,7 +30,7 @@ so that cell degrades — as designed — to a printed pointer at the extra.
 | {doc}`2. Export and interchange <02_export_and_interchange>` | SysML/JSON round-trips, save/load, KerML, spec metamodel, API JSON |
 | {doc}`3. Calculations and constraints <03_calculations_and_constraints>` | expressions, calcs, instantiation, constraints, requirements, the full loop |
 | {doc}`4. Actions and states <04_actions_and_states>` | action graphs, hierarchical/parallel state machines, time |
-| {doc}`5. Stdlib and validation <05_stdlib_and_validation>` | the vendored standard library, `sysml2 lint` |
+| {doc}`5. Stdlib and validation <05_stdlib_and_validation>` | the vendored standard library, `longeron lint` |
 | {doc}`6. Interactive diagrams <06_interactive_diagrams>` | ipyelk structure/state/action diagrams, click-selection, headless SVG/PNG |
 | {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views |
 | {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |

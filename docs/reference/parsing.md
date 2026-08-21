@@ -1,13 +1,13 @@
 # Parsing & building
 
-## `sysml2.parser`
+## `longeron.parser`
 
 ```{eval-rst}
-.. automodule:: sysml2.parser
+.. automodule:: longeron.parser
 ```
 
-## `sysml2.builder`
+## `longeron.builder`
 
 ```{eval-rst}
-.. automodule:: sysml2.builder
+.. automodule:: longeron.builder
 ```

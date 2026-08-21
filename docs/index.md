@@ -2,7 +2,8 @@
 
 *The spine of your system model* — a Python package that defines, exports,
 imports, and **executes** SysML v2 models. The distribution is named
-`longeron`; the import name is `sysml2`. The parsers are generated with
+`longeron`; the import name is `longeron` (with `sysml2` kept as a
+built-in compatibility alias). The parsers are generated with
 ANTLR 4 from combined grammars for SysML v2 and KerML (see the
 [grammar patches](architecture.md#grammar-patches) for local deviations).
 

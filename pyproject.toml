@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longeron"
-version = "0.2.0"
+version = "0.3.0"
 description = "Define, execute, and replay SysML v2 models in Python: ANTLR-based parser, validator, interpreter, and diagram renderers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,7 +43,7 @@ docs = [
     "sphinx-design>=0.6",
 ]
 ecore = ["pyecore>=0.15"]
-rdf = ["rdflib>=7.0"]  # sysml2.rdf; sysml2.rag deliberately needs NO extra
+rdf = ["rdflib>=7.0"]  # longeron.rdf; longeron.rag deliberately needs NO extra
 replay = ["anywidget>=0.9"]
 mdao = ["openmdao>=3.30"]
 trades = ["ortools>=9.8"]
@@ -52,13 +52,14 @@ viz = ["matplotlib>=3.8", "anywidget>=0.9"]
 cad = ["cadquery>=2.5"]
 
 [project.scripts]
-sysml2 = "sysml2.cli:main"
+longeron = "longeron.cli:main"
+sysml2 = "longeron.cli:main"  # pre-0.3.0 command name, kept as an alias
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src"]  # picks up both longeron and the sysml2 compat shim
 
 [tool.setuptools.package-data]
-sysml2 = [
+longeron = [
     "_gen/**/*.interp", "_gen/**/*.tokens", "_spec/*.ecore",
     "_spec/README.md",
     "_stdlib/prebuilt.json",  # stdlib-aware validation out of the box
@@ -75,7 +76,7 @@ testpaths = ["tests"]
 target-version = "py310"
 line-length = 100
 extend-include = ["*.ipynb"]  # lint + format notebook code cells too
-extend-exclude = ["src/sysml2/_gen"]
+extend-exclude = ["src/longeron/_gen"]
 
 [tool.ruff.lint]
 select = [
@@ -90,12 +91,13 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/sysml2/__init__.py" = ["F403"]  # re-export of the model namespace
+"src/longeron/__init__.py" = ["F403"]  # re-export of the model namespace
+"src/sysml2/__init__.py" = ["F403"]  # compat shim re-exports longeron's surface
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/sysml2"]
-exclude = ["src/sysml2/_gen"]
+files = ["src/longeron", "src/sysml2"]
+exclude = ["src/longeron/_gen"]
 check_untyped_defs = true
 no_implicit_optional = true
 warn_redundant_casts = true
@@ -104,8 +106,14 @@ warn_return_any = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-module = "sysml2._gen.*"
+module = "longeron._gen.*"
 follow_imports = "skip"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# the sysml2 compat shim aliases longeron dynamically (star re-export,
+# module __getattr__, meta-path finder) -- not worth typing strictly
+module = "sysml2"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
@@ -151,7 +159,7 @@ follow_imports = "skip"
 ignore_errors = true
 
 [tool.coverage.run]
-source = ["sysml2"]
+source = ["longeron"]
 omit = ["*/_gen/*"]
 
 [tool.coverage.report]
@@ -226,12 +234,12 @@ test-vendor = "pytest -c pyproject.toml -q vendor/ipyelk/tests"
 lint = "ruff format --check src tests examples scripts notebooks docs && ruff check src tests examples scripts notebooks docs"
 format = "ruff format src tests examples scripts notebooks docs && ruff check --fix src tests examples scripts notebooks docs"
 typecheck = "mypy"
-coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
+coverage = "pytest -q --cov=longeron --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"
 stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
 notebooks = "python scripts/run_notebooks.py"
 hooks = "git config core.hooksPath scripts/git-hooks"
-# serve from the repo root so both notebooks/ (sysml2 tutorials) and
+# serve from the repo root so both notebooks/ (longeron tutorials) and
 # vendor/ipyelk/examples/ (ipyelk demos, incl. 07_Simulation) are browsable;
 # PYTHONHASHSEED pins kernel hashing so interactive runs are deterministic
 lab = { cmd = "jupyter lab notebooks/", env = { PYTHONHASHSEED = "0" } }
@@ -240,4 +248,4 @@ check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
 [tool.pixi.tasks.parsers]
 cmd = "python scripts/generate_parsers.py"
 inputs = ["grammars/*.g4", "scripts/generate_parsers.py"]
-outputs = ["src/sysml2/_gen/sysml/SysMLParser.py", "src/sysml2/_gen/kerml/KerMLParser.py"]
+outputs = ["src/longeron/_gen/sysml/SysMLParser.py", "src/longeron/_gen/kerml/KerMLParser.py"]

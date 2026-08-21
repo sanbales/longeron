@@ -8,13 +8,13 @@ pytest.importorskip("pyecore")
 
 from conftest import VEHICLE_MODEL
 
-import sysml2
-from sysml2 import api
+import longeron
+from longeron import api
 
 
 @pytest.fixture(scope="module")
 def records():
-    return api.to_api_records(sysml2.loads(VEHICLE_MODEL))
+    return api.to_api_records(longeron.loads(VEHICLE_MODEL))
 
 
 class TestExport:
@@ -43,11 +43,11 @@ class TestExport:
     def test_ids_unique_and_stable(self, records):
         ids = [r["@id"] for r in records]
         assert len(ids) == len(set(ids))
-        again = api.to_api_records(sysml2.loads(VEHICLE_MODEL))
+        again = api.to_api_records(longeron.loads(VEHICLE_MODEL))
         assert sorted(ids) == sorted(r["@id"] for r in again)
 
     def test_json_serializable(self, records):
-        text = api.to_api_json(sysml2.loads(VEHICLE_MODEL))
+        text = api.to_api_json(longeron.loads(VEHICLE_MODEL))
         assert json.loads(text)
 
 
@@ -82,12 +82,12 @@ class TestImport:
         assert first == second
 
     def test_unknown_type_raises(self):
-        with pytest.raises(sysml2.SysMLError, match="unknown or abstract"):
+        with pytest.raises(longeron.SysMLError, match="unknown or abstract"):
             api.from_api_records([{"@type": "Bogus", "@id": "x"}])
 
 
 def test_direction_survives_round_trip():
-    model = sysml2.loads("package P { calc def C { in x : Real; return : Real = x; } }")
+    model = longeron.loads("package P { calc def C { in x : Real; return : Real = x; } }")
     records = api.to_api_records(model)
     spec = api.from_api_records(records)
     param = next(o for o in spec.all_instances() if getattr(o, "declaredName", None) == "x")
@@ -104,7 +104,7 @@ class TestImpliedSpecializations:
         assert not any(r.get("isImplied") for r in records)
 
     def test_implied_records_emitted(self):
-        records = api.to_api_records(sysml2.loads(self.MODEL), implied=True)
+        records = api.to_api_records(longeron.loads(self.MODEL), implied=True)
         implied = [r for r in records if r.get("isImplied")]
         by_type = {r["@type"] for r in implied}
         # part def A implies Parts::Part; the untyped usage b implies
@@ -121,7 +121,7 @@ class TestImpliedSpecializations:
 
     def test_explicit_specializations_not_flagged(self):
         records = api.to_api_records(
-            sysml2.loads("package P { part def A; part def B :> A; }"), implied=True
+            longeron.loads("package P { part def A; part def B :> A; }"), implied=True
         )
         implied = [r for r in records if r.get("isImplied")]
         # B specializes A explicitly -> only A gets an implied record
@@ -129,13 +129,13 @@ class TestImpliedSpecializations:
 
     def test_ids_stable_and_unique(self):
         model_text = self.MODEL
-        first = api.to_api_records(sysml2.loads(model_text), implied=True)
-        second = api.to_api_records(sysml2.loads(model_text), implied=True)
+        first = api.to_api_records(longeron.loads(model_text), implied=True)
+        second = api.to_api_records(longeron.loads(model_text), implied=True)
         assert sorted(r["@id"] for r in first) == sorted(r["@id"] for r in second)
         assert len({r["@id"] for r in first}) == len(first)
 
     def test_implied_records_reimport(self):
-        records = api.to_api_records(sysml2.loads(self.MODEL), implied=True)
+        records = api.to_api_records(longeron.loads(self.MODEL), implied=True)
         spec = api.from_api_records(records)
         implied = [
             o for o in spec.all_instances() if o.eClass.name in ("Subclassification", "Subsetting")
@@ -144,12 +144,12 @@ class TestImpliedSpecializations:
         assert all(o.isImplied for o in implied)
 
     def test_implied_json(self):
-        text = api.to_api_json(sysml2.loads(self.MODEL), implied=True)
+        text = api.to_api_json(longeron.loads(self.MODEL), implied=True)
         assert '"isImplied": true' in text
 
     def test_spec_model_input_rejected(self):
-        from sysml2.ecore import to_spec
+        from longeron.ecore import to_spec
 
-        spec = to_spec(sysml2.loads(self.MODEL))
-        with pytest.raises(sysml2.SysMLError, match="needs a sysml2 Model"):
+        spec = to_spec(longeron.loads(self.MODEL))
+        with pytest.raises(longeron.SysMLError, match="needs a longeron Model"):
             api.to_api_records(spec, implied=True)

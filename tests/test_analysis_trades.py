@@ -6,15 +6,15 @@ import pytest
 
 pytest.importorskip("ortools")
 
-import sysml2
-from sysml2.analysis import trades
+import longeron
+from longeron.analysis import trades
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def catalog():
-    return sysml2.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    return longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -162,11 +162,11 @@ class TestExplainability:
 
 class TestErrors:
     def test_no_variation_points(self, catalog):
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        with pytest.raises(longeron.analysis.AnalysisError):
             trades.TradeStudy(catalog, "DroneCatalog::Emax2306")
 
     def test_unknown_metric(self, study):
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        with pytest.raises(longeron.analysis.AnalysisError):
             study.minimize("nope")
 
 
@@ -188,13 +188,13 @@ class TestExactEvaluation:
         assert arch.metrics["hoverMinutes"] == pytest.approx(4.875)
 
     def test_evaluate_validates_selection(self, study):
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        with pytest.raises(longeron.analysis.AnalysisError):
             study.evaluate({"motors": "emax2306"})  # missing points
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        with pytest.raises(longeron.analysis.AnalysisError):
             study.evaluate(
                 {"motors": "nope", "props": "hq5x43", "battery": "lipo4s1500", "esc": "esc45"}
             )
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        with pytest.raises(longeron.analysis.AnalysisError):
             study.evaluate(
                 {
                     "motors": "emax2306",

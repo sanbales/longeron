@@ -10,11 +10,18 @@ Java toolchain is needed to install or use it:
 pip install longeron
 ```
 
-The import name is `sysml2`:
+The import name is `longeron`:
 
 ```python
-import sysml2
+import longeron
 ```
+
+:::{note}
+The project was renamed from `sysml2` in 0.3.0. `import sysml2` remains a
+supported compatibility alias — the package ships a shim that hands back
+longeron's own modules — and the `sysml2` console command and PyPI alias
+distribution are kept, so pre-rename code keeps working unchanged.
+:::
 
 ### Optional extras
 
@@ -23,14 +30,14 @@ core install stays light:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
-| `ecore` | OMG spec-metamodel projection ({mod}`sysml2.ecore`) and Systems Modeling API JSON ({mod}`sysml2.api`) | `pyecore` |
-| `rdf` | RDF projection + SPARQL ({mod}`sysml2.rdf`) | `rdflib` |
-| `replay` | simulation/action replay widget ({mod}`sysml2.replay`) | `anywidget` |
-| `mdao` | OpenMDAO sizing bridge ({mod}`sysml2.analysis.mdao`) | `openmdao` |
-| `trades` | CP-SAT architecture trade studies ({mod}`sysml2.analysis.trades`) | `ortools` |
-| `smt` | requirement-consistency checks on Z3 ({mod}`sysml2.analysis.smt`) | `z3-solver` |
-| `viz` | trade-study figures + parallel-coordinates widget ({mod}`sysml2.analysis.viz`) | `matplotlib`, `anywidget` |
-| `cad` | cadquery solid export, e.g. STEP ({mod}`sysml2.analysis.geometry`) | `cadquery` (~1 GB OCC kernel) |
+| `ecore` | OMG spec-metamodel projection ({mod}`longeron.ecore`) and Systems Modeling API JSON ({mod}`longeron.api`) | `pyecore` |
+| `rdf` | RDF projection + SPARQL ({mod}`longeron.rdf`) | `rdflib` |
+| `replay` | simulation/action replay widget ({mod}`longeron.replay`) | `anywidget` |
+| `mdao` | OpenMDAO sizing bridge ({mod}`longeron.analysis.mdao`) | `openmdao` |
+| `trades` | CP-SAT architecture trade studies ({mod}`longeron.analysis.trades`) | `ortools` |
+| `smt` | requirement-consistency checks on Z3 ({mod}`longeron.analysis.smt`) | `z3-solver` |
+| `viz` | trade-study figures + parallel-coordinates widget ({mod}`longeron.analysis.viz`) | `matplotlib`, `anywidget` |
+| `cad` | cadquery solid export, e.g. STEP ({mod}`longeron.analysis.geometry`) | `cadquery` (~1 GB OCC kernel) |
 | `docs` | build this documentation site | `sphinx`, `myst-nb`, `furo`, ... |
 | `dev` | tests, lint, type-checking, notebook execution | `pytest`, `ruff`, `mypy`, solvers, ... |
 
@@ -38,13 +45,13 @@ core install stays light:
 pip install "longeron[mdao,trades,smt,viz]"   # the full analysis stack
 ```
 
-The LLM retrieval substrate ({mod}`sysml2.rag`) deliberately needs **no
+The LLM retrieval substrate ({mod}`longeron.rag`) deliberately needs **no
 extra** — chunking, neighborhoods, and keyword search are stdlib only, so
 the substrate works in any install.
 
-Interactive diagrams ({mod}`sysml2.diagrams`) additionally need the
+Interactive diagrams ({mod}`longeron.diagrams`) additionally need the
 vendored ipyelk from a source checkout (`pip install -e vendor/ipyelk`);
-headless SVG/PNG rendering ({mod}`sysml2.render`) needs `node` on `PATH`.
+headless SVG/PNG rendering ({mod}`longeron.render`) needs `node` on `PATH`.
 
 ### From source
 
@@ -68,9 +75,9 @@ pixi run docs     # build this documentation site
 ## Quickstart: parse → validate → simulate
 
 ```python
-import sysml2
+import longeron
 
-model = sysml2.loads("""
+model = longeron.loads("""
     package Demo {
         part def Vehicle {
             attribute mass : Real = 1200.0;
@@ -88,11 +95,11 @@ model = sysml2.loads("""
 
 # validate -- dangling references, typos, duplicate names, cycles; names
 # resolve against the vendored standard library (that bare `Real` passes)
-for diagnostic in sysml2.validate(model):
+for diagnostic in longeron.validate(model):
     print(diagnostic)  # a clean model prints nothing
 
 # execute
-interp = sysml2.Interpreter(model)
+interp = longeron.Interpreter(model)
 vehicle = interp.instantiate("Demo::Vehicle")
 interp.check(vehicle)[0].passed  # True (mass <= maxMass)
 

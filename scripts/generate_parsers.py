@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the ANTLR parsers in src/sysml2/_gen from grammars/*.g4.
+"""Regenerate the ANTLR parsers in src/longeron/_gen from grammars/*.g4.
 
 Requires Java 11+ and the ANTLR 4.13.2 tool jar.  The jar is located via
 (in order): $ANTLR_JAR, ~/.m2/repository/org/antlr/antlr4/<ver>/, or it is
@@ -85,7 +85,7 @@ def main() -> None:
         java, jar = find_java(), find_jar()
         runner = [java, "-jar", jar]
     for grammar, subdir in GRAMMARS.items():
-        out = ROOT / "src/sysml2/_gen" / subdir
+        out = ROOT / "src/longeron/_gen" / subdir
         out.mkdir(parents=True, exist_ok=True)
         (out / "__init__.py").touch()
         cmd = [
@@ -107,7 +107,7 @@ def main() -> None:
                 print(line)
         if result.returncode != 0:
             sys.exit(f"ANTLR failed for {grammar}")
-    (ROOT / "src/sysml2/_gen/__init__.py").touch()
+    (ROOT / "src/longeron/_gen/__init__.py").touch()
     print("done.")
 
 

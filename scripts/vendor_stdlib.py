@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""(Re)vendor the SysML v2 standard library subset into src/sysml2/_stdlib.
+"""(Re)vendor the SysML v2 standard library subset into src/longeron/_stdlib.
 
 Downloads the pinned file set from Systems-Modeling/SysML-v2-Release and
 rebuilds the prebuilt JSON. Run after changing the file lists, to bump the
@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STDLIB = ROOT / "src/sysml2/_stdlib"
+STDLIB = ROOT / "src/longeron/_stdlib"
 REPO = "Systems-Modeling/SysML-v2-Release"
 BRANCH = "master"
 
@@ -61,7 +61,7 @@ def main() -> None:
 
 
 def rebuild_prebuilt() -> None:
-    from sysml2 import stdlib
+    from longeron import stdlib
 
     stdlib._PREBUILT.unlink(missing_ok=True)
     stdlib._raw_prebuilt = None

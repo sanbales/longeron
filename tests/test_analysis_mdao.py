@@ -6,22 +6,22 @@ import pytest
 
 pytest.importorskip("openmdao")
 
-import sysml2
-from sysml2.analysis import mdao
+import longeron
+from longeron.analysis import mdao
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(scope="module")
 def drone():
-    return sysml2.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
 
 
 class TestCalcComponent:
     def test_calc_as_component(self, drone):
         import openmdao.api as om
 
-        interp = sysml2.Interpreter(drone)
+        interp = longeron.Interpreter(drone)
         prob = om.Problem(reports=False)
         prob.model.add_subsystem("hover", mdao.calc_component(interp, "Drone::HoverTime"))
         prob.setup()
@@ -32,8 +32,8 @@ class TestCalcComponent:
         assert prob.get_val("hover.current")[0] == pytest.approx(12000.0)
 
     def test_non_calc_rejected(self, drone):
-        interp = sysml2.Interpreter(drone)
-        with pytest.raises(sysml2.analysis.AnalysisError):
+        interp = longeron.Interpreter(drone)
+        with pytest.raises(longeron.analysis.AnalysisError):
             mdao.calc_component(interp, "Drone::QuadCopter")
 
 
@@ -81,7 +81,7 @@ def missions(request):
 
     sys.path.insert(0, str(EXAMPLES))  # 'uav_aero:...' entry points
     request.addfinalizer(lambda: sys.path.remove(str(EXAMPLES)))
-    return sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
 
 
 class TestExternalAnalysisBinding:
@@ -142,13 +142,13 @@ class TestExternalAnalysisBinding:
         assert optima["external"] > 12.0  # the polar backs off the stall
 
     def test_unknown_fidelity_key_is_loud(self, missions):
-        with pytest.raises(sysml2.analysis.AnalysisError, match="never bound"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="never bound"):
             mdao.build_problem(
                 missions, "UavMissions::IsrPrime", fidelity={"CruisePowerr": "external"}
             )
 
     def test_invalid_fidelity_value_is_loud(self, missions):
-        with pytest.raises(sysml2.analysis.AnalysisError, match="'model' or 'external'"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="'model' or 'external'"):
             mdao.build_problem(missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "hifi"})
 
     def test_contract_mismatch_is_precise(self, missions, monkeypatch):
@@ -172,7 +172,7 @@ class TestExternalAnalysisBinding:
         annotation = next(m for m in calc.members if type(m).__name__ == "MetadataUsage")
         value = annotation.members[0].value
         monkeypatch.setattr(value.expr, "value", "fake_aero:WrongIo", raising=False)
-        with pytest.raises(sysml2.analysis.AnalysisError) as err:
+        with pytest.raises(longeron.analysis.AnalysisError) as err:
             mdao.build_problem(
                 missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
             )
@@ -200,7 +200,7 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_tool")
         fake.doubler_factory = doubler_factory
         monkeypatch.setitem(__import__("sys").modules, "fake_tool", fake)
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 metadata def ExternalAnalysis {
                     attribute component : String;
@@ -224,7 +224,7 @@ class TestExternalAnalysisBinding:
         assert build.problem.get_val("more")[0] == pytest.approx(9.0)
         assert build.externals == {"twice": "fake_tool:doubler_factory"}
         # 'model' fidelity cannot work without a body -- and says so
-        with pytest.raises(sysml2.analysis.AnalysisError, match="no body"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="no body"):
             mdao.build_problem(model, "P::A", fidelity={"Double": "model"})
 
     def test_nested_external_invocation_is_rejected(self, monkeypatch):
@@ -243,7 +243,7 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_nested")
         fake.Identity = Identity
         monkeypatch.setitem(__import__("sys").modules, "fake_nested", fake)
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 metadata def ExternalAnalysis {
                     attribute component : String;
@@ -259,19 +259,19 @@ class TestExternalAnalysisBinding:
                 }
             }
         """)
-        with pytest.raises(sysml2.analysis.AnalysisError, match="larger expression"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="larger expression"):
             mdao.build_problem(model, "P::A")
 
     def test_bad_component_specs_are_loud(self, missions):
         import openmdao.api as om
 
-        with pytest.raises(sysml2.analysis.AnalysisError, match=r"module.*attr"):
+        with pytest.raises(longeron.analysis.AnalysisError, match=r"module.*attr"):
             mdao._load_component(om, "no-colon")
-        with pytest.raises(sysml2.analysis.AnalysisError, match="cannot import"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="cannot import"):
             mdao._load_component(om, "definitely_not_a_module:X")
-        with pytest.raises(sysml2.analysis.AnalysisError, match="no attribute"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="no attribute"):
             mdao._load_component(om, "uav_aero:Nope")
-        with pytest.raises(sysml2.analysis.AnalysisError, match="ExplicitComponent"):
+        with pytest.raises(longeron.analysis.AnalysisError, match="ExplicitComponent"):
             mdao._load_component(om, "uav_aero:RHO")
 
 

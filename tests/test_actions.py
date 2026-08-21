@@ -2,8 +2,8 @@
 
 import pytest
 
-import sysml2
-from sysml2.errors import ExecutionError
+import longeron
+from longeron.errors import ExecutionError
 
 
 class TestBasics:
@@ -54,8 +54,8 @@ class TestEvents:
 
 @pytest.fixture(scope="module")
 def control_flow_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 action def Loops {
                     in n : Integer;
@@ -132,8 +132,8 @@ class TestControlFlow:
 
 
 def test_infinite_loop_guard():
-    interp = sysml2.Interpreter(
-        sysml2.loads("""
+    interp = longeron.Interpreter(
+        longeron.loads("""
         package P {
             action def Forever { loop { assign x := 1; } }
         }

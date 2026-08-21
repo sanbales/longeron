@@ -1,14 +1,14 @@
-"""Execution-trace replay tests (sysml2.replay)."""
+"""Execution-trace replay tests (longeron.replay)."""
 
 import json
 import shutil
 
 import pytest
 
-import sysml2
-from sysml2 import replay
-from sysml2.errors import ExecutionError
-from sysml2.interpreter import StateMachine
+import longeron
+from longeron import replay
+from longeron.errors import ExecutionError
+from longeron.interpreter import StateMachine
 
 FLAT_MODEL = """
 package Machines {
@@ -138,22 +138,22 @@ package Ops {
 
 @pytest.fixture(scope="module")
 def flat_interp():
-    return sysml2.Interpreter(sysml2.loads(FLAT_MODEL))
+    return longeron.Interpreter(longeron.loads(FLAT_MODEL))
 
 
 @pytest.fixture(scope="module")
 def timed_interp():
-    return sysml2.Interpreter(sysml2.loads(TIMED_MODEL))
+    return longeron.Interpreter(longeron.loads(TIMED_MODEL))
 
 
 @pytest.fixture(scope="module")
 def parallel_interp():
-    return sysml2.Interpreter(sysml2.loads(PARALLEL_MODEL))
+    return longeron.Interpreter(longeron.loads(PARALLEL_MODEL))
 
 
 @pytest.fixture(scope="module")
 def action_interp():
-    return sysml2.Interpreter(sysml2.loads(ACTION_MODEL))
+    return longeron.Interpreter(longeron.loads(ACTION_MODEL))
 
 
 # -- timeline recording -------------------------------------------------------
@@ -242,7 +242,7 @@ def test_parents_map_typed_submachine():
     qualified names are not prefixed by the using state's -- the recorded
     parents map is the only correct branch/leaf signal there."""
 
-    interp = sysml2.Interpreter(sysml2.loads(TYPED_SUBMACHINE_MODEL))
+    interp = longeron.Interpreter(longeron.loads(TYPED_SUBMACHINE_MODEL))
     timeline = replay.record_timeline(interp, "P::Outer", ["go", "quit"])
     assert timeline.tracks["P::Outer::x"] == [(0.0, True), (2.0, False)]
     assert timeline.tracks["P::Inner::a"] == [(0.0, True), (1.0, False)]
@@ -255,7 +255,7 @@ def test_parents_map_typed_submachine():
 
 
 def test_env_steps_follow_assignments():
-    interp = sysml2.Interpreter(sysml2.loads(ENV_MODEL))
+    interp = longeron.Interpreter(longeron.loads(ENV_MODEL))
     timeline = replay.record_timeline(interp, "P::Tally", ["tick", "tock", "tick"])
     assert [values for _, values in timeline.env_steps] == [
         {"count": 0, "ratio": 0.0},
@@ -268,7 +268,7 @@ def test_env_steps_follow_assignments():
 
 
 def test_env_steps_scalars_only_and_rounded():
-    interp = sysml2.Interpreter(sysml2.loads(ENV_MODEL))
+    interp = longeron.Interpreter(longeron.loads(ENV_MODEL))
     timeline = replay.record_timeline(interp, "P::Tally", ["tick", "tock"])
     data = json.loads(timeline.to_json())
     assert data["env_steps"][-1][1] == {"count": 1, "ratio": 0.333}
@@ -374,7 +374,7 @@ def test_action_on_step_hook_pairing(action_interp):
 
     from collections import deque
 
-    from sysml2.interpreter import _ActionExecutor
+    from longeron.interpreter import _ActionExecutor
 
     executor = _ActionExecutor(
         action_interp, action_interp.resolve("Ops::Deploy"), {"tested": True}, deque()
@@ -427,7 +427,7 @@ def _needs_diagrams():
 
 def test_state_svg_addressable(flat_interp):
     _needs_diagrams()
-    from sysml2 import diagrams, render
+    from longeron import diagrams, render
 
     svg = render.to_svg(diagrams.state_diagram(flat_interp.resolve("Machines::TrafficLight")))
     assert 'data-qname="Machines::TrafficLight::red"' in svg
@@ -451,7 +451,7 @@ def test_replay_widget_smoke(timed_interp):
 
 def test_action_svg_addressable(action_interp):
     _needs_diagrams()
-    from sysml2 import diagrams, render
+    from longeron import diagrams, render
 
     svg = render.to_svg(diagrams.action_diagram(action_interp.resolve("Ops::Deploy")))
     assert 'data-qname="Ops::Deploy::build"' in svg

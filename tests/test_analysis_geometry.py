@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2.analysis import AnalysisError, geometry
+import longeron
+from longeron.analysis import AnalysisError, geometry
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -16,9 +16,9 @@ CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, 
 
 @pytest.fixture(scope="module")
 def study():
-    from sysml2.analysis import trades
+    from longeron.analysis import trades
 
-    catalog = sysml2.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    catalog = longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
     return trades.TradeStudy(catalog, "DroneCatalog::TradeQuad")
 
 
@@ -554,9 +554,9 @@ class TestTeardropQuadGeometry:
 
 @pytest.fixture(scope="module")
 def mission_study():
-    from sysml2.analysis import trades
+    from longeron.analysis import trades
 
-    catalog = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    catalog = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
     return trades.TradeStudy(catalog, "UavMissions::InterceptUav")
 
 

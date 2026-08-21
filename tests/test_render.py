@@ -8,13 +8,13 @@ pytest.importorskip("ipyelk")
 if shutil.which("node") is None:
     pytest.skip("node executable not available", allow_module_level=True)
 
-import sysml2
-from sysml2 import diagrams, render
+import longeron
+from longeron import diagrams, render
 
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return sysml2.load("examples/drone.sysml")
+    return longeron.load("examples/drone.sysml")
 
 
 class TestSvg:
@@ -92,7 +92,7 @@ class TestSvg:
         emits their coordinates relative to that node; honoring it makes
         arrows meet the boxes they connect."""
 
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 state def M {
                     entry; then outer;
@@ -135,7 +135,7 @@ class TestSvg:
                 assert by - 1 <= py <= by + bh + 1, f"edge endpoint y={py} misses box {endpoint}"
 
     def test_escaping(self):
-        model = sysml2.loads('package P { part def A { attribute note : String = "<b>&"; } }')
+        model = longeron.loads('package P { part def A { attribute note : String = "<b>&"; } }')
         svg = render.to_svg(diagrams.structure_diagram(model))
         assert "&lt;b&gt;&amp;" in svg
 

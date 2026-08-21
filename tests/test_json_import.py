@@ -3,20 +3,20 @@
 import pytest
 from conftest import ACTION_MODEL, STATE_MODEL, VEHICLE_MODEL
 
-import sysml2
-from sysml2 import model as M
+import longeron
+from longeron import model as M
 
 
 def _normalized(model):
-    data = sysml2.to_dict(model)
+    data = longeron.to_dict(model)
     data.pop("source_name", None)
     return data
 
 
 @pytest.mark.parametrize("source", [VEHICLE_MODEL, ACTION_MODEL, STATE_MODEL])
 def test_json_round_trip(source):
-    model = sysml2.loads(source)
-    clone = sysml2.from_json(sysml2.to_json(model))
+    model = longeron.loads(source)
+    clone = longeron.from_json(longeron.to_json(model))
     assert _normalized(clone) == _normalized(model)
 
 
@@ -24,15 +24,15 @@ def test_json_round_trip(source):
 def test_json_to_sysml_text(source):
     """SysML text can be generated from just the JSON definition."""
 
-    json_text = sysml2.to_json(sysml2.loads(source))
-    regenerated = sysml2.to_sysml(sysml2.from_json(json_text))
-    reparsed = sysml2.loads(regenerated)
-    assert _normalized(reparsed) == _normalized(sysml2.loads(source))
+    json_text = longeron.to_json(longeron.loads(source))
+    regenerated = longeron.to_sysml(longeron.from_json(json_text))
+    reparsed = longeron.loads(regenerated)
+    assert _normalized(reparsed) == _normalized(longeron.loads(source))
 
 
 def test_json_import_is_executable():
-    model = sysml2.from_json(sysml2.to_json(sysml2.loads(VEHICLE_MODEL)))
-    interp = sysml2.Interpreter(model)
+    model = longeron.from_json(longeron.to_json(longeron.loads(VEHICLE_MODEL)))
+    interp = longeron.Interpreter(model)
     assert interp.call("Vehicles::TotalMass", 1000.0, 200.0) == 1200.0
     car = interp.instantiate("Vehicles::Vehicle")
     assert car.slots["mass"] == 1200.0
@@ -40,8 +40,8 @@ def test_json_import_is_executable():
 
 
 def test_json_import_state_machine():
-    model = sysml2.from_json(sysml2.to_json(sysml2.loads(STATE_MODEL)))
-    interp = sysml2.Interpreter(model)
+    model = longeron.from_json(longeron.to_json(longeron.loads(STATE_MODEL)))
+    interp = longeron.Interpreter(model)
     result = interp.simulate("Machines::TrafficLight", events=["go"])
     assert result.final_state == "green"
 
@@ -49,9 +49,11 @@ def test_json_import_state_machine():
 def test_from_dict_single_element():
     part = M.Definition(kind="part", name="Widget")
     part.add(
-        M.Usage(kind="attribute", name="w", value=M.FeatureValue(sysml2.parse_expression("3 + 4")))
+        M.Usage(
+            kind="attribute", name="w", value=M.FeatureValue(longeron.parse_expression("3 + 4"))
+        )
     )
-    rebuilt = sysml2.from_dict(sysml2.to_dict(part))
+    rebuilt = longeron.from_dict(longeron.to_dict(part))
     assert isinstance(rebuilt, M.Definition)
     assert rebuilt.members[0].value.expr.to_text() == "3 + 4"
     assert rebuilt.members[0].owner is rebuilt
@@ -59,16 +61,16 @@ def test_from_dict_single_element():
 
 def test_from_json_wraps_non_model_root():
     pkg = M.Package(name="Solo")
-    model = sysml2.from_json(sysml2.to_json(pkg))
+    model = longeron.from_json(longeron.to_json(pkg))
     assert isinstance(model, M.Model)
     assert model.find("Solo") is not None
 
 
 def test_from_dict_rejects_garbage():
-    with pytest.raises(sysml2.BuildError):
-        sysml2.from_dict({"name": "x"})
-    with pytest.raises(sysml2.BuildError):
-        sysml2.from_dict({"@type": "NoSuchElement"})
+    with pytest.raises(longeron.BuildError):
+        longeron.from_dict({"name": "x"})
+    with pytest.raises(longeron.BuildError):
+        longeron.from_dict({"@type": "NoSuchElement"})
 
 
 def test_expression_dict_round_trip():
@@ -87,28 +89,28 @@ def test_expression_dict_round_trip():
         "null ?? 5",
         "v istype Real and v as Integer > 0",
     ]
-    from sysml2.ast import expr_from_dict, expr_to_dict
+    from longeron.ast import expr_from_dict, expr_to_dict
 
     for text in cases:
-        expr = sysml2.parse_expression(text)
+        expr = longeron.parse_expression(text)
         rebuilt = expr_from_dict(expr_to_dict(expr))
         assert rebuilt == expr, f"expression {text!r} did not round-trip"
 
 
 def test_save_and_load(tmp_path):
-    model = sysml2.loads(VEHICLE_MODEL)
+    model = longeron.loads(VEHICLE_MODEL)
     for suffix in (".sysml", ".json"):
         path = tmp_path / f"m{suffix}"
-        sysml2.save(model, path)
-        reloaded = sysml2.load(path)
+        longeron.save(model, path)
+        reloaded = longeron.load(path)
         assert _normalized(reloaded) == _normalized(model)
 
 
 def test_full_loop(tmp_path):
     """Read a model, run it, write results back, save, reload, re-check."""
 
-    model = sysml2.loads(VEHICLE_MODEL)
-    interp = sysml2.Interpreter(model)
+    model = longeron.loads(VEHICLE_MODEL)
+    interp = longeron.Interpreter(model)
 
     # run: instantiate with overrides and evaluate a calc
     car = interp.instantiate("Vehicles::Vehicle", mass=1400.0)
@@ -118,17 +120,19 @@ def test_full_loop(tmp_path):
     snapshot = interp.snapshot(car, name="measuredCar")
     snapshot.add(
         M.Usage(
-            kind="attribute", name="totalWithCargo", value=M.FeatureValue(sysml2.ast.Literal(total))
+            kind="attribute",
+            name="totalWithCargo",
+            value=M.FeatureValue(longeron.ast.Literal(total)),
         )
     )
     model.find("Vehicles").add(snapshot)
 
     # save and reload in both formats
-    sysml2.save(model, tmp_path / "loop.sysml")
-    sysml2.save(model, tmp_path / "loop.json")
+    longeron.save(model, tmp_path / "loop.sysml")
+    longeron.save(model, tmp_path / "loop.json")
     for name in ("loop.sysml", "loop.json"):
-        reloaded = sysml2.load(tmp_path / name)
-        interp2 = sysml2.Interpreter(reloaded)
+        reloaded = longeron.load(tmp_path / name)
+        interp2 = longeron.Interpreter(reloaded)
         snap = reloaded.find("Vehicles::measuredCar")
         assert snap.types == ["Vehicles::Vehicle"]
         values = interp2.instantiate(snap)
@@ -144,5 +148,5 @@ def test_snapshot_kinds(vehicle_interp):
     assert kinds["mass"] == "attribute"
     assert kinds["engine"] == "part"
     assert kinds["wheels_1"] == "part"
-    text = sysml2.to_sysml(snap)
+    text = longeron.to_sysml(snap)
     assert "part snap : Vehicles::Vehicle" in text

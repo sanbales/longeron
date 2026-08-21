@@ -1,10 +1,10 @@
-"""Validation tests: sysml2.validate / sysml2 lint."""
+"""Validation tests: longeron.validate / longeron lint."""
 
-import sysml2
+import longeron
 
 
 def diags(source, code=None):
-    result = sysml2.validate(sysml2.loads(source))
+    result = longeron.validate(longeron.loads(source))
     if code is not None:
         return [d for d in result if d.code == code]
     return result
@@ -12,7 +12,7 @@ def diags(source, code=None):
 
 class TestCleanModels:
     def test_valid_model_no_diagnostics(self, vehicle_model):
-        assert sysml2.validate(vehicle_model) == []
+        assert longeron.validate(vehicle_model) == []
 
     def test_builtin_types_resolve_against_stdlib(self):
         # no import anywhere: Real/Integer/String resolve through the
@@ -62,10 +62,10 @@ class TestStdlibResolution:
         assert "Reall" in found[0].message
 
     def test_stdlib_disabled_restores_old_warnings(self):
-        model = sysml2.loads("package P { part def V { attribute m : Real; } }")
-        assert sysml2.validate(model) == []
+        model = longeron.loads("package P { part def V { attribute m : Real; } }")
+        assert longeron.validate(model) == []
         found = [
-            d for d in sysml2.validate(model, stdlib=False) if d.code == "unresolved-reference"
+            d for d in longeron.validate(model, stdlib=False) if d.code == "unresolved-reference"
         ]
         assert len(found) == 1
 
@@ -75,13 +75,13 @@ class TestImpliedSpecializations:
 
     @staticmethod
     def resolver(model):
-        from sysml2.interpreter import Resolver
-        from sysml2.stdlib import standard_library_model
+        from longeron.interpreter import Resolver
+        from longeron.stdlib import standard_library_model
 
         return Resolver(model, library=standard_library_model())
 
     def test_part_def_implies_parts_part(self):
-        model = sysml2.loads("package P { part def V; part v : V; }")
+        model = longeron.loads("package P { part def V; part v : V; }")
         resolver = self.resolver(model)
         v = resolver.resolve("P::V", model)
         assert [g.qualified_name for g in resolver.implied_generals(v)] == ["Parts::Part"]
@@ -89,18 +89,18 @@ class TestImpliedSpecializations:
         assert resolver.implied_generals(resolver.resolve("P::v", model)) == []
 
     def test_bare_part_usage_implies_parts(self):
-        model = sysml2.loads("package P { part v; }")
+        model = longeron.loads("package P { part v; }")
         resolver = self.resolver(model)
         usage = resolver.resolve("P::v", model)
         assert [g.qualified_name for g in resolver.implied_generals(usage)] == ["Parts::parts"]
 
     def test_explicit_supers_suppress_implied(self):
-        model = sysml2.loads("package P { part def A; part def B :> A; }")
+        model = longeron.loads("package P { part def A; part def B :> A; }")
         resolver = self.resolver(model)
         assert resolver.implied_generals(resolver.resolve("P::B", model)) == []
 
     def test_action_inherits_start_done_when_implied(self):
-        model = sysml2.loads("package P { action def A { action s1; } }")
+        model = longeron.loads("package P { action def A { action s1; } }")
         resolver = self.resolver(model)
         target = resolver.resolve("P::A", model)
         names = {m.name for m in resolver.members_of(target, implied=True)}
@@ -110,8 +110,8 @@ class TestImpliedSpecializations:
         assert "start" not in plain
 
     def test_instantiation_unchanged_by_implied_bases(self):
-        interp = sysml2.Interpreter(
-            sysml2.loads("package P { part def V { attribute m : Real = 1.0; } }")
+        interp = longeron.Interpreter(
+            longeron.loads("package P { part def V { attribute m : Real = 1.0; } }")
         )
         assert set(interp.instantiate("P::V").slots) == {"m"}
 
@@ -325,7 +325,7 @@ class TestStrictImports:
     def strict(self, source):
         return [
             d
-            for d in sysml2.validate(sysml2.loads(source), strict_imports=True)
+            for d in longeron.validate(longeron.loads(source), strict_imports=True)
             if d.code == "stdlib-implicit-name"
         ]
 
@@ -386,7 +386,7 @@ class TestStrictImports:
 
 class TestCLI:
     def test_lint_clean(self, tmp_path, capsys):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "ok.sysml"
         path.write_text("package P { part def V { attribute m : Real; } }")
@@ -394,7 +394,7 @@ class TestCLI:
         assert "0 error(s), 0 warning(s)" in capsys.readouterr().out
 
     def test_lint_warnings_pass_by_default(self, tmp_path, capsys):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "warn.sysml"
         path.write_text("package P { part v : Ghost; }")
@@ -403,7 +403,7 @@ class TestCLI:
         assert "warning[unresolved-reference]" in out
 
     def test_lint_no_stdlib_flag(self, tmp_path, capsys):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "m.sysml"
         path.write_text("package P { part def V { attribute m : Real; } }")
@@ -413,21 +413,21 @@ class TestCLI:
         assert "warning[unresolved-reference]" in capsys.readouterr().out
 
     def test_lint_strict_fails_on_warnings(self, tmp_path):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "warn.sysml"
         path.write_text("package P { part v : Ghost; }")
         assert main(["lint", str(path), "--strict"]) == 1
 
     def test_lint_errors_fail(self, tmp_path):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "bad.sysml"
         path.write_text("package P { part def X; part def X; }")
         assert main(["lint", str(path)]) == 1
 
     def test_lint_strict_imports_flag(self, tmp_path, capsys):
-        from sysml2.cli import main
+        from longeron.cli import main
 
         path = tmp_path / "m.sysml"
         path.write_text("package P { part def V { attribute m : Real; } }")
@@ -452,5 +452,5 @@ def test_diagnostics_sorted_errors_first():
 
 
 def test_drone_example_is_clean():
-    model = sysml2.load("examples/drone.sysml")
-    assert [d for d in sysml2.validate(model) if d.severity == "error"] == []
+    model = longeron.load("examples/drone.sysml")
+    assert [d for d in longeron.validate(model) if d.severity == "error"] == []

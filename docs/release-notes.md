@@ -4,27 +4,36 @@
 
 Highlights on `main` since the 0.2.0 release:
 
+### Project rename
+
+- **The import package is now `longeron`** (matching the distribution
+  name); the CLI gains a `longeron` command. The historical `sysml2` names
+  keep working unchanged: longeron ships a built-in `sysml2` compatibility
+  shim (same module objects, no deprecation warnings), the `sysml2` console
+  command remains, and `$SYSML2_CACHE_DIR` is still honored behind the new
+  `$LONGERON_CACHE_DIR`.
+
 ### The analysis stack
 
-- **`sysml2.analysis`** — analytical bridges from executable models onto
+- **`longeron.analysis`** — analytical bridges from executable models onto
   external solvers, each behind its own extra:
-  - {mod}`sysml2.analysis.mdao`: part trees and calcs project onto OpenMDAO
+  - {mod}`longeron.analysis.mdao`: part trees and calcs project onto OpenMDAO
     `Problem`s (derived attributes → components, free attributes → design
     variables, constraints → margin outputs), with `@ExternalAnalysis`
     annotations binding higher-fidelity components in place of calc bodies.
-  - {mod}`sysml2.analysis.trades`: discrete architecture trade studies over
+  - {mod}`longeron.analysis.trades`: discrete architecture trade studies over
     variation/variant catalogs on OR-Tools CP-SAT, scored interpreter-exact.
-  - {mod}`sysml2.analysis.smt`: requirement consistency, conflict cores, and
+  - {mod}`longeron.analysis.smt`: requirement consistency, conflict cores, and
     design-space bounds on Z3.
 - **Views over the analyses**: honest Pareto fronts with explicit senses,
   publication-quality figures, an interactive parallel-coordinates widget
-  with editable brushes ({mod}`sysml2.analysis.viz`), an N2 matrix in the
+  with editable brushes ({mod}`longeron.analysis.viz`), an N2 matrix in the
   NASA/OpenMDAO convention plus connection-network views
-  ({mod}`sysml2.analysis.structure`), and the linked mission-compromise
-  dashboard ({mod}`sysml2.analysis.dashboard`).
+  ({mod}`longeron.analysis.structure`), and the linked mission-compromise
+  dashboard ({mod}`longeron.analysis.dashboard`).
 - **To-scale 3D**: parametric meshes for architecture mixes (box quad,
   teardrop quad, cruciform tail-sitter VTOL, interceptor) with a three.js
-  viewer ({mod}`sysml2.analysis.geometry`, {mod}`sysml2.analysis.viewer3d`);
+  viewer ({mod}`longeron.analysis.geometry`, {mod}`longeron.analysis.viewer3d`);
   cadquery solid/STEP export behind the `cad` extra.
 - **Physics fidelity**: drag buildup, load-sized structure, and a
   multi-mission UAV catalog example (`examples/uav_missions.sysml`) driving
@@ -41,7 +50,7 @@ Highlights on `main` since the 0.2.0 release:
 
 - Replay v2: action executions replay over the action diagram, step-mode
   scrubbing, scalar-env readouts.
-- `sysml2` published as a PyPI alias distribution of `longeron`.
+- `sysml2` kept as a PyPI alias distribution of `longeron`.
 - ruff format adopted for code *and* notebooks.
 - The vendored ipyelk labextension is now built from the patched
   TypeScript sources, so every JS fix ships in the bundles.

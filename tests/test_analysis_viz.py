@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-import sysml2
-from sysml2.analysis import AnalysisError, viz
-from sysml2.analysis.trades import Architecture
+import longeron
+from longeron.analysis import AnalysisError, viz
+from longeron.analysis.trades import Architecture
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -20,9 +20,9 @@ ROWS = [
 
 @pytest.fixture(scope="module")
 def study():
-    from sysml2.analysis import trades
+    from longeron.analysis import trades
 
-    catalog = sysml2.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    catalog = longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
     return trades.TradeStudy(catalog, "DroneCatalog::TradeQuad")
 
 
@@ -395,9 +395,9 @@ class TestFigures:
         [11, 24] window, so only stationFloor could ever bind)."""
 
         pytest.importorskip("openmdao")
-        from sysml2.analysis import mdao
+        from longeron.analysis import mdao
 
-        model = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+        model = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
         build = mdao.build_problem(
             model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
         )
@@ -431,9 +431,9 @@ MISSION_CHARTS = {
 
 @pytest.fixture(scope="module")
 def mission_spaces():
-    from sysml2.analysis import trades
+    from longeron.analysis import trades
 
-    model = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    model = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
     out = {}
     for name, (qname, metric) in MISSION_CHARTS.items():
         study = trades.TradeStudy(model, qname)

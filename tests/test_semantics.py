@@ -3,14 +3,14 @@ parallel states, and time triggers."""
 
 import pytest
 
-import sysml2
-from sysml2.errors import ExecutionError
+import longeron
+from longeron.errors import ExecutionError
 
 
 @pytest.fixture(scope="module")
 def succession_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 action def OutOfOrder {
                     out log : String;
@@ -113,8 +113,8 @@ class TestSuccessionFlow:
 
 @pytest.fixture(scope="module")
 def action_time_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 action def Timed {
                     out elapsed : Real;
@@ -147,8 +147,8 @@ class TestActionTime:
 
 @pytest.fixture(scope="module")
 def hier_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 state def Machine {
                     attribute log : String := "";
@@ -210,8 +210,8 @@ class TestHierarchicalStates:
 
 @pytest.fixture(scope="module")
 def parallel_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 state def Radio {
                     entry; then on;
@@ -256,8 +256,8 @@ class TestParallelStates:
 
 @pytest.fixture(scope="module")
 def state_time_interp():
-    return sysml2.Interpreter(
-        sysml2.loads("""
+    return longeron.Interpreter(
+        longeron.loads("""
             package P {
                 item def Tick;
                 state def Toaster {

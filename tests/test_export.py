@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-import sysml2
-from sysml2 import model as M
+import longeron
+from longeron import model as M
 
 ROUND_TRIP_SOURCES = [
     "package Empty;",
@@ -102,17 +102,17 @@ ROUND_TRIP_SOURCES = [
 def test_round_trip(source):
     """parse -> print -> parse again must preserve the model structure."""
 
-    model1 = sysml2.loads(source)
-    text = sysml2.to_sysml(model1)
-    model2 = sysml2.loads(text, source_name="<reprint>")
-    d1, d2 = sysml2.to_dict(model1), sysml2.to_dict(model2)
+    model1 = longeron.loads(source)
+    text = longeron.to_sysml(model1)
+    model2 = longeron.loads(text, source_name="<reprint>")
+    d1, d2 = longeron.to_dict(model1), longeron.to_dict(model2)
     d1.pop("source_name", None)
     d2.pop("source_name", None)
     assert d1 == d2, f"round-trip mismatch for:\n{text}"
 
 
 def test_json_export(vehicle_model):
-    data = json.loads(sysml2.to_json(vehicle_model))
+    data = json.loads(longeron.to_json(vehicle_model))
     assert data["@type"] == "Model"
     pkg = data["members"][0]
     assert pkg["name"] == "Vehicles"
@@ -123,8 +123,8 @@ def test_json_export(vehicle_model):
 
 
 def test_expression_dict():
-    expr = sysml2.parse_expression("1 + 2 * x")
-    data = sysml2.to_dict(expr)
+    expr = longeron.parse_expression("1 + 2 * x")
+    data = longeron.to_dict(expr)
     assert data["@expr"] == "Binary"
     assert data["op"] == "+"
     assert data["right"]["op"] == "*"
@@ -145,17 +145,17 @@ def test_expression_precedence_printing():
         "a.b.c + 1",
     ]
     for text in cases:
-        expr = sysml2.parse_expression(text)
-        printed = sysml2.ast.expr_to_text(expr)
-        reparsed = sysml2.parse_expression(printed)
-        assert sysml2.to_dict(expr) == sysml2.to_dict(reparsed), (
+        expr = longeron.parse_expression(text)
+        printed = longeron.ast.expr_to_text(expr)
+        reparsed = longeron.parse_expression(printed)
+        assert longeron.to_dict(expr) == longeron.to_dict(reparsed), (
             f"{text!r} printed as {printed!r} which parses differently"
         )
 
 
 def test_quoted_name_export():
-    model = sysml2.loads("package 'Nice Name' { part def 'part one'; }")
-    text = sysml2.to_sysml(model)
+    model = longeron.loads("package 'Nice Name' { part def 'part one'; }")
+    text = longeron.to_sysml(model)
     assert "'Nice Name'" in text
     assert "'part one'" in text
 
@@ -164,9 +164,9 @@ def test_reserved_word_names_quoted():
     pkg = M.Package(name="state")  # reserved word as a name
     model = M.Model()
     model.add(pkg)
-    text = sysml2.to_sysml(model)
+    text = longeron.to_sysml(model)
     assert "'state'" in text
-    sysml2.loads(text)
+    longeron.loads(text)
 
 
 def test_unsupported_round_trip():
@@ -176,7 +176,7 @@ package P {
     view def V;
 }
 """
-    model = sysml2.loads(src)
-    text = sysml2.to_sysml(model)
-    model2 = sysml2.loads(text)
-    assert sysml2.to_dict(model.members[0]) == sysml2.to_dict(model2.members[0])
+    model = longeron.loads(src)
+    text = longeron.to_sysml(model)
+    model2 = longeron.loads(text)
+    assert longeron.to_dict(model.members[0]) == longeron.to_dict(model2.members[0])

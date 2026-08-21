@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysml2"
-version = "0.2.0"
-description = "Alias for 'longeron' (whose import name is `sysml2`): define, execute, and replay SysML v2 models in Python"
+version = "0.2.1"
+description = "Alias for 'longeron': define, execute, and replay SysML v2 models in Python (`import sysml2` still works via longeron's built-in compatibility shim)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

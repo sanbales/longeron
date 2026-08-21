@@ -18,16 +18,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# autodoc imports sysml2 straight from the checkout
+# autodoc imports longeron straight from the checkout
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "docs" / "_ext"))
 
-import sysml2  # noqa: E402  (needs the path insertion above)
+import longeron  # noqa: E402  (needs the path insertion above)
 
 project = "longeron"
 author = "sanbales"
 copyright = "2025, sanbales"
-version = sysml2.__version__
+version = longeron.__version__
 release = version
 
 extensions = [
@@ -99,11 +99,11 @@ def _patch_geometry_docstring(app, what, name, obj, options, lines):
 
     The docstring introduces an indented example with ``paints:`` (single
     colon), which docutils misreads as a definition list. The source fix is
-    one character, but ``src/sysml2`` belongs to the code owners -- patch it
+    one character, but ``src/longeron`` belongs to the code owners -- patch it
     at build time instead (a no-op once the docstring is fixed upstream).
     """
 
-    if name == "sysml2.analysis.geometry" and what == "module":
+    if name == "longeron.analysis.geometry" and what == "module":
         for index, line in enumerate(lines):
             if line.endswith("paints:"):
                 lines[index] = line + ":"

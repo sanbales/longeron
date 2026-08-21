@@ -2,8 +2,8 @@
 
 import pytest
 
-import sysml2
-from sysml2.errors import EvaluationError
+import longeron
+from longeron.errors import EvaluationError
 
 
 class TestCalc:
@@ -43,7 +43,7 @@ class TestInstantiate:
     def test_nested_parts(self, vehicle_interp):
         car = vehicle_interp.instantiate("Vehicles::Vehicle")
         engine = car.slots["engine"]
-        assert isinstance(engine, sysml2.Instance)
+        assert isinstance(engine, longeron.Instance)
         assert engine.slots["power"] == 150.0
 
     def test_multiplicity_expansion(self, vehicle_interp):
@@ -113,38 +113,38 @@ class TestRequirements:
 
 class TestResolution:
     def test_resolve_through_alias(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package A { part def Thing { attribute x : Real = 1.0; } }
             package B { alias TheThing for A::Thing; }
         """)
-        interp = sysml2.Interpreter(model)
+        interp = longeron.Interpreter(model)
         inst = interp.instantiate("B::TheThing")
         assert inst.slots["x"] == 1.0
 
     def test_resolve_through_import(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package Lib { attribute k : Real = 2.5; }
             package App {
                 private import Lib::*;
                 calc def UseK { in x : Real; return : Real = x * k; }
             }
         """)
-        interp = sysml2.Interpreter(model)
+        interp = longeron.Interpreter(model)
         assert interp.call("App::UseK", 4.0) == 10.0
 
     def test_inherited_attributes(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 part def Base { attribute a : Real = 1.0; }
                 part def Derived :> Base { attribute b : Real = 2.0; }
             }
         """)
-        interp = sysml2.Interpreter(model)
+        interp = longeron.Interpreter(model)
         inst = interp.instantiate("P::Derived")
         assert inst.slots == {"b": 2.0, "a": 1.0}
 
     def test_redefinition_overrides(self):
-        model = sysml2.loads("""
+        model = longeron.loads("""
             package P {
                 part def Base { attribute a : Real = 1.0; }
                 part def Derived :> Base {
@@ -152,5 +152,5 @@ class TestResolution:
                 }
             }
         """)
-        interp = sysml2.Interpreter(model)
+        interp = longeron.Interpreter(model)
         assert interp.instantiate("P::Derived").slots["a"] == 42.0

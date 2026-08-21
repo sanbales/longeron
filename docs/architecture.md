@@ -28,24 +28,24 @@ analysis bridges — consumes that model.
 
 ## The analysis stack
 
-{mod}`sysml2.analysis` projects executable models onto external solvers.
+{mod}`longeron.analysis` projects executable models onto external solvers.
 Each submodule imports its solver lazily, so the package itself adds no
 third-party dependencies:
 
-- {mod}`sysml2.analysis.mdao` — part trees and calcs become OpenMDAO
+- {mod}`longeron.analysis.mdao` — part trees and calcs become OpenMDAO
   `Problem`s: derived attributes turn into components, free attributes into
   design variables, constraints into margin outputs; `@ExternalAnalysis`
   annotations swap higher-fidelity components in for calc bodies.
-- {mod}`sysml2.analysis.trades` — variation/variant catalogs become
+- {mod}`longeron.analysis.trades` — variation/variant catalogs become
   OR-Tools CP-SAT models for discrete architecture trade studies, scored
   exactly through the interpreter.
-- {mod}`sysml2.analysis.smt` — requirement sets become Z3 assertions:
+- {mod}`longeron.analysis.smt` — requirement sets become Z3 assertions:
   consistency checks, conflict cores, and design-space bounds over the
   reals.
-- {mod}`sysml2.analysis.viz`, {mod}`sysml2.analysis.structure`,
-  {mod}`sysml2.analysis.dashboard` — figures, N2/network views of the
+- {mod}`longeron.analysis.viz`, {mod}`longeron.analysis.structure`,
+  {mod}`longeron.analysis.dashboard` — figures, N2/network views of the
   generated problems, and the linked mission-compromise dashboard.
-- {mod}`sysml2.analysis.geometry` / {mod}`sysml2.analysis.viewer3d` —
+- {mod}`longeron.analysis.geometry` / {mod}`longeron.analysis.viewer3d` —
   parametric to-scale meshes for architecture mixes (stdlib-only math) and
   a small three.js viewer; real CAD solids (STEP export) live behind the
   `cad` extra.
@@ -56,7 +56,7 @@ stack end to end.
 
 ## Vendored ipyelk
 
-The interactive diagrams ({mod}`sysml2.diagrams`) are built on
+The interactive diagrams ({mod}`longeron.diagrams`) are built on
 [ipyelk](https://github.com/jupyrdf/ipyelk), which is **vendored** under
 `vendor/ipyelk` (BSD-3-Clause, tag v2.1.1) and installed editable so it
 can be patched as needed: headless-safe scheduling, resend-with-backoff
@@ -67,8 +67,8 @@ rebuilt from the patched TypeScript sources. Every local patch is marked
 the history is tracked by `git log -- vendor/ipyelk`.
 
 Layout normally runs in the browser (elkjs). For tests, exports, and this
-documentation build, {mod}`sysml2.render` runs the same elkjs (vendored as
-`sysml2/_js/elk.bundled.js`, EPL-2.0) in a node subprocess and draws
+documentation build, {mod}`longeron.render` runs the same elkjs (vendored as
+`longeron/_js/elk.bundled.js`, EPL-2.0) in a node subprocess and draws
 styled SVG/PNG headlessly.
 
 ## Grammar patches

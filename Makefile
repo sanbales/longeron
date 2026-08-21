@@ -14,7 +14,7 @@ test-vendor:  ## vendored ipyelk test suite (incl. ported F1-F6 fixes)
 	$(VENV)/pytest -c pyproject.toml -q vendor/ipyelk/tests
 
 coverage:
-	$(VENV)/pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered
+	$(VENV)/pytest -q --cov=longeron --cov-report=term-missing:skip-covered
 
 lint:
 	$(VENV)/ruff format --check src tests examples scripts notebooks docs
