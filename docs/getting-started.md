@@ -24,6 +24,7 @@ core install stays light:
 | Extra | Enables | Pulls in |
 |---|---|---|
 | `ecore` | OMG spec-metamodel projection ({mod}`sysml2.ecore`) and Systems Modeling API JSON ({mod}`sysml2.api`) | `pyecore` |
+| `rdf` | RDF projection + SPARQL ({mod}`sysml2.rdf`) | `rdflib` |
 | `replay` | simulation/action replay widget ({mod}`sysml2.replay`) | `anywidget` |
 | `mdao` | OpenMDAO sizing bridge ({mod}`sysml2.analysis.mdao`) | `openmdao` |
 | `trades` | CP-SAT architecture trade studies ({mod}`sysml2.analysis.trades`) | `ortools` |
@@ -36,6 +37,10 @@ core install stays light:
 ```bash
 pip install "longeron[mdao,trades,smt,viz]"   # the full analysis stack
 ```
+
+The LLM retrieval substrate ({mod}`sysml2.rag`) deliberately needs **no
+extra** — chunking, neighborhoods, and keyword search are stdlib only, so
+the substrate works in any install.
 
 Interactive diagrams ({mod}`sysml2.diagrams`) additionally need the
 vendored ipyelk from a source checkout (`pip install -e vendor/ipyelk`);

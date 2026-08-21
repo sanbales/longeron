@@ -23,6 +23,7 @@ for SysML v2 and KerML, taken from
 | **Validate** | `sysml2.validate()` / `sysml2 lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems. Names resolve against the vendored standard library (a bare `Real` passes with no import; a typo like `Reall` warns), and plain definitions carry their *implied* specializations (`part def` → `Parts::Part`, `action def` → `Actions::Action`, which is how `start`/`done` resolve); opt out with `stdlib=False` / `--no-stdlib`. |
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
 | **Visualize** | `sysml2.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. |
+| **Query & retrieve** | Project any model onto RDF (`sysml2.rdf`, rdflib) and ask SPARQL questions over structure, specializations, typed attribute values, variation points, and requirements. A dependency-free RAG substrate (`sysml2.rag`) chunks the model into stable, re-parseable SysML fragments keyed by qualified name, walks semantic neighborhoods, and does keyword search — retrieval for LLM agents that cite names and resolve them through the interpreter for ground truth. |
 | **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
 
 The builder covers the full grammar: every construct the SysML grammar
@@ -41,7 +42,9 @@ make check        # ruff + mypy + 388 tests
 ```
 
 Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
-projection and API JSON (pyecore); `pre-commit install` wires ruff+mypy
+projection and API JSON (pyecore), and `pip install -e ".[rdf]"` the RDF
+projection (rdflib; the `sysml2.rag` retrieval substrate needs no extra);
+`pre-commit install` wires ruff+mypy
 into every commit.
 
 ### With pixi (optional)
@@ -131,7 +134,7 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 # -> 'on'
 ```
 
-A complete walk-through lives in `examples/demo.py`, and seven executable
+A complete walk-through lives in `examples/demo.py`, and eight executable
 tutorials live in [`notebooks/`](notebooks/):
 
 | Notebook | Covers |
@@ -143,6 +146,7 @@ tutorials live in [`notebooks/`](notebooks/):
 | `05_stdlib_and_validation` | the vendored standard library, `sysml2 lint` |
 | `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
 | `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views |
+| `08_semantic_web_and_rag` | RDF projection + SPARQL queries, deterministic retrieval chunks, semantic neighborhoods, keyword search, the agent tool-use loop |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
@@ -237,6 +241,8 @@ src/sysml2/
     stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt JSON)
     ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
     api.py                 OMG Systems Modeling API JSON interchange
+    rdf.py                 RDF projection + SPARQL convenience (rdflib)
+    rag.py                 LLM retrieval substrate: chunks, neighborhoods, search
     diagrams.py            interactive ELK diagrams (ipyelk)
     render.py + _js/       headless SVG/PNG export (vendored elkjs via node)
 vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)

@@ -30,7 +30,7 @@ extras — see the [extras table](getting-started.md#optional-extras).
 
 - [Getting started](getting-started.md) — install, extras, and a
   parse → validate → simulate quickstart.
-- [Tutorials](tutorials/index.md) — the seven executable notebooks,
+- [Tutorials](tutorials/index.md) — the eight executable notebooks,
   run at docs-build time so every output is current.
 - [API reference](reference/index.md) — autodoc pages for every module.
 - [Architecture](architecture.md) — how a model flows through the
