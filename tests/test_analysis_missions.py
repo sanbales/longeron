@@ -53,7 +53,7 @@ def base_mix(arch):
         sorted(
             (k, v)
             for k, v in arch.selection.items()
-            if k in ("airframe", "motors", "props", "battery")
+            if k in ("airframe", "motors", "props", "battery", "material")
         )
     )
 
@@ -63,7 +63,7 @@ class TestModelShape:
         assert sysml2.validate(model) == []
 
     def test_mission_points(self, studies):
-        shared = {"airframe", "motors", "props", "battery"}
+        shared = {"airframe", "motors", "props", "battery", "material"}
         assert set(studies["isr"].points) == shared | {"sensor"}
         assert set(studies["logistics"].points) == shared | {"cargo"}
         assert set(studies["intercept"].points) == shared
@@ -73,11 +73,15 @@ class TestModelShape:
             "vtolWing",
             "dartInterceptor",
         }
+        assert set(studies["intercept"].points["material"].variants) == {
+            "aluminum",
+            "carbonFiber",
+        }
 
     def test_candidate_space_sizes(self, spaces):
-        assert len(spaces["isr"]) == 4 * 3 * 3 * 3 * 3
-        assert len(spaces["logistics"]) == 4 * 3 * 3 * 3 * 3
-        assert len(spaces["intercept"]) == 4 * 3 * 3 * 3
+        assert len(spaces["isr"]) == 4 * 3 * 3 * 3 * 2 * 3
+        assert len(spaces["logistics"]) == 4 * 3 * 3 * 3 * 2 * 3
+        assert len(spaces["intercept"]) == 4 * 3 * 3 * 3 * 2
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -127,8 +131,9 @@ class TestFronts:
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
         # teardropQuad adds ISR mixes (its bay takes the grade-2 sensor)
-        # and intercept mixes; its 1.0 kg bay excludes every parcel
-        assert counts == {"isr": 23, "logistics": 20, "intercept": 56}
+        # and intercept mixes; its 1.0 kg bay excludes every parcel; the
+        # material axis doubles the space without moving the stories
+        assert counts == {"isr": 50, "logistics": 47, "intercept": 114}
 
     def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
         """The design-space answer to "are wings necessary?": both the
@@ -146,6 +151,7 @@ class TestFamilyWinners:
             (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
         )
         assert best.selection["airframe"] == "vtolWing"
+        assert best.selection["material"] == "carbonFiber"  # grams buy minutes
         assert best.metrics["stationMinutes"] > 100.0
 
     def test_winged_vtol_wins_logistics(self, spaces):
@@ -182,6 +188,7 @@ class TestFamilyWinners:
                 (a for a in spaces[name] if a.verified), key=lambda a: a.metrics["missionCost"]
             )
             assert cheapest.selection["airframe"] == "boxQuad", name
+            assert cheapest.selection["material"] == "aluminum", name  # Al owns cheap
 
     def test_a_robust_mix_sits_on_two_fronts(self, spaces):
         fronts = {
@@ -189,10 +196,24 @@ class TestFamilyWinners:
             for name in MISSIONS
         }
         overlap = fronts["isr"] & fronts["logistics"]
-        assert overlap  # the winged std/slim/packMax bird serves both
+        assert overlap  # the winged std/slim bird serves both
         assert any(dict(mix)["airframe"] == "vtolWing" for mix in overlap)
         # nothing is on all three fronts: missions really pull apart
         assert not (overlap & fronts["intercept"])
+
+    def test_both_materials_earn_front_seats(self, spaces):
+        """The material axis is a real trade: carbon's lighter structure
+        buys endurance/payload-range seats on the mass-driven fronts,
+        aluminum keeps every cheap corner -- and the intercept front is
+        ALL aluminum, because dash physics never rewards the grams."""
+
+        mats = {
+            name: {a.selection["material"] for a in front_2d(spaces[name], MISSIONS[name][1])}
+            for name in MISSIONS
+        }
+        assert mats["isr"] == {"aluminum", "carbonFiber"}
+        assert mats["logistics"] == {"aluminum", "carbonFiber"}
+        assert mats["intercept"] == {"aluminum"}
 
 
 class TestExplainableInfeasibility:
@@ -221,23 +242,26 @@ class TestExplainableInfeasibility:
                 "motors": "sprintMotor",
                 "props": "slimProp",
                 "battery": "packMax",
+                "material": "aluminum",
             }
         )
         assert not arch.verified
         assert "packPower" in arch.violations  # 4 x 950 W > any pack
 
     def test_eco_motors_cannot_vtol_the_big_pack(self, studies):
-        arch = studies["isr"].evaluate(
-            {
-                "airframe": "vtolWing",
-                "motors": "ecoMotor",
-                "props": "slimProp",
-                "battery": "packMax",
-                "sensor": "stareEoIr",
-            }
-        )
-        assert not arch.verified
-        assert arch.violations == ["isrLift"]
+        for material in ("aluminum", "carbonFiber"):  # even carbon's grams
+            arch = studies["isr"].evaluate(
+                {
+                    "airframe": "vtolWing",
+                    "motors": "ecoMotor",
+                    "props": "slimProp",
+                    "battery": "packMax",
+                    "sensor": "stareEoIr",
+                    "material": material,
+                }
+            )
+            assert not arch.verified
+            assert arch.violations == ["isrLift"]
 
     def test_feasible_mix_has_no_violations(self, studies):
         arch = studies["isr"].evaluate(
@@ -247,10 +271,11 @@ class TestExplainableInfeasibility:
                 "props": "slimProp",
                 "battery": "packMax",
                 "sensor": "stareEoIr",
+                "material": "carbonFiber",
             }
         )
         assert arch.verified and arch.violations == []
-        assert arch.metrics["stationMinutes"] == pytest.approx(115.137, abs=0.01)
+        assert arch.metrics["stationMinutes"] == pytest.approx(147.386, abs=0.01)
 
 
 class TestPhysicsSanity:
@@ -264,6 +289,7 @@ class TestPhysicsSanity:
                 "props": "slimProp",
                 "battery": "packMax",
                 "sensor": "stareEoIr",
+                "material": "carbonFiber",
             }
         )
         assert winged.metrics["loiterPowerW"] < 0.15 * winged.metrics["hoverPowerW"]
@@ -276,6 +302,7 @@ class TestPhysicsSanity:
                 "props": "slimProp",
                 "battery": "packMax",
                 "cargo": "parcelBayL",
+                "material": "aluminum",
             }
         )
         assert arch.metrics["outboundPowerW"] > arch.metrics["returnPowerW"]
@@ -287,6 +314,7 @@ class TestPhysicsSanity:
                 "motors": "sprintMotor",
                 "props": "slimProp",
                 "battery": "packLite",
+                "material": "aluminum",
             }
         )
         vd = arch.metrics["dashSpeed"]
@@ -310,6 +338,7 @@ class TestPhysicsSanity:
                 "motors": "stdMotor",
                 "props": "lifterProp",
                 "battery": "packLite",
+                "material": "aluminum",
             }
         )
         assert not arch.verified
@@ -318,9 +347,10 @@ class TestPhysicsSanity:
     def test_wings_versus_teardrop_is_a_drag_story(self, studies, spaces):
         """The model answers "are wings necessary?" from physics, not
         from a hardcoded verdict: with identical components the teardrop
-        shell out-dashes the box quad purely on CdA (0.021 vs 0.055),
-        and each airframe's best feasible mix ranks dart > teardrop >
-        box quad -- the dart's 0.009 CdA beats even a 4-motor power
+        shell out-dashes the box quad purely on its BUILT-UP CdA (the
+        skinned lathe earns ~0.0125 m^2 vs the open frame's 0.055), and
+        each airframe's best feasible mix ranks dart > teardrop > box
+        quad -- the dart's ~0.006 buildup beats even a 4-motor power
         advantage, but only narrowly."""
 
         def dash(airframe):
@@ -332,6 +362,7 @@ class TestPhysicsSanity:
                         "motors": "stdMotor",
                         "props": "slimProp",
                         "battery": "packMid",
+                        "material": "aluminum",
                     }
                 )
                 .metrics["dashSpeed"]

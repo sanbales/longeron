@@ -72,8 +72,8 @@ class TestCompromiseScores:
 
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
-        assert data["shared"] == ["airframe", "motors", "props", "battery"]
-        assert len(data["candidates"]) == 4 * 3 * 3 * 3
+        assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
+        assert len(data["candidates"]) == 4 * 3 * 3 * 3 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_best_equipment_per_mission(self, data):
@@ -81,10 +81,12 @@ class TestDashboardData:
         infeasible missions display 0 but keep a mix for the red card."""
 
         best = next(
-            c for c in data["candidates"] if c["label"] == "vtolWing/stdMotor/slimProp/packMax"
+            c
+            for c in data["candidates"]
+            if c["label"] == "vtolWing/stdMotor/slimProp/packMax/carbonFiber"
         )
         assert best["feasible"] == {"ISR": True, "logistics": True, "intercept": True}
-        assert best["metric"]["ISR"] == pytest.approx(115.137, abs=0.01)
+        assert best["metric"]["ISR"] == pytest.approx(147.386, abs=0.01)
         assert best["mission_mix"]["ISR"]["sensor"] in ("stareEoIr", "hawkeyeGimbal")
         dart = next(
             c for c in data["candidates"] if c["label"].startswith("dartInterceptor/sprintMotor")
@@ -112,7 +114,8 @@ class TestDashboardWiring:
         payload = json.loads(dash.parcoords.table_json)
         assert len(payload["lines"]) == len(data["candidates"])
         names = [a["name"] for a in payload["axes"]]
-        assert names[:4] == data["shared"]
+        assert names[:5] == data["shared"]
+        assert "material" in names  # the material trade is brushable
         assert {"cost", "stationMinutes", "payloadRangeKgKm", "maxTargetSpeed"} <= set(names)
         assert len(dash.picks) == 4
         assert dash.viewer.label.startswith("\u2605")

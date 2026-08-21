@@ -45,23 +45,26 @@ class TestN2Payload:
         names = [c["name"] for c in payload["components"]]
         i_power = names.index("loiterPowerW")
         i_station = names.index("stationMinutes")
-        cell = next(c for c in payload["cells"] if c["row"] == i_station and c["col"] == i_power)
+        # source row, target column (NASA/OpenMDAO orientation)
+        cell = next(c for c in payload["cells"] if c["row"] == i_power and c["col"] == i_station)
         assert cell["vars"] == ["loiterPowerW \u2192 loiterPowerW"]
 
-    def test_feedforward_problem_has_no_feedback(self, build):
+    def test_feedforward_problem_fills_the_upper_triangle(self, build):
         """This sizing chain is a pure feed-forward cascade: with the
-        source in the column and the target in the row, every dot sits
-        BELOW the diagonal (col < row) and none is marked feedback."""
+        source in the row and the target in the column (flow reads
+        clockwise: out along the row, down the column), every dot sits
+        ABOVE the diagonal (col > row) and none is marked feedback."""
 
         payload = structure.n2_payload(build)
         assert payload["cells"]  # a real matrix, not an empty grid
         for cell in payload["cells"]:
-            assert cell["col"] < cell["row"]
+            assert cell["col"] > cell["row"]
             assert cell["feedback"] is False
 
-    def test_feedback_lands_above_the_diagonal(self):
+    def test_feedback_lands_below_the_diagonal(self):
         """A deliberately cyclic two-component group: the back edge gets
-        col > row and the feedback flag."""
+        col < row and the feedback flag -- the lower triangle, exactly
+        where OpenMDAO's own n2 draws feedback."""
 
         om = pytest.importorskip("openmdao.api")
         prob = om.Problem(reports=False)
@@ -75,15 +78,55 @@ class TestN2Payload:
         payload = structure.n2_payload(prob)
         names = [c["name"] for c in payload["components"]]
         ia, ib = names.index("a"), names.index("b")
-        forward = next(c for c in payload["cells"] if c["row"] == ib and c["col"] == ia)
-        back = next(c for c in payload["cells"] if c["row"] == ia and c["col"] == ib)
+        forward = next(c for c in payload["cells"] if c["row"] == ia and c["col"] == ib)
+        back = next(c for c in payload["cells"] if c["row"] == ib and c["col"] == ia)
         assert forward["feedback"] is False
+        assert forward["col"] > forward["row"]  # feed-forward: upper triangle
         assert back["feedback"] is True
-        assert back["col"] > back["row"]  # above the diagonal
+        assert back["col"] < back["row"]  # feedback: lower triangle
+
+    def test_matches_openmdaos_own_viewer_data(self, build):
+        """The payload's orientation is verified against the connection
+        list OpenMDAO's own n2 renders for the same problem: every
+        (source, target) pair lands in the source's row and the target's
+        column, and feed-forward is exactly src-before-tgt."""
+
+        viewer = pytest.importorskip("openmdao.visualization.n2_viewer.n2_viewer")
+        payload = structure.n2_payload(build)
+        index = {c["path"]: i for i, c in enumerate(payload["components"])}
+        official = {
+            (index[src], index[tgt])
+            for src, tgt in (
+                (conn["src"].rsplit(".", 1)[0], conn["tgt"].rsplit(".", 1)[0])
+                for conn in viewer._get_viewer_data(build.problem)["connections_list"]
+            )
+            if src in index and tgt in index  # _auto_ivc skipped
+        }
+        ours = {(cell["row"], cell["col"]) for cell in payload["cells"]}
+        assert ours == official
+        # feed-forward iff the source executes first -- upper triangle
+        for cell in payload["cells"]:
+            assert cell["feedback"] == (cell["col"] < cell["row"])
 
     def test_auto_ivc_is_skipped(self, build):
         payload = structure.n2_payload(build)
         assert all(c["name"] != "_auto_ivc" for c in payload["components"])
+
+
+class TestOpenMdaoN2:
+    def test_embeds_the_official_diagram(self, build):
+        html = structure.openmdao_n2(build, height=500)
+        page = html.data
+        assert html._repr_html_() == page  # displayable inline
+        assert page.startswith("<iframe srcdoc=")
+        assert 'height="500"' in page
+        # the embedded document is the real application, not a stub
+        assert len(page) > 100_000
+        for marker in ("modelData", "openmdao"):
+            assert marker in page, marker
+        # srcdoc quoting: no raw double quotes survive inside the value
+        body = page.split('srcdoc="', 1)[1].rsplit('" width=', 1)[0]
+        assert '"' not in body
 
 
 @pytest.fixture(scope="module")
@@ -99,6 +142,7 @@ class TestConstraintNetworkPayload:
             "motors",
             "props",
             "battery",
+            "material",
         ]
         assert {c["name"] for c in payload["constraints"]} == {
             "propFit",
@@ -113,7 +157,9 @@ class TestConstraintNetworkPayload:
 
     def test_participation_is_transitive(self, study):
         """propFit touches only props+motors directly; canCatch reaches
-        every point THROUGH the derived maxTargetSpeed build-up."""
+        the drag/power/energy points THROUGH the derived maxTargetSpeed
+        build-up (but not the material -- dash physics is massless);
+        launchLift reaches the material through the sized structure."""
 
         payload = structure.constraint_network_payload(study)
         names = [v["name"] for v in payload["variables"]]
@@ -124,6 +170,7 @@ class TestConstraintNetworkPayload:
 
         assert touched("propFit") == {"props", "motors"}
         assert touched("canCatch") == {"airframe", "motors", "props", "battery"}
+        assert "material" in touched("launchLift")
 
     def test_violation_tinting(self, study):
         space = study.all_architectures()
@@ -179,8 +226,8 @@ class TestJsMath:
         script.write_text(f"""
 import {{ isFeedback, related }} from {json.dumps(str(module))};
 import assert from "node:assert/strict";
-assert.equal(isFeedback(2, 1), false);  // below diagonal: feed-forward
-assert.equal(isFeedback(1, 2), true);   // above diagonal: feedback
+assert.equal(isFeedback(1, 2), false);  // upper triangle: feed-forward
+assert.equal(isFeedback(2, 1), true);   // lower triangle: feedback
 const cells = [{{row: 1, col: 0}}, {{row: 2, col: 0}}, {{row: 2, col: 1}},
                {{row: 5, col: 4}}];
 assert.deepEqual(related(cells, 0), [1]);  // shares col 0

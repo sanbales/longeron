@@ -95,8 +95,8 @@ class TestExternalAnalysisBinding:
     def test_default_fidelity_is_the_model_body(self, missions):
         build = mdao.build_problem(missions, "UavMissions::IsrPrime")
         build.problem.run_model()
-        # first-order body: parasite + induced at 15 m/s
-        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(105.692, abs=0.01)
+        # first-order body: buildup CdA parasite + induced at 15 m/s
+        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(78.841, abs=0.01)
         assert build.externals == {}
 
     def test_external_fidelity_swaps_the_component(self, missions):
@@ -106,10 +106,10 @@ class TestExternalAnalysisBinding:
         build.problem.run_model()
         power = build.problem.get_val("loiterPowerW")[0]
         assert build.externals == {"loiterPowerW": "uav_aero:CruisePowerPolar"}
-        assert power == pytest.approx(113.2, abs=0.5)  # Re + stall terms
+        assert power == pytest.approx(84.27, abs=0.5)  # Re + stall terms
         # the external output composes with interpreter-backed components
         station = build.problem.get_val("stationMinutes")[0]
-        assert station == pytest.approx(882126.0 / (power + 22.0) / 60.0, rel=1e-6)
+        assert station == pytest.approx(891757.0 / (power + 22.0) / 60.0, rel=1e-6)
 
     def test_qualified_fidelity_key(self, missions):
         build = mdao.build_problem(

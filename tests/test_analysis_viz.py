@@ -298,10 +298,67 @@ class TestFigures:
         texts = " ".join(t.get_text() for t in fig.axes[0].texts)
         assert "tight binds at 0.50" in texts
         assert "feasible" in texts  # the shaded band is labeled
-        assert "infeasible" in texts
+        assert "infeasible: tight" in texts  # ... naming its binding constraint
         import matplotlib.pyplot as plt
 
         plt.close(fig)
+
+    def test_margin_sweep_bands_match_sign_structure(self):
+        """Regression: the shaded bands are exactly the sign structure of
+        the margins -- a sweep that leaves and re-enters feasibility
+        shades BOTH boundaries and names the binding constraint in the
+        infeasible band between them."""
+
+        values = [0.0, 1.0, 2.0, 3.0, 4.0]
+        curves = {
+            "m1": [3.0, 0.0 + 1e-12, -1.0, 0.0, 3.0],  # dips below zero mid-sweep
+            "m2": [5.0, 4.0, 3.0, 2.0, 1.0],  # always holds
+        }
+        bands = viz._sweep_bands(values, curves)
+        assert [b["feasible"] for b in bands] == [True, False, True]
+        assert [b["binding"] for b in bands] == [None, "m1", None]
+        # boundaries interpolate the zero crossings of the tightest margin
+        assert bands[0]["x1"] == pytest.approx(1.0, abs=1e-6)
+        assert bands[1]["x1"] == pytest.approx(3.0, abs=1e-6)
+        assert bands[0]["x0"] == values[0] and bands[-1]["x1"] == values[-1]
+        # adjacent bands tile the axis with no gaps
+        from itertools import pairwise
+
+        for left, right in pairwise(bands):
+            assert left["x1"] == right["x0"]
+
+        class Stub:
+            def __init__(self):
+                self.x = 0.0
+
+            def set_val(self, name, value):
+                self.x = value
+
+            def run_model(self):
+                pass
+
+            def get_val(self, name):
+                if name == "x":
+                    return [self.x]
+                if name == "m1":
+                    return [-(self.x - 1.0) * (3.0 - self.x) if 1.0 <= self.x <= 3.0 else 1.0]
+                return [5.0 - self.x]
+
+        fig = viz.margin_sweep_figure(Stub(), "x", [i / 4 for i in range(17)], ["m1", "m2"])
+        texts = " ".join(t.get_text() for t in fig.axes[0].texts)
+        assert "infeasible: m1" in texts
+        assert "m1 binds at 1." in texts
+        # one accent span per feasible band + tint & hatch per infeasible
+        assert len(fig.axes[0].patches) >= 4
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_sweep_bands_all_infeasible_names_the_culprit(self):
+        bands = viz._sweep_bands([0.0, 1.0], {"a": [-1.0, -2.0], "b": [1.0, 1.0]})
+        assert bands == [{"x0": 0.0, "x1": 1.0, "feasible": False, "binding": "a"}]
+        with pytest.raises(AnalysisError):
+            viz._sweep_bands([0.0, 1.0], {})
 
     def test_margin_sweep_figure_needs_margins(self):
         with pytest.raises(AnalysisError):
