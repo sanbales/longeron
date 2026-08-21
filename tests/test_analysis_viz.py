@@ -96,6 +96,44 @@ class TestParcoordsWidget:
         widget = viz.parcoords(ROWS)
         assert "pointerdown" in widget._esm  # brushing is a drag
         assert "selected" in widget._esm  # syncs back to Python
+        # editable brushes: move/resize/clear + cursor affordances
+        for token in ("brushZone", "moveInterval", "resizeInterval",
+                      "ns-resize", "grab", "crosshair", "dblclick"):
+            assert token in widget._esm, token
+
+    def test_brush_math_with_node(self, tmp_path):
+        """The pure JS interval/hit-test helpers, exercised via node."""
+
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node not available")
+        module = tmp_path / "pc_math.mjs"
+        module.write_text(viz._PC_MATH_JS + "\nexport { clamp01, interval,"
+                          " inBrush, brushZone, moveInterval,"
+                          " resizeInterval };\n")
+        script = tmp_path / "test.mjs"
+        script.write_text(f"""
+import {{ brushZone, moveInterval, resizeInterval, inBrush }}
+  from {json.dumps(str(module))};
+import assert from "node:assert/strict";
+assert.equal(brushZone(0.4, [0.2, 0.6], 0.02), "body");
+assert.equal(brushZone(0.21, [0.2, 0.6], 0.02), "lo");
+assert.equal(brushZone(0.615, [0.2, 0.6], 0.02), "hi");
+assert.equal(brushZone(0.9, [0.2, 0.6], 0.02), null);
+assert.deepEqual(moveInterval([0.2, 0.4], 0.3), [0.5, 0.7]);
+assert.deepEqual(moveInterval([0.6, 0.9], 0.5), [0.7, 1]);
+assert.deepEqual(resizeInterval([0.2, 0.6], "lo", 0.7),
+                 {{ brush: [0.6, 0.7], end: "hi" }});
+assert.equal(inBrush([0.2, 0.6], 0.6), true);
+console.log("node brush math ok");
+""")
+        out = subprocess.run([node, str(script)], capture_output=True,
+                             text=True, timeout=30)
+        assert out.returncode == 0, out.stderr
+        assert "node brush math ok" in out.stdout
 
 
 def _arch(motor, cost, hover, mass, feasible=True):
@@ -111,12 +149,17 @@ class TestFigures:
         matplotlib = pytest.importorskip("matplotlib")
         matplotlib.use("Agg")
 
+    @staticmethod
+    def _front_points(fig):
+        return [tuple(p) for c in fig.axes[0].collections
+                if c.get_label() == "Pareto frontier"
+                for p in c.get_offsets()]
+
     def test_pareto_figure(self):
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
                  _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
-        front = [archs[0], archs[1]]
         fig = viz.pareto_figure(
-            archs, front, x="cost", y="hover", panel_y="mass",
+            archs, x="cost", y="hover", panel_y="mass",
             annotate={"cruiser": archs[0]})
         assert len(fig.axes) == 2  # main + small multiple
         texts = [t.get_text() for t in fig.axes[0].texts]
@@ -125,9 +168,59 @@ class TestFigures:
 
         plt.close(fig)
 
+    def test_pareto_figure_front_is_computed_from_plotted_axes(self):
+        """Regression: a mix that is Pareto-optimal only via an unplotted
+        third metric (b: lightest) must NOT appear on the drawn cost-hover
+        frontier -- projecting a 3-objective front here was the bug."""
+
+        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
+                 _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
+        fig = viz.pareto_figure(archs, x="cost", y="hover", panel_y="mass")
+        assert self._front_points(fig) == [(100.0, 15.0)]  # a alone
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_pareto_figure_senses(self):
+        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
+                 _arch("c", 180, 6, 1.1)]
+        fig = viz.pareto_figure(archs, x="cost", y="mass", y_sense="min")
+        # min cost / min mass: a (cheaper) and b (lighter); c dominated
+        assert sorted(self._front_points(fig)) == [(100.0, 1.0),
+                                                   (150.0, 0.9)]
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+        with pytest.raises(AnalysisError):
+            viz.pareto_figure(archs, x="cost", y="mass", y_sense="down")
+
+    def test_pareto_figure_catalog_front_matches_brute_force(self, study):
+        """Regression on the shipped catalog: the drawn cost-hover front
+        is the brute-force 2D non-dominated set -- one mix, the $118
+        cruiser (cheapest AND longest-hovering)."""
+
+        archs = study.all_architectures()
+        feasible = [a for a in archs if a.verified]
+        brute = {(a.metrics["totalCost"], a.metrics["hoverMinutes"])
+                 for a in feasible
+                 if not any(
+                     b.metrics["totalCost"] <= a.metrics["totalCost"]
+                     and b.metrics["hoverMinutes"]
+                     >= a.metrics["hoverMinutes"]
+                     and (b.metrics["totalCost"] < a.metrics["totalCost"]
+                          or b.metrics["hoverMinutes"]
+                          > a.metrics["hoverMinutes"])
+                     for b in feasible)}
+        fig = viz.pareto_figure(archs, x="totalCost", y="hoverMinutes",
+                                panel_y="totalMass")
+        assert set(self._front_points(fig)) == brute == {(118.0, 15.0)}
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
     def test_pareto_figure_single_panel(self):
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9)]
-        fig = viz.pareto_figure(archs, archs, x="cost", y="hover")
+        fig = viz.pareto_figure(archs, x="cost", y="hover")
         assert len(fig.axes) == 1
         import matplotlib.pyplot as plt
 
@@ -156,6 +249,8 @@ class TestFigures:
         assert stub.x == 0.0  # baseline restored
         texts = " ".join(t.get_text() for t in fig.axes[0].texts)
         assert "tight binds at 0.50" in texts
+        assert "feasible" in texts  # the shaded band is labeled
+        assert "infeasible" in texts
         import matplotlib.pyplot as plt
 
         plt.close(fig)
@@ -163,14 +258,3 @@ class TestFigures:
     def test_margin_sweep_figure_needs_margins(self):
         with pytest.raises(AnalysisError):
             viz.margin_sweep_figure(object(), "x", [0.0], {})
-
-    def test_interval_figure(self):
-        fig = viz.interval_figure(
-            0.0, 0.46, span=(0.0, 0.8), bound_text="max = 23/50 kg",
-            witness=0.2, witness_label="Z3 witness")
-        texts = [t.get_text() for t in fig.axes[0].texts]
-        assert "max = 23/50 kg" in texts
-        assert "Z3 witness" in texts
-        import matplotlib.pyplot as plt
-
-        plt.close(fig)
