@@ -119,7 +119,7 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 # lazy imports behind the [viz]/[cad] extras
-module = ["matplotlib.*", "cadquery.*"]
+module = ["matplotlib.*", "cadquery.*", "ipywidgets.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

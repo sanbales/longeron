@@ -154,10 +154,13 @@ package UavMissions {
 
     // Airframes: a cheap rotor-only quad, a streamlined teardrop-body
     // quad (same rotor-borne physics, a fraction of the box frame's CdA,
-    // but a slim payload bay), a winged VTOL (quad lift: two large props
-    // on wingtip nacelles + two smaller props atop the twin vertical
-    // stabilizers), and a rail-launched streamlined interceptor
-    // (hoverThrustFactor 0: no hover requirement, no hover budget).
+    // but a slim payload bay; the bullet body stands through the rotor
+    // plane), a cruciform tail-sitter VTOL (one long wing pair, one
+    // shorter pair, a wingtip prop on each of the four tips with thrust
+    // along the chords/body axis: it hovers nose-up on its props and
+    // pitches over to cruise wing-borne), and a rail-launched
+    // streamlined interceptor (hoverThrustFactor 0: no hover
+    // requirement, no hover budget).
     part def BoxQuad :> Airframe {
         attribute mass : Real = 0.85;   attribute cost : Real = 95.0;
         attribute dragArea : Real = 0.055;
@@ -201,7 +204,7 @@ package UavMissions {
         attribute loiterSpeed : Real = 15.0;
         attribute cruiseSpeed : Real = 21.0;
         attribute motorCount : Integer = 4;
-        attribute diskAreaFactor : Real = 3.3;  // 2 wingtip + 2 smaller tail
+        attribute diskAreaFactor : Real = 3.3;  // 2 main + 2 smaller tips
         attribute hoverThrustFactor : Real = 1.45;
         attribute payloadCapacity : Real = 5.5;
         attribute hoverOpsSec : Real = 120.0;
