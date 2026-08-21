@@ -90,6 +90,54 @@ class TestOptimization:
         assert ("emax2306", "hq5x43", "esc45") in picks  # lightest
         assert len(front) == 2
 
+    def test_pareto_two_objective_cost_hover_front(self, study):
+        """Regression: the 2D (min cost, max hover) front of the catalog.
+
+        The cheapest feasible mix also hovers longest, so the cost-hover
+        front is a *single* point -- the $118 cruiser.  The 0.9 kg racer
+        is Pareto-optimal only once mass counts as a third objective; a
+        3-objective front projected onto these two axes would wrongly
+        include it (that projection was notebook 07's original bug).
+        """
+
+        archs = study.enumerate()
+        front = trades.pareto(archs, minimize=("totalCost",),
+                              maximize=("hoverMinutes",))
+
+        def dominates(b, a):  # brute-force weak dominance cross-check
+            return ((b.metrics["totalCost"] <= a.metrics["totalCost"]
+                     and b.metrics["hoverMinutes"]
+                     >= a.metrics["hoverMinutes"])
+                    and (b.metrics["totalCost"] < a.metrics["totalCost"]
+                         or b.metrics["hoverMinutes"]
+                         > a.metrics["hoverMinutes"]))
+
+        brute = [a for a in archs
+                 if not any(dominates(b, a) for b in archs)]
+        key = lambda a: tuple(sorted(a.selection.items()))  # noqa: E731
+        assert {key(a) for a in front} == {key(a) for a in brute}
+        assert len(front) == 1
+        assert front[0].selection == {
+            "motors": "sunnySky2212", "props": "hq5x43",
+            "battery": "lipo3s2200", "esc": "esc20"}
+        assert front[0].metrics["totalCost"] == pytest.approx(118.0)
+        assert front[0].metrics["hoverMinutes"] == pytest.approx(15.0)
+
+    def test_pareto_keeps_equal_key_duplicates(self):
+        a = trades.Architecture({"m": "a"}, {"cost": 1.0, "hover": 5.0})
+        b = trades.Architecture({"m": "b"}, {"cost": 1.0, "hover": 5.0})
+        c = trades.Architecture({"m": "c"}, {"cost": 2.0, "hover": 4.0})
+        front = trades.pareto([a, b, c], minimize=("cost",),
+                              maximize=("hover",))
+        assert front == [a, b]  # ties survive; c is dominated
+
+    def test_pareto_weak_dominance(self):
+        a = trades.Architecture({"m": "a"}, {"cost": 1.0, "hover": 5.0})
+        d = trades.Architecture({"m": "d"}, {"cost": 1.0, "hover": 6.0})
+        front = trades.pareto([a, d], minimize=("cost",),
+                              maximize=("hover",))
+        assert front == [d]  # equal on cost, better on hover: dominates
+
 
 class TestExplainability:
     def test_feasible_has_no_core(self, study):
