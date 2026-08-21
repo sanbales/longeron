@@ -38,7 +38,7 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-make check        # ruff + mypy + 388 tests
+make check        # ruff + mypy + 668 tests
 ```
 
 Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel

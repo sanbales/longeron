@@ -1,11 +1,12 @@
 # longeron
 
-*The spine of your system model* — a Python package that defines, exports,
-imports, and **executes** SysML v2 models. The distribution is named
-`longeron`; the import name is `longeron` (with `sysml2` kept as a
-built-in compatibility alias). The parsers are generated with
-ANTLR 4 from combined grammars for SysML v2 and KerML (see the
-[grammar patches](architecture.md#grammar-patches) for local deviations).
+*The spine of your system model.* `longeron` is a Python package that
+defines, exports, imports, and **executes** SysML v2 models. The import
+name is `longeron`, and `sysml2` remains a built-in compatibility alias
+([migration notes](guides/compat.md)). The parsers are generated with
+ANTLR 4 from combined SysML v2 and KerML grammars, and the full official
+SysML-v2-Release corpus parses and builds
+([grammar conformance](guides/grammar.md)).
 
 > SysML® is a registered trademark of the Object Management Group. This
 > project is not affiliated with or endorsed by OMG, and is not a
@@ -17,8 +18,9 @@ ANTLR 4 from combined grammars for SysML v2 and KerML (see the
 pip install longeron
 ```
 
-Optional solver, visualization, and interchange features live behind
-extras — see the [extras table](getting-started.md#optional-extras).
+The core install has one hard dependency, the ANTLR runtime. Solver,
+visualization, and interchange features live behind extras
+([extras table](getting-started.md#optional-extras)).
 
 ## Capabilities
 
@@ -31,11 +33,19 @@ extras — see the [extras table](getting-started.md#optional-extras).
 
 - [Getting started](getting-started.md) — install, extras, and a
   parse → validate → simulate quickstart.
-- [Tutorials](tutorials/index.md) — the eight executable notebooks,
-  run at docs-build time so every output is current.
+- [Tutorials](tutorials/index.md) — eight executable notebooks. The
+  documentation build runs them, so every output on those pages is
+  current.
+- [Guides](guides/index.md) — one task per page: the
+  [command line](guides/cli.md), [workspaces & caching](guides/workspaces.md),
+  [validation](guides/validation.md),
+  [grammar conformance](guides/grammar.md),
+  [choosing an analysis](guides/analysis.md),
+  [development](guides/contributing.md), and
+  [migration from sysml2](guides/compat.md).
 - [API reference](reference/index.md) — autodoc pages for every module.
 - [Architecture](architecture.md) — how a model flows through the
-  package, the analysis stack, and the vendored pieces.
+  package, and what is vendored.
 - [Release notes](release-notes.md) — what shipped in 0.2.0 and what is
   queued for 0.3.0.
 
@@ -44,6 +54,7 @@ extras — see the [extras table](getting-started.md#optional-extras).
 
 getting-started
 tutorials/index
+guides/index
 reference/index
 architecture
 release-notes

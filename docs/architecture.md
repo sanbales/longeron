@@ -1,9 +1,9 @@
 # Architecture
 
-The package is a pipeline: generated ANTLR parsers turn SysML v2 text into
-parse trees, the builder turns parse trees into a typed object model, and
-everything else — exporters, validators, the interpreter, diagrams, the
-analysis bridges — consumes that model.
+The package is a pipeline. Generated ANTLR parsers turn SysML v2 text
+into parse trees, and the builder turns parse trees into a typed object
+model. Everything else consumes that model: the exporters, the
+validator, the interpreter, the diagrams, and the analysis bridges.
 
 ## Package layout
 
@@ -28,14 +28,15 @@ analysis bridges — consumes that model.
 
 ## The analysis stack
 
-{mod}`longeron.analysis` projects executable models onto external solvers.
-Each submodule imports its solver lazily, so the package itself adds no
-third-party dependencies:
+{mod}`longeron.analysis` projects executable models onto external
+solvers. Each submodule imports its solver lazily, so the package itself
+adds no third-party dependencies:
 
 - {mod}`longeron.analysis.mdao` — part trees and calcs become OpenMDAO
-  `Problem`s: derived attributes turn into components, free attributes into
-  design variables, constraints into margin outputs; `@ExternalAnalysis`
-  annotations swap higher-fidelity components in for calc bodies.
+  `Problem`s: derived attributes turn into components, free attributes
+  into design variables, and constraints into margin outputs.
+  `@ExternalAnalysis` annotations swap higher-fidelity components in for
+  calc bodies.
 - {mod}`longeron.analysis.trades` — variation/variant catalogs become
   OR-Tools CP-SAT models for discrete architecture trade studies, scored
   exactly through the interpreter.
@@ -46,13 +47,14 @@ third-party dependencies:
   {mod}`longeron.analysis.dashboard` — figures, N2/network views of the
   generated problems, and the linked mission-compromise dashboard.
 - {mod}`longeron.analysis.geometry` / {mod}`longeron.analysis.viewer3d` —
-  parametric to-scale meshes for architecture mixes (stdlib-only math) and
-  a small three.js viewer; real CAD solids (STEP export) live behind the
-  `cad` extra.
+  parametric to-scale meshes for architecture mixes (stdlib-only math)
+  and a small three.js viewer. Real CAD solids (STEP export) live behind
+  the `cad` extra.
 
-Tutorial {doc}`7. Analysis: trade studies, sizing, and requirement
-consistency <tutorials/07_analysis_and_trades>` drives the whole
-stack end to end.
+The guide [Choosing an analysis](guides/analysis.md) matches questions
+to bridges, and tutorial
+{doc}`7 <tutorials/07_analysis_and_trades>` drives the whole stack end
+to end.
 
 ## Vendored ipyelk
 
@@ -66,14 +68,15 @@ rebuilt from the patched TypeScript sources. Every local patch is marked
 [`vendor/ipyelk/README.vendor.md`](https://github.com/sanbales/longeron/blob/main/vendor/ipyelk/README.vendor.md);
 the history is tracked by `git log -- vendor/ipyelk`.
 
-Layout normally runs in the browser (elkjs). For tests, exports, and this
-documentation build, {mod}`longeron.render` runs the same elkjs (vendored as
-`longeron/_js/elk.bundled.js`, EPL-2.0) in a node subprocess and draws
-styled SVG/PNG headlessly.
+Layout normally runs in the browser (elkjs). For tests, exports, and
+this documentation build, {mod}`longeron.render` runs the same elkjs
+(vendored as `longeron/_js/elk.bundled.js`, EPL-2.0) in a node
+subprocess and draws styled SVG/PNG headlessly.
 
 ## Grammar patches
 
-```{include} ../README.md
-:start-after: "## Grammar patches"
-:end-before: "## Regenerating the parsers"
-```
+The grammars carry ten local patches against their upstream source, and
+one known precedence deviation from the OMG specification remains. The
+guide [Grammar conformance](guides/grammar.md) carries the patch table,
+the corpus result, and the deviation. The full per-patch rationale lives
+in the [README](https://github.com/sanbales/longeron#grammar-patches).
