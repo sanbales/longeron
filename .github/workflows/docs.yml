@@ -1,0 +1,49 @@
+# Build the documentation site and publish it to GitHub Pages.
+#
+# One-time repo setup: Settings -> Pages -> Source = "GitHub Actions"
+# (the deploy job below fails with "Pages not enabled" until then).
+
+name: docs
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # sphinx-build -W: the tutorial notebooks execute during the build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.67.0
+          cache: true
+          environments: docs
+
+      - run: pixi run docs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

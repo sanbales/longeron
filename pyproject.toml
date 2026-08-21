@@ -30,6 +30,17 @@ dev = [
     # cadquery ([cad]) stays OUT of dev: the OCC kernel is ~1 GB and the
     # notebook's cadquery cell degrades to a printed note without it
 ]
+docs = [
+    # the documentation site (docs/): sphinx-build -W -b html docs build/docs
+    # (executing the tutorial notebooks additionally needs the dev extras
+    # plus node on PATH -- the pixi `docs` environment provides everything)
+    "sphinx>=8",
+    "myst-nb>=1.2",
+    "furo>=2024.8",
+    "sphinx-autodoc-typehints>=2",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+]
 ecore = ["pyecore>=0.15"]
 replay = ["anywidget>=0.9"]
 mdao = ["openmdao>=3.30"]
@@ -165,6 +176,21 @@ jupyterlab = ">=4.1"
 longeron = { path = ".", editable = true, extras = ["dev", "ecore"] }
 ipyelk = { path = "vendor/ipyelk", editable = true }  # vendored, with local TLC
 
+[tool.pixi.feature.docs.pypi-dependencies]
+# mirrors [project.optional-dependencies].docs (the docs env also gets the
+# default feature: dev extras, editable ipyelk, node -- notebook execution)
+sphinx = ">=8"
+myst-nb = ">=1.2"
+furo = ">=2024.8"
+sphinx-autodoc-typehints = ">=2"
+sphinx-copybutton = ">=0.5"
+sphinx-design = ">=0.6"
+
+[tool.pixi.feature.docs.tasks]
+# executes the tutorial notebooks; warnings are errors
+docs = "sphinx-build -W -b html docs build/docs"
+docs-serve = { cmd = "python -m http.server 8000 --directory build/docs", depends-on = ["docs"] }
+
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
 
@@ -183,12 +209,14 @@ py310 = ["py310"]
 py311 = ["py311"]
 py312 = ["py312"]
 py313 = ["py313"]
+# docs = default toolchain (node, dev extras for notebook execution) + sphinx
+docs = ["docs"]
 
 [tool.pixi.tasks]
 test = "pytest -q"
 test-vendor = "pytest -c pyproject.toml -q vendor/ipyelk/tests"
-lint = "ruff format --check src tests examples scripts notebooks && ruff check src tests examples scripts notebooks"
-format = "ruff format src tests examples scripts notebooks && ruff check --fix src tests examples scripts notebooks"
+lint = "ruff format --check src tests examples scripts notebooks docs && ruff check src tests examples scripts notebooks docs"
+format = "ruff format src tests examples scripts notebooks docs && ruff check --fix src tests examples scripts notebooks docs"
 typecheck = "mypy"
 coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"

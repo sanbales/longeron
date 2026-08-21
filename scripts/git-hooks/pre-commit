@@ -52,9 +52,7 @@ def staged_paths() -> list[str]:
 
 
 def staged_blob(path: str) -> bytes:
-    return subprocess.run(
-        ["git", "show", f":{path}"], capture_output=True, check=True
-    ).stdout
+    return subprocess.run(["git", "show", f":{path}"], capture_output=True, check=True).stdout
 
 
 def staged_mode(path: str) -> str:
@@ -116,24 +114,25 @@ def strip_notebook(blob: bytes, full: bool) -> tuple[bytes, list[str]]:
     if not stripped:
         return blob, []
     # byte-identical to nbformat.write (indent=1, sorted, no ascii escapes)
-    text = json.dumps(
-        nb, indent=1, sort_keys=True, separators=(",", ": "), ensure_ascii=False
-    )
+    text = json.dumps(nb, indent=1, sort_keys=True, separators=(",", ": "), ensure_ascii=False)
     return (text + "\n").encode("utf-8"), stripped
 
 
 def restage(path: str, content: bytes) -> None:
     """Replace the INDEX entry for *path* without touching the working tree."""
 
-    blob_hash = subprocess.run(
-        ["git", "hash-object", "-w", "--stdin"],
-        input=content,
-        capture_output=True,
-        check=True,
-    ).stdout.decode().strip()
+    blob_hash = (
+        subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            input=content,
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     subprocess.run(
-        ["git", "update-index", "--cacheinfo",
-         f"{staged_mode(path)},{blob_hash},{path}"],
+        ["git", "update-index", "--cacheinfo", f"{staged_mode(path)},{blob_hash},{path}"],
         check=True,
     )
 
@@ -141,11 +140,12 @@ def restage(path: str, content: bytes) -> None:
 def main() -> int:
     failures: list[str] = []
     for path in staged_paths():
+        if staged_mode(path) == "120000":
+            continue  # symlink: the blob is the target path, not content
         blob = staged_blob(path)
         if path.endswith(".ipynb"):
             try:
-                blob, what = strip_notebook(
-                    blob, full=not path.startswith("vendor/"))
+                blob, what = strip_notebook(blob, full=not path.startswith("vendor/"))
             except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
                 failures.append(f"{path}: could not parse/strip notebook ({e!r})")
                 continue
@@ -165,8 +165,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)
         print(
-            "\ndeliberate large asset: git commit --no-verify "
-            "(say why in the message)",
+            "\ndeliberate large asset: git commit --no-verify (say why in the message)",
             file=sys.stderr,
         )
         return 1
