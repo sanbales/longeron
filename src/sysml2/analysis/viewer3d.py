@@ -16,8 +16,12 @@ ResizeObserver re-sizes the renderer and re-fits the camera on host
 resizes); ``width_px``/``height_px`` set the aspect ratio and the
 fallback width.  An optional second mesh (``mesh_b_json``) renders side
 by side at true scale for A/B comparison, with captions from
-``label``/``label_b``.  Updating ``mesh_json`` from Python (e.g.
-observing another widget's traitlet) re-bakes the scene in place.
+``label``/``label_b``.  A mesh dict may carry ``labels`` --
+``{text, anchor}`` entries as produced by
+:func:`sysml2.analysis.geometry.lineup` -- rendered as billboard
+sprites above each configuration, so a grid lineup names its cells
+in-scene.  Updating ``mesh_json`` from Python (e.g. observing another
+widget's traitlet) re-bakes the scene in place.
 
 Offline tradeoff: the front-end imports three.js (~630 kB) from the
 jsDelivr CDN at view time -- the one exception to the otherwise
@@ -141,7 +145,8 @@ async function render({ model, el }) {
   observer.observe(el);
   layout(false);
 
-  // --- geometry: one BufferGeometry + material per baked part
+  // --- geometry: one BufferGeometry + material per baked part; the
+  // optional mesh.labels ride above their anchors as billboard sprites
   function buildGroup(meshJson) {
     const mesh = JSON.parse(meshJson);
     const group = new THREE.Group();
@@ -157,12 +162,38 @@ async function render({ model, el }) {
         transparent: opacity < 1, opacity });
       group.add(new THREE.Mesh(geometry, material));
     }
+    const span = Math.max(
+      mesh.bounds[1][0] - mesh.bounds[0][0],
+      mesh.bounds[1][2] - mesh.bounds[0][2], 0.2);
+    for (const label of mesh.labels || []) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512; canvas.height = 96;
+      const ctx = canvas.getContext("2d");
+      const size = Math.min(44, Math.floor(920 / (label.text.length + 1)));
+      ctx.font = "600 " + size + "px Helvetica, Arial, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.lineWidth = 8; ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(244, 244, 242, 0.9)";  // halo on the sky
+      ctx.strokeText(label.text, 256, 48);
+      ctx.fillStyle = "#2b2d31";
+      ctx.fillText(label.text, 256, 48);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: new THREE.CanvasTexture(canvas), transparent: true,
+        depthTest: false }));
+      sprite.position.set(...label.anchor);
+      sprite.scale.set(span * 0.3, span * 0.05625, 1);
+      group.add(sprite);
+    }
     return group;
   }
 
   function dispose(group) {
     group.traverse((node) => {
       if (node.isMesh) { node.geometry.dispose(); node.material.dispose(); }
+      if (node.isSprite) {
+        if (node.material.map) node.material.map.dispose();
+        node.material.dispose();
+      }
     });
     group.clear();
   }

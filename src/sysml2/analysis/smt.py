@@ -11,9 +11,15 @@ Mapping: scalar attributes of an instantiated part tree -> Z3 ``Real`` /
 ``Int`` / ``Bool`` consts named by dotted path; attribute value expressions
 -> equality assertions (omit paths listed in ``free``); ``assert
 constraint`` bodies and requirement ``assume``/``require`` bodies -> labeled
-assertions; ``calc`` invocations are inlined by substitution.  Sequences,
-strings, state machines, and ``->`` collection operators are out of scope
-(recorded in ``gaps``).
+assertions; ``calc`` invocations are inlined by substitution.  Attributes
+whose values do not depend -- transitively -- on any ``free`` path are
+CONSTANT under the query and are pinned to their interpreter-exact values
+instead of being encoded symbolically: the requirement algebra stays
+symbolic only where the freed variables can actually reach, and physics
+upstream of them (``sqrt``/``pow``/``max`` chains Z3 has no business
+solving) never hits the solver at all.  Sequences, strings, state
+machines, and ``->`` collection operators are out of scope (recorded in
+``gaps``).
 
 Requires the ``smt`` extra: ``pip install "longeron[smt]"``.
 """
@@ -27,7 +33,7 @@ from .. import ast as A
 from .. import model as M
 from ..errors import EvaluationError, ResolutionError
 from ..interpreter import Instance, Interpreter
-from ._expr import AnalysisError, QName, constraint_expr, is_scalar, named_members
+from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
 __all__ = ["SmtResult", "SmtSystem", "to_smt"]
 
@@ -101,6 +107,8 @@ class SmtSystem:
             value = model.eval(const, model_completion=True)
             if hasattr(value, "as_fraction"):
                 out[path] = float(value.as_fraction())
+            elif hasattr(value, "as_decimal"):  # algebraic (irrational) real
+                out[path] = float(value.as_decimal(17).rstrip("?"))
             elif str(value) in ("True", "False"):
                 out[path] = str(value) == "True"
             else:
@@ -124,7 +132,13 @@ def to_smt(
     requirements: tuple[str, ...] = (),
     free: tuple[str, ...] = (),
 ) -> SmtSystem:
-    """Encode a part definition's tree (and requirements) for Z3."""
+    """Encode a part definition's tree (and requirements) for Z3.
+
+    ``free`` names the attribute paths left unconstrained (the query's
+    variables).  Attribute values that cannot be reached by any free
+    path are pinned to their interpreter-exact numbers; the rest are
+    encoded symbolically.
+    """
 
     interp = Interpreter(model)
     target = interp.resolve(part) if isinstance(part, str) else part
@@ -147,25 +161,76 @@ class _Builder:
         self.free = free
 
     def tree(self, defn: M.Definition | M.Usage, instance: Instance, prefix: str) -> None:
+        """Declare, mark, and assert the whole attribute tree.
+
+        Two passes: declaration collects every attribute const plus its
+        referenced paths; a fixed point then marks the paths the ``free``
+        variables can reach (directly or through other attributes) as
+        SYMBOLIC.  Assertion encodes symbolic values as Z3 expressions
+        and pins everything else to its interpreter-exact slot value.
+        """
+
+        refs: dict[str, set[str]] = {}
+        self._declare_tree(defn, instance, prefix, refs)
+        symbolic = set(self.free)
+        changed = True
+        while changed:
+            changed = False
+            for path, deps in refs.items():
+                if path not in symbolic and deps & symbolic:
+                    symbolic.add(path)
+                    changed = True
+        self._assert_tree(defn, instance, prefix, frozenset(symbolic))
+
+    def _declare_tree(
+        self,
+        defn: M.Definition | M.Usage,
+        instance: Instance,
+        prefix: str,
+        refs: dict[str, set[str]],
+    ) -> None:
         for attr in named_members(self.interp, defn, ("attribute",)):
             name = attr.name or attr.short_name
             assert name is not None
             path = f"{prefix}{name}"
             slot = instance.slots.get(name)
-            const = self._declare(path, attr, slot)
-            if const is None:
+            if self._declare(path, attr, slot) is None:
                 continue
-            if path in self.free:
+            if attr.value is not None:
+                refs[path] = {prefix + ".".join(p) for p in free_refs(attr.value.expr)}
+        for name, slot in instance.slots.items():
+            if isinstance(slot, Instance) and slot.definition is not None:
+                self._declare_tree(slot.definition, slot, f"{prefix}{name}.", refs)
+            elif isinstance(slot, list) and slot and isinstance(slot[0], Instance):
+                for i, item in enumerate(slot):
+                    if item.definition is not None:
+                        self._declare_tree(item.definition, item, f"{prefix}{name}_{i + 1}.", refs)
+
+    def _assert_tree(
+        self,
+        defn: M.Definition | M.Usage,
+        instance: Instance,
+        prefix: str,
+        symbolic: frozenset[str],
+    ) -> None:
+        for attr in named_members(self.interp, defn, ("attribute",)):
+            name = attr.name or attr.short_name
+            assert name is not None
+            path = f"{prefix}{name}"
+            const = self.system.variables.get(path)
+            if const is None or path in self.free:
                 continue
+            slot = instance.slots.get(name)
             expr = attr.value.expr if attr.value is not None else None
-            if expr is not None:
+            pinnable = is_scalar(slot) or isinstance(slot, bool)
+            if expr is not None and (path in symbolic or not pinnable):
                 try:
                     encoded = self._encode(expr, defn, prefix, {})
                     self.system.assertions.append((f"{path}.value", const == encoded))
                     continue
                 except AnalysisError as err:
                     self.system.gaps.append(f"{path}: {err}")
-            if is_scalar(slot) or isinstance(slot, bool):
+            if pinnable:  # constant under this query: interpreter-exact pin
                 self.system.assertions.append((f"{path}.value", const == slot))
         for con in named_members(self.interp, defn, ("constraint",)):
             expr = constraint_expr(self.interp, con)
@@ -182,11 +247,13 @@ class _Builder:
             self.system.assertions.append((label, encoded))
         for name, slot in instance.slots.items():
             if isinstance(slot, Instance) and slot.definition is not None:
-                self.tree(slot.definition, slot, prefix=f"{prefix}{name}.")
+                self._assert_tree(slot.definition, slot, f"{prefix}{name}.", symbolic)
             elif isinstance(slot, list) and slot and isinstance(slot[0], Instance):
                 for i, item in enumerate(slot):
                     if item.definition is not None:
-                        self.tree(item.definition, item, prefix=f"{prefix}{name}_{i + 1}.")
+                        self._assert_tree(
+                            item.definition, item, f"{prefix}{name}_{i + 1}.", symbolic
+                        )
 
     def requirement(self, req_name: str) -> None:
         req = self.interp.resolve(req_name)

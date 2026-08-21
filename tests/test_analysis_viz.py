@@ -295,19 +295,54 @@ class TestFigures:
         values = [i / 10 for i in range(11)]
         fig = viz.margin_sweep_figure(stub, "x", values, {"tight": "tight", "loose": "loose"})
         assert stub.x == 0.0  # baseline restored
-        texts = " ".join(t.get_text() for t in fig.axes[0].texts)
-        assert "tight binds at 0.50" in texts
-        assert "feasible" in texts  # the shaded band is labeled
-        assert "infeasible: tight" in texts  # ... naming its binding constraint
+        texts = [t.get_text() for t in fig.axes[0].texts]
+        assert any("infeasible:" in t and "tight" in t for t in texts)
+        # ONLY infeasible bands shade: no accent span, no 'feasible' caption
+        assert not any(t.strip() == "feasible" for t in texts)
         import matplotlib.pyplot as plt
 
         plt.close(fig)
 
+    def test_sweep_bands_union_over_all_constraints(self):
+        """The regression the user reported: EVERY constraint that goes
+        negative anywhere contributes a band -- a floor broken at the
+        low end, a ceiling broken at the high end, and a requirement
+        lost in the middle each carry their own names, with overlaps
+        merged and labeled with all binding constraints."""
+
+        values = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        curves = {
+            "floor": [x - 2.0 for x in values],  # negative below 2
+            "middle": [(x - 4.0) * (x - 6.0) for x in values],  # negative in (4, 6)
+            "ceiling": [8.0 - x for x in values],  # negative above 8
+        }
+        bands = viz._sweep_bands(values, curves)
+        assert bands == [
+            {"x0": 0.0, "x1": 2.0, "binding": ["floor"]},
+            {"x0": 4.0, "x1": 6.0, "binding": ["middle"]},
+            {"x0": 8.0, "x1": 10.0, "binding": ["ceiling"]},
+        ]
+
+    def test_sweep_bands_overlaps_stack_their_labels(self):
+        """Where two constraints are broken at once the band carries BOTH
+        names; the union splits exactly where the violated set changes."""
+
+        values = [0.0, 1.0, 2.0, 3.0, 4.0]
+        curves = {
+            "a": [1.0, -1.0, -1.0, -1.0, 1.0],  # negative in (0.5, 3.5)
+            "b": [1.0, 1.0, -1.0, 1.0, 1.0],  # negative in (1.5, 2.5)
+        }
+        bands = viz._sweep_bands(values, curves)
+        assert bands == [
+            {"x0": 0.5, "x1": 1.5, "binding": ["a"]},
+            {"x0": 1.5, "x1": 2.5, "binding": ["a", "b"]},
+            {"x0": 2.5, "x1": 3.5, "binding": ["a"]},
+        ]
+
     def test_margin_sweep_bands_match_sign_structure(self):
-        """Regression: the shaded bands are exactly the sign structure of
-        the margins -- a sweep that leaves and re-enters feasibility
-        shades BOTH boundaries and names the binding constraint in the
-        infeasible band between them."""
+        """A sweep that leaves and re-enters feasibility shades exactly
+        the negative stretch, with interpolated boundaries -- and the
+        feasible stretches produce no bands at all."""
 
         values = [0.0, 1.0, 2.0, 3.0, 4.0]
         curves = {
@@ -315,17 +350,11 @@ class TestFigures:
             "m2": [5.0, 4.0, 3.0, 2.0, 1.0],  # always holds
         }
         bands = viz._sweep_bands(values, curves)
-        assert [b["feasible"] for b in bands] == [True, False, True]
-        assert [b["binding"] for b in bands] == [None, "m1", None]
-        # boundaries interpolate the zero crossings of the tightest margin
-        assert bands[0]["x1"] == pytest.approx(1.0, abs=1e-6)
-        assert bands[1]["x1"] == pytest.approx(3.0, abs=1e-6)
-        assert bands[0]["x0"] == values[0] and bands[-1]["x1"] == values[-1]
-        # adjacent bands tile the axis with no gaps
-        from itertools import pairwise
-
-        for left, right in pairwise(bands):
-            assert left["x1"] == right["x0"]
+        assert len(bands) == 1
+        assert bands[0]["binding"] == ["m1"]
+        # boundaries interpolate m1's zero crossings
+        assert bands[0]["x0"] == pytest.approx(1.0, abs=1e-6)
+        assert bands[0]["x1"] == pytest.approx(3.0, abs=1e-6)
 
         class Stub:
             def __init__(self):
@@ -346,19 +375,47 @@ class TestFigures:
 
         fig = viz.margin_sweep_figure(Stub(), "x", [i / 4 for i in range(17)], ["m1", "m2"])
         texts = " ".join(t.get_text() for t in fig.axes[0].texts)
-        assert "infeasible: m1" in texts
-        assert "m1 binds at 1." in texts
-        # one accent span per feasible band + tint & hatch per infeasible
-        assert len(fig.axes[0].patches) >= 4
+        assert "infeasible:" in texts and "m1" in texts
+        # tint + hatch per infeasible band, nothing shaded elsewhere
+        assert len(fig.axes[0].patches) == 2  # one tint + one hatch overlay
         import matplotlib.pyplot as plt
 
         plt.close(fig)
 
     def test_sweep_bands_all_infeasible_names_the_culprit(self):
         bands = viz._sweep_bands([0.0, 1.0], {"a": [-1.0, -2.0], "b": [1.0, 1.0]})
-        assert bands == [{"x0": 0.0, "x1": 1.0, "feasible": False, "binding": "a"}]
+        assert bands == [{"x0": 0.0, "x1": 1.0, "binding": ["a"]}]
         with pytest.raises(AnalysisError):
             viz._sweep_bands([0.0, 1.0], {})
+
+    def test_notebook_sweep_shows_stall_and_cruise_bands(self):
+        """The reported gap: the stall floor and transit-speed ceiling
+        must appear as their own infeasible bands when the sweep range
+        actually crosses them (the old notebook swept exactly the legal
+        [11, 24] window, so only stationFloor could ever bind)."""
+
+        pytest.importorskip("openmdao")
+        from sysml2.analysis import mdao
+
+        model = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+        build = mdao.build_problem(
+            model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+        )
+        p = build.problem
+        values = [9.0 + 0.35 * i for i in range(50)]
+        curves = {label: [] for label in build.constraints}
+        for v in values:
+            p.set_val("loiterSpeed", v)
+            p.run_model()
+            for label, output in build.constraints.items():
+                curves[label].append(float(p.get_val(output)[0]))
+        bands = viz._sweep_bands(values, curves)
+        named = [tuple(b["binding"]) for b in bands]
+        assert ("aboveStall",) in named  # below 11 m/s
+        assert any("IsrStation::stationFloor" in b for b in named)  # past ~19.5
+        assert any("belowCruise" in b for b in named)  # above 24 m/s
+        # above 24 BOTH the ceiling and the station floor are broken
+        assert any(set(b) >= {"belowCruise", "IsrStation::stationFloor"} for b in named)
 
     def test_margin_sweep_figure_needs_margins(self):
         with pytest.raises(AnalysisError):

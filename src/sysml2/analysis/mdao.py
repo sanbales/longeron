@@ -8,6 +8,16 @@ Mapping (see ``.handoff/analysis-integration-design.md`` in the main tree):
   (value expression referencing other features) becomes an
   ``ExplicitComponent``; *free* attributes (literal values) become
   ``IndepVarComp`` outputs, so they can be design variables.
+* DISCIPLINE GROUPING: when a derived attribute's value invokes a calc
+  def that lives in its own package (e.g. ``UavMissions::Propulsion``),
+  the attribute's component is housed in an OpenMDAO ``Group`` named
+  after that package (outputs promoted, so flat names keep working).
+  The SysML package structure is the source of the grouping -- organize
+  the calc defs into discipline packages and the generated N2 shows the
+  classic Aerodynamics / Propulsion / Structures / Performance blocks.
+  Calcs owned by a namespace enclosing the part definition itself are
+  shared context, not disciplines, and stay ungrouped
+  (``ProblemBuild.disciplines`` records the mapping).
 * attribute cross-references -> ``connect()`` between promoted names
   (``chassis.mass`` connects group ``chassis``'s promoted ``mass``).
 * ``assert constraint`` / requirement ``require`` with a comparison body ->
@@ -84,6 +94,7 @@ class ProblemBuild:
     constraints: dict[str, str] = field(default_factory=dict)  # name -> margin var
     gaps: list[str] = field(default_factory=list)  # unmapped constructs
     externals: dict[str, str] = field(default_factory=dict)  # attr -> component spec
+    disciplines: dict[str, list[str]] = field(default_factory=dict)  # group -> attrs
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +263,51 @@ def _resolve_calc(
     return None
 
 
+def _discipline(interp: Interpreter, defn: M.Namespace, expr: A.Expr) -> str | None:
+    """The discipline group an attribute's component belongs to, if any.
+
+    The owning package of the FIRST calc def the value expression
+    invokes (depth-first), when that package is a discipline package --
+    i.e. not a namespace that encloses the part definition itself
+    (calcs beside the part are shared context, not a discipline).  The
+    model's package structure is deliberately the single source of this
+    grouping.
+    """
+
+    found: M.Definition | M.Usage | None = None
+
+    def visit(node: Any) -> None:
+        nonlocal found
+        if found is not None:
+            return
+        if isinstance(node, A.Invocation):
+            calc = _resolve_calc(interp, defn, node)
+            if calc is not None:
+                found = calc
+                return
+        if isinstance(node, A.Expr):
+            for f in fields(node):
+                visit(getattr(node, f.name))
+        elif isinstance(node, tuple):
+            for item in node:
+                visit(item)
+
+    visit(expr)
+    if found is None:
+        return None
+    package: M.Element | None = found.owner
+    while package is not None and not isinstance(package, M.Package):
+        package = package.owner
+    if package is None or package.name is None:
+        return None
+    node: M.Element | None = defn
+    while node is not None:  # enclosing namespaces are context, not disciplines
+        if node is package:
+            return None
+        node = node.owner
+    return package.name
+
+
 def _contains_bodiless_external(interp: Interpreter, context: M.Namespace, expr: A.Expr) -> bool:
     """Whether ``expr`` invokes (anywhere) a bodiless external calc."""
 
@@ -380,15 +436,18 @@ def _add_external(
     calc: M.Definition | M.Usage,
     spec: str,
     prefix: str,
+    path_prefix: str = "",
 ) -> list[tuple[str, str]]:
     """Wire an external component in place of ``attribute name = Calc(...)``.
 
     Validates the calc's declared in/out parameters against the
     component's actual I/O (that declared contract is the point), promotes
     the component's single output under the attribute name, and returns
-    the group-relative connections for the invocation's arguments
-    (attribute references connect, numeric literals become an aux
-    ``IndepVarComp``).
+    the connections for the invocation's arguments (attribute references
+    connect, numeric literals become an aux ``IndepVarComp``).  ``group``
+    is the housing group (a discipline group when the calc lives in a
+    discipline package); ``path_prefix`` is that group's path relative to
+    the group the connections are declared on.
     """
 
     params = [
@@ -442,7 +501,7 @@ def _add_external(
     for pname, arg in bound.items():
         path = _ref_path(arg)
         if path is not None:
-            connections.append((".".join(path), f"{comp_name}.{pname}"))
+            connections.append((".".join(path), f"{path_prefix}{comp_name}.{pname}"))
         elif isinstance(arg, A.Literal) and is_scalar(arg.value):
             consts.append((pname, float(arg.value)))
         else:
@@ -457,7 +516,8 @@ def _add_external(
             ivc.add_output(pname, val=value)
         group.add_subsystem(f"{comp_name}_args", ivc)
         connections += [
-            (f"{comp_name}_args.{pname}", f"{comp_name}.{pname}") for pname, _ in consts
+            (f"{path_prefix}{comp_name}_args.{pname}", f"{path_prefix}{comp_name}.{pname}")
+            for pname, _ in consts
         ]
     build.externals[f"{prefix}{name}"] = spec
     return connections
@@ -554,7 +614,19 @@ def _populate(
 ) -> None:
     consts: list[tuple[str, float]] = []
     connections: list[tuple[str, str]] = []
-    comps: list[tuple[str, Any, str]] = []  # (subsystem name, comp, output)
+    comps: list[tuple[str, Any, str, str | None]] = []  # (name, comp, output, discipline)
+    disc_groups: dict[str, Any] = {}
+
+    def host_of(disc: str | None) -> tuple[Any, str]:
+        """The group housing a component + its connect-path prefix."""
+
+        if disc is None:
+            return group, ""
+        if disc not in disc_groups:
+            sub = group.add_subsystem(sanitize((disc,)), om.Group(), promotes_outputs=["*"])
+            sub.options["auto_order"] = True
+            disc_groups[disc] = sub
+        return disc_groups[disc], f"{sanitize((disc,))}."
 
     for attr in named_members(interp, defn, ("attribute",)):
         name = attr.name or attr.short_name
@@ -567,10 +639,14 @@ def _populate(
                 spec = external_binding(calc)
                 assert spec is not None
                 _guard_nested(interp, defn, expr, fid, f"{prefix}{name}", skip=expr)
+                disc = _discipline(interp, defn, expr)
+                host, path_prefix = host_of(disc)
                 connections += _add_external(
-                    om, interp, build, group, defn, name, expr, calc, spec, prefix
+                    om, interp, build, host, defn, name, expr, calc, spec, prefix, path_prefix
                 )
                 build.derived.append(f"{prefix}{name}")
+                if disc is not None:
+                    build.disciplines.setdefault(disc, []).append(f"{prefix}{name}")
                 continue
         refs = _variable_refs(expr, instance) if expr is not None else {}
         if expr is None or not refs:
@@ -582,16 +658,21 @@ def _populate(
                 build.gaps.append(f"{prefix}{name}: non-scalar attribute skipped")
             continue
         _guard_nested(interp, defn, expr, fid, f"{prefix}{name}")
+        disc = _discipline(interp, defn, expr)
+        _, path_prefix = host_of(disc)
         comp_name = f"{sanitize((name,))}_comp"
         comps.append(
             (
                 comp_name,
                 _expr_component(interp, defn, name, expr, {sanitize(p): p for p in refs}),
                 name,
+                disc,
             )
         )
-        connections += [(".".join(p), f"{comp_name}.{sanitize(p)}") for p in refs]
+        connections += [(".".join(p), f"{path_prefix}{comp_name}.{sanitize(p)}") for p in refs]
         build.derived.append(f"{prefix}{name}")
+        if disc is not None:
+            build.disciplines.setdefault(disc, []).append(f"{prefix}{name}")
 
     for con in named_members(interp, defn, ("constraint",)):
         margin = _margin_expr(interp, con)
@@ -607,6 +688,7 @@ def _populate(
                 comp_name,
                 _expr_component(interp, defn, out, margin, {sanitize(p): p for p in refs}),
                 out,
+                None,  # requirement margins stay at the system level
             )
         )
         connections += [(".".join(p), f"{comp_name}.{sanitize(p)}") for p in refs]
@@ -648,8 +730,9 @@ def _populate(
                     "parts are not connected (phase 2: arrays)"
                 )
 
-    for comp_name, comp, out in comps:
-        group.add_subsystem(comp_name, comp, promotes_outputs=[out])
+    for comp_name, comp, out, disc in comps:
+        host, _ = host_of(disc)
+        host.add_subsystem(comp_name, comp, promotes_outputs=[out])
     group.options["auto_order"] = True
 
     for src, tgt in connections:

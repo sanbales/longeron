@@ -867,30 +867,71 @@ def _translate(vertices: list[float], dx: float, dy: float, dz: float) -> list[f
     return out
 
 
+def _grid_shape(count: int) -> tuple[int, int]:
+    """The (rows, cols) of a visually balanced, wider-than-tall lineup.
+
+    ``rows = floor(sqrt(n))``, ``cols = ceil(n / rows)``: 1 -> 1x1,
+    2 -> 1x2, 3 -> 1x3, 4 -> 2x2, 6 -> 2x3, 8 -> 2x4, 9 -> 3x3.
+    """
+
+    rows = max(1, floor(sqrt(count)))
+    return rows, ceil(count / rows)
+
+
 def lineup(
     meshes: list[dict[str, Any]], *, gap: float = 0.25, labels: list[str] | None = None
 ) -> dict[str, Any]:
-    """Merge mesh dicts into one to-scale scene, side by side along X.
+    """Merge mesh dicts into one to-scale scene on a shared ground plane.
 
     Each mesh keeps its parts (names prefixed by its label so a scene can
     carry several configurations); everything sits on a shared ground
-    plane (ymin aligned).  ``gap`` metres separate neighbouring bounds.
+    plane (ymin aligned) with ``gap`` metres between neighbouring cells.
+    Up to three meshes pack side by side along X at their true widths;
+    larger lineups fold into the adaptive grid of :func:`_grid_shape`
+    (rows along Z, row-major from the front, uniform cells sized by the
+    largest footprint) so four configurations read as 2x2, six as 2x3,
+    eight as 2x4.  With ``labels`` the scene carries a ``labels`` list
+    (``{text, anchor}``) that :func:`sysml2.analysis.viewer3d.mesh_viewer`
+    renders as a billboard caption above each cell.
     """
 
     if not meshes:
         raise AnalysisError("lineup needs at least one mesh")
     if labels is not None and len(labels) != len(meshes):
         raise AnalysisError("lineup needs one label per mesh")
-    widths = [m["bounds"][1][0] - m["bounds"][0][0] for m in meshes]
-    total = sum(widths) + gap * (len(meshes) - 1)
+    rows, cols = _grid_shape(len(meshes))
     y_floor = min(m["bounds"][0][1] for m in meshes)
 
+    # per-mesh cell origin (x, z), packed for a single row, uniform grid
+    # cells otherwise (columns line up between rows)
+    origins: list[tuple[float, float]] = []
+    if rows == 1:
+        widths = [m["bounds"][1][0] - m["bounds"][0][0] for m in meshes]
+        total = sum(widths) + gap * (len(meshes) - 1)
+        cursor = -total / 2
+        for width in widths:
+            origins.append((cursor + width / 2, 0.0))
+            cursor += width + gap
+    else:
+        cell_w = max(m["bounds"][1][0] - m["bounds"][0][0] for m in meshes) + gap
+        cell_d = max(m["bounds"][1][2] - m["bounds"][0][2] for m in meshes) + gap
+        for index in range(len(meshes)):
+            row, col = divmod(index, cols)
+            origins.append(
+                (
+                    (col - (cols - 1) / 2) * cell_w,
+                    ((rows - 1) / 2 - row) * cell_d,  # row 0 at the front
+                )
+            )
+
     parts: list[dict[str, Any]] = []
-    cursor = -total / 2
+    captions: list[dict[str, Any]] = []
     for index, mesh in enumerate(meshes):
-        (x0, y0, _z0), _ = mesh["bounds"]
-        dx = cursor - x0
+        (x0, y0, z0), (x1, y1, z1) = mesh["bounds"]
+        cx, cz = origins[index]
+        dx = cx - (x0 + x1) / 2
         dy = y_floor - y0
+        dz = cz - (z0 + z1) / 2
         prefix = labels[index] if labels is not None else str(index + 1)
         for part in mesh["parts"]:
             parts.append(
@@ -898,19 +939,32 @@ def lineup(
                     "name": f"{prefix}:{part['name']}",
                     "color": part["color"],
                     "opacity": part.get("opacity", 1.0),
-                    "vertices": [round(c, 5) for c in _translate(part["vertices"], dx, dy, 0.0)],
+                    "vertices": [round(c, 5) for c in _translate(part["vertices"], dx, dy, dz)],
                     "faces": list(part["faces"]),
                 }
             )
-        cursor += widths[index] + gap
+        if labels is not None:
+            captions.append(
+                {
+                    "text": labels[index],
+                    "anchor": [
+                        round(cx, 5),
+                        round(y1 + dy + 0.06 * max(x1 - x0, y1 - y0, 0.2), 5),
+                        round(cz, 5),
+                    ],
+                }
+            )
 
     lo = [min(min(p["vertices"][i::3]) for p in parts) for i in range(3)]
     hi = [max(max(p["vertices"][i::3]) for p in parts) for i in range(3)]
-    return {
+    scene = {
         "unit": "m",
         "parts": parts,
         "bounds": [[floor(v * 1e5) / 1e5 for v in lo], [ceil(v * 1e5) / 1e5 for v in hi]],
     }
+    if captions:
+        scene["labels"] = captions
+    return scene
 
 
 def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:

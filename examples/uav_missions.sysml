@@ -22,7 +22,17 @@ package UavMissions {
     doc /* Multi-mission UAV catalog: four airframe families, tiered
            components, a structural-material trade, and three mission
            contexts with executable physics (drag buildup + tube sizing
-           included). */
+           included).  The calc defs are organized into DISCIPLINE
+           packages (Aerodynamics, Propulsion, Structures, Performance)
+           and the variation points into a Catalog package -- the model's
+           own structure is what groups the generated OpenMDAO problem
+           into the classic discipline blocks of an N2 diagram. */
+
+    private import Aerodynamics::*;
+    private import Propulsion::*;
+    private import Structures::*;
+    private import Performance::*;
+    private import Catalog::*;
 
     // ----- external-analysis annotation ------------------------------------
     // Declares that a calc def's in/out parameters are the I/O contract of
@@ -38,174 +48,216 @@ package UavMissions {
         attribute component : String;
     }
 
-    // ----- physics ----------------------------------------------------------
+    // ----- discipline packages ----------------------------------------------
+    // The physics calc defs live in one package per discipline.  This is
+    // not cosmetic: sysml2.analysis.mdao reads an attribute's calc
+    // invocations and groups the generated OpenMDAO components by the
+    // owning package, so the N2 diagram shows Aerodynamics / Propulsion /
+    // Structures / Performance blocks because the MODEL says so.
 
-    calc def HoverPower {
-        doc /* Momentum-theory hover power: ideal induced power from disk
-               loading, over an overall hover system efficiency (rotor
-               figure of merit x motor/ESC losses). */
-        in massKg : Real;
-        in diskArea : Real;         // total rotor disk area, m^2
-        in systemEff : Real = 0.55;
-        return : Real = pow(massKg * 9.81, 1.5)
-            / sqrt(2.0 * 1.225 * diskArea) / systemEff;
+    package Propulsion {
+        doc /* Hover and cruise power, and the energy ledger they draw
+               against. */
+
+        calc def HoverPower {
+            doc /* Momentum-theory hover power: ideal induced power from disk
+                   loading, over an overall hover system efficiency (rotor
+                   figure of merit x motor/ESC losses). */
+            in massKg : Real;
+            in diskArea : Real;         // total rotor disk area, m^2
+            in systemEff : Real = 0.55;
+            return : Real = pow(massKg * 9.81, 1.5)
+                / sqrt(2.0 * 1.225 * diskArea) / systemEff;
+        }
+
+        calc def CruisePower {
+            @ExternalAnalysis { component = "uav_aero:CruisePowerPolar"; }
+            doc /* First-order wing-borne cruise power: parasite drag (CdA) plus
+                   induced drag at speed V, over the propulsive efficiency.
+                   `spanEff` is the Oswald factor TIMES the wingtip-prop bonus:
+                   props mounted on wingtip nacelles rotate against the tip
+                   vortices and recover part of the induced loss, raising the
+                   wing's effective L/D.  `wingArea` is declared for the
+                   external component (examples/uav_aero.py), whose
+                   Reynolds-scaled drag polar with a stall-adjacent drag rise
+                   needs the reference area; this first-order body does not. */
+            in massKg : Real;
+            in speed : Real;            // m/s
+            in dragArea : Real;         // parasite drag area CdA, m^2
+            in span : Real;             // wing span, m
+            in wingArea : Real;         // reference area, m^2 (external polar)
+            in spanEff : Real;          // Oswald e x wingtip-prop bonus
+            in propEff : Real;          // prop x motor efficiency
+            return : Real = (0.5 * 1.225 * dragArea * speed * speed * speed
+                + 2.0 * (massKg * 9.81) * (massKg * 9.81)
+                  / (1.225 * speed * 3.141592653589793 * spanEff * span * span))
+                / propEff;
+        }
+
+        calc def RotorCruisePower {
+            doc /* Rotor-borne translation (no wing): induced power stays at
+                   the hover level while parasite drag power grows with V^3. */
+            in massKg : Real;
+            in speed : Real;
+            in diskArea : Real;
+            in dragArea : Real;
+            in propEff : Real;
+            return : Real = HoverPower(massKg = massKg, diskArea = diskArea)
+                + 0.5 * 1.225 * dragArea * speed * speed * speed / propEff;
+        }
+
+        calc def UsableEnergy {
+            doc /* The battery joules a mission may actually plan on:
+                   pack energy at a usable depth-of-discharge fraction,
+                   less the hover budget (takeoff + landing) at hover
+                   power. */
+            in batteryWh : Real;
+            in hoverPowerW : Real;
+            in hoverOpsSec : Real;
+            in usableFraction : Real = 0.8;
+            return : Real = batteryWh * 3600.0 * usableFraction
+                - hoverPowerW * hoverOpsSec;
+        }
     }
 
-    calc def CruisePower {
-        @ExternalAnalysis { component = "uav_aero:CruisePowerPolar"; }
-        doc /* First-order wing-borne cruise power: parasite drag (CdA) plus
-               induced drag at speed V, over the propulsive efficiency.
-               `spanEff` is the Oswald factor TIMES the wingtip-prop bonus:
-               props mounted on wingtip nacelles rotate against the tip
-               vortices and recover part of the induced loss, raising the
-               wing's effective L/D.  `wingArea` is declared for the
-               external component (examples/uav_aero.py), whose
-               Reynolds-scaled drag polar with a stall-adjacent drag rise
-               needs the reference area; this first-order body does not. */
-        in massKg : Real;
-        in speed : Real;            // m/s
-        in dragArea : Real;         // parasite drag area CdA, m^2
-        in span : Real;             // wing span, m
-        in wingArea : Real;         // reference area, m^2 (external polar)
-        in spanEff : Real;          // Oswald e x wingtip-prop bonus
-        in propEff : Real;          // prop x motor efficiency
-        return : Real = (0.5 * 1.225 * dragArea * speed * speed * speed
-            + 2.0 * (massKg * 9.81) * (massKg * 9.81)
-              / (1.225 * speed * 3.141592653589793 * spanEff * span * span))
-            / propEff;
+    package Aerodynamics {
+        doc /* The parasite-drag buildup.  Each airframe's CdA is a
+               wetted-area buildup, not a quoted number: CdA = sum over
+               surfaces of Cf x S_wet x form factor (flat-plate skin
+               friction at a fixed representative Cf), plus a bluff-body
+               term for open frames and exposed rotor gear.  The teardrop
+               shell earns its slender-body advantage from these terms;
+               bigger wings really do pay for their extra skin. */
+
+        calc def SkinFrictionDrag {
+            doc /* One streamlined surface's parasite drag area: flat-plate
+                   skin-friction coefficient x wetted area x form factor.
+                   Cf = 0.0055 is a fixed representative value for small-UAV
+                   Reynolds numbers (~3e5..1e6, mostly turbulent). */
+            in wettedArea : Real;       // m^2
+            in formFactor : Real;       // >= 1, pressure-drag multiplier
+            in frictionCoeff : Real = 0.0055;
+            return : Real = frictionCoeff * wettedArea * formFactor;
+        }
+
+        calc def BodyWettedArea {
+            doc /* Lathed-body wetted area: ~0.75 x the enclosing cylinder
+                   (teardrop/ogive bodies of revolution). */
+            in length : Real;
+            in diameter : Real;
+            return : Real = 0.75 * 3.141592653589793 * diameter * length;
+        }
+
+        calc def BodyFormFactor {
+            doc /* Slender-body form factor by fineness ratio l/d: ~1.24 at
+                   l/d 5 falling toward ~1.13 at l/d 11 (Hoerner-style). */
+            in length : Real;
+            in diameter : Real;
+            return : Real = 1.05 + 0.9 * diameter / length;
+        }
+
+        calc def WingWettedArea {
+            doc /* Both faces plus section curvature: 2.05 x exposed
+                   planform (a cruciform counts both pairs). */
+            in planformArea : Real;
+            return : Real = 2.05 * planformArea;
+        }
+
+        calc def WingFormFactor {
+            doc /* Hoerner wing form factor by thickness ratio:
+                   1 + 2.7 t/c + 100 (t/c)^4 -- ~1.25 at 9%, ~1.34 at 12%. */
+            in thicknessRatio : Real;
+            return : Real = 1.0 + 2.7 * thicknessRatio
+                + 100.0 * pow(thicknessRatio, 4.0);
+        }
+
+        calc def BluffFrameDrag {
+            doc /* Open-frame / exposed-gear drag area: frontal area x a
+                   bluff-body Cd (~1.1 for plates, arms, and motor cans). */
+            in frontalArea : Real;      // m^2
+            in dragCoeff : Real = 1.1;
+            return : Real = frontalArea * dragCoeff;
+        }
     }
 
-    calc def RotorCruisePower {
-        doc /* Rotor-borne translation (no wing): induced power stays at
-               the hover level while parasite drag power grows with V^3. */
-        in massKg : Real;
-        in speed : Real;
-        in diskArea : Real;
-        in dragArea : Real;
-        in propEff : Real;
-        return : Real = HoverPower(massKg = massKg, diskArea = diskArea)
-            + 0.5 * 1.225 * dragArea * speed * speed * speed / propEff;
+    package Structures {
+        doc /* Load-based sizing.  Quad arms and wing spars are round
+               tubes sized by the loads they carry -- bending stress with
+               a safety factor AND a tip-deflection stiffness floor -- in
+               the selected structural material, so material density,
+               stiffness, strength, and $/kg all reach the mission
+               metrics through the mass and cost build-ups. */
+
+        calc def TubeWallForStress {
+            doc /* Thin-walled round tube in bending: sigma = M r / I with
+                   I = pi r^3 t  =>  wall t = M x SF / (pi r^2 sigma_y). */
+            in momentNm : Real;
+            in radius : Real;
+            in yieldPa : Real;
+            in safetyFactor : Real = 2.0;
+            return : Real = momentNm * safetyFactor
+                / (3.141592653589793 * radius * radius * yieldPa);
+        }
+
+        calc def TubeWallForStiffness {
+            doc /* Cantilever tip deflection delta = F L^3 / (3 E I) with
+                   I = pi r^3 t, capped at deflectionRatio x L  =>
+                   t = F L^2 / (3 E pi r^3 x deflectionRatio). */
+            in tipLoadN : Real;
+            in length : Real;
+            in radius : Real;
+            in modulusPa : Real;
+            in deflectionRatio : Real = 0.02;
+            return : Real = tipLoadN * length * length
+                / (3.0 * modulusPa * 3.141592653589793
+                   * pow(radius, 3.0) * deflectionRatio);
+        }
+
+        calc def TubeMass {
+            doc /* Thin-walled tube mass: A = 2 pi r t, m = A L rho. */
+            in radius : Real;
+            in wall : Real;
+            in length : Real;
+            in density : Real;
+            return : Real = 2.0 * 3.141592653589793 * radius * wall
+                * length * density;
+        }
+
+        calc def SparRootMoment {
+            doc /* Root bending moment of one wing panel under an
+                   elliptic-ish lift distribution at load factor n: half the
+                   lift acts at the elliptic centroid 4/(3 pi) of the
+                   half-span  =>  M = n W b / (3 pi) ~ 0.106 n W b. */
+            in grossKg : Real;
+            in span : Real;
+            in loadFactor : Real = 2.5;
+            return : Real = loadFactor * grossKg * 9.81 * span
+                / (3.0 * 3.141592653589793);
+        }
     }
 
-    calc def DashSpeed {
-        doc /* Parasite-drag-limited level top speed: available propulsive
-               power = 0.5 rho CdA V^3 (induced drag is negligible at dash
-               speeds). */
-        in powerW : Real;           // propulsive power, W (elec x eta)
-        in dragArea : Real;
-        return : Real = pow(2.0 * powerW / (1.225 * dragArea), 1.0 / 3.0);
-    }
+    package Performance {
+        doc /* Mission performance: what the sized, powered aircraft is
+               worth in mission units -- top speed, time on station. */
 
-    // ----- parasite-drag buildup -------------------------------------------
-    // Each airframe's CdA is a wetted-area buildup, not a quoted number:
-    // CdA = sum over surfaces of Cf x S_wet x form factor (flat-plate
-    // skin friction at a fixed representative Cf), plus a bluff-body term
-    // for open frames and exposed rotor gear.  The teardrop shell earns
-    // its slender-body advantage from these terms; bigger wings really do
-    // pay for their extra skin.
+        calc def DashSpeed {
+            doc /* Parasite-drag-limited level top speed: available propulsive
+                   power = 0.5 rho CdA V^3 (induced drag is negligible at dash
+                   speeds). */
+            in powerW : Real;           // propulsive power, W (elec x eta)
+            in dragArea : Real;
+            return : Real = pow(2.0 * powerW / (1.225 * dragArea), 1.0 / 3.0);
+        }
 
-    calc def SkinFrictionDrag {
-        doc /* One streamlined surface's parasite drag area: flat-plate
-               skin-friction coefficient x wetted area x form factor.
-               Cf = 0.0055 is a fixed representative value for small-UAV
-               Reynolds numbers (~3e5..1e6, mostly turbulent). */
-        in wettedArea : Real;       // m^2
-        in formFactor : Real;       // >= 1, pressure-drag multiplier
-        in frictionCoeff : Real = 0.0055;
-        return : Real = frictionCoeff * wettedArea * formFactor;
-    }
-
-    calc def BodyWettedArea {
-        doc /* Lathed-body wetted area: ~0.75 x the enclosing cylinder
-               (teardrop/ogive bodies of revolution). */
-        in length : Real;
-        in diameter : Real;
-        return : Real = 0.75 * 3.141592653589793 * diameter * length;
-    }
-
-    calc def BodyFormFactor {
-        doc /* Slender-body form factor by fineness ratio l/d: ~1.24 at
-               l/d 5 falling toward ~1.13 at l/d 11 (Hoerner-style). */
-        in length : Real;
-        in diameter : Real;
-        return : Real = 1.05 + 0.9 * diameter / length;
-    }
-
-    calc def WingWettedArea {
-        doc /* Both faces plus section curvature: 2.05 x exposed
-               planform (a cruciform counts both pairs). */
-        in planformArea : Real;
-        return : Real = 2.05 * planformArea;
-    }
-
-    calc def WingFormFactor {
-        doc /* Hoerner wing form factor by thickness ratio:
-               1 + 2.7 t/c + 100 (t/c)^4 -- ~1.25 at 9%, ~1.34 at 12%. */
-        in thicknessRatio : Real;
-        return : Real = 1.0 + 2.7 * thicknessRatio
-            + 100.0 * pow(thicknessRatio, 4.0);
-    }
-
-    calc def BluffFrameDrag {
-        doc /* Open-frame / exposed-gear drag area: frontal area x a
-               bluff-body Cd (~1.1 for plates, arms, and motor cans). */
-        in frontalArea : Real;      // m^2
-        in dragCoeff : Real = 1.1;
-        return : Real = frontalArea * dragCoeff;
-    }
-
-    // ----- structural sizing -------------------------------------------------
-    // Quad arms and wing spars are round tubes sized by the loads they
-    // carry -- bending stress with a safety factor AND a tip-deflection
-    // stiffness floor -- in the selected structural material, so material
-    // density, stiffness, strength, and $/kg all reach the mission
-    // metrics through the mass and cost build-ups.
-
-    calc def TubeWallForStress {
-        doc /* Thin-walled round tube in bending: sigma = M r / I with
-               I = pi r^3 t  =>  wall t = M x SF / (pi r^2 sigma_y). */
-        in momentNm : Real;
-        in radius : Real;
-        in yieldPa : Real;
-        in safetyFactor : Real = 2.0;
-        return : Real = momentNm * safetyFactor
-            / (3.141592653589793 * radius * radius * yieldPa);
-    }
-
-    calc def TubeWallForStiffness {
-        doc /* Cantilever tip deflection delta = F L^3 / (3 E I) with
-               I = pi r^3 t, capped at deflectionRatio x L  =>
-               t = F L^2 / (3 E pi r^3 x deflectionRatio). */
-        in tipLoadN : Real;
-        in length : Real;
-        in radius : Real;
-        in modulusPa : Real;
-        in deflectionRatio : Real = 0.02;
-        return : Real = tipLoadN * length * length
-            / (3.0 * modulusPa * 3.141592653589793
-               * pow(radius, 3.0) * deflectionRatio);
-    }
-
-    calc def TubeMass {
-        doc /* Thin-walled tube mass: A = 2 pi r t, m = A L rho. */
-        in radius : Real;
-        in wall : Real;
-        in length : Real;
-        in density : Real;
-        return : Real = 2.0 * 3.141592653589793 * radius * wall
-            * length * density;
-    }
-
-    calc def SparRootMoment {
-        doc /* Root bending moment of one wing panel under an
-               elliptic-ish lift distribution at load factor n: half the
-               lift acts at the elliptic centroid 4/(3 pi) of the
-               half-span  =>  M = n W b / (3 pi) ~ 0.106 n W b. */
-        in grossKg : Real;
-        in span : Real;
-        in loadFactor : Real = 2.5;
-        return : Real = loadFactor * grossKg * 9.81 * span
-            / (3.0 * 3.141592653589793);
+        calc def StationTime {
+            doc /* Time on station in minutes: usable energy over the
+                   loiter burn (aircraft + sensor draw). */
+            in usableEnergyJ : Real;
+            in loiterPowerW : Real;
+            in sensorPowerW : Real;
+            return : Real = usableEnergyJ
+                / (loiterPowerW + sensorPowerW) / 60.0;
+        }
     }
 
     // ----- component families -----------------------------------------------
@@ -514,40 +566,47 @@ package UavMissions {
 
     // ----- variation points ---------------------------------------------------
 
-    variation part def AirframeChoice :> Airframe {
-        variant part boxQuad : BoxQuad;
-        variant part teardropQuad : TeardropQuad;
-        variant part vtolWing : VtolWing;
-        variant part dartInterceptor : DartInterceptor;
-    }
-    variation part def MotorChoice :> Motor {
-        variant part ecoMotor : EcoMotor;
-        variant part stdMotor : StdMotor;
-        variant part sprintMotor : SprintMotor;
-    }
-    variation part def PropChoice :> Propeller {
-        variant part slimProp : SlimProp;
-        variant part cruiseProp : CruiseProp;
-        variant part lifterProp : LifterProp;
-    }
-    variation part def BatteryChoice :> Battery {
-        variant part packLite : PackLite;
-        variant part packMid : PackMid;
-        variant part packMax : PackMax;
-    }
-    variation part def SensorChoice :> SensorPackage {
-        variant part pathfinderEO : PathfinderEO;
-        variant part stareEoIr : StareEoIr;
-        variant part hawkeyeGimbal : HawkeyeGimbal;
-    }
-    variation part def CargoChoice :> CargoBay {
-        variant part parcelBayS : ParcelBayS;
-        variant part parcelBayM : ParcelBayM;
-        variant part parcelBayL : ParcelBayL;
-    }
-    variation part def MaterialChoice :> StructuralMaterial {
-        variant part aluminum : Aluminum6061;
-        variant part carbonFiber : CarbonFiberTube;
+    package Catalog {
+        doc /* The variation points under trade: one choice per shared
+               subsystem plus the per-mission equipment.  These seven
+               points ARE the columns of every parallel-coordinates view
+               and the decision variables of every trade study below. */
+
+        variation part def AirframeChoice :> Airframe {
+            variant part boxQuad : BoxQuad;
+            variant part teardropQuad : TeardropQuad;
+            variant part vtolWing : VtolWing;
+            variant part dartInterceptor : DartInterceptor;
+        }
+        variation part def MotorChoice :> Motor {
+            variant part ecoMotor : EcoMotor;
+            variant part stdMotor : StdMotor;
+            variant part sprintMotor : SprintMotor;
+        }
+        variation part def PropChoice :> Propeller {
+            variant part slimProp : SlimProp;
+            variant part cruiseProp : CruiseProp;
+            variant part lifterProp : LifterProp;
+        }
+        variation part def BatteryChoice :> Battery {
+            variant part packLite : PackLite;
+            variant part packMid : PackMid;
+            variant part packMax : PackMax;
+        }
+        variation part def SensorChoice :> SensorPackage {
+            variant part pathfinderEO : PathfinderEO;
+            variant part stareEoIr : StareEoIr;
+            variant part hawkeyeGimbal : HawkeyeGimbal;
+        }
+        variation part def CargoChoice :> CargoBay {
+            variant part parcelBayS : ParcelBayS;
+            variant part parcelBayM : ParcelBayM;
+            variant part parcelBayL : ParcelBayL;
+        }
+        variation part def MaterialChoice :> StructuralMaterial {
+            variant part aluminum : Aluminum6061;
+            variant part carbonFiber : CarbonFiberTube;
+        }
     }
 
     // ----- the shared assembly under trade --------------------------------------
@@ -637,6 +696,7 @@ package UavMissions {
 
         part sensor : SensorChoice;
 
+        attribute minStationMinutes : Real = 25.0;  // the tasking floor
         attribute missionMass : Real = baseMass + sensor.mass;
         attribute missionCost : Real = baseCost + sensor.cost;
         attribute hoverPowerW : Real =
@@ -659,7 +719,7 @@ package UavMissions {
         assert constraint sensorGrade { sensor.grade >= 2 }
         assert constraint isrLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
-        assert constraint stationReq { stationMinutes >= 25.0 }
+        assert constraint stationReq { stationMinutes >= minStationMinutes }
     }
 
     // ----- mission 2: logistics -----------------------------------------------------
@@ -673,6 +733,8 @@ package UavMissions {
 
         part cargo : CargoChoice;
 
+        attribute minDeliveryRadiusKm : Real = 8.0;  // the tasking floor
+        attribute minPayloadKg : Real = 1.0;         // smallest useful parcel
         attribute outboundMass : Real = baseMass + cargo.bayMass
             + cargo.payloadKg;
         attribute returnMass : Real = baseMass + cargo.bayMass;
@@ -718,7 +780,8 @@ package UavMissions {
             cargo.bayMass + cargo.payloadKg <= airframe.payloadCapacity }
         assert constraint logLift {
             maxThrust >= airframe.hoverThrustFactor * outboundMass * 9.81 }
-        assert constraint radiusReq { deliveryRadiusKm >= 8.0 }
+        assert constraint payloadReq { cargo.payloadKg >= minPayloadKg }
+        assert constraint radiusReq { deliveryRadiusKm >= minDeliveryRadiusKm }
     }
 
     // ----- mission 3: high-speed intercept ---------------------------------------------
@@ -762,28 +825,83 @@ package UavMissions {
 
     part def IsrPrime {
         doc /* The ISR trade winner frozen as a concrete sizing context:
-               component masses and efficiencies are baked in, the loiter
-               speed stays continuous.  Attribute values mirror the
-               vtolWing + stdMotor + slimProp + packMax + stareEoIr +
-               carbonFiber mix (the CF spar buys ~0.24 kg over aluminum;
-               dragArea is the wetted-area buildup's value). */
+               the component mix is baked in (vtolWing + stdMotor +
+               slimProp + packMax + stareEoIr + carbonFiber), the loiter
+               speed stays continuous -- and the chain from configuration
+               to time-on-station is spelled out discipline by discipline
+               with the shared calc defs, so the generated OpenMDAO
+               problem tells the classic MDO story: Aerodynamics builds
+               the drag, Structures sizes the spar and its mass,
+               Propulsion turns mass and drag into power and usable
+               energy, Performance turns power into minutes on station. */
 
         attribute loiterSpeed : Real = 15.0;    // m/s -- the design variable
-        attribute massKg : Real = 5.5528;       // missionMass of the winner
-        attribute dragArea : Real = 0.019574;   // CdA buildup, m^2
+
+        // frozen winner configuration (catalog values of the mix above)
+        attribute emptyMassKg : Real = 5.396;   // shell+avionics+pack+motors/props+sensor
+        attribute fuselageLength : Real = 0.95;
+        attribute fuselageDiameter : Real = 0.12;
         attribute span : Real = 2.6;
         attribute wingArea : Real = 0.624;
+        attribute secondaryWingArea : Real = 0.387;
         attribute spanEff : Real = 1.0496;      // 0.82 Oswald x 1.28 tip props
         attribute propEff : Real = 0.697;       // slim prop x std motor
         attribute sensorPowerW : Real = 22.0;
-        attribute usableEnergyJ : Real = 891757.0; // packMax x 80% - hover ops
+        attribute batteryWh : Real = 360.0;     // packMax
+        attribute hoverOpsSec : Real = 120.0;   // takeoff + landing budget
+        attribute diskArea : Real =             // 3.3 disks x slim prop
+            3.3 * 3.141592653589793 * 0.24 * 0.24 / 4.0;
+        attribute designGrossKg : Real = 6.0;
+        attribute sparRadius : Real = 0.012;
+        attribute minWallM : Real = 0.0005;     // manufacturing gauge floor
+        attribute sparDensity : Real = 1600.0;  // carbon fiber tube
+        attribute sparYieldPa : Real = 6.0e8;
 
+        // Aerodynamics: the same wetted-area buildup the catalog uses
+        attribute dragArea : Real = 1.15 * (
+            SkinFrictionDrag(
+                wettedArea = BodyWettedArea(length = fuselageLength,
+                                            diameter = fuselageDiameter),
+                formFactor = BodyFormFactor(length = fuselageLength,
+                                            diameter = fuselageDiameter))
+            + SkinFrictionDrag(          // main pair, NACA 2412
+                wettedArea = WingWettedArea(planformArea = wingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.12))
+            + SkinFrictionDrag(          // secondary pair, NACA 0009
+                wettedArea = WingWettedArea(planformArea = secondaryWingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.09))
+            + 4.0 * SkinFrictionDrag(    // wingtip motor pods
+                wettedArea = BodyWettedArea(length = 0.12, diameter = 0.045),
+                formFactor = BodyFormFactor(length = 0.12, diameter = 0.045)));
+
+        // Structures: spar sized by the root bending moment, mass rolled up
+        attribute sparWall : Real = max(minWallM,
+            TubeWallForStress(
+                momentNm = SparRootMoment(grossKg = designGrossKg,
+                                          span = span),
+                radius = sparRadius,
+                yieldPa = sparYieldPa));
+        attribute sparMassKg : Real =
+            TubeMass(radius = sparRadius, wall = sparWall,
+                     length = span, density = sparDensity);
+        attribute massKg : Real = emptyMassKg + sparMassKg;
+
+        // Propulsion: hover sets the energy reserve, cruise sets the burn
+        attribute hoverPowerW : Real =
+            HoverPower(massKg = massKg, diskArea = diskArea);
+        attribute usableEnergyJ : Real =
+            UsableEnergy(batteryWh = batteryWh, hoverPowerW = hoverPowerW,
+                         hoverOpsSec = hoverOpsSec);
         attribute loiterPowerW : Real = CruisePower(
             massKg = massKg, speed = loiterSpeed, dragArea = dragArea,
             span = span, wingArea = wingArea, spanEff = spanEff,
             propEff = propEff);
+
+        // Performance: usable energy over the loiter burn
         attribute stationMinutes : Real =
-            usableEnergyJ / (loiterPowerW + sensorPowerW) / 60.0;
+            StationTime(usableEnergyJ = usableEnergyJ,
+                        loiterPowerW = loiterPowerW,
+                        sensorPowerW = sensorPowerW);
 
         assert constraint aboveStall { loiterSpeed >= 11.0 }
         assert constraint belowCruise { loiterSpeed <= 24.0 }
@@ -794,5 +912,45 @@ package UavMissions {
         subject uav : IsrPrime;
         assume constraint { uav.loiterSpeed > 0.0 }
         require constraint stationFloor { uav.stationMinutes >= 90.0 }
+    }
+
+    // ----- mission requirements (the dashboard's threshold anchors) ---------
+
+    package MissionRequirements {
+        doc /* One requirement def per mission tasking, formalizing the
+               floors the mission contexts assert: the numeric thresholds
+               live as ATTRIBUTES of the subjects (minStationMinutes,
+               minPayloadKg, minDeliveryRadiusKm, targetSpeed), so a
+               dashboard can read its slider defaults straight from the
+               model and re-evaluate feasibility as they move. */
+
+        requirement def IsrTasking {
+            doc /* Hold station with a stabilized grade-2+ sensor at
+                   least minStationMinutes. */
+            subject uav : IsrUav;
+            assume constraint { uav.airframe.hoverThrustFactor > 0.0 }
+            require constraint stationFloor {
+                uav.stationMinutes >= uav.minStationMinutes }
+        }
+
+        requirement def LogisticsTasking {
+            doc /* Deliver at least minPayloadKg out to at least
+                   minDeliveryRadiusKm and return empty. */
+            subject uav : LogisticsUav;
+            assume constraint { uav.cargo.payloadKg > 0.0 }
+            require constraint payloadFloor {
+                uav.cargo.payloadKg >= uav.minPayloadKg }
+            require constraint radiusFloor {
+                uav.deliveryRadiusKm >= uav.minDeliveryRadiusKm }
+        }
+
+        requirement def InterceptTasking {
+            doc /* Catch a target crossing at targetSpeed, first seen at
+                   targetDistance. */
+            subject uav : InterceptUav;
+            assume constraint { uav.dashSpeed > uav.targetSpeed }
+            require constraint catchFloor {
+                uav.maxTargetSpeed >= uav.targetSpeed }
+        }
     }
 }

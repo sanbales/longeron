@@ -40,11 +40,14 @@ class TestMeshViewer:
         pytest.importorskip("anywidget")
         widget = viewer3d.mesh_viewer(MESH)
         # the front-end contract: CDN import (documented offline tradeoff),
-        # graceful fallback, re-fit gesture, and in-place mesh swaps
+        # graceful fallback, re-fit gesture, in-place mesh swaps, and
+        # billboard sprite labels for grid lineups
         assert viewer3d.THREE_URL in widget._esm
         assert "offline" in widget._esm
         assert "dblclick" in widget._esm
         assert "change:mesh_json" in widget._esm
+        for token in ("mesh.labels", "Sprite", "CanvasTexture", "label.anchor"):
+            assert token in widget._esm, token
 
     def test_esm_ux_contracts(self):
         """The UX rework, encoded: the canvas fills the host width and
