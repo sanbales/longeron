@@ -44,8 +44,7 @@ from .trades import Architecture, TradeStudy
 if TYPE_CHECKING:
     import anywidget
 
-__all__ = ["constraint_network", "constraint_network_payload", "n2_payload",
-           "n2_view"]
+__all__ = ["constraint_network", "constraint_network_payload", "n2_payload", "n2_view"]
 
 
 # ---------------------------------------------------------------------------
@@ -72,12 +71,15 @@ def n2_payload(problem: Any) -> dict[str, Any]:
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError(
             "sysml2.analysis.structure.n2_payload needs OpenMDAO; install "
-            "the extra with 'pip install \"longeron[mdao]\"'") from err
+            "the extra with 'pip install \"longeron[mdao]\"'"
+        ) from err
     prob.final_setup()
     model = prob.model
-    paths = [system.pathname
-             for system in model.system_iter(recurse=True, typ=Component)
-             if system.pathname != "_auto_ivc"]
+    paths = [
+        system.pathname
+        for system in model.system_iter(recurse=True, typ=Component)
+        if system.pathname != "_auto_ivc"
+    ]
     index = {path: i for i, path in enumerate(paths)}
 
     cells: dict[tuple[int, int], list[str]] = {}
@@ -93,10 +95,13 @@ def n2_payload(problem: Any) -> dict[str, Any]:
         leaf = path.rsplit(".", 1)[-1]
         return leaf.removesuffix("_comp") or leaf
 
-    return {"components": [{"name": short(p), "path": p} for p in paths],
-            "cells": [{"row": row, "col": col, "feedback": col > row,
-                       "vars": names}
-                      for (row, col), names in sorted(cells.items())]}
+    return {
+        "components": [{"name": short(p), "path": p} for p in paths],
+        "cells": [
+            {"row": row, "col": col, "feedback": col > row, "vars": names}
+            for (row, col), names in sorted(cells.items())
+        ],
+    }
 
 
 # Pure N2 interaction math, DOM-free so node can exercise it (the tests
@@ -116,7 +121,9 @@ function related(cells, i) {
 }
 """
 
-_N2_ESM = _N2_MATH_JS + r"""
+_N2_ESM = (
+    _N2_MATH_JS
+    + r"""
 function render({ model, el }) {
   const P = JSON.parse(model.get("payload_json"));
   const n = P.components.length;
@@ -227,6 +234,7 @@ function render({ model, el }) {
 }
 export default { render };
 """
+)
 
 _N2_CSS = """
 .sysml2-n2 { font-family: Helvetica, Arial, sans-serif;
@@ -254,8 +262,8 @@ _N2_CSS = """
 
 
 def constraint_network_payload(
-        study: TradeStudy,
-        architectures: Sequence[Architecture] | None = None,
+    study: TradeStudy,
+    architectures: Sequence[Architecture] | None = None,
 ) -> dict[str, Any]:
     """The baked bipartite constraint-participation payload.
 
@@ -268,8 +276,7 @@ def constraint_network_payload(
     ``tinted`` when it actually kills mixes.
     """
 
-    refs_of = {name: {p[0] for p in free_refs(expr)}
-               for name, expr in study.derived_order}
+    refs_of = {name: {p[0] for p in free_refs(expr)} for name, expr in study.derived_order}
 
     def touched_points(names: set[str]) -> set[str]:
         seen: set[str] = set()
@@ -290,8 +297,9 @@ def constraint_network_payload(
     for arch in architectures or ():
         violations.update(arch.violations)
 
-    variables = [{"name": point.name, "variants": len(point.variants)}
-                 for point in study.points.values()]
+    variables = [
+        {"name": point.name, "variants": len(point.variants)} for point in study.points.values()
+    ]
     v_index = {v["name"]: i for i, v in enumerate(variables)}
     constraints: list[dict[str, Any]] = []
     edges: list[list[int]] = []
@@ -302,16 +310,14 @@ def constraint_network_payload(
         name = con.name or con.label
         count = violations.get(name, 0)
         c_i = len(constraints)
-        constraints.append({"name": name, "text": body.to_text(),
-                            "violations": count, "tinted": count > 0})
-        for point in sorted(touched_points({p[0]
-                                            for p in free_refs(body)})):
+        constraints.append(
+            {"name": name, "text": body.to_text(), "violations": count, "tinted": count > 0}
+        )
+        for point in sorted(touched_points({p[0] for p in free_refs(body)})):
             edges.append([v_index[point], c_i])
     if not constraints:
-        raise AnalysisError(f"{study.assembly.label} declares no "
-                            "encodable constraints")
-    return {"variables": variables, "constraints": constraints,
-            "edges": edges}
+        raise AnalysisError(f"{study.assembly.label} declares no encodable constraints")
+    return {"variables": variables, "constraints": constraints, "edges": edges}
 
 
 # Pure bipartite adjacency math (node-tested like the N2 helpers).
@@ -330,7 +336,9 @@ function neighborhood(edges, side, index) {
 }
 """
 
-_NET_ESM = _NET_MATH_JS + r"""
+_NET_ESM = (
+    _NET_MATH_JS
+    + r"""
 function render({ model, el }) {
   const P = JSON.parse(model.get("payload_json"));
   el.classList.add("sysml2-connet");
@@ -434,6 +442,7 @@ function render({ model, el }) {
 }
 export default { render };
 """
+)
 
 _NET_CSS = """
 .sysml2-connet { font-family: Helvetica, Arial, sans-serif;
@@ -465,8 +474,7 @@ _NET_CSS = """
 _WIDGET_CLS: dict[str, type[anywidget.AnyWidget]] = {}
 
 
-def _payload_widget(kind: str, esm: str, css: str,
-                    doc: str) -> type[anywidget.AnyWidget]:
+def _payload_widget(kind: str, esm: str, css: str, doc: str) -> type[anywidget.AnyWidget]:
     if kind in _WIDGET_CLS:
         return _WIDGET_CLS[kind]
     try:
@@ -475,15 +483,20 @@ def _payload_widget(kind: str, esm: str, css: str,
     except ImportError as err:
         raise ImportError(
             "the structure diagrams need anywidget; install the extra "
-            "with 'pip install \"longeron[viz]\"'") from err
+            "with 'pip install \"longeron[viz]\"'"
+        ) from err
 
-    cls = type(kind, (_anywidget.AnyWidget,), {
-        "__doc__": doc,
-        "_esm": esm,
-        "_css": css,
-        "payload_json": traitlets.Unicode("").tag(sync=True),
-        "width_px": traitlets.Int(640).tag(sync=True),
-    })
+    cls = type(
+        kind,
+        (_anywidget.AnyWidget,),
+        {
+            "__doc__": doc,
+            "_esm": esm,
+            "_css": css,
+            "payload_json": traitlets.Unicode("").tag(sync=True),
+            "width_px": traitlets.Int(640).tag(sync=True),
+        },
+    )
     _WIDGET_CLS[kind] = cls
     return cls
 
@@ -497,15 +510,13 @@ def n2_view(problem: Any, *, width_px: int = 640) -> anywidget.AnyWidget:
     column and lists the coupled variables; click pins the tooltip.
     """
 
-    cls = _payload_widget("N2Widget", _N2_ESM, _N2_CSS,
-                          "N2 matrix over a baked problem payload.")
-    return cls(payload_json=json.dumps(n2_payload(problem)),
-               width_px=width_px)
+    cls = _payload_widget("N2Widget", _N2_ESM, _N2_CSS, "N2 matrix over a baked problem payload.")
+    return cls(payload_json=json.dumps(n2_payload(problem)), width_px=width_px)
 
 
-def constraint_network(study: TradeStudy,
-                       architectures: Sequence[Architecture] | None = None,
-                       *, width_px: int = 760) -> anywidget.AnyWidget:
+def constraint_network(
+    study: TradeStudy, architectures: Sequence[Architecture] | None = None, *, width_px: int = 760
+) -> anywidget.AnyWidget:
     """The bipartite decision/constraint participation view of a study.
 
     Hover a constraint to light up the variation points its expression
@@ -513,8 +524,9 @@ def constraint_network(study: TradeStudy,
     in ``architectures`` are tinted warm with their violation count.
     """
 
-    cls = _payload_widget("ConstraintNetworkWidget", _NET_ESM, _NET_CSS,
-                          "Bipartite constraint-participation network.")
-    return cls(payload_json=json.dumps(
-        constraint_network_payload(study, architectures)),
-        width_px=width_px)
+    cls = _payload_widget(
+        "ConstraintNetworkWidget", _NET_ESM, _NET_CSS, "Bipartite constraint-participation network."
+    )
+    return cls(
+        payload_json=json.dumps(constraint_network_payload(study, architectures)), width_px=width_px
+    )

@@ -81,8 +81,9 @@ class TestLoadDir:
 
 class TestLoadMany:
     def test_explicit_files(self, workspace_dir):
-        model = sysml2.load_many([workspace_dir / "lib" / "units.sysml",
-                                  workspace_dir / "app.sysml"])
+        model = sysml2.load_many(
+            [workspace_dir / "lib" / "units.sysml", workspace_dir / "app.sysml"]
+        )
         interp = sysml2.Interpreter(model)
         assert interp.call("Units::Weight", m=2.0) == pytest.approx(19.62)
 
@@ -139,8 +140,7 @@ class TestCache:
         model = sysml2.load_file(path, cache=True)
         assert isinstance(model, M.Model)
 
-    def test_cache_entries_are_readable_json(self, workspace_dir,
-                                             isolated_cache):
+    def test_cache_entries_are_readable_json(self, workspace_dir, isolated_cache):
         sysml2.load_file(workspace_dir / "app.sysml", cache=True)
         entry = next(iter(isolated_cache.glob("*.json")))
         data = json.loads(entry.read_text())
@@ -177,8 +177,7 @@ class TestCLI:
     def test_calc_from_directory(self, workspace_dir, capsys):
         from sysml2.cli import main
 
-        assert main(["calc", str(workspace_dir), "Units::Weight",
-                     "m=3.0"]) == 0
+        assert main(["calc", str(workspace_dir), "Units::Weight", "m=3.0"]) == 0
         assert "29.4" in capsys.readouterr().out
 
     def test_parse_directory(self, workspace_dir, capsys):

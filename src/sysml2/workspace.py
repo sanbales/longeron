@@ -109,9 +109,9 @@ def _cache_store(path: Path, model: M.Model) -> None:
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", dir=path.parent,
-                                         suffix=".tmp", delete=False,
-                                         encoding="utf-8") as handle:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=path.parent, suffix=".tmp", delete=False, encoding="utf-8"
+        ) as handle:
             json.dump(to_dict(model), handle, separators=(",", ":"))
         os.replace(handle.name, path)  # atomic under concurrent writers
     except OSError:
@@ -166,8 +166,7 @@ def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
     return merge_models(models, source_name=str(base))
 
 
-def merge_models(models: Iterable[M.Model], source_name: str = "<merged>"
-                 ) -> M.Model:
+def merge_models(models: Iterable[M.Model], source_name: str = "<merged>") -> M.Model:
     """Combine the top-level members of several models under one root."""
 
     combined = M.Model(source_name=source_name)

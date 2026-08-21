@@ -17,13 +17,13 @@ HOOK = ROOT / "scripts" / "git-hooks" / "pre-commit"
 
 #: minimal PATH (system git/python only) and no user git config, so the
 #: hook behaves identically on any machine
-_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null"}
+_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
 
 
 def _run_notebooks_module():
     spec = importlib.util.spec_from_file_location(
-        "run_notebooks", ROOT / "scripts" / "run_notebooks.py")
+        "run_notebooks", ROOT / "scripts" / "run_notebooks.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -34,8 +34,10 @@ def dirty_notebook_text() -> str:
 
     nb = nbformat.v4.new_notebook()
     nb.metadata["kernelspec"] = {
-        "display_name": "Python 3 (ipykernel)", "language": "python",
-        "name": "python3"}
+        "display_name": "Python 3 (ipykernel)",
+        "language": "python",
+        "name": "python3",
+    }
     nb.metadata["language_info"] = {"name": "python", "version": "3.13.1"}
     nb.metadata["widgets"] = {"state": {"abc": {}}}
     nb.cells.append(nbformat.v4.new_markdown_cell("héllo — unicode"))
@@ -50,14 +52,20 @@ def dirty_notebook_text() -> str:
 
 def git(repo: Path, *args: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=repo, env=_ENV, capture_output=True, text=True,
-        check=kwargs.pop("check", True), **kwargs)
+        ["git", *args],
+        cwd=repo,
+        env=_ENV,
+        capture_output=True,
+        text=True,
+        check=kwargs.pop("check", True),
+        **kwargs,
+    )
 
 
 def run_hook(repo: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(HOOK)], cwd=repo, env=_ENV,
-        capture_output=True, text=True)
+        [sys.executable, str(HOOK)], cwd=repo, env=_ENV, capture_output=True, text=True
+    )
 
 
 @pytest.fixture
@@ -75,8 +83,8 @@ def stage(repo: Path, rel: str, text: str) -> None:
 
 def staged(repo: Path, rel: str) -> bytes:
     return subprocess.run(
-        ["git", "show", f":{rel}"], cwd=repo, env=_ENV,
-        capture_output=True, check=True).stdout
+        ["git", "show", f":{rel}"], cwd=repo, env=_ENV, capture_output=True, check=True
+    ).stdout
 
 
 def test_strips_tutorial_notebook_index_only(repo):
@@ -130,8 +138,7 @@ def test_vendored_notebook_keeps_upstream_metadata(repo):
     assert "widgets" not in committed["metadata"]
     # upstream-pristine bits survive
     assert committed["metadata"]["language_info"]["name"] == "python"
-    assert committed["metadata"]["kernelspec"]["display_name"] == \
-        "Python 3 (ipykernel)"
+    assert committed["metadata"]["kernelspec"]["display_name"] == "Python 3 (ipykernel)"
     assert code[0]["metadata"]["collapsed"] is False
 
 

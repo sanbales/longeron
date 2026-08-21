@@ -32,35 +32,29 @@ class TestStructure:
 
     def test_attribute_compartments(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        battery = next(n for n in _walk(widget.source.value)
-                       if n.id == "Drone::Battery")
+        battery = next(n for n in _walk(widget.source.value) if n.id == "Drone::Battery")
         texts = [label.text for label in battery.labels]
         assert any("capacity : Real = 5200.0" in t for t in texts)
 
     def test_multiplicity_shown(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        rotors = next(n for n in _walk(widget.source.value)
-                      if n.id == "Drone::QuadCopter::rotors")
-        assert any("rotors : Rotor [4]" in label.text
-                   for label in rotors.labels)
+        rotors = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter::rotors")
+        assert any("rotors : Rotor [4]" in label.text for label in rotors.labels)
 
     def test_parameter_rows(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        hover = next(n for n in _walk(widget.source.value)
-                     if n.id == "Drone::HoverTime")
+        hover = next(n for n in _walk(widget.source.value) if n.id == "Drone::HoverTime")
         texts = [label.text for label in hover.labels]
         assert "in capacity : Real" in texts
         assert "return : Real" in texts
 
     def test_requirement_and_constraint_rows(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        envelope = next(n for n in _walk(widget.source.value)
-                        if n.id == "Drone::FlightEnvelope")
+        envelope = next(n for n in _walk(widget.source.value) if n.id == "Drone::FlightEnvelope")
         texts = " | ".join(label.text for label in envelope.labels)
         assert "subject drone : QuadCopter" in texts
         assert "require hoverMargin" in texts
-        quad = next(n for n in _walk(widget.source.value)
-                    if n.id == "Drone::QuadCopter")
+        quad = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter")
         quad_texts = " | ".join(label.text for label in quad.labels)
         assert "assert takeoffMassLimit" in quad_texts
 
@@ -94,12 +88,12 @@ class TestStructure:
             }
         """)
         widget = diagrams.structure_diagram(model)
-        assert any("sysml-edge-connect" in e.properties.cssClasses
-                   for e in widget.source.value.edges)
+        assert any(
+            "sysml-edge-connect" in e.properties.cssClasses for e in widget.source.value.edges
+        )
 
     def test_relationships_can_be_disabled(self, drone_model):
-        widget = diagrams.structure_diagram(drone_model,
-                                            show_relationships=False)
+        widget = diagrams.structure_diagram(drone_model, show_relationships=False)
         assert widget.source.value.edges == []
 
 
@@ -110,16 +104,14 @@ class TestStates:
         root = widget.source.value
         state_ids = {n.id for n in _walk(root) if n.id}
         assert "Drone::FlightStates::idle" in state_ids
-        markers = [n for n in _walk(root)
-                   if "sysml-marker" in n.properties.cssClasses]
+        markers = [n for n in _walk(root) if "sysml-marker" in n.properties.cssClasses]
         assert len(markers) == 1  # the entry marker
         assert len(root.edges) == 6  # entry + 5 transitions
 
     def test_transition_labels(self, drone_model):
         machine = drone_model.find("Drone::FlightStates")
         widget = diagrams.state_diagram(machine)
-        texts = [label.text for e in widget.source.value.edges
-                 for label in e.labels]
+        texts = [label.text for e in widget.source.value.edges for label in e.labels]
         assert "launch" in texts
         assert 'low_battery / send "RTL"' in texts  # real effect, not '\u2026'
 
@@ -136,8 +128,7 @@ class TestStates:
             }
         """)
         widget = diagrams.state_diagram(model.find("P::M"))
-        outer = next(n for n in _walk(widget.source.value)
-                     if n.id == "P::M::outer")
+        outer = next(n for n in _walk(widget.source.value) if n.id == "P::M::outer")
         assert any(n.id == "P::M::outer::inner" for n in _walk(outer))
 
 
@@ -156,19 +147,16 @@ class TestActions:
         """)
         widget = diagrams.action_diagram(model.find("P::Pipeline"))
         root = widget.source.value
-        markers = [n for n in _walk(root)
-                   if "sysml-marker" in n.properties.cssClasses]
+        markers = [n for n in _walk(root) if "sysml-marker" in n.properties.cssClasses]
         assert len(markers) == 2  # start + done
-        guarded = [e for e in root.edges
-                   if "sysml-edge-guarded" in e.properties.cssClasses]
+        guarded = [e for e in root.edges if "sysml-edge-guarded" in e.properties.cssClasses]
         assert len(guarded) == 1
         assert guarded[0].labels[0].text == "[x > 0]"
 
     def test_declaration_order_chain(self, drone_model):
         widget = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
         root = widget.source.value
-        steps = [n for n in _walk(root)
-                 if "sysml-step" in n.properties.cssClasses]
+        steps = [n for n in _walk(root) if "sysml-step" in n.properties.cssClasses]
         assert len(steps) == 2  # assign + if
         assert len(root.edges) == len(steps) + 1  # chain through start/done
 
@@ -178,8 +166,7 @@ class TestDispatcherAndSelection:
         state = diagrams.diagram(drone_model.find("Drone::FlightStates"))
         action = diagrams.diagram(drone_model.find("Drone::PlanBattery"))
         structure = diagrams.diagram(drone_model)
-        assert all(type(w).__name__ == "Diagram"
-                   for w in (state, action, structure))
+        assert all(type(w).__name__ == "Diagram" for w in (state, action, structure))
 
     def test_on_select_resolves_elements(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)

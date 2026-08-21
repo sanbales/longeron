@@ -26,13 +26,16 @@ class TestModelIntrospection:
     def test_variation_points(self, study):
         assert set(study.points) == {"motors", "props", "battery", "esc"}
         assert study.points["motors"].count == 4
-        assert set(study.points["motors"].variants) == {
-            "emax2306", "tmotorF60", "sunnySky2212"}
+        assert set(study.points["motors"].variants) == {"emax2306", "tmotorF60", "sunnySky2212"}
         assert study.points["motors"].variants["emax2306"]["mass"] == 0.033
 
     def test_derived_attributes(self, study):
         assert [n for n, _ in study.derived_order] == [
-            "totalMass", "totalCost", "totalThrust", "hoverMinutes"]
+            "totalMass",
+            "totalCost",
+            "totalThrust",
+            "hoverMinutes",
+        ]
 
     def test_constraints_found(self, study):
         assert "cellMatch" in study.constraint_names
@@ -57,10 +60,17 @@ class TestEnumeration:
                 assert a.selection["props"] != "apc1045"  # propFit (10" > 5.1")
 
     def test_exact_metrics(self, study):
-        archs = {tuple(sorted(a.selection.items())): a
-                 for a in study.enumerate()}
-        key = tuple(sorted({"motors": "sunnySky2212", "props": "hq5x43",
-                            "battery": "lipo3s2200", "esc": "esc20"}.items()))
+        archs = {tuple(sorted(a.selection.items())): a for a in study.enumerate()}
+        key = tuple(
+            sorted(
+                {
+                    "motors": "sunnySky2212",
+                    "props": "hq5x43",
+                    "battery": "lipo3s2200",
+                    "esc": "esc20",
+                }.items()
+            )
+        )
         a = archs[key]
         assert a.metrics["totalCost"] == pytest.approx(118.0)
         assert a.metrics["totalMass"] == pytest.approx(0.979)
@@ -81,11 +91,10 @@ class TestOptimization:
         assert best.metrics["hoverMinutes"] == pytest.approx(15.0)
 
     def test_pareto_front(self, study):
-        front = trades.pareto(study.enumerate(),
-                              minimize=("totalCost", "totalMass"),
-                              maximize=("hoverMinutes",))
-        picks = {(a.selection["motors"], a.selection["props"],
-                  a.selection["esc"]) for a in front}
+        front = trades.pareto(
+            study.enumerate(), minimize=("totalCost", "totalMass"), maximize=("hoverMinutes",)
+        )
+        picks = {(a.selection["motors"], a.selection["props"], a.selection["esc"]) for a in front}
         assert ("sunnySky2212", "hq5x43", "esc20") in picks  # cheapest
         assert ("emax2306", "hq5x43", "esc45") in picks  # lightest
         assert len(front) == 2
@@ -101,25 +110,27 @@ class TestOptimization:
         """
 
         archs = study.enumerate()
-        front = trades.pareto(archs, minimize=("totalCost",),
-                              maximize=("hoverMinutes",))
+        front = trades.pareto(archs, minimize=("totalCost",), maximize=("hoverMinutes",))
 
         def dominates(b, a):  # brute-force weak dominance cross-check
-            return ((b.metrics["totalCost"] <= a.metrics["totalCost"]
-                     and b.metrics["hoverMinutes"]
-                     >= a.metrics["hoverMinutes"])
-                    and (b.metrics["totalCost"] < a.metrics["totalCost"]
-                         or b.metrics["hoverMinutes"]
-                         > a.metrics["hoverMinutes"]))
+            return (
+                b.metrics["totalCost"] <= a.metrics["totalCost"]
+                and b.metrics["hoverMinutes"] >= a.metrics["hoverMinutes"]
+            ) and (
+                b.metrics["totalCost"] < a.metrics["totalCost"]
+                or b.metrics["hoverMinutes"] > a.metrics["hoverMinutes"]
+            )
 
-        brute = [a for a in archs
-                 if not any(dominates(b, a) for b in archs)]
+        brute = [a for a in archs if not any(dominates(b, a) for b in archs)]
         key = lambda a: tuple(sorted(a.selection.items()))  # noqa: E731
         assert {key(a) for a in front} == {key(a) for a in brute}
         assert len(front) == 1
         assert front[0].selection == {
-            "motors": "sunnySky2212", "props": "hq5x43",
-            "battery": "lipo3s2200", "esc": "esc20"}
+            "motors": "sunnySky2212",
+            "props": "hq5x43",
+            "battery": "lipo3s2200",
+            "esc": "esc20",
+        }
         assert front[0].metrics["totalCost"] == pytest.approx(118.0)
         assert front[0].metrics["hoverMinutes"] == pytest.approx(15.0)
 
@@ -127,15 +138,13 @@ class TestOptimization:
         a = trades.Architecture({"m": "a"}, {"cost": 1.0, "hover": 5.0})
         b = trades.Architecture({"m": "b"}, {"cost": 1.0, "hover": 5.0})
         c = trades.Architecture({"m": "c"}, {"cost": 2.0, "hover": 4.0})
-        front = trades.pareto([a, b, c], minimize=("cost",),
-                              maximize=("hover",))
+        front = trades.pareto([a, b, c], minimize=("cost",), maximize=("hover",))
         assert front == [a, b]  # ties survive; c is dominated
 
     def test_pareto_weak_dominance(self):
         a = trades.Architecture({"m": "a"}, {"cost": 1.0, "hover": 5.0})
         d = trades.Architecture({"m": "d"}, {"cost": 1.0, "hover": 6.0})
-        front = trades.pareto([a, d], minimize=("cost",),
-                              maximize=("hover",))
+        front = trades.pareto([a, d], minimize=("cost",), maximize=("hover",))
         assert front == [d]  # equal on cost, better on hover: dominates
 
 
@@ -165,14 +174,16 @@ class TestExactEvaluation:
     """evaluate()/all_architectures() need only the interpreter."""
 
     def test_evaluate_feasible_mix(self, study):
-        arch = study.evaluate({"motors": "sunnySky2212", "props": "hq5x43",
-                               "battery": "lipo3s2200", "esc": "esc20"})
+        arch = study.evaluate(
+            {"motors": "sunnySky2212", "props": "hq5x43", "battery": "lipo3s2200", "esc": "esc20"}
+        )
         assert arch.verified
         assert arch.metrics["totalCost"] == pytest.approx(118.0)
 
     def test_evaluate_infeasible_mix(self, study):
-        arch = study.evaluate({"motors": "tmotorF60", "props": "hq5x43",
-                               "battery": "lipo6s1300", "esc": "esc45"})
+        arch = study.evaluate(
+            {"motors": "tmotorF60", "props": "hq5x43", "battery": "lipo6s1300", "esc": "esc45"}
+        )
         assert not arch.verified  # fails enduranceReq (4.875 min)
         assert arch.metrics["hoverMinutes"] == pytest.approx(4.875)
 
@@ -180,19 +191,24 @@ class TestExactEvaluation:
         with pytest.raises(sysml2.analysis.AnalysisError):
             study.evaluate({"motors": "emax2306"})  # missing points
         with pytest.raises(sysml2.analysis.AnalysisError):
-            study.evaluate({"motors": "nope", "props": "hq5x43",
-                            "battery": "lipo4s1500", "esc": "esc45"})
+            study.evaluate(
+                {"motors": "nope", "props": "hq5x43", "battery": "lipo4s1500", "esc": "esc45"}
+            )
         with pytest.raises(sysml2.analysis.AnalysisError):
-            study.evaluate({"motors": "emax2306", "props": "hq5x43",
-                            "battery": "lipo4s1500", "esc": "esc45",
-                            "extra": "x"})
+            study.evaluate(
+                {
+                    "motors": "emax2306",
+                    "props": "hq5x43",
+                    "battery": "lipo4s1500",
+                    "esc": "esc45",
+                    "extra": "x",
+                }
+            )
 
     def test_all_architectures_is_the_candidate_space(self, study):
         archs = study.all_architectures()
         assert len(archs) == 54  # 3 * 3 * 3 * 2
         feasible = [a for a in archs if a.verified]
         assert len(feasible) == 8  # matches enumerate()
-        enumerated = {tuple(sorted(a.selection.items()))
-                      for a in study.enumerate()}
-        assert {tuple(sorted(a.selection.items()))
-                for a in feasible} == enumerated
+        enumerated = {tuple(sorted(a.selection.items())) for a in study.enumerate()}
+        assert {tuple(sorted(a.selection.items())) for a in feasible} == enumerated

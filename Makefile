@@ -17,10 +17,12 @@ coverage:
 	$(VENV)/pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered
 
 lint:
-	$(VENV)/ruff check src tests examples scripts
+	$(VENV)/ruff format --check src tests examples scripts notebooks
+	$(VENV)/ruff check src tests examples scripts notebooks
 
 format:
-	$(VENV)/ruff check --fix src tests examples scripts
+	$(VENV)/ruff format src tests examples scripts notebooks
+	$(VENV)/ruff check --fix src tests examples scripts notebooks
 
 typecheck:
 	$(VENV)/mypy

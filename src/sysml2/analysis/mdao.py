@@ -52,8 +52,13 @@ from ._expr import (
     sanitize,
 )
 
-__all__ = ["ProblemBuild", "add_optimization", "build_problem",
-           "calc_component", "external_binding"]
+__all__ = [
+    "ProblemBuild",
+    "add_optimization",
+    "build_problem",
+    "calc_component",
+    "external_binding",
+]
 
 _COMPARISONS = {"<", "<=", ">", ">=", "=="}
 
@@ -64,7 +69,8 @@ def _om() -> Any:
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError(
             "sysml2.analysis.mdao needs OpenMDAO; install the extra with "
-            "'pip install \"longeron[mdao]\"'") from err
+            "'pip install \"longeron[mdao]\"'"
+        ) from err
     return om
 
 
@@ -85,8 +91,9 @@ class ProblemBuild:
 # ---------------------------------------------------------------------------
 
 
-def calc_component(interp: Interpreter, calc: str | M.Definition | M.Usage,
-                   out_name: str = "result") -> Any:
+def calc_component(
+    interp: Interpreter, calc: str | M.Definition | M.Usage, out_name: str = "result"
+) -> Any:
     """Wrap a ``calc def`` as an ``ExplicitComponent`` (FD partials)."""
 
     om = _om()
@@ -96,9 +103,11 @@ def calc_component(interp: Interpreter, calc: str | M.Definition | M.Usage,
     if target.kind != "calc":
         raise AnalysisError(f"{calc!r} is not a calc definition")
     calc_target: M.Definition | M.Usage = target
-    params = [m for m in interp.resolver.members_of(calc_target)
-              if isinstance(m, M.Usage) and m.direction in ("in", "inout")
-              and m.name]
+    params = [
+        m
+        for m in interp.resolver.members_of(calc_target)
+        if isinstance(m, M.Usage) and m.direction in ("in", "inout") and m.name
+    ]
 
     class _CalcComp(om.ExplicitComponent):  # type: ignore[name-defined]
         def setup(self) -> None:
@@ -106,8 +115,7 @@ def calc_component(interp: Interpreter, calc: str | M.Definition | M.Usage,
                 default = 1.0
                 if p.value is not None:
                     try:
-                        default = float(interp.evaluate(p.value.expr,
-                                                        calc_target))
+                        default = float(interp.evaluate(p.value.expr, calc_target))
                     except (EvaluationError, TypeError):
                         pass
                 self.add_input(p.name, val=default)
@@ -115,8 +123,7 @@ def calc_component(interp: Interpreter, calc: str | M.Definition | M.Usage,
             self.declare_partials(out_name, "*", method="fd")
 
         def compute(self, inputs: Any, outputs: Any) -> None:
-            kwargs = {p.name: float(inputs[p.name][0]) for p in params
-                      if p.name is not None}
+            kwargs = {p.name: float(inputs[p.name][0]) for p in params if p.name is not None}
             outputs[out_name] = interp.call(calc_target, **kwargs)
 
     comp = _CalcComp()
@@ -145,18 +152,22 @@ def external_binding(calc: M.Definition | M.Usage) -> str | None:
         if member.typed_by.split("::")[-1] != "ExternalAnalysis":
             continue
         for value in member.members:
-            if not (isinstance(value, M.MetadataValue)
-                    and value.redefines == "component"
-                    and value.value is not None):
+            if not (
+                isinstance(value, M.MetadataValue)
+                and value.redefines == "component"
+                and value.value is not None
+            ):
                 continue
             expr = value.value.expr
             if isinstance(expr, A.Literal) and isinstance(expr.value, str):
                 return expr.value
             raise AnalysisError(
                 f"{calc.label}: @ExternalAnalysis component must be a "
-                f"string literal (got '{expr.to_text()}')")
-        raise AnalysisError(f"{calc.label}: @ExternalAnalysis annotation "
-                            "declares no 'component' value")
+                f"string literal (got '{expr.to_text()}')"
+            )
+        raise AnalysisError(
+            f"{calc.label}: @ExternalAnalysis annotation declares no 'component' value"
+        )
     return None
 
 
@@ -166,8 +177,11 @@ def _calc_body(interp: Interpreter, calc: M.Definition | M.Usage) -> A.Expr | No
     if calc.result is not None:
         return calc.result
     for member in interp.resolver.members_of(calc):
-        if isinstance(member, M.Usage) and member.direction == "return" \
-                and member.value is not None:
+        if (
+            isinstance(member, M.Usage)
+            and member.direction == "return"
+            and member.value is not None
+        ):
             return member.value.expr
     return None
 
@@ -184,16 +198,13 @@ def _return_name(interp: Interpreter, calc: M.Definition | M.Usage) -> str | Non
 class _Fidelity:
     """Per-calc fidelity choices (``'model'`` | ``'external'``) + bookkeeping."""
 
-    def __init__(self, interp: Interpreter,
-                 fidelity: Mapping[str, str] | None):
+    def __init__(self, interp: Interpreter, fidelity: Mapping[str, str] | None):
         self.interp = interp
         self.requested = dict(fidelity or {})
         self.used: set[str] = set()
-        bad = {k: v for k, v in self.requested.items()
-               if v not in ("model", "external")}
+        bad = {k: v for k, v in self.requested.items() if v not in ("model", "external")}
         if bad:
-            raise AnalysisError(f"fidelity values must be 'model' or "
-                                f"'external' (got {bad})")
+            raise AnalysisError(f"fidelity values must be 'model' or 'external' (got {bad})")
 
     def mode(self, calc: M.Definition | M.Usage) -> str:
         """The effective fidelity: bodiless annotated calcs default external."""
@@ -209,7 +220,8 @@ class _Fidelity:
                     raise AnalysisError(
                         f"{calc.label}: fidelity 'model' requested but the "
                         "calc declares no body -- only 'external' is "
-                        "possible")
+                        "possible"
+                    )
                 return self.requested[key]
         return "model" if has_body else "external"
 
@@ -220,11 +232,13 @@ class _Fidelity:
                 f"fidelity given for calc(s) never bound in this problem: "
                 f"{sorted(unused)} (known keys are names/qualified names of "
                 "@ExternalAnalysis-annotated calc defs reached by the part "
-                "tree)")
+                "tree)"
+            )
 
 
-def _resolve_calc(interp: Interpreter, context: M.Namespace,
-                  expr: A.Expr) -> M.Definition | M.Usage | None:
+def _resolve_calc(
+    interp: Interpreter, context: M.Namespace, expr: A.Expr
+) -> M.Definition | M.Usage | None:
     """The calc definition a direct invocation targets, if it is one."""
 
     if not isinstance(expr, A.Invocation):
@@ -238,8 +252,7 @@ def _resolve_calc(interp: Interpreter, context: M.Namespace,
     return None
 
 
-def _contains_bodiless_external(interp: Interpreter, context: M.Namespace,
-                                expr: A.Expr) -> bool:
+def _contains_bodiless_external(interp: Interpreter, context: M.Namespace, expr: A.Expr) -> bool:
     """Whether ``expr`` invokes (anywhere) a bodiless external calc."""
 
     found = False
@@ -248,8 +261,11 @@ def _contains_bodiless_external(interp: Interpreter, context: M.Namespace,
         nonlocal found
         if isinstance(node, A.Invocation):
             calc = _resolve_calc(interp, context, node)
-            if calc is not None and external_binding(calc) is not None \
-                    and _calc_body(interp, calc) is None:
+            if (
+                calc is not None
+                and external_binding(calc) is not None
+                and _calc_body(interp, calc) is None
+            ):
                 found = True
         if isinstance(node, A.Expr):
             for f in fields(node):
@@ -262,9 +278,14 @@ def _contains_bodiless_external(interp: Interpreter, context: M.Namespace,
     return found
 
 
-def _guard_nested(interp: Interpreter, context: M.Namespace, expr: A.Expr,
-                  fid: _Fidelity, where: str,
-                  skip: A.Expr | None = None) -> None:
+def _guard_nested(
+    interp: Interpreter,
+    context: M.Namespace,
+    expr: A.Expr,
+    fid: _Fidelity,
+    where: str,
+    skip: A.Expr | None = None,
+) -> None:
     """Reject externally-bound calcs invoked inside larger expressions.
 
     An external component can only replace a whole attribute value
@@ -282,7 +303,8 @@ def _guard_nested(interp: Interpreter, context: M.Namespace, expr: A.Expr,
                     f"{where}: calc {calc.label} is bound to an external "
                     "component but is invoked inside a larger expression; "
                     "only a direct 'attribute x = Calc(...)' value can "
-                    "bind externally (or select fidelity 'model')")
+                    "bind externally (or select fidelity 'model')"
+                )
         if isinstance(node, A.Expr):
             for f in fields(node):
                 visit(getattr(node, f.name))
@@ -298,23 +320,27 @@ def _load_component(om: Any, spec: str) -> Any:
 
     module_name, sep, attr = spec.partition(":")
     if not (sep and module_name and attr):
-        raise AnalysisError(f"external component spec {spec!r} is not of "
-                            "the form 'package.module:attr'")
+        raise AnalysisError(
+            f"external component spec {spec!r} is not of the form 'package.module:attr'"
+        )
     try:
         module = importlib.import_module(module_name)
     except ImportError as err:
-        raise AnalysisError(f"cannot import module {module_name!r} for "
-                            f"external component {spec!r}: {err}") from err
+        raise AnalysisError(
+            f"cannot import module {module_name!r} for external component {spec!r}: {err}"
+        ) from err
     try:
         target = getattr(module, attr)
     except AttributeError as err:
-        raise AnalysisError(f"module {module_name!r} has no attribute "
-                            f"{attr!r} (external component {spec!r})") from err
+        raise AnalysisError(
+            f"module {module_name!r} has no attribute {attr!r} (external component {spec!r})"
+        ) from err
     component = target() if callable(target) else target
     if not isinstance(component, om.ExplicitComponent):
         raise AnalysisError(
             f"external component {spec!r} produced "
-            f"{type(component).__name__}, not an om.ExplicitComponent")
+            f"{type(component).__name__}, not an om.ExplicitComponent"
+        )
     return component
 
 
@@ -330,10 +356,8 @@ def _component_io(om: Any, spec: str) -> tuple[set[str], list[str]]:
     probe = probe_problem.model.add_subsystem("probe", _load_component(om, spec))
     probe_problem.setup()
     probe_problem.final_setup()
-    inputs = {name.rsplit(".", 1)[-1]
-              for name, _ in probe.list_inputs(out_stream=None)}
-    outputs = [name.rsplit(".", 1)[-1]
-               for name, _ in probe.list_outputs(out_stream=None)]
+    inputs = {name.rsplit(".", 1)[-1] for name, _ in probe.list_inputs(out_stream=None)}
+    outputs = [name.rsplit(".", 1)[-1] for name, _ in probe.list_outputs(out_stream=None)]
     return inputs, outputs
 
 
@@ -345,10 +369,18 @@ def _ref_path(expr: A.Expr) -> QName | None:
     return None
 
 
-def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
-                  group: Any, defn: M.Namespace, name: str,
-                  invocation: A.Invocation, calc: M.Definition | M.Usage,
-                  spec: str, prefix: str) -> list[tuple[str, str]]:
+def _add_external(
+    om: Any,
+    interp: Interpreter,
+    build: ProblemBuild,
+    group: Any,
+    defn: M.Namespace,
+    name: str,
+    invocation: A.Invocation,
+    calc: M.Definition | M.Usage,
+    spec: str,
+    prefix: str,
+) -> list[tuple[str, str]]:
     """Wire an external component in place of ``attribute name = Calc(...)``.
 
     Validates the calc's declared in/out parameters against the
@@ -359,9 +391,11 @@ def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
     ``IndepVarComp``).
     """
 
-    params = [m for m in interp.resolver.members_of(calc)
-              if isinstance(m, M.Usage) and m.direction in ("in", "inout")
-              and m.name is not None]
+    params = [
+        m
+        for m in interp.resolver.members_of(calc)
+        if isinstance(m, M.Usage) and m.direction in ("in", "inout") and m.name is not None
+    ]
     declared = [p.name for p in params if p.name is not None]
 
     bound: dict[str, A.Expr] = {}
@@ -369,13 +403,15 @@ def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
         bound[pname] = arg
     for pname, arg in invocation.named:
         if pname in bound:
-            raise AnalysisError(f"{calc.label}: argument {pname!r} given "
-                                "twice in the external binding")
+            raise AnalysisError(
+                f"{calc.label}: argument {pname!r} given twice in the external binding"
+            )
         bound[pname] = arg
     unknown = sorted(set(bound) - set(declared))
     if unknown:
-        raise AnalysisError(f"{calc.label}: invocation passes parameter(s) "
-                            f"{unknown} the calc does not declare")
+        raise AnalysisError(
+            f"{calc.label}: invocation passes parameter(s) {unknown} the calc does not declare"
+        )
 
     inputs, outputs = _component_io(om, spec)
     if set(declared) != inputs:
@@ -384,21 +420,23 @@ def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
         raise AnalysisError(
             f"{calc.label}: external component {spec!r} does not match the "
             f"declared contract: component lacks declared input(s) "
-            f"{missing}; component declares undeclared input(s) {extra}")
+            f"{missing}; component declares undeclared input(s) {extra}"
+        )
     if len(outputs) != 1:
         raise AnalysisError(
             f"{calc.label}: external component {spec!r} must expose exactly "
-            f"one output (found {sorted(outputs)})")
+            f"one output (found {sorted(outputs)})"
+        )
     declared_out = _return_name(interp, calc)
     if declared_out is not None and outputs[0] != declared_out:
         raise AnalysisError(
             f"{calc.label}: external component {spec!r} output "
             f"{outputs[0]!r} does not match the declared return "
-            f"{declared_out!r}")
+            f"{declared_out!r}"
+        )
 
     comp_name = f"{sanitize((name,))}_ext"
-    group.add_subsystem(comp_name, _load_component(om, spec),
-                        promotes_outputs=[(outputs[0], name)])
+    group.add_subsystem(comp_name, _load_component(om, spec), promotes_outputs=[(outputs[0], name)])
     connections: list[tuple[str, str]] = []
     consts: list[tuple[str, float]] = []
     for pname, arg in bound.items():
@@ -411,14 +449,16 @@ def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
             raise AnalysisError(
                 f"{calc.label}: external-binding argument {pname!r} must be "
                 f"an attribute reference or numeric literal "
-                f"(got '{arg.to_text()}')")
+                f"(got '{arg.to_text()}')"
+            )
     if consts:
         ivc = om.IndepVarComp()
         for pname, value in consts:
             ivc.add_output(pname, val=value)
         group.add_subsystem(f"{comp_name}_args", ivc)
-        connections += [(f"{comp_name}_args.{pname}", f"{comp_name}.{pname}")
-                        for pname, _ in consts]
+        connections += [
+            (f"{comp_name}_args.{pname}", f"{comp_name}.{pname}") for pname, _ in consts
+        ]
     build.externals[f"{prefix}{name}"] = spec
     return connections
 
@@ -428,8 +468,9 @@ def _add_external(om: Any, interp: Interpreter, build: ProblemBuild,
 # ---------------------------------------------------------------------------
 
 
-def _expr_component(interp: Interpreter, context: M.Namespace, out_name: str,
-                    expr: A.Expr, inputs: dict[str, QName]) -> Any:
+def _expr_component(
+    interp: Interpreter, context: M.Namespace, out_name: str, expr: A.Expr, inputs: dict[str, QName]
+) -> Any:
     """A component evaluating ``expr`` with referenced paths as inputs."""
 
     om = _om()
@@ -454,10 +495,13 @@ def _expr_component(interp: Interpreter, context: M.Namespace, out_name: str,
 # ---------------------------------------------------------------------------
 
 
-def build_problem(model: M.Model, part: str | M.Definition | M.Usage,
-                  requirements: tuple[str, ...] = (),
-                  setup: bool = True,
-                  fidelity: Mapping[str, str] | None = None) -> ProblemBuild:
+def build_problem(
+    model: M.Model,
+    part: str | M.Definition | M.Usage,
+    requirements: tuple[str, ...] = (),
+    setup: bool = True,
+    fidelity: Mapping[str, str] | None = None,
+) -> ProblemBuild:
     """Build an OpenMDAO ``Problem`` mirroring a part definition's tree.
 
     ``fidelity`` selects, per ``@ExternalAnalysis``-annotated calc def
@@ -489,20 +533,25 @@ def build_problem(model: M.Model, part: str | M.Definition | M.Usage,
     prob = om.Problem(reports=False)
     build = ProblemBuild(problem=prob)
     fid = _Fidelity(interp, fidelity)
-    _populate(om, interp, build, prob.model, target, instance, prefix="",
-              fid=fid)
+    _populate(om, interp, build, prob.model, target, instance, prefix="", fid=fid)
     for req_name in requirements:
-        _add_requirement(om, interp, build, prob.model, req_name, target,
-                         instance, fid)
+        _add_requirement(om, interp, build, prob.model, req_name, target, instance, fid)
     fid.check_all_used()
     if setup:
         prob.setup()
     return build
 
 
-def _populate(om: Any, interp: Interpreter, build: ProblemBuild, group: Any,
-              defn: M.Definition | M.Usage, instance: Instance,
-              prefix: str, fid: _Fidelity) -> None:
+def _populate(
+    om: Any,
+    interp: Interpreter,
+    build: ProblemBuild,
+    group: Any,
+    defn: M.Definition | M.Usage,
+    instance: Instance,
+    prefix: str,
+    fid: _Fidelity,
+) -> None:
     consts: list[tuple[str, float]] = []
     connections: list[tuple[str, str]] = []
     comps: list[tuple[str, Any, str]] = []  # (subsystem name, comp, output)
@@ -517,10 +566,10 @@ def _populate(om: Any, interp: Interpreter, build: ProblemBuild, group: Any,
                 assert isinstance(expr, A.Invocation)
                 spec = external_binding(calc)
                 assert spec is not None
-                _guard_nested(interp, defn, expr, fid,
-                              f"{prefix}{name}", skip=expr)
-                connections += _add_external(om, interp, build, group, defn,
-                                             name, expr, calc, spec, prefix)
+                _guard_nested(interp, defn, expr, fid, f"{prefix}{name}", skip=expr)
+                connections += _add_external(
+                    om, interp, build, group, defn, name, expr, calc, spec, prefix
+                )
                 build.derived.append(f"{prefix}{name}")
                 continue
         refs = _variable_refs(expr, instance) if expr is not None else {}
@@ -534,26 +583,32 @@ def _populate(om: Any, interp: Interpreter, build: ProblemBuild, group: Any,
             continue
         _guard_nested(interp, defn, expr, fid, f"{prefix}{name}")
         comp_name = f"{sanitize((name,))}_comp"
-        comps.append((comp_name,
-                      _expr_component(interp, defn, name, expr,
-                                      {sanitize(p): p for p in refs}), name))
+        comps.append(
+            (
+                comp_name,
+                _expr_component(interp, defn, name, expr, {sanitize(p): p for p in refs}),
+                name,
+            )
+        )
         connections += [(".".join(p), f"{comp_name}.{sanitize(p)}") for p in refs]
         build.derived.append(f"{prefix}{name}")
 
     for con in named_members(interp, defn, ("constraint",)):
         margin = _margin_expr(interp, con)
         if margin is None:
-            build.gaps.append(f"{prefix}{con.label}: constraint body is not a "
-                              "comparison; skipped")
+            build.gaps.append(f"{prefix}{con.label}: constraint body is not a comparison; skipped")
             continue
         refs = _variable_refs(margin, instance)
-        _guard_nested(interp, defn, margin, fid,
-                      f"{prefix}{con.name or con.label}")
+        _guard_nested(interp, defn, margin, fid, f"{prefix}{con.name or con.label}")
         out = f"{con.name or con.label}_margin"
         comp_name = f"{sanitize((out,))}_comp"
-        comps.append((comp_name,
-                      _expr_component(interp, defn, out, margin,
-                                      {sanitize(p): p for p in refs}), out))
+        comps.append(
+            (
+                comp_name,
+                _expr_component(interp, defn, out, margin, {sanitize(p): p for p in refs}),
+                out,
+            )
+        )
         connections += [(".".join(p), f"{comp_name}.{sanitize(p)}") for p in refs]
         build.constraints[f"{prefix}{con.name or con.label}"] = f"{prefix}{out}"
 
@@ -569,18 +624,29 @@ def _populate(om: Any, interp: Interpreter, build: ProblemBuild, group: Any,
         member = _member_named(interp, defn, name)
         if isinstance(slot, Instance) and slot.definition is not None:
             sub = group.add_subsystem(sanitize((name,)), om.Group())
-            _populate(om, interp, build, sub, slot.definition, slot,
-                      prefix=f"{prefix}{name}.", fid=fid)
+            _populate(
+                om, interp, build, sub, slot.definition, slot, prefix=f"{prefix}{name}.", fid=fid
+            )
         elif isinstance(slot, list) and slot and isinstance(slot[0], Instance):
             for i, item in enumerate(slot):
                 if item.definition is None:
                     continue
                 sub = group.add_subsystem(f"{sanitize((name,))}_{i + 1}", om.Group())
-                _populate(om, interp, build, sub, item.definition, item,
-                          prefix=f"{prefix}{name}_{i + 1}.", fid=fid)
+                _populate(
+                    om,
+                    interp,
+                    build,
+                    sub,
+                    item.definition,
+                    item,
+                    prefix=f"{prefix}{name}_{i + 1}.",
+                    fid=fid,
+                )
             if member is not None and _refs_into(defn, interp, name):
-                build.gaps.append(f"{prefix}{name}: references into sequence "
-                                  "parts are not connected (phase 2: arrays)")
+                build.gaps.append(
+                    f"{prefix}{name}: references into sequence "
+                    "parts are not connected (phase 2: arrays)"
+                )
 
     for comp_name, comp, out in comps:
         group.add_subsystem(comp_name, comp, promotes_outputs=[out])
@@ -590,16 +656,14 @@ def _populate(om: Any, interp: Interpreter, build: ProblemBuild, group: Any,
         group.connect(src, tgt)
 
 
-def _member_named(interp: Interpreter, defn: M.Definition | M.Usage,
-                  name: str) -> M.Usage | None:
+def _member_named(interp: Interpreter, defn: M.Definition | M.Usage, name: str) -> M.Usage | None:
     for m in interp.resolver.members_of(defn):
         if isinstance(m, M.Usage) and name in (m.name, m.short_name):
             return m
     return None
 
 
-def _refs_into(defn: M.Definition | M.Usage, interp: Interpreter,
-               slot_name: str) -> bool:
+def _refs_into(defn: M.Definition | M.Usage, interp: Interpreter, slot_name: str) -> bool:
     for attr in named_members(interp, defn, ("attribute", "constraint")):
         expr = attr.value.expr if attr.value is not None else attr.result
         if expr is None:
@@ -634,14 +698,19 @@ def _margin_expr(interp: Interpreter, con: M.Usage) -> A.Expr | None:
         return A.Binary("-", expr.right, expr.left)
     if expr.op in (">", ">="):
         return A.Binary("-", expr.left, expr.right)
-    return A.Unary("-", A.Invocation(("abs",), (A.Binary("-", expr.left,
-                                                         expr.right),)))
+    return A.Unary("-", A.Invocation(("abs",), (A.Binary("-", expr.left, expr.right),)))
 
 
-def _add_requirement(om: Any, interp: Interpreter, build: ProblemBuild,
-                     group: Any, req_name: str,
-                     subject_defn: M.Definition | M.Usage,
-                     instance: Instance, fid: _Fidelity) -> None:
+def _add_requirement(
+    om: Any,
+    interp: Interpreter,
+    build: ProblemBuild,
+    group: Any,
+    req_name: str,
+    subject_defn: M.Definition | M.Usage,
+    instance: Instance,
+    fid: _Fidelity,
+) -> None:
     """Map a requirement's require-constraints to margin outputs at the root.
 
     The requirement's ``subject`` name is stripped from reference paths, so
@@ -651,8 +720,11 @@ def _add_requirement(om: Any, interp: Interpreter, build: ProblemBuild,
     req = interp.resolve(req_name)
     if not isinstance(req, (M.Definition, M.Usage)):
         raise AnalysisError(f"{req_name!r} is not a requirement")
-    subjects = [m.name for m in interp.resolver.members_of(req)
-                if isinstance(m, M.Usage) and m.kind == "subject" and m.name]
+    subjects = [
+        m.name
+        for m in interp.resolver.members_of(req)
+        if isinstance(m, M.Usage) and m.kind == "subject" and m.name
+    ]
     subject = subjects[0] if subjects else "subject"
     for con in named_members(interp, req, ("constraint",)):
         if con.constraint_kind == "assume":
@@ -662,19 +734,18 @@ def _add_requirement(om: Any, interp: Interpreter, build: ProblemBuild,
             build.gaps.append(f"{req.label}::{con.label}: not a comparison")
             continue
         stripped: dict[QName, str | QName] = {
-            path: path[1:] for path in free_refs(margin)
-            if path[0] == subject and len(path) > 1}
+            path: path[1:] for path in free_refs(margin) if path[0] == subject and len(path) > 1
+        }
         margin = rewrite_refs(margin, stripped)
         refs = _variable_refs(margin, instance)
-        _guard_nested(interp, req, margin, fid,
-                      f"{req.label}::{con.name or con.label}")
+        _guard_nested(interp, req, margin, fid, f"{req.label}::{con.name or con.label}")
         out = f"{con.name or con.label}_margin"
         comp_name = f"{sanitize((req.label, out))}_comp"
         group.add_subsystem(
             comp_name,
-            _expr_component(interp, req, out, margin,
-                            {sanitize(p): p for p in refs}),
-            promotes_outputs=[out])
+            _expr_component(interp, req, out, margin, {sanitize(p): p for p in refs}),
+            promotes_outputs=[out],
+        )
         for p in refs:
             group.connect(".".join(p), f"{comp_name}.{sanitize(p)}")
         build.constraints[f"{req.label}::{con.name or con.label}"] = out
@@ -685,10 +756,13 @@ def _add_requirement(om: Any, interp: Interpreter, build: ProblemBuild,
 # ---------------------------------------------------------------------------
 
 
-def add_optimization(build: ProblemBuild, objective: str,
-                     design_vars: dict[str, tuple[float, float]],
-                     maximize: bool = False,
-                     constraints: tuple[str, ...] | None = None) -> None:
+def add_optimization(
+    build: ProblemBuild,
+    objective: str,
+    design_vars: dict[str, tuple[float, float]],
+    maximize: bool = False,
+    constraints: tuple[str, ...] | None = None,
+) -> None:
     """Configure SLSQP over margin constraints; call before ``setup()``."""
 
     om = _om()
@@ -697,7 +771,8 @@ def add_optimization(build: ProblemBuild, objective: str,
     for name, (lower, upper) in design_vars.items():
         prob.model.add_design_var(name, lower=lower, upper=upper)
     prob.model.add_objective(objective, scaler=-1.0 if maximize else 1.0)
-    names = (build.constraints if constraints is None
-             else {c: build.constraints[c] for c in constraints})
+    names = (
+        build.constraints if constraints is None else {c: build.constraints[c] for c in constraints}
+    )
     for margin_var in names.values():
         prob.model.add_constraint(margin_var, lower=0.0)

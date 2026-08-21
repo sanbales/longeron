@@ -19,8 +19,11 @@ def test_notebooks_exist():
 def test_notebook_executes(path):
     notebook = nbformat.read(path, as_version=4)
     client = nbclient.NotebookClient(
-        notebook, timeout=600, kernel_name="python3",
-        resources={"metadata": {"path": str(ROOT / "notebooks")}})
+        notebook,
+        timeout=600,
+        kernel_name="python3",
+        resources={"metadata": {"path": str(ROOT / "notebooks")}},
+    )
     client.execute()  # raises CellExecutionError on any failing cell
 
 
@@ -36,8 +39,8 @@ def test_notebook_committed_without_outputs(path):
     import subprocess
 
     blob = subprocess.run(
-        ["git", "show", f"HEAD:notebooks/{path.name}"],
-        capture_output=True, cwd=ROOT)
+        ["git", "show", f"HEAD:notebooks/{path.name}"], capture_output=True, cwd=ROOT
+    )
     if blob.returncode != 0:  # not committed yet: fall back to the file
         notebook = nbformat.read(path, as_version=4)
     else:
@@ -45,9 +48,10 @@ def test_notebook_committed_without_outputs(path):
     for index, cell in enumerate(notebook.cells):
         if cell.cell_type != "code":
             continue
-        assert cell.get("outputs") == [], \
-            f"{path.name} cell {index} has committed outputs " \
+        assert cell.get("outputs") == [], (
+            f"{path.name} cell {index} has committed outputs "
             f"(run scripts/run_notebooks.py --strip-only)"
+        )
         assert cell.get("execution_count") is None
         assert "execution" not in cell.get("metadata", {})
     assert "widgets" not in notebook.metadata

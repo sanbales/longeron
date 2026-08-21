@@ -24,9 +24,18 @@ def lib_interp(library):
 class TestLibraryContent:
     def test_packages_present(self, library):
         names = {m.name for m in library.members}
-        assert {"Parts", "Items", "Actions", "States", "Requirements",
-                "Connections", "ScalarValues", "ISQ", "SI",
-                "Quantities"} <= names
+        assert {
+            "Parts",
+            "Items",
+            "Actions",
+            "States",
+            "Requirements",
+            "Connections",
+            "ScalarValues",
+            "ISQ",
+            "SI",
+            "Quantities",
+        } <= names
 
     def test_package_count(self, library):
         assert len(library.members) >= 40
@@ -38,8 +47,7 @@ class TestLibraryContent:
 
     def test_public_import_reexport(self, lib_interp):
         # ISQ::mass lives in ISQBase but is re-exported by 'public import'
-        assert lib_interp.resolve("ISQ::mass").qualified_name == \
-            "ISQBase::mass"
+        assert lib_interp.resolve("ISQ::mass").qualified_name == "ISQBase::mass"
 
     def test_alias_resolution(self, lib_interp):
         assert lib_interp.resolve("SI::kg").qualified_name == "SI::kilogram"
@@ -114,8 +122,7 @@ class TestValidationWithLibrary:
             }
         """
         model = sysml2.loads(source)
-        before = [d for d in sysml2.validate(model)
-                  if d.code == "unresolved-reference"]
+        before = [d for d in sysml2.validate(model) if d.code == "unresolved-reference"]
         assert len(before) == 1  # NoSuchThing
 
     def test_stdlib_types_resolve_in_validation(self):
@@ -126,8 +133,11 @@ class TestValidationWithLibrary:
             }
         """)
         sysml2.add_standard_library(model)
-        diags = [d for d in sysml2.validate(model)
-                 if "App" in d.element and d.code == "unresolved-reference"]
+        diags = [
+            d
+            for d in sysml2.validate(model)
+            if "App" in d.element and d.code == "unresolved-reference"
+        ]
         assert diags == []
 
 

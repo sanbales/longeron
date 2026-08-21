@@ -10,10 +10,8 @@ from sysml2.analysis import AnalysisError, geometry
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
-RACER = {"prop_diameter_in": 5.0, "motor_mass": 0.033,
-         "battery_mass": 0.19, "esc_mass": 0.012}
-CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056,
-           "battery_mass": 0.18, "esc_mass": 0.009}
+RACER = {"prop_diameter_in": 5.0, "motor_mass": 0.033, "battery_mass": 0.19, "esc_mass": 0.012}
+CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, "esc_mass": 0.009}
 
 
 @pytest.fixture(scope="module")
@@ -31,11 +29,10 @@ def _volume(vertices, faces):
     total = 0.0
     for i in range(0, len(faces), 3):
         a, b, c = (faces[i] * 3, faces[i + 1] * 3, faces[i + 2] * 3)
-        ax, ay, az = vertices[a:a + 3]
-        bx, by, bz = vertices[b:b + 3]
-        cx, cy, cz = vertices[c:c + 3]
-        total += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx)
-                  + az * (bx * cy - by * cx))
+        ax, ay, az = vertices[a : a + 3]
+        bx, by, bz = vertices[b : b + 3]
+        cx, cy, cz = vertices[c : c + 3]
+        total += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
     return total / 6.0
 
 
@@ -46,16 +43,14 @@ def _watertight(vertices, faces):
     canonical: dict[tuple[float, float, float], int] = {}
     index_of = []
     for i in range(0, len(vertices), 3):
-        key = (round(vertices[i], 7), round(vertices[i + 1], 7),
-               round(vertices[i + 2], 7))
+        key = (round(vertices[i], 7), round(vertices[i + 1], 7), round(vertices[i + 2], 7))
         index_of.append(canonical.setdefault(key, len(canonical)))
     edges: dict[tuple[int, int], int] = {}
     for i in range(0, len(faces), 3):
         tri = [index_of[faces[i + k]] for k in range(3)]
         for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
             edges[(a, b)] = edges.get((a, b), 0) + 1
-    return all(count == 1 and edges.get((b, a)) == 1
-               for (a, b), count in edges.items())
+    return all(count == 1 and edges.get((b, a)) == 1 for (a, b), count in edges.items())
 
 
 def _component_boxes(part):
@@ -66,8 +61,7 @@ def _component_boxes(part):
     canonical: dict[tuple[float, float, float], int] = {}
     index_of = []
     for i in range(0, len(vertices), 3):
-        key = (round(vertices[i], 7), round(vertices[i + 1], 7),
-               round(vertices[i + 2], 7))
+        key = (round(vertices[i], 7), round(vertices[i + 1], 7), round(vertices[i + 2], 7))
         index_of.append(canonical.setdefault(key, len(canonical)))
     parent = list(range(len(canonical)))
 
@@ -85,7 +79,7 @@ def _component_boxes(part):
     boxes: dict[int, list[list[float]]] = {}
     for v in range(len(index_of)):
         root = find(index_of[v])
-        x, y, z = vertices[3 * v:3 * v + 3]
+        x, y, z = vertices[3 * v : 3 * v + 3]
         lo, hi = boxes.setdefault(root, [[x, y, z], [x, y, z]])
         for axis, c in enumerate((x, y, z)):
             lo[axis] = min(lo[axis], c)
@@ -97,8 +91,7 @@ def _disjoint(box_a, box_b):
     """True iff the two AABBs are strictly separated on some axis."""
 
     (alo, ahi), (blo, bhi) = box_a, box_b
-    return any(ahi[axis] < blo[axis] or bhi[axis] < alo[axis]
-               for axis in range(3))
+    return any(ahi[axis] < blo[axis] or bhi[axis] < alo[axis] for axis in range(3))
 
 
 class TestPrimitives:
@@ -125,8 +118,7 @@ class TestPrimitives:
 class TestDroneGeometry:
     def test_parts_and_schema(self):
         mesh = geometry.drone_geometry(**RACER)
-        assert [p["name"] for p in mesh["parts"]] == [
-            "frame", "motors", "props", "battery", "esc"]
+        assert [p["name"] for p in mesh["parts"]] == ["frame", "motors", "props", "battery", "esc"]
         assert mesh["unit"] == "m"
         colors = {p["color"] for p in mesh["parts"]}
         assert len(colors) == 5  # per-part colors are distinct
@@ -150,8 +142,7 @@ class TestDroneGeometry:
         (_lo, hi) = mesh["bounds"]
         # prop tips: half wheelbase + prop radius, both from the 10" prop
         spacing = 10.0 * geometry.IN + 0.02
-        assert hi[0] == pytest.approx(spacing / 2 + 5.0 * geometry.IN,
-                                      abs=1e-3)
+        assert hi[0] == pytest.approx(spacing / 2 + 5.0 * geometry.IN, abs=1e-3)
         racer = geometry.drone_geometry(**RACER)
         assert racer["bounds"][1][0] < hi[0] / 1.8  # 10" dwarfs 5"
 
@@ -171,8 +162,8 @@ class TestNewPrimitives:
     def test_loft_frustum_volume(self):
         # 1x1 square to 0.5x0.5 square over length 2: V = h/3 (A0+A1+sqrt)
         vertices, faces = geometry._loft(
-            (0, 0, 0), (0.5, 0, 0), (0, 0.5, 0),
-            (0, 0, 2), (0.25, 0, 0), (0, 0.25, 0))
+            (0, 0, 0), (0.5, 0, 0), (0, 0.5, 0), (0, 0, 2), (0.25, 0, 0), (0, 0.25, 0)
+        )
         assert _volume(vertices, faces) == pytest.approx(2 / 3 * 1.75)
         assert _watertight(vertices, faces)
 
@@ -190,14 +181,30 @@ class TestNewPrimitives:
             geometry._tube([(0.0, 0.5), (1.0, 0.0)])
 
 
-WINGED = {"wing_span": 2.6, "wing_area": 0.624, "taper": 0.6,
-          "fuselage_length": 0.95, "prop_diameter": 0.24,
-          "motor_mass": 0.092, "battery_mass": 1.95}
-DART = {"body_length": 1.25, "wing_span": 1.05, "wing_area": 0.179,
-        "taper": 0.5, "prop_diameter": 0.24, "motor_mass": 0.15,
-        "battery_mass": 0.5}
-TEARDROP = {"fuselage_length": 0.62, "prop_diameter": 0.24,
-            "motor_mass": 0.092, "battery_mass": 0.98}
+WINGED = {
+    "wing_span": 2.6,
+    "wing_area": 0.624,
+    "taper": 0.6,
+    "fuselage_length": 0.95,
+    "prop_diameter": 0.24,
+    "motor_mass": 0.092,
+    "battery_mass": 1.95,
+}
+DART = {
+    "body_length": 1.25,
+    "wing_span": 1.05,
+    "wing_area": 0.179,
+    "taper": 0.5,
+    "prop_diameter": 0.24,
+    "motor_mass": 0.15,
+    "battery_mass": 0.5,
+}
+TEARDROP = {
+    "fuselage_length": 0.62,
+    "prop_diameter": 0.24,
+    "motor_mass": 0.092,
+    "battery_mass": 0.98,
+}
 
 
 def _thickest(profile):
@@ -224,8 +231,8 @@ class TestNacaProfile:
     def test_closed_and_chord_normalized(self):
         profile = geometry.naca4_profile("2412", 24)
         xs = [x for x, _ in profile]
-        assert max(xs) == pytest.approx(1.0, abs=1e-9)   # trailing edge
-        assert min(xs) == pytest.approx(0.0, abs=0.02)   # leading edge
+        assert max(xs) == pytest.approx(1.0, abs=1e-9)  # trailing edge
+        assert min(xs) == pytest.approx(0.0, abs=0.02)  # leading edge
 
     def test_validates(self):
         with pytest.raises(AnalysisError):
@@ -244,8 +251,11 @@ def _chord_at(part, coord, station, tol=0.02, axis=0):
     baked in hover attitude)."""
 
     vertices = part["vertices"]
-    xs = [vertices[i + axis] for i in range(0, len(vertices), 3)
-          if abs(vertices[i + coord] - station) < tol]
+    xs = [
+        vertices[i + axis]
+        for i in range(0, len(vertices), 3)
+        if abs(vertices[i + coord] - station) < tol
+    ]
     assert xs, f"no section vertices near station {station}"
     return max(xs), min(xs)
 
@@ -254,7 +264,13 @@ class TestWingedVtolGeometry:
     def test_parts_and_solidity(self):
         mesh = geometry.winged_vtol_geometry(**WINGED)
         assert [p["name"] for p in mesh["parts"]] == [
-            "frame", "wing", "tail", "motors", "props", "battery"]
+            "frame",
+            "wing",
+            "tail",
+            "motors",
+            "props",
+            "battery",
+        ]
         assert len({p["color"] for p in mesh["parts"]}) == 6
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
@@ -266,11 +282,10 @@ class TestWingedVtolGeometry:
         assert hi[2] == pytest.approx(2.6 / 2 + 0.12, abs=1e-3)
         assert lo[2] == pytest.approx(-(2.6 / 2 + 0.12), abs=1e-3)
         # the 2.6 m wing dwarfs the quad frame
-        quad = geometry.drone_geometry(prop_diameter_in=0.33 / geometry.IN,
-                                       motor_mass=0.092, battery_mass=0.98,
-                                       esc_mass=0.014)
-        assert (hi[2] - lo[2]) > 2.5 * (quad["bounds"][1][2]
-                                        - quad["bounds"][0][2])
+        quad = geometry.drone_geometry(
+            prop_diameter_in=0.33 / geometry.IN, motor_mass=0.092, battery_mass=0.98, esc_mass=0.014
+        )
+        assert (hi[2] - lo[2]) > 2.5 * (quad["bounds"][1][2] - quad["bounds"][0][2])
 
     def test_exactly_four_horizontal_lift_props(self):
         """The hover story: four wingtip rotors, every disk's surface
@@ -282,7 +297,7 @@ class TestWingedVtolGeometry:
         disks = _component_boxes(props)
         assert len(disks) == 4
         for lo, hi in disks:
-            assert hi[1] - lo[1] < 0.004          # wafer-thin in Y ...
+            assert hi[1] - lo[1] < 0.004  # wafer-thin in Y ...
             assert hi[0] - lo[0] > 10 * (hi[1] - lo[1])  # ... wide in X
             assert hi[2] - lo[2] > 10 * (hi[1] - lo[1])  # ... and in Z
         # catalog props on the main-pair tips, smaller ones on the
@@ -290,8 +305,7 @@ class TestWingedVtolGeometry:
         spans = sorted(box[1][2] - box[0][2] for box in disks)
         assert spans[0] == pytest.approx(spans[1], abs=1e-3)
         assert spans[2] == pytest.approx(spans[3], abs=1e-3)
-        assert spans[0] == pytest.approx(
-            geometry._SECONDARY_PROP_RATIO * spans[2], rel=0.02)
+        assert spans[0] == pytest.approx(geometry._SECONDARY_PROP_RATIO * spans[2], rel=0.02)
 
     def test_thrust_axes_parallel_to_the_body_axis(self):
         """The tail-sitter requirement, encoded: the fuselage's long axis
@@ -333,14 +347,11 @@ class TestWingedVtolGeometry:
         wing_span = max(wing["vertices"][2::3]) - min(wing["vertices"][2::3])
         tail_span = max(tail["vertices"][0::3]) - min(tail["vertices"][0::3])
         assert wing_span == pytest.approx(2.6, abs=1e-3)
-        assert tail_span == pytest.approx(
-            geometry._SECONDARY_SPAN_RATIO * 2.6, rel=0.01)
+        assert tail_span == pytest.approx(geometry._SECONDARY_SPAN_RATIO * 2.6, rel=0.01)
         assert wing_span > tail_span
         # thin across their thickness axes: airfoils, not slabs
-        wing_thick = (max(wing["vertices"][0::3])
-                      - min(wing["vertices"][0::3]))
-        tail_thick = (max(tail["vertices"][2::3])
-                      - min(tail["vertices"][2::3]))
+        wing_thick = max(wing["vertices"][0::3]) - min(wing["vertices"][0::3])
+        tail_thick = max(tail["vertices"][2::3]) - min(tail["vertices"][2::3])
         assert wing_thick < 0.1 * wing_span
         assert tail_thick < 0.1 * tail_span
 
@@ -349,8 +360,7 @@ class TestWingedVtolGeometry:
         """The reported overlap bug, encoded: every pair of prop disks is
         strictly AABB-separated, even for the largest catalog prop."""
 
-        mesh = geometry.winged_vtol_geometry(
-            **{**WINGED, "prop_diameter": prop_diameter})
+        mesh = geometry.winged_vtol_geometry(**{**WINGED, "prop_diameter": prop_diameter})
         props = next(p for p in mesh["parts"] if p["name"] == "props")
         disks = _component_boxes(props)
         assert len(disks) == 4
@@ -377,16 +387,15 @@ class TestWingedVtolGeometry:
         assert root_qc == pytest.approx(tip_qc, abs=0.003)
         # section thickness ~ NACA 2412 (12% of chord), not a slab
         vertices = wing["vertices"]
-        xs = [vertices[i] for i in range(0, len(vertices), 3)
-              if abs(vertices[i + 2]) < 0.02]
+        xs = [vertices[i] for i in range(0, len(vertices), 3) if abs(vertices[i + 2]) < 0.02]
         assert max(xs) - min(xs) == pytest.approx(0.12 * root, rel=0.06)
         assert len({round(x, 4) for x in xs}) > 6  # curved, not boxy
 
     def test_wing_aspect_ratio_from_the_model(self):
         mesh = geometry.winged_vtol_geometry(**WINGED)
         wing = next(p for p in mesh["parts"] if p["name"] == "wing")
-        span = (max(wing["vertices"][2::3]) - min(wing["vertices"][2::3]))
-        chord = (max(wing["vertices"][1::3]) - min(wing["vertices"][1::3]))
+        span = max(wing["vertices"][2::3]) - min(wing["vertices"][2::3])
+        chord = max(wing["vertices"][1::3]) - min(wing["vertices"][1::3])
         assert span == pytest.approx(2.6, abs=1e-3)
         # chordwise (y) extent = root chord; AR = span / mean chord
         assert chord == pytest.approx(2.0 * 0.624 / 2.6 / 1.6, rel=0.02)
@@ -403,7 +412,13 @@ class TestInterceptorGeometry:
     def test_parts_and_solidity(self):
         mesh = geometry.interceptor_geometry(**DART)
         assert [p["name"] for p in mesh["parts"]] == [
-            "frame", "wing", "tail", "motors", "props", "battery"]
+            "frame",
+            "wing",
+            "tail",
+            "motors",
+            "props",
+            "battery",
+        ]
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
 
@@ -432,8 +447,7 @@ class TestInterceptorGeometry:
         tip_qc = tip_le - 0.25 * (tip_le - tip_te)
         assert root_qc == pytest.approx(tip_qc, abs=0.003)
         vertices = wing["vertices"]
-        ys = [vertices[i + 1] for i in range(0, len(vertices), 3)
-              if abs(vertices[i + 2]) < 0.02]
+        ys = [vertices[i + 1] for i in range(0, len(vertices), 3) if abs(vertices[i + 2]) < 0.02]
         assert max(ys) - min(ys) == pytest.approx(0.09 * root, rel=0.06)
 
     def test_pusher_prop_at_the_stern(self):
@@ -449,8 +463,7 @@ class TestInterceptorGeometry:
 class TestTeardropQuadGeometry:
     def test_parts_and_solidity(self):
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
-        assert [p["name"] for p in mesh["parts"]] == [
-            "frame", "motors", "props", "battery"]
+        assert [p["name"] for p in mesh["parts"]] == ["frame", "motors", "props", "battery"]
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
 
@@ -461,17 +474,20 @@ class TestTeardropQuadGeometry:
 
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
         frame = next(p for p in mesh["parts"] if p["name"] == "frame")
-        shell_box = max(_component_boxes(frame),
-                        key=lambda box: box[1][1] - box[0][1])
+        shell_box = max(_component_boxes(frame), key=lambda box: box[1][1] - box[0][1])
         y_lo, y_hi = shell_box[0][1], shell_box[1][1]
         assert y_hi - y_lo == pytest.approx(0.62, abs=1e-3)
         vertices = frame["vertices"]
-        widest = max((vertices[i:i + 3] for i in range(0, len(vertices), 3)),
-                     key=lambda v: (v[0] ** 2 + v[2] ** 2))
+        widest = max(
+            (vertices[i : i + 3] for i in range(0, len(vertices), 3)),
+            key=lambda v: v[0] ** 2 + v[2] ** 2,
+        )
         assert widest[1] > (y_lo + y_hi) / 2  # blunt nose is UP
-        radius = max((vertices[i] ** 2 + vertices[i + 2] ** 2) ** 0.5
-                     for i in range(0, len(vertices), 3)
-                     if abs(vertices[i]) < 0.06 and abs(vertices[i + 2]) < 0.06)
+        radius = max(
+            (vertices[i] ** 2 + vertices[i + 2] ** 2) ** 0.5
+            for i in range(0, len(vertices), 3)
+            if abs(vertices[i]) < 0.06 and abs(vertices[i + 2]) < 0.06
+        )
         assert radius < 0.15 * 0.62  # genuinely streamlined
 
     def test_body_long_axis_normal_to_the_rotor_discs(self):
@@ -481,8 +497,7 @@ class TestTeardropQuadGeometry:
 
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
         frame = next(p for p in mesh["parts"] if p["name"] == "frame")
-        shell_box = max(_component_boxes(frame),
-                        key=lambda box: box[1][1] - box[0][1])
+        shell_box = max(_component_boxes(frame), key=lambda box: box[1][1] - box[0][1])
         extents = [shell_box[1][i] - shell_box[0][i] for i in range(3)]
         body_axis = extents.index(max(extents))
         assert body_axis == 1  # the bullet stands on end
@@ -514,16 +529,14 @@ class TestTeardropQuadGeometry:
 
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
         frame = next(p for p in mesh["parts"] if p["name"] == "frame")
-        shell_box = max(_component_boxes(frame),
-                        key=lambda box: box[1][1] - box[0][1])
-        hull_r = max(shell_box[1][0], -shell_box[0][0],
-                     shell_box[1][2], -shell_box[0][2])
+        shell_box = max(_component_boxes(frame), key=lambda box: box[1][1] - box[0][1])
+        hull_r = max(shell_box[1][0], -shell_box[0][0], shell_box[1][2], -shell_box[0][2])
         props = next(p for p in mesh["parts"] if p["name"] == "props")
         for lo, hi in _component_boxes(props):
             cx = (lo[0] + hi[0]) / 2
             cz = (lo[2] + hi[2]) / 2
             disc_r = (hi[0] - lo[0]) / 2
-            assert (cx ** 2 + cz ** 2) ** 0.5 - disc_r > hull_r
+            assert (cx**2 + cz**2) ** 0.5 - disc_r > hull_r
 
     def test_bounds_enclose_all_vertices(self):
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
@@ -536,8 +549,7 @@ class TestTeardropQuadGeometry:
 
     def test_validates_dimensions(self):
         with pytest.raises(AnalysisError):
-            geometry.teardrop_quad_geometry(
-                **{**TEARDROP, "fuselage_length": 0.0})
+            geometry.teardrop_quad_geometry(**{**TEARDROP, "fuselage_length": 0.0})
 
 
 @pytest.fixture(scope="module")
@@ -551,28 +563,34 @@ def mission_study():
 class TestMissionBridge:
     def test_family_dispatch(self, mission_study):
         def mix(airframe):
-            return mission_study.evaluate({
-                "airframe": airframe, "motors": "stdMotor",
-                "props": "slimProp", "battery": "packMid"})
+            return mission_study.evaluate(
+                {
+                    "airframe": airframe,
+                    "motors": "stdMotor",
+                    "props": "slimProp",
+                    "battery": "packMid",
+                }
+            )
 
         quad = geometry.mission_geometry(mission_study, mix("boxQuad"))
-        assert [p["name"] for p in quad["parts"]] == [
-            "frame", "motors", "props", "battery", "esc"]
-        teardrop = geometry.mission_geometry(mission_study,
-                                             mix("teardropQuad"))
-        assert [p["name"] for p in teardrop["parts"]] == [
-            "frame", "motors", "props", "battery"]
+        assert [p["name"] for p in quad["parts"]] == ["frame", "motors", "props", "battery", "esc"]
+        teardrop = geometry.mission_geometry(mission_study, mix("teardropQuad"))
+        assert [p["name"] for p in teardrop["parts"]] == ["frame", "motors", "props", "battery"]
         winged = geometry.mission_geometry(mission_study, mix("vtolWing"))
         assert any(p["name"] == "wing" for p in winged["parts"])
-        dart = geometry.mission_geometry(mission_study,
-                                         mix("dartInterceptor"))
+        dart = geometry.mission_geometry(mission_study, mix("dartInterceptor"))
         span_z = dart["bounds"][1][2] - dart["bounds"][0][2]
         assert span_z == pytest.approx(1.05, abs=1e-3)
 
     def test_params_read_the_selected_variants(self, mission_study):
-        arch = mission_study.evaluate({
-            "airframe": "vtolWing", "motors": "ecoMotor",
-            "props": "lifterProp", "battery": "packLite"})
+        arch = mission_study.evaluate(
+            {
+                "airframe": "vtolWing",
+                "motors": "ecoMotor",
+                "props": "lifterProp",
+                "battery": "packLite",
+            }
+        )
         params = geometry.mission_params(mission_study, arch)
         assert params["wing_span"] == 2.6
         assert params["wing_area"] == 0.624
@@ -581,9 +599,9 @@ class TestMissionBridge:
         assert params["battery_mass"] == 0.5
 
     def test_missing_point_is_loud(self, mission_study):
-        arch = mission_study.evaluate({
-            "airframe": "boxQuad", "motors": "stdMotor",
-            "props": "slimProp", "battery": "packMid"})
+        arch = mission_study.evaluate(
+            {"airframe": "boxQuad", "motors": "stdMotor", "props": "slimProp", "battery": "packMid"}
+        )
         arch.selection.pop("battery")
         with pytest.raises(AnalysisError):
             geometry.mission_params(mission_study, arch)
@@ -595,37 +613,40 @@ class TestLineup:
         dart = geometry.interceptor_geometry(**DART)
         scene = geometry.lineup([winged, dart], labels=["isr", "dash"])
         assert len(scene["parts"]) == 12
-        assert {p["name"].split(":")[0] for p in scene["parts"]} == \
-            {"isr", "dash"}
+        assert {p["name"].split(":")[0] for p in scene["parts"]} == {"isr", "dash"}
         # widths are preserved, meshes do not overlap, ground is shared
-        width = sum(m["bounds"][1][0] - m["bounds"][0][0]
-                    for m in (winged, dart)) + 0.25
-        assert scene["bounds"][1][0] - scene["bounds"][0][0] == \
-            pytest.approx(width, abs=1e-3)
+        width = sum(m["bounds"][1][0] - m["bounds"][0][0] for m in (winged, dart)) + 0.25
+        assert scene["bounds"][1][0] - scene["bounds"][0][0] == pytest.approx(width, abs=1e-3)
         assert scene["bounds"][0][1] == pytest.approx(
-            min(m["bounds"][0][1] for m in (winged, dart)), abs=1e-3)
+            min(m["bounds"][0][1] for m in (winged, dart)), abs=1e-3
+        )
 
     def test_validates(self):
         with pytest.raises(AnalysisError):
             geometry.lineup([])
         with pytest.raises(AnalysisError):
-            geometry.lineup([geometry.interceptor_geometry(**DART)],
-                            labels=["a", "b"])
+            geometry.lineup([geometry.interceptor_geometry(**DART)], labels=["a", "b"])
 
 
 class TestArchitectureBridge:
     def test_params_from_mix(self, study):
-        arch = study.evaluate({"motors": "sunnySky2212", "props": "apc1045",
-                               "battery": "lipo3s2200", "esc": "esc20"})
+        arch = study.evaluate(
+            {"motors": "sunnySky2212", "props": "apc1045", "battery": "lipo3s2200", "esc": "esc20"}
+        )
         params = geometry.architecture_params(study, arch)
-        assert params == {"motor_mass": 0.056, "prop_diameter_in": 10.0,
-                          "battery_mass": 0.18, "esc_mass": 0.009}
+        assert params == {
+            "motor_mass": 0.056,
+            "prop_diameter_in": 10.0,
+            "battery_mass": 0.18,
+            "esc_mass": 0.009,
+        }
         mesh = geometry.architecture_geometry(study, arch)
         assert len(mesh["parts"]) == 5
 
     def test_missing_point_is_loud(self, study):
-        arch = study.evaluate({"motors": "emax2306", "props": "hq5x43",
-                               "battery": "lipo4s1500", "esc": "esc45"})
+        arch = study.evaluate(
+            {"motors": "emax2306", "props": "hq5x43", "battery": "lipo4s1500", "esc": "esc45"}
+        )
         arch.selection.pop("esc")
         with pytest.raises(AnalysisError):
             geometry.architecture_params(study, arch)
@@ -636,9 +657,19 @@ class TestCadqueryBridge:
         pytest.importorskip("cadquery")
         assembly = geometry.to_cadquery(**RACER)
         names = {child.name for child in assembly.children}
-        assert names == {"frame", "motor1", "motor2", "motor3", "motor4",
-                         "prop1", "prop2", "prop3", "prop4", "battery",
-                         "esc"}
+        assert names == {
+            "frame",
+            "motor1",
+            "motor2",
+            "motor3",
+            "motor4",
+            "prop1",
+            "prop2",
+            "prop3",
+            "prop4",
+            "battery",
+            "esc",
+        }
 
     def test_missing_extra_is_loud(self, monkeypatch):
         import builtins

@@ -29,10 +29,10 @@ from math import pi
 
 import openmdao.api as om
 
-RHO = 1.225        # kg/m^3, sea level
-MU = 1.81e-5       # Pa*s, dynamic viscosity of air
-RE_REF = 5.0e5     # Reynolds number the catalog CdA values are quoted at
-CL_STALL = 1.05    # stall-onset lift coefficient of the catalog wings
+RHO = 1.225  # kg/m^3, sea level
+MU = 1.81e-5  # Pa*s, dynamic viscosity of air
+RE_REF = 5.0e5  # Reynolds number the catalog CdA values are quoted at
+CL_STALL = 1.05  # stall-onset lift coefficient of the catalog wings
 
 
 class CruisePowerPolar(om.ExplicitComponent):
@@ -41,12 +41,12 @@ class CruisePowerPolar(om.ExplicitComponent):
     def setup(self) -> None:
         self.add_input("massKg", val=1.0)
         self.add_input("speed", val=15.0)
-        self.add_input("dragArea", val=0.03)   # CdA, m^2
+        self.add_input("dragArea", val=0.03)  # CdA, m^2
         self.add_input("span", val=2.0)
         self.add_input("wingArea", val=0.5)
-        self.add_input("spanEff", val=0.9)     # Oswald e x wingtip-prop bonus
+        self.add_input("spanEff", val=0.9)  # Oswald e x wingtip-prop bonus
         self.add_input("propEff", val=0.7)
-        self.add_output("power", val=0.0)      # W, electrical
+        self.add_output("power", val=0.0)  # W, electrical
         self.declare_partials("power", "*", method="fd")
 
     def compute(self, inputs, outputs) -> None:  # type: ignore[no-untyped-def]

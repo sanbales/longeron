@@ -125,13 +125,16 @@ def constraint_expr(interp: Interpreter, usage: M.Usage) -> A.Expr | None:
     return None
 
 
-def named_members(interp: Interpreter, defn: M.Definition | M.Usage,
-                  kinds: tuple[str, ...]) -> list[M.Usage]:
+def named_members(
+    interp: Interpreter, defn: M.Definition | M.Usage, kinds: tuple[str, ...]
+) -> list[M.Usage]:
     """Named usages of the given kinds, own + inherited."""
 
-    return [m for m in interp.resolver.members_of(defn)
-            if isinstance(m, M.Usage) and m.kind in kinds
-            and (m.name or m.short_name)]
+    return [
+        m
+        for m in interp.resolver.members_of(defn)
+        if isinstance(m, M.Usage) and m.kind in kinds and (m.name or m.short_name)
+    ]
 
 
 def instance_path(instance: Instance, parts: QName) -> Any:

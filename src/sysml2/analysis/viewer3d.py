@@ -310,8 +310,8 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         import traitlets
     except ImportError as err:
         raise ImportError(
-            "the 3D viewer needs anywidget; install the extra with "
-            "'pip install \"longeron[viz]\"'") from err
+            "the 3D viewer needs anywidget; install the extra with 'pip install \"longeron[viz]\"'"
+        ) from err
 
     class MeshViewer(_anywidget.AnyWidget):
         """three.js rendering of baked mesh dicts (A, optionally A|B)."""
@@ -330,10 +330,15 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
     return MeshViewer
 
 
-def mesh_viewer(mesh: dict[str, Any], mesh_b: dict[str, Any] | None = None,
-                *, label: str = "", label_b: str = "",
-                width_px: int = 760,
-                height_px: int = 430) -> anywidget.AnyWidget:
+def mesh_viewer(
+    mesh: dict[str, Any],
+    mesh_b: dict[str, Any] | None = None,
+    *,
+    label: str = "",
+    label_b: str = "",
+    width_px: int = 760,
+    height_px: int = 430,
+) -> anywidget.AnyWidget:
     """View one baked mesh dict, or two side by side at true scale.
 
     ``mesh``/``mesh_b`` come from :mod:`sysml2.analysis.geometry` (or any
@@ -347,7 +352,11 @@ def mesh_viewer(mesh: dict[str, Any], mesh_b: dict[str, Any] | None = None,
     """
 
     cls = _viewer_class()
-    return cls(mesh_json=json.dumps(mesh),
-               mesh_b_json=json.dumps(mesh_b) if mesh_b is not None else "",
-               label=label, label_b=label_b,
-               width_px=width_px, height_px=height_px)
+    return cls(
+        mesh_json=json.dumps(mesh),
+        mesh_b_json=json.dumps(mesh_b) if mesh_b is not None else "",
+        label=label,
+        label_b=label_b,
+        width_px=width_px,
+        height_px=height_px,
+    )

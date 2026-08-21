@@ -8,8 +8,9 @@ import pytest
 
 from sysml2.analysis import geometry, viewer3d
 
-MESH = geometry.drone_geometry(prop_diameter_in=5.0, motor_mass=0.033,
-                               battery_mass=0.19, esc_mass=0.012)
+MESH = geometry.drone_geometry(
+    prop_diameter_in=5.0, motor_mass=0.033, battery_mass=0.19, esc_mass=0.012
+)
 
 
 class TestMeshViewer:
@@ -18,18 +19,22 @@ class TestMeshViewer:
         widget = viewer3d.mesh_viewer(MESH, label="racer", width_px=500)
         parsed = json.loads(widget.mesh_json)
         assert [p["name"] for p in parsed["parts"]] == [
-            "frame", "motors", "props", "battery", "esc"]
+            "frame",
+            "motors",
+            "props",
+            "battery",
+            "esc",
+        ]
         assert widget.mesh_b_json == ""  # single mode
         assert widget.label == "racer" and widget.width_px == 500
 
     def test_compare_mode(self):
         pytest.importorskip("anywidget")
-        other = geometry.drone_geometry(prop_diameter_in=10.0,
-                                        motor_mass=0.056,
-                                        battery_mass=0.18, esc_mass=0.009)
+        other = geometry.drone_geometry(
+            prop_diameter_in=10.0, motor_mass=0.056, battery_mass=0.18, esc_mass=0.009
+        )
         widget = viewer3d.mesh_viewer(MESH, other, label="a", label_b="b")
-        assert json.loads(widget.mesh_b_json)["bounds"] != \
-            json.loads(widget.mesh_json)["bounds"]
+        assert json.loads(widget.mesh_b_json)["bounds"] != json.loads(widget.mesh_json)["bounds"]
 
     def test_esm_contracts(self):
         pytest.importorskip("anywidget")
@@ -49,9 +54,16 @@ class TestMeshViewer:
 
         pytest.importorskip("anywidget")
         widget = viewer3d.mesh_viewer(MESH)
-        for token in ("ResizeObserver", "contextmenu", "preventDefault",
-                      "stopPropagation", "shiftKey", "button === 2",
-                      "setPointerCapture", "sysml2-viewer3d-hint"):
+        for token in (
+            "ResizeObserver",
+            "contextmenu",
+            "preventDefault",
+            "stopPropagation",
+            "shiftKey",
+            "button === 2",
+            "setPointerCapture",
+            "sysml2-viewer3d-hint",
+        ):
             assert token in widget._esm, token
         for word in ("orbit", "pan", "zoom", "fit"):
             assert word in widget._esm, word
@@ -61,6 +73,8 @@ class TestMeshViewer:
         pytest.importorskip("anywidget")
         widget = viewer3d.mesh_viewer(MESH)
         widget.mesh_json = json.dumps(
-            geometry.drone_geometry(prop_diameter_in=10.0, motor_mass=0.056,
-                                    battery_mass=0.18, esc_mass=0.009))
+            geometry.drone_geometry(
+                prop_diameter_in=10.0, motor_mass=0.056, battery_mass=0.18, esc_mass=0.009
+            )
+        )
         assert json.loads(widget.mesh_json)["bounds"][1][0] > 0.2

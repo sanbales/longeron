@@ -35,8 +35,7 @@ from .trades import Architecture, TradeStudy, pareto
 if TYPE_CHECKING:
     import anywidget
 
-__all__ = ["margin_sweep_figure", "mix_table", "parcoords",
-           "parcoords_payload", "pareto_figure"]
+__all__ = ["margin_sweep_figure", "mix_table", "parcoords", "parcoords_payload", "pareto_figure"]
 
 # Shared palette (restrained: one accent, grays for scaffolding).  The
 # accent family varies lightness, never hue -- see the categorical /
@@ -44,9 +43,9 @@ __all__ = ["margin_sweep_figure", "mix_table", "parcoords",
 INK = "#2b2d31"
 MUTE = "#9aa0a8"
 FAINT = "#d9dbdf"
-ACCENT = "#2f6b8f"       # petrol blue: frontier / brushed lines
+ACCENT = "#2f6b8f"  # petrol blue: frontier / brushed lines
 ACCENT_RAMP = ("#2f6b8f", "#5b8dad", "#8fb2c7", "#b7cedd")
-WARM = "#c2603e"         # terracotta: the one warm highlight
+WARM = "#c2603e"  # terracotta: the one warm highlight
 
 
 def _plt() -> Any:
@@ -55,12 +54,14 @@ def _plt() -> Any:
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError(
             "sysml2.analysis.viz figures need matplotlib; install the extra "
-            "with 'pip install \"longeron[viz]\"'") from err
+            "with 'pip install \"longeron[viz]\"'"
+        ) from err
     return plt
 
 
 def _pe() -> Any:
     import matplotlib.patheffects as patheffects  # after _plt() succeeded
+
     return patheffects
 
 
@@ -69,10 +70,11 @@ def _pe() -> Any:
 # ---------------------------------------------------------------------------
 
 
-def mix_table(study: TradeStudy,
-              architectures: Sequence[Architecture] | None = None,
-              derived: Mapping[str, Callable[[Architecture], Any]] | None = None,
-              ) -> list[dict[str, Any]]:
+def mix_table(
+    study: TradeStudy,
+    architectures: Sequence[Architecture] | None = None,
+    derived: Mapping[str, Callable[[Architecture], Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Flat rows (selection + metrics + ``feasible``) for plotting.
 
     ``derived`` adds computed columns, e.g. ``{"thrustToWeight":
@@ -81,8 +83,7 @@ def mix_table(study: TradeStudy,
     (:meth:`~sysml2.analysis.trades.TradeStudy.all_architectures`).
     """
 
-    archs = (study.all_architectures() if architectures is None
-             else architectures)
+    archs = study.all_architectures() if architectures is None else architectures
     rows: list[dict[str, Any]] = []
     for arch in archs:
         row: dict[str, Any] = dict(arch.selection)
@@ -106,8 +107,9 @@ def _fmt(value: float) -> str:
     return f"{value:.2f}" if magnitude < 10 else f"{value:.1f}"
 
 
-def parcoords_payload(rows: Sequence[Mapping[str, Any]],
-                      axes: Sequence[str] | None = None) -> dict[str, Any]:
+def parcoords_payload(
+    rows: Sequence[Mapping[str, Any]], axes: Sequence[str] | None = None
+) -> dict[str, Any]:
     """The baked parallel-coordinates payload (house pattern: Python owns
     the schema, JS only paints).
 
@@ -120,12 +122,10 @@ def parcoords_payload(rows: Sequence[Mapping[str, Any]],
 
     if not rows:
         raise AnalysisError("parcoords needs at least one row")
-    names = list(axes) if axes is not None else \
-        [k for k in rows[0] if k != "feasible"]
+    names = list(axes) if axes is not None else [k for k in rows[0] if k != "feasible"]
     missing = [n for n in names if n not in rows[0]]
     if missing:
-        raise AnalysisError(f"rows have no column(s) {missing!r} "
-                            f"(have: {sorted(rows[0])})")
+        raise AnalysisError(f"rows have no column(s) {missing!r} (have: {sorted(rows[0])})")
 
     specs: list[dict[str, Any]] = []
     positions: list[list[float]] = []  # per axis, per row
@@ -134,33 +134,38 @@ def parcoords_payload(rows: Sequence[Mapping[str, Any]],
         values = [row[name] for row in rows]
         if any(isinstance(v, str) for v in values):
             categories = list(dict.fromkeys(str(v) for v in values))
-            t_of = {c: (i / (len(categories) - 1) if len(categories) > 1
-                        else 0.5)
-                    for i, c in enumerate(categories)}
-            specs.append({"name": name,
-                          "ticks": [{"t": round(t_of[c], 4), "label": c}
-                                    for c in categories]})
+            t_of = {
+                c: (i / (len(categories) - 1) if len(categories) > 1 else 0.5)
+                for i, c in enumerate(categories)
+            }
+            specs.append(
+                {"name": name, "ticks": [{"t": round(t_of[c], 4), "label": c} for c in categories]}
+            )
             positions.append([t_of[str(v)] for v in values])
             displays.append([str(v) for v in values])
         else:
             lo, hi = min(values), max(values)
             span = hi - lo
-            specs.append({"name": name,
-                          "ticks": [{"t": 0.0, "label": _fmt(lo)},
-                                    {"t": 1.0, "label": _fmt(hi)}]})
-            positions.append([(v - lo) / span if span else 0.5
-                              for v in values])
+            specs.append(
+                {
+                    "name": name,
+                    "ticks": [{"t": 0.0, "label": _fmt(lo)}, {"t": 1.0, "label": _fmt(hi)}],
+                }
+            )
+            positions.append([(v - lo) / span if span else 0.5 for v in values])
             displays.append([_fmt(float(v)) for v in values])
 
     lines = []
     for index, row in enumerate(rows):
         cats = [str(row[n]) for n in names if isinstance(row[n], str)]
-        lines.append({
-            "label": row.get("label") or " / ".join(cats) or f"mix {index}",
-            "t": [round(positions[a][index], 4) for a in range(len(names))],
-            "v": [displays[a][index] for a in range(len(names))],
-            "feasible": bool(row.get("feasible", True)),
-        })
+        lines.append(
+            {
+                "label": row.get("label") or " / ".join(cats) or f"mix {index}",
+                "t": [round(positions[a][index], 4) for a in range(len(names))],
+                "v": [displays[a][index] for a in range(len(names))],
+                "feasible": bool(row.get("feasible", True)),
+            }
+        )
     return {"axes": specs, "lines": lines}
 
 
@@ -210,7 +215,9 @@ function resizeInterval(brush, end, t) {
 # the body to move (grab cursor), drag an end handle to resize
 # (ns-resize), click the axis outside the brush -- or double-click
 # anywhere in the zone -- to clear.
-_PC_ESM = _PC_MATH_JS + r"""
+_PC_ESM = (
+    _PC_MATH_JS
+    + r"""
 function render({ model, el }) {
   const table = JSON.parse(model.get("table_json"));
   const axes = table.axes;
@@ -411,6 +418,7 @@ function render({ model, el }) {
 }
 export default { render };
 """
+)
 
 _PC_CSS = """
 .sysml2-parcoords { font-family: Helvetica, Arial, sans-serif;
@@ -457,7 +465,8 @@ def _parcoords_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise ImportError(
             "the parallel-coordinates widget needs anywidget; install the "
-            "extra with 'pip install \"longeron[viz]\"'") from err
+            "extra with 'pip install \"longeron[viz]\"'"
+        ) from err
 
     class ParCoordsWidget(_anywidget.AnyWidget):
         """Brushable parallel coordinates over a baked mix table."""
@@ -477,10 +486,13 @@ def _parcoords_class() -> type[anywidget.AnyWidget]:
     return ParCoordsWidget
 
 
-def parcoords(rows: Sequence[Mapping[str, Any]],
-              axes: Sequence[str] | None = None, *,
-              width_px: int = 920,
-              height_px: int = 380) -> anywidget.AnyWidget:
+def parcoords(
+    rows: Sequence[Mapping[str, Any]],
+    axes: Sequence[str] | None = None,
+    *,
+    width_px: int = 920,
+    height_px: int = 380,
+) -> anywidget.AnyWidget:
     """A brushable parallel-coordinates widget over :func:`mix_table` rows.
 
     Brush gestures live in a narrow zone around each axis (the cursor
@@ -497,9 +509,12 @@ def parcoords(rows: Sequence[Mapping[str, Any]],
 
     cls = _parcoords_class()
     payload = parcoords_payload(rows, axes)
-    return cls(table_json=json.dumps(payload),
-               selected=json.dumps(list(range(len(payload["lines"])))),
-               width_px=width_px, height_px=height_px)
+    return cls(
+        table_json=json.dumps(payload),
+        selected=json.dumps(list(range(len(payload["lines"])))),
+        width_px=width_px,
+        height_px=height_px,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -521,14 +536,19 @@ def _style_axes(ax: Any) -> None:
     ax.set_axisbelow(True)
 
 
-def pareto_figure(architectures: Iterable[Architecture], *,
-                  x: str, y: str,
-                  sense: tuple[str, str] = ("min", "min"),
-                  panel_y: str | None = None,
-                  xlabel: str | None = None, ylabel: str | None = None,
-                  panel_ylabel: str | None = None,
-                  annotate: Mapping[str, Architecture] | None = None,
-                  title: str | None = None) -> Any:
+def pareto_figure(
+    architectures: Iterable[Architecture],
+    *,
+    x: str,
+    y: str,
+    sense: tuple[str, str] = ("min", "min"),
+    panel_y: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    panel_ylabel: str | None = None,
+    annotate: Mapping[str, Architecture] | None = None,
+    title: str | None = None,
+) -> Any:
     """The two-objective Pareto frontier inside the full candidate space.
 
     ``architectures`` is every evaluated mix (feasible or not, e.g. from
@@ -565,48 +585,63 @@ def pareto_figure(architectures: Iterable[Architecture], *,
     plt = _plt()
     x_sense, y_sense = sense
     if x_sense not in ("min", "max") or y_sense not in ("min", "max"):
-        raise AnalysisError("sense must pair 'min'/'max' "
-                            f"(got {sense!r})")
+        raise AnalysisError(f"sense must pair 'min'/'max' (got {sense!r})")
     archs = list(architectures)
     feasible = [a for a in archs if a.verified]
     senses = ((x, x_sense), (y, y_sense))
-    front = pareto(feasible,
-                   minimize=tuple(m for m, s in senses if s == "min"),
-                   maximize=tuple(m for m, s in senses if s == "max"))
+    front = pareto(
+        feasible,
+        minimize=tuple(m for m, s in senses if s == "min"),
+        maximize=tuple(m for m, s in senses if s == "max"),
+    )
     front_keys = {tuple(sorted(a.selection.items())) for a in front}
-    groups: dict[str, list[Architecture]] = {
-        "front": [], "dominated": [], "infeasible": []}
+    groups: dict[str, list[Architecture]] = {"front": [], "dominated": [], "infeasible": []}
     for arch in archs:
         key = tuple(sorted(arch.selection.items()))
-        groups["front" if key in front_keys else
-               "dominated" if arch.verified else "infeasible"].append(arch)
+        groups[
+            "front" if key in front_keys else "dominated" if arch.verified else "infeasible"
+        ].append(arch)
 
     if panel_y is not None:
         fig, (ax, panel) = plt.subplots(
-            2, 1, figsize=(7.0, 5.4), sharex=True,
-            height_ratios=(3.0, 1.25), layout="constrained")
+            2, 1, figsize=(7.0, 5.4), sharex=True, height_ratios=(3.0, 1.25), layout="constrained"
+        )
     else:
         fig, ax = plt.subplots(figsize=(7.0, 4.2), layout="constrained")
         panel = None
 
     def scatter(target: Any, metric_y: str, labeled: bool) -> None:
         styles: dict[str, dict[str, Any]] = {
-            "infeasible": {"marker": "x", "c": FAINT, "s": 18,
-                           "linewidths": 1.0,
-                           "label": "infeasible (excluded from front)"
-                           if labeled else None},
-            "dominated": {"marker": "o", "c": "#c3c7cd", "s": 24,
-                          "label": "feasible, dominated" if labeled
-                          else None},
-            "front": {"marker": "o", "c": ACCENT, "s": 46,
-                      "edgecolors": "white", "linewidths": 0.7, "zorder": 4,
-                      "label": "Pareto frontier" if labeled else None},
+            "infeasible": {
+                "marker": "x",
+                "c": FAINT,
+                "s": 18,
+                "linewidths": 1.0,
+                "label": "infeasible (excluded from front)" if labeled else None,
+            },
+            "dominated": {
+                "marker": "o",
+                "c": "#c3c7cd",
+                "s": 24,
+                "label": "feasible, dominated" if labeled else None,
+            },
+            "front": {
+                "marker": "o",
+                "c": ACCENT,
+                "s": 46,
+                "edgecolors": "white",
+                "linewidths": 0.7,
+                "zorder": 4,
+                "label": "Pareto frontier" if labeled else None,
+            },
         }
         for name, archs in groups.items():
             if archs:
-                target.scatter([a.metrics[x] for a in archs],
-                               [a.metrics[metric_y] for a in archs],
-                               **styles[name])
+                target.scatter(
+                    [a.metrics[x] for a in archs],
+                    [a.metrics[metric_y] for a in archs],
+                    **styles[name],
+                )
 
     scatter(ax, y, labeled=True)
     steps = sorted(groups["front"], key=lambda a: a.metrics[x])
@@ -614,30 +649,48 @@ def pareto_figure(architectures: Iterable[Architecture], *,
         # the staircase must bound the attainable side: with x minimized
         # the best-so-far y holds until the next (costlier) point is
         # bought (steps-post); with x maximized the mirror image.
-        ax.plot([a.metrics[x] for a in steps],
-                [a.metrics[y] for a in steps],
-                drawstyle="steps-post" if x_sense == "min" else "steps-pre",
-                color=ACCENT, linewidth=1.4, alpha=0.85, zorder=3)
+        ax.plot(
+            [a.metrics[x] for a in steps],
+            [a.metrics[y] for a in steps],
+            drawstyle="steps-post" if x_sense == "min" else "steps-pre",
+            color=ACCENT,
+            linewidth=1.4,
+            alpha=0.85,
+            zorder=3,
+        )
 
-    x_mid = (min(a.metrics[x] for a in groups["front"] or steps or [])
-             + max(a.metrics[x] for a in groups["front"])) / 2 \
-        if groups["front"] else 0.0
+    x_mid = (
+        (
+            min(a.metrics[x] for a in groups["front"] or steps or [])
+            + max(a.metrics[x] for a in groups["front"])
+        )
+        / 2
+        if groups["front"]
+        else 0.0
+    )
     for name, arch in (annotate or {}).items():
         left = arch.metrics[x] <= x_mid
         ax.annotate(
-            name, (arch.metrics[x], arch.metrics[y]),
-            xytext=(14 if left else -14, -18), textcoords="offset points",
-            ha="left" if left else "right", fontsize=8.5, color=INK,
-            arrowprops={"arrowstyle": "-",
-                        "connectionstyle": "arc3,rad=-0.2",
-                        "color": MUTE, "linewidth": 0.8})
+            name,
+            (arch.metrics[x], arch.metrics[y]),
+            xytext=(14 if left else -14, -18),
+            textcoords="offset points",
+            ha="left" if left else "right",
+            fontsize=8.5,
+            color=INK,
+            arrowprops={
+                "arrowstyle": "-",
+                "connectionstyle": "arc3,rad=-0.2",
+                "color": MUTE,
+                "linewidth": 0.8,
+            },
+        )
 
     ax.grid(axis="y", color=FAINT, linewidth=0.5)
     ax.set_ylabel(ylabel or y)
     if title:
         ax.set_title(title, fontsize=10, color=INK, loc="left")
-    ax.legend(frameon=False, fontsize=8, loc="best", labelcolor=INK,
-              handletextpad=0.4)
+    ax.legend(frameon=False, fontsize=8, loc="best", labelcolor=INK, handletextpad=0.4)
     _style_axes(ax)
 
     if panel is not None:
@@ -651,10 +704,15 @@ def pareto_figure(architectures: Iterable[Architecture], *,
     return fig
 
 
-def margin_sweep_figure(problem: Any, var: str, values: Sequence[float],
-                        margins: Mapping[str, str] | Sequence[str], *,
-                        xlabel: str | None = None,
-                        title: str | None = None) -> Any:
+def margin_sweep_figure(
+    problem: Any,
+    var: str,
+    values: Sequence[float],
+    margins: Mapping[str, str] | Sequence[str],
+    *,
+    xlabel: str | None = None,
+    title: str | None = None,
+) -> Any:
     """Requirement margins across a design-variable sweep.
 
     One chart answering "how far can ``var`` go, and which requirement
@@ -669,8 +727,7 @@ def margin_sweep_figure(problem: Any, var: str, values: Sequence[float],
     shows ("Payloads above 0.46 kg cannot fly").
     """
 
-    named = (dict(margins) if isinstance(margins, Mapping)
-             else {m: m for m in margins})
+    named = dict(margins) if isinstance(margins, Mapping) else {m: m for m in margins}
     if not named:
         raise AnalysisError("margin_sweep_figure needs at least one margin")
     baseline = float(problem.get_val(var)[0])
@@ -686,21 +743,24 @@ def margin_sweep_figure(problem: Any, var: str, values: Sequence[float],
     plt = _plt()
     fig, ax = plt.subplots(figsize=(7.0, 3.6), layout="constrained")
     span = values[-1] - values[0]
-    colors = dict(zip(curves, ACCENT_RAMP * (1 + len(named) // 4),
-                      strict=False))
+    colors = dict(zip(curves, ACCENT_RAMP * (1 + len(named) // 4), strict=False))
     for label, ys in curves.items():
         ax.plot(values, ys, color=colors[label], linewidth=1.6)
     # direct end labels, pushed apart where curves converge
     y_all = [y for ys in curves.values() for y in ys]
     min_gap = 0.06 * ((max(y_all) - min(y_all)) or 1.0)
     slot = None
-    for final, label in sorted((ys[-1], label)
-                               for label, ys in curves.items()):
+    for final, label in sorted((ys[-1], label) for label, ys in curves.items()):
         slot = final if slot is None else max(final, slot + min_gap)
-        ax.annotate(label.split("::")[-1].removesuffix("_margin"),
-                    (values[-1], slot), xytext=(6, 0),
-                    textcoords="offset points", va="center", fontsize=8,
-                    color=colors[label])
+        ax.annotate(
+            label.split("::")[-1].removesuffix("_margin"),
+            (values[-1], slot),
+            xytext=(6, 0),
+            textcoords="offset points",
+            va="center",
+            fontsize=8,
+            color=colors[label],
+        )
     ax.axhline(0.0, color=MUTE, linewidth=0.9, linestyle=(0, (4, 3)))
 
     mins = [min(column) for column in zip(*curves.values(), strict=True)]
@@ -713,23 +773,39 @@ def margin_sweep_figure(problem: Any, var: str, values: Sequence[float],
             binding = min(named, key=lambda label: curves[label][i])
             break
     if crossing is not None and binding is not None:
-        ax.axvspan(values[0], crossing, color=ACCENT, alpha=0.06,
-                   linewidth=0)
-        ax.axvspan(crossing, values[-1], color=FAINT, alpha=0.35,
-                   linewidth=0)
+        ax.axvspan(values[0], crossing, color=ACCENT, alpha=0.06, linewidth=0)
+        ax.axvspan(crossing, values[-1], color=FAINT, alpha=0.35, linewidth=0)
         ax.axvline(crossing, color=WARM, linewidth=1.0)
         ax.annotate(
-            f"{binding.split('::')[-1].removesuffix('_margin')} binds at "
-            f"{crossing:.2f}", (crossing, ax.get_ylim()[1]),
-            xytext=(5, -4), textcoords="offset points", va="top",
-            fontsize=8, color=WARM)
+            f"{binding.split('::')[-1].removesuffix('_margin')} binds at {crossing:.2f}",
+            (crossing, ax.get_ylim()[1]),
+            xytext=(5, -4),
+            textcoords="offset points",
+            va="top",
+            fontsize=8,
+            color=WARM,
+        )
         halo = [_pe().withStroke(linewidth=2.5, foreground="white")]
-        ax.text((values[0] + crossing) / 2, 0.04, "feasible",
-                transform=ax.get_xaxis_transform(), ha="center",
-                fontsize=8, color=ACCENT, path_effects=halo)
-        ax.text((crossing + values[-1]) / 2, 0.04, "infeasible",
-                transform=ax.get_xaxis_transform(), ha="center",
-                fontsize=8, color=MUTE, path_effects=halo)
+        ax.text(
+            (values[0] + crossing) / 2,
+            0.04,
+            "feasible",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            fontsize=8,
+            color=ACCENT,
+            path_effects=halo,
+        )
+        ax.text(
+            (crossing + values[-1]) / 2,
+            0.04,
+            "infeasible",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            fontsize=8,
+            color=MUTE,
+            path_effects=halo,
+        )
 
     ax.set_xlim(values[0], values[-1] + 0.22 * span)
     ax.set_xlabel(xlabel or var)

@@ -21,8 +21,7 @@ def drone():
 
 class TestConsistency:
     def test_drone_requirements_are_consistent(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter",
-                            requirements=("Drone::FlightEnvelope",))
+        system = smt.to_smt(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
         assert system.gaps == []
         result = system.check()
         assert result.status == "sat"
@@ -30,8 +29,7 @@ class TestConsistency:
         assert result.witness["totalMass"] == pytest.approx(1.24)
 
     def test_calc_invocations_inline(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter",
-                            requirements=("Drone::FlightEnvelope",))
+        system = smt.to_smt(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
         labels = [label for label, _ in system.assertions]
         assert "FlightEnvelope::hoverMargin [require]" in labels
 
@@ -41,14 +39,21 @@ class TestConflictCore:
         pkg = drone.find("Drone")
         req = M.Definition(kind="requirement", name="HeavyPayload")
         req.add(M.Usage(kind="subject", name="drone", types=["QuadCopter"]))
-        req.add(M.Usage(
-            kind="constraint", name="bigPayload", constraint_kind="require",
-            result=sysml2.parse_expression("drone.payloadMass >= 0.6")))
+        req.add(
+            M.Usage(
+                kind="constraint",
+                name="bigPayload",
+                constraint_kind="require",
+                result=sysml2.parse_expression("drone.payloadMass >= 0.6"),
+            )
+        )
         pkg.add(req)
-        system = smt.to_smt(drone, "Drone::QuadCopter",
-                            requirements=("Drone::FlightEnvelope",
-                                          "Drone::HeavyPayload"),
-                            free=("payloadMass",))
+        system = smt.to_smt(
+            drone,
+            "Drone::QuadCopter",
+            requirements=("Drone::FlightEnvelope", "Drone::HeavyPayload"),
+            free=("payloadMass",),
+        )
         result = system.check()
         assert result.status == "unsat"
         # payload >= 0.6 pushes totalMass past the 1.5 kg takeoff limit
@@ -59,9 +64,12 @@ class TestConflictCore:
 
 class TestDesignSpace:
     def test_max_payload_with_all_constraints(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter",
-                            requirements=("Drone::FlightEnvelope",),
-                            free=("payloadMass",))
+        system = smt.to_smt(
+            drone,
+            "Drone::QuadCopter",
+            requirements=("Drone::FlightEnvelope",),
+            free=("payloadMass",),
+        )
         bound, result = system.maximize("payloadMass")
         assert result.status == "sat"
         assert Fraction(bound) == Fraction(23, 50)  # 0.46, exact
@@ -69,8 +77,7 @@ class TestDesignSpace:
     def test_strict_bound_is_open(self, drone):
         # only canHover (strict >): the supremum is reported with -epsilon
         system = smt.to_smt(drone, "Drone::QuadCopter", free=("payloadMass",))
-        bound, result = system.maximize(
-            "payloadMass", exclude=("QuadCopter::takeoffMassLimit",))
+        bound, result = system.maximize("payloadMass", exclude=("QuadCopter::takeoffMassLimit",))
         assert result.status == "sat"
         assert "epsilon" in bound
         assert bound.startswith(str(Fraction(7166, 2725)))  # ~2.6297 kg

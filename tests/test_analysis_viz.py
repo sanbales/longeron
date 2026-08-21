@@ -12,12 +12,9 @@ from sysml2.analysis.trades import Architecture
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 ROWS = [
-    {"motor": "a", "prop": "p1", "cost": 100.0, "mass": 0.9,
-     "feasible": True},
-    {"motor": "b", "prop": "p1", "cost": 150.0, "mass": 1.0,
-     "feasible": True},
-    {"motor": "a", "prop": "p2", "cost": 200.0, "mass": 1.1,
-     "feasible": False},
+    {"motor": "a", "prop": "p1", "cost": 100.0, "mass": 0.9, "feasible": True},
+    {"motor": "b", "prop": "p1", "cost": 150.0, "mass": 1.0, "feasible": True},
+    {"motor": "a", "prop": "p2", "cost": 200.0, "mass": 1.1, "feasible": False},
 ]
 
 
@@ -70,13 +67,13 @@ class TestMixTable:
         rows = viz.mix_table(study)
         assert len(rows) == 54
         assert sum(r["feasible"] for r in rows) == 8
-        assert {"motors", "props", "battery", "esc", "totalCost",
-                "feasible"} <= set(rows[0])
+        assert {"motors", "props", "battery", "esc", "totalCost", "feasible"} <= set(rows[0])
 
     def test_derived_columns(self, study):
-        rows = viz.mix_table(study, derived={
-            "tw": lambda a: a.metrics["totalThrust"]
-            / (a.metrics["totalMass"] * 9.81)})
+        rows = viz.mix_table(
+            study,
+            derived={"tw": lambda a: a.metrics["totalThrust"] / (a.metrics["totalMass"] * 9.81)},
+        )
         assert all(r["tw"] > 0 for r in rows)
 
 
@@ -97,8 +94,15 @@ class TestParcoordsWidget:
         assert "pointerdown" in widget._esm  # brushing is a drag
         assert "selected" in widget._esm  # syncs back to Python
         # editable brushes: move/resize/clear + cursor affordances
-        for token in ("brushZone", "moveInterval", "resizeInterval",
-                      "ns-resize", "grab", "crosshair", "dblclick"):
+        for token in (
+            "brushZone",
+            "moveInterval",
+            "resizeInterval",
+            "ns-resize",
+            "grab",
+            "crosshair",
+            "dblclick",
+        ):
             assert token in widget._esm, token
 
     def test_brush_math_with_node(self, tmp_path):
@@ -111,9 +115,11 @@ class TestParcoordsWidget:
         if node is None:
             pytest.skip("node not available")
         module = tmp_path / "pc_math.mjs"
-        module.write_text(viz._PC_MATH_JS + "\nexport { clamp01, interval,"
-                          " inBrush, brushZone, moveInterval,"
-                          " resizeInterval };\n")
+        module.write_text(
+            viz._PC_MATH_JS + "\nexport { clamp01, interval,"
+            " inBrush, brushZone, moveInterval,"
+            " resizeInterval };\n"
+        )
         script = tmp_path / "test.mjs"
         script.write_text(f"""
 import {{ brushZone, moveInterval, resizeInterval, inBrush }}
@@ -130,8 +136,7 @@ assert.deepEqual(resizeInterval([0.2, 0.6], "lo", 0.7),
 assert.equal(inBrush([0.2, 0.6], 0.6), true);
 console.log("node brush math ok");
 """)
-        out = subprocess.run([node, str(script)], capture_output=True,
-                             text=True, timeout=30)
+        out = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
         assert out.returncode == 0, out.stderr
         assert "node brush math ok" in out.stdout
 
@@ -140,7 +145,8 @@ def _arch(motor, cost, hover, mass, feasible=True):
     return Architecture(
         selection={"motor": motor},
         metrics={"cost": cost, "hover": hover, "mass": mass},
-        verified=feasible)
+        verified=feasible,
+    )
 
 
 class TestFigures:
@@ -151,16 +157,28 @@ class TestFigures:
 
     @staticmethod
     def _front_points(fig):
-        return [tuple(p) for c in fig.axes[0].collections
-                if c.get_label() == "Pareto frontier"
-                for p in c.get_offsets()]
+        return [
+            tuple(p)
+            for c in fig.axes[0].collections
+            if c.get_label() == "Pareto frontier"
+            for p in c.get_offsets()
+        ]
 
     def test_pareto_figure(self):
-        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
-                 _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
+        archs = [
+            _arch("a", 100, 15, 1.0),
+            _arch("b", 150, 7, 0.9),
+            _arch("c", 180, 6, 1.1),
+            _arch("d", 120, 5, 1.2, False),
+        ]
         fig = viz.pareto_figure(
-            archs, x="cost", y="hover", sense=("min", "max"),
-            panel_y="mass", annotate={"cruiser": archs[0]})
+            archs,
+            x="cost",
+            y="hover",
+            sense=("min", "max"),
+            panel_y="mass",
+            annotate={"cruiser": archs[0]},
+        )
         assert len(fig.axes) == 2  # main + small multiple
         texts = [t.get_text() for t in fig.axes[0].texts]
         assert "cruiser" in texts
@@ -173,38 +191,36 @@ class TestFigures:
         third metric (b: lightest) must NOT appear on the drawn cost-hover
         frontier -- projecting a 3-objective front here was the bug."""
 
-        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
-                 _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
-        fig = viz.pareto_figure(archs, x="cost", y="hover",
-                                sense=("min", "max"), panel_y="mass")
+        archs = [
+            _arch("a", 100, 15, 1.0),
+            _arch("b", 150, 7, 0.9),
+            _arch("c", 180, 6, 1.1),
+            _arch("d", 120, 5, 1.2, False),
+        ]
+        fig = viz.pareto_figure(archs, x="cost", y="hover", sense=("min", "max"), panel_y="mass")
         assert self._front_points(fig) == [(100.0, 15.0)]  # a alone
         import matplotlib.pyplot as plt
 
         plt.close(fig)
 
     def test_pareto_figure_senses(self):
-        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
-                 _arch("c", 180, 6, 1.1)]
+        archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9), _arch("c", 180, 6, 1.1)]
         # the default sense is the conservative (min, min): a maximize-y
         # chart must say so explicitly -- there is no silent max default
         fig = viz.pareto_figure(archs, x="cost", y="mass")
         # min cost / min mass: a (cheaper) and b (lighter); c dominated
-        assert sorted(self._front_points(fig)) == [(100.0, 1.0),
-                                                   (150.0, 0.9)]
+        assert sorted(self._front_points(fig)) == [(100.0, 1.0), (150.0, 0.9)]
         import matplotlib.pyplot as plt
 
         plt.close(fig)
         with pytest.raises(AnalysisError):
-            viz.pareto_figure(archs, x="cost", y="mass",
-                              sense=("min", "down"))
+            viz.pareto_figure(archs, x="cost", y="mass", sense=("min", "down"))
         with pytest.raises(AnalysisError):
-            viz.pareto_figure(archs, x="cost", y="mass",
-                              sense=("up", "min"))
+            viz.pareto_figure(archs, x="cost", y="mass", sense=("up", "min"))
 
     @staticmethod
     def _step_line(fig):
-        lines = [ln for ln in fig.axes[0].get_lines()
-                 if len(ln.get_xdata()) > 1]
+        lines = [ln for ln in fig.axes[0].get_lines() if len(ln.get_xdata()) > 1]
         assert len(lines) == 1
         return lines[0]
 
@@ -215,14 +231,11 @@ class TestFigures:
 
         import matplotlib.pyplot as plt
 
-        archs = [_arch("a", 100, 10, 1.0), _arch("b", 150, 20, 0.9),
-                 _arch("c", 200, 30, 1.1)]
-        fig = viz.pareto_figure(archs, x="cost", y="hover",
-                                sense=("min", "max"))
+        archs = [_arch("a", 100, 10, 1.0), _arch("b", 150, 20, 0.9), _arch("c", 200, 30, 1.1)]
+        fig = viz.pareto_figure(archs, x="cost", y="hover", sense=("min", "max"))
         assert self._step_line(fig).get_drawstyle() == "steps-post"
         plt.close(fig)
-        fig = viz.pareto_figure(archs, x="hover", y="cost",
-                                sense=("max", "min"))
+        fig = viz.pareto_figure(archs, x="hover", y="cost", sense=("max", "min"))
         assert self._step_line(fig).get_drawstyle() == "steps-pre"
         plt.close(fig)
 
@@ -233,18 +246,22 @@ class TestFigures:
 
         archs = study.all_architectures()
         feasible = [a for a in archs if a.verified]
-        brute = {(a.metrics["totalCost"], a.metrics["hoverMinutes"])
-                 for a in feasible
-                 if not any(
-                     b.metrics["totalCost"] <= a.metrics["totalCost"]
-                     and b.metrics["hoverMinutes"]
-                     >= a.metrics["hoverMinutes"]
-                     and (b.metrics["totalCost"] < a.metrics["totalCost"]
-                          or b.metrics["hoverMinutes"]
-                          > a.metrics["hoverMinutes"])
-                     for b in feasible)}
-        fig = viz.pareto_figure(archs, x="totalCost", y="hoverMinutes",
-                                sense=("min", "max"), panel_y="totalMass")
+        brute = {
+            (a.metrics["totalCost"], a.metrics["hoverMinutes"])
+            for a in feasible
+            if not any(
+                b.metrics["totalCost"] <= a.metrics["totalCost"]
+                and b.metrics["hoverMinutes"] >= a.metrics["hoverMinutes"]
+                and (
+                    b.metrics["totalCost"] < a.metrics["totalCost"]
+                    or b.metrics["hoverMinutes"] > a.metrics["hoverMinutes"]
+                )
+                for b in feasible
+            )
+        }
+        fig = viz.pareto_figure(
+            archs, x="totalCost", y="hoverMinutes", sense=("min", "max"), panel_y="totalMass"
+        )
         assert set(self._front_points(fig)) == brute == {(118.0, 15.0)}
         import matplotlib.pyplot as plt
 
@@ -252,8 +269,7 @@ class TestFigures:
 
     def test_pareto_figure_single_panel(self):
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9)]
-        fig = viz.pareto_figure(archs, x="cost", y="hover",
-                                sense=("min", "max"))
+        fig = viz.pareto_figure(archs, x="cost", y="hover", sense=("min", "max"))
         assert len(fig.axes) == 1
         import matplotlib.pyplot as plt
 
@@ -277,8 +293,7 @@ class TestFigures:
 
         stub = Stub()
         values = [i / 10 for i in range(11)]
-        fig = viz.margin_sweep_figure(
-            stub, "x", values, {"tight": "tight", "loose": "loose"})
+        fig = viz.margin_sweep_figure(stub, "x", values, {"tight": "tight", "loose": "loose"})
         assert stub.x == 0.0  # baseline restored
         texts = " ".join(t.get_text() for t in fig.axes[0].texts)
         assert "tight binds at 0.50" in texts
@@ -325,24 +340,29 @@ class TestMissionFrontFigures:
 
     @staticmethod
     def _points(fig, label):
-        return [tuple(p) for c in fig.axes[0].collections
-                if c.get_label() == label for p in c.get_offsets()]
+        return [
+            tuple(p)
+            for c in fig.axes[0].collections
+            if c.get_label() == label
+            for p in c.get_offsets()
+        ]
 
     @pytest.mark.parametrize("name", list(MISSION_CHARTS))
-    def test_front_matches_brute_force_and_bounds_the_cloud(
-            self, mission_spaces, name):
+    def test_front_matches_brute_force_and_bounds_the_cloud(self, mission_spaces, name):
         import matplotlib.pyplot as plt
 
         archs, metric = mission_spaces[name]
-        fig = viz.pareto_figure(archs, x="missionCost", y=metric,
-                                sense=("min", "max"))
+        fig = viz.pareto_figure(archs, x="missionCost", y=metric, sense=("min", "max"))
         drawn = sorted(self._points(fig, "Pareto frontier"))
 
-        feasible = [(a.metrics["missionCost"], a.metrics[metric])
-                    for a in archs if a.verified]
-        brute = sorted({(c, m) for c, m in feasible
-                        if not any(bc <= c and bm >= m and (bc, bm) != (c, m)
-                                   for bc, bm in feasible)})
+        feasible = [(a.metrics["missionCost"], a.metrics[metric]) for a in archs if a.verified]
+        brute = sorted(
+            {
+                (c, m)
+                for c, m in feasible
+                if not any(bc <= c and bm >= m and (bc, bm) != (c, m) for bc, bm in feasible)
+            }
+        )
         assert drawn == brute
         assert len(drawn) >= 4  # a real staircase, not a lone point
 
@@ -359,24 +379,22 @@ class TestMissionFrontFigures:
             assert stair is not None and m <= stair + 1e-9
 
         # the step line is drawn through the front, oriented for min-x
-        lines = [ln for ln in fig.axes[0].get_lines()
-                 if len(ln.get_xdata()) > 1]
+        lines = [ln for ln in fig.axes[0].get_lines() if len(ln.get_xdata()) > 1]
         assert len(lines) == 1
         assert lines[0].get_drawstyle() == "steps-post"
-        assert sorted(zip(lines[0].get_xdata(),
-                          lines[0].get_ydata(), strict=True)) == brute
+        assert sorted(zip(lines[0].get_xdata(), lines[0].get_ydata(), strict=True)) == brute
         plt.close(fig)
 
-    def test_intercept_front_carries_wings_and_teardrop(
-            self, mission_spaces):
+    def test_intercept_front_carries_wings_and_teardrop(self, mission_spaces):
         import matplotlib.pyplot as plt
 
         archs, metric = mission_spaces["intercept"]
-        fig = viz.pareto_figure(archs, x="missionCost", y=metric,
-                                sense=("min", "max"))
+        fig = viz.pareto_figure(archs, x="missionCost", y=metric, sense=("min", "max"))
         drawn = set(self._points(fig, "Pareto frontier"))
-        on_front = {a.selection["airframe"] for a in archs if a.verified
-                    and (a.metrics["missionCost"],
-                         a.metrics[metric]) in drawn}
+        on_front = {
+            a.selection["airframe"]
+            for a in archs
+            if a.verified and (a.metrics["missionCost"], a.metrics[metric]) in drawn
+        }
         assert {"dartInterceptor", "teardropQuad"} <= on_front
         plt.close(fig)

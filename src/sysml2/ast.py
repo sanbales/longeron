@@ -17,12 +17,29 @@ QName = tuple[str, ...]
 
 UnaryOp = L["+", "-", "~", "not"]
 BinaryOp = L[
-    "??", "or", "and", "implies",              # conditional-binary
-    "|", "&", "xor",                            # bitwise
-    "==", "!=", "===", "!==",                   # equality
-    "<", ">", "<=", ">=",                       # relational
-    "..",                                       # range
-    "+", "-", "*", "/", "%", "**", "^",         # arithmetic
+    "??",
+    "or",
+    "and",
+    "implies",  # conditional-binary
+    "|",
+    "&",
+    "xor",  # bitwise
+    "==",
+    "!=",
+    "===",
+    "!==",  # equality
+    "<",
+    ">",
+    "<=",
+    ">=",  # relational
+    "..",  # range
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "**",
+    "^",  # arithmetic
 ]
 ClassificationOp = L["istype", "hastype", "@", "@@"]
 CastOp = L["as", "meta"]
@@ -490,15 +507,35 @@ def expr_from_dict(data: dict | None) -> Expr | None:
             kwargs[f.name] = tuple((n, expr_from_dict(e)) for n, e in value)
         else:
             kwargs[f.name] = _decode_value(value)
-    if (type_name == "Literal" and kwargs.get("value") == "*"
-            and data.get("text") == "*"):
+    if type_name == "Literal" and kwargs.get("value") == "*" and data.get("text") == "*":
         kwargs["value"] = INF  # bare '*' is infinity; '"*"' is a string
     return cls(**kwargs)
 
 
-_NODE_TYPES.update({cls.__name__: cls for cls in (
-    Literal, FeatureRef, ChainAccess, Unary, Binary, Conditional,
-    Classification, Cast, AllOf, SequenceExpr, IndexOp, QuantityOp, Param,
-    BodyExpr, Invocation, Constructor, ArrowOp, CollectOp, SelectOp,
-    MetadataAccess,
-)})
+_NODE_TYPES.update(
+    {
+        cls.__name__: cls
+        for cls in (
+            Literal,
+            FeatureRef,
+            ChainAccess,
+            Unary,
+            Binary,
+            Conditional,
+            Classification,
+            Cast,
+            AllOf,
+            SequenceExpr,
+            IndexOp,
+            QuantityOp,
+            Param,
+            BodyExpr,
+            Invocation,
+            Constructor,
+            ArrowOp,
+            CollectOp,
+            SelectOp,
+            MetadataAccess,
+        )
+    }
+)

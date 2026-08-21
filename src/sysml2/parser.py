@@ -38,8 +38,15 @@ class ParseResult:
         return str(self.tree.toStringTree(recog=self.parser))
 
 
-def _run_parser(text: str, lexer_cls, parser_cls, source_name: str, language: str,
-                rule: str = "rootNamespace", require_eof: bool = True) -> ParseResult:
+def _run_parser(
+    text: str,
+    lexer_cls,
+    parser_cls,
+    source_name: str,
+    language: str,
+    rule: str = "rootNamespace",
+    require_eof: bool = True,
+) -> ParseResult:
     listener = _CollectingErrorListener()
     lexer = lexer_cls(InputStream(text))
     lexer.removeErrorListeners()
@@ -52,9 +59,13 @@ def _run_parser(text: str, lexer_cls, parser_cls, source_name: str, language: st
     if require_eof:
         current = parser.getCurrentToken()
         if current is not None and current.type != Token.EOF:
-            listener.issues.append(SyntaxIssue(
-                current.line, current.column,
-                f"unexpected trailing input starting at {current.text!r}"))
+            listener.issues.append(
+                SyntaxIssue(
+                    current.line,
+                    current.column,
+                    f"unexpected trailing input starting at {current.text!r}",
+                )
+            )
     if listener.issues:
         raise ParseError(listener.issues, source_name)
     return ParseResult(tree, parser, tokens, language, source_name)
@@ -90,5 +101,4 @@ def parse_file(path, language: str | None = None) -> ParseResult:
 def parse_expression_text(text: str, source_name: str = "<expr>") -> ParseResult:
     """Parse a single SysML owned-expression snippet, e.g. ``"2 + x * 3"``."""
 
-    return _run_parser(text, SysMLLexer, SysMLParser, source_name, "sysml",
-                       rule="ownedExpression")
+    return _run_parser(text, SysMLLexer, SysMLParser, source_name, "sysml", rule="ownedExpression")

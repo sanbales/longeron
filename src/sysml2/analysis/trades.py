@@ -61,7 +61,8 @@ def _cp() -> Any:
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError(
             "sysml2.analysis.trades needs OR-Tools CP-SAT; install the extra "
-            "with 'pip install \"longeron[trades]\"'") from err
+            "with 'pip install \"longeron[trades]\"'"
+        ) from err
     return cp_model
 
 
@@ -96,18 +97,22 @@ class Architecture:
         return f"[{mix}] {vals}"
 
 
-def pareto(architectures: list[Architecture], minimize: tuple[str, ...] = (),
-           maximize: tuple[str, ...] = ()) -> list[Architecture]:
+def pareto(
+    architectures: list[Architecture],
+    minimize: tuple[str, ...] = (),
+    maximize: tuple[str, ...] = (),
+) -> list[Architecture]:
     """The non-dominated subset under the given objectives."""
 
     def key(a: Architecture) -> tuple[float, ...]:
-        return (*(a.metrics[m] for m in minimize),
-                *(-a.metrics[m] for m in maximize))
+        return (*(a.metrics[m] for m in minimize), *(-a.metrics[m] for m in maximize))
 
     def dominated(a: Architecture) -> bool:
         ka = key(a)
-        return any(all(x <= y for x, y in zip(key(b), ka, strict=True))
-                   and key(b) != ka for b in architectures)
+        return any(
+            all(x <= y for x, y in zip(key(b), ka, strict=True)) and key(b) != ka
+            for b in architectures
+        )
 
     return [a for a in architectures if not dominated(a)]
 
@@ -141,8 +146,14 @@ def _frac(value: Any) -> Fraction:
 class _Encoder:
     """AST -> CP-SAT fixed-point arithmetic / half-reified constraints."""
 
-    _FLIP: ClassVar[dict[str, str]] = {"<": ">=", "<=": ">", ">": "<=",
-                                       ">=": "<", "==": "!=", "!=": "=="}
+    _FLIP: ClassVar[dict[str, str]] = {
+        "<": ">=",
+        "<=": ">",
+        ">": "<=",
+        ">=": "<",
+        "==": "!=",
+        "!=": "==",
+    }
 
     def __init__(self, study: TradeStudy, model: Any):
         self.study = study
@@ -172,16 +183,18 @@ class _Encoder:
             if expr.op == "*":
                 return self.mul(left, right)
             return self.div(left, right)
-        raise AnalysisError(f"cannot encode expression '{expr.to_text()}' "
-                            f"({type(expr).__name__}) for CP-SAT")
+        raise AnalysisError(
+            f"cannot encode expression '{expr.to_text()}' ({type(expr).__name__}) for CP-SAT"
+        )
 
     def add(self, a: _Val, b: _Val) -> _Val:
         if a.const is not None and b.const is not None:
             return _Val(const=a.const + b.const)
         scale = self._common_scale(a, b)
         (alo, ahi), (blo, bhi) = a.bounds, b.bounds
-        return _Val(expr=self._at(a, scale) + self._at(b, scale), scale=scale,
-                    lo=alo + blo, hi=ahi + bhi)
+        return _Val(
+            expr=self._at(a, scale) + self._at(b, scale), scale=scale, lo=alo + blo, hi=ahi + bhi
+        )
 
     def mul(self, a: _Val, b: _Val) -> _Val:
         if a.const is not None and b.const is not None:
@@ -192,8 +205,9 @@ class _Encoder:
             c = a.const
             (blo, bhi) = b.bounds
             bounds = sorted((c * blo, c * bhi))
-            return _Val(expr=b.expr * c.numerator, scale=b.scale * c.denominator,
-                        lo=bounds[0], hi=bounds[1])
+            return _Val(
+                expr=b.expr * c.numerator, scale=b.scale * c.denominator, lo=bounds[0], hi=bounds[1]
+            )
         va, vb = self._as_var(a), self._as_var(b)
         cands = [x * y for x in a.bounds for y in b.bounds]
         lo, hi = min(cands), max(cands)
@@ -208,16 +222,17 @@ class _Encoder:
                 raise AnalysisError("division by constant zero")
             return self.mul(_Val(const=1 / b.const), a)
         if b.lo <= 0:
-            raise AnalysisError("division by an expression that may be <= 0 "
-                                "is not supported (bounds "
-                                f"[{b.lo}, {b.hi}])")
+            raise AnalysisError(
+                "division by an expression that may be <= 0 "
+                "is not supported (bounds "
+                f"[{b.lo}, {b.hi}])"
+            )
         va, vb = self._as_var(a), self._as_var(b)
         cands = [x / y for x in a.bounds for y in b.bounds]
         lo, hi = min(cands), max(cands)
         target = self._new_var(lo, hi, _DIV_SCALE)
         # value = (va/sa)/(vb/sb) = va*sb / (vb*sa); floor at 1/_DIV_SCALE
-        self.model.add_division_equality(target, va * (b.scale * _DIV_SCALE),
-                                         vb * a.scale)
+        self.model.add_division_equality(target, va * (b.scale * _DIV_SCALE), vb * a.scale)
         return _Val(expr=target, scale=_DIV_SCALE, lo=lo, hi=hi)
 
     # -- boolean ------------------------------------------------------------
@@ -238,34 +253,44 @@ class _Encoder:
                 arms.append(lit)
             self.model.add_bool_or(arms).only_enforce_if(literal)
             return
-        if isinstance(expr, A.Unary) and expr.op == "not" and \
-                isinstance(expr.operand, A.Binary) and \
-                expr.operand.op in self._FLIP:
-            flipped = A.Binary(self._FLIP[expr.operand.op],  # type: ignore[arg-type]
-                               expr.operand.left, expr.operand.right)
+        if (
+            isinstance(expr, A.Unary)
+            and expr.op == "not"
+            and isinstance(expr.operand, A.Binary)
+            and expr.operand.op in self._FLIP
+        ):
+            flipped = A.Binary(
+                self._FLIP[expr.operand.op],  # type: ignore[arg-type]
+                expr.operand.left,
+                expr.operand.right,
+            )
             self.constrain(flipped, literal)
             return
-        if isinstance(expr, A.Binary) and expr.op in ("<", "<=", ">", ">=",
-                                                      "==", "!="):
-            diff = self.add(self.value(expr.left),
-                            self.mul(_Val(const=Fraction(-1)),
-                                     self.value(expr.right)))
+        if isinstance(expr, A.Binary) and expr.op in ("<", "<=", ">", ">=", "==", "!="):
+            diff = self.add(
+                self.value(expr.left), self.mul(_Val(const=Fraction(-1)), self.value(expr.right))
+            )
             self._compare(diff, expr.op, literal)
             return
-        raise AnalysisError(f"cannot encode constraint '{expr.to_text()}' "
-                            "for CP-SAT")
+        raise AnalysisError(f"cannot encode constraint '{expr.to_text()}' for CP-SAT")
 
     def _compare(self, diff: _Val, op: str, literal: Any) -> None:
         if diff.const is not None:  # statically decided
-            holds = {"<": diff.const < 0, "<=": diff.const <= 0,
-                     ">": diff.const > 0, ">=": diff.const >= 0,
-                     "==": diff.const == 0, "!=": diff.const != 0}[op]
+            holds = {
+                "<": diff.const < 0,
+                "<=": diff.const <= 0,
+                ">": diff.const > 0,
+                ">=": diff.const >= 0,
+                "==": diff.const == 0,
+                "!=": diff.const != 0,
+            }[op]
             if not holds:
                 self.model.add_bool_and([literal.negated()])
             return
         e = diff.expr
-        con = {"<": e <= -1, "<=": e <= 0, ">": e >= 1, ">=": e >= 0,
-               "==": e == 0, "!=": e != 0}[op]
+        con = {"<": e <= -1, "<=": e <= 0, ">": e >= 1, ">=": e >= 0, "==": e == 0, "!=": e != 0}[
+            op
+        ]
         self.model.add(con).only_enforce_if(literal)
 
     # -- plumbing -----------------------------------------------------------
@@ -273,8 +298,7 @@ class _Encoder:
     def _common_scale(self, a: _Val, b: _Val) -> int:
         scale = 1
         for v in (a, b):
-            scale = lcm(scale, v.const.denominator if v.const is not None
-                        else v.scale)
+            scale = lcm(scale, v.const.denominator if v.const is not None else v.scale)
         return scale
 
     def _at(self, v: _Val, scale: int) -> Any:
@@ -297,7 +321,8 @@ class _Encoder:
                 f"fixed-point encoding overflows CP-SAT's integer domain "
                 f"(scale {scale}): this model's arithmetic is beyond the "
                 "linear mapper -- evaluate mixes exactly with "
-                "all_architectures()/evaluate() instead")
+                "all_architectures()/evaluate() instead"
+            )
         return self.model.new_int_var(lo_i, hi_i, f"aux_{self._aux}")
 
 
@@ -319,8 +344,7 @@ class TradeStudy:
 
     def __init__(self, model: M.Model, assembly: str | M.Definition | M.Usage):
         self.interp = Interpreter(model)
-        target = (self.interp.resolve(assembly) if isinstance(assembly, str)
-                  else assembly)
+        target = self.interp.resolve(assembly) if isinstance(assembly, str) else assembly
         if not isinstance(target, (M.Definition, M.Usage)):
             raise AnalysisError(f"{assembly!r} is not a part definition")
         self.assembly = target
@@ -331,24 +355,22 @@ class TradeStudy:
         self.constraint_names = [
             c.name or c.label
             for c in named_members(self.interp, target, ("constraint",))
-            if constraint_expr(self.interp, c) is not None]
+            if constraint_expr(self.interp, c) is not None
+        ]
         self.gaps: list[str] = []
 
     # -- model introspection --------------------------------------------------
 
     def _find_points(self) -> dict[str, VariationPoint]:
         points: dict[str, VariationPoint] = {}
-        for member in named_members(self.interp, self.assembly,
-                                    ("part", "item")):
+        for member in named_members(self.interp, self.assembly, ("part", "item")):
             if not member.types:
                 continue
             try:
-                typ = self.interp.resolver.resolve(member.types[0],
-                                                   member.owner or self.assembly)
+                typ = self.interp.resolver.resolve(member.types[0], member.owner or self.assembly)
             except Exception:
                 continue
-            if not (isinstance(typ, (M.Definition, M.Usage)) and
-                    typ.is_variation):
+            if not (isinstance(typ, (M.Definition, M.Usage)) and typ.is_variation):
                 continue
             variants: dict[str, dict[str, Any]] = {}
             for var in typ.members:
@@ -356,18 +378,15 @@ class TradeStudy:
                     continue
                 if var.types:
                     inst = self.interp.instantiate(
-                        self._namespace(self.interp.resolver.resolve(
-                            var.types[0], typ)))
+                        self._namespace(self.interp.resolver.resolve(var.types[0], typ))
+                    )
                 else:
                     inst = self.interp.instantiate(var)
-                variants[var.name] = {k: v for k, v in inst.slots.items()
-                                      if is_scalar(v)}
+                variants[var.name] = {k: v for k, v in inst.slots.items() if is_scalar(v)}
             count = 1
-            if member.multiplicity is not None and \
-                    member.multiplicity.upper is not None:
+            if member.multiplicity is not None and member.multiplicity.upper is not None:
                 try:
-                    count = int(self.interp.evaluate(member.multiplicity.upper,
-                                                     self.assembly))
+                    count = int(self.interp.evaluate(member.multiplicity.upper, self.assembly))
                 except (EvaluationError, TypeError):
                     count = 1
             assert member.name is not None
@@ -398,8 +417,7 @@ class TradeStudy:
         while changed:  # fixed point: member order must not matter
             changed = False
             for name in order:
-                if name not in derived and \
-                        refs[name] & (set(self.points) | derived):
+                if name not in derived and refs[name] & (set(self.points) | derived):
                     derived.add(name)
                     changed = True
 
@@ -409,8 +427,7 @@ class TradeStudy:
         while remaining:  # Kahn's algorithm, stable on member order
             ready = [n for n in remaining if refs[n] & derived <= placed]
             if not ready:
-                raise AnalysisError("cyclic derived attributes: "
-                                    + ", ".join(sorted(remaining)))
+                raise AnalysisError("cyclic derived attributes: " + ", ".join(sorted(remaining)))
             for name in ready:
                 out.append((name, exprs[name]))
                 placed.add(name)
@@ -424,8 +441,7 @@ class TradeStudy:
         model = cp.CpModel()
         sel: dict[str, dict[str, Any]] = {}
         for pname, point in self.points.items():
-            sel[pname] = {v: model.new_bool_var(f"{pname}={v}")
-                          for v in point.variants}
+            sel[pname] = {v: model.new_bool_var(f"{pname}={v}") for v in point.variants}
             model.add_exactly_one(sel[pname].values())
 
         self._attr_vars: dict[QName, _Val] = {}
@@ -457,11 +473,11 @@ class TradeStudy:
         try:
             value = self.interp.evaluate(A.FeatureRef(path), self.assembly)
         except EvaluationError as err:
-            raise AnalysisError(f"cannot resolve '{'.'.join(path)}' during "
-                                "CP-SAT encoding") from err
+            raise AnalysisError(
+                f"cannot resolve '{'.'.join(path)}' during CP-SAT encoding"
+            ) from err
         if not is_scalar(value):
-            raise AnalysisError(f"'{'.'.join(path)}' is not numeric "
-                                f"({value!r})")
+            raise AnalysisError(f"'{'.'.join(path)}' is not numeric ({value!r})")
         return _Val(const=_frac(value))
 
     def _channel(self, encoder: _Encoder, path: QName) -> _Val:
@@ -474,16 +490,15 @@ class TradeStudy:
         values: dict[str, Fraction] = {}
         for vname, slots in point.variants.items():
             if attr not in slots:
-                raise AnalysisError(f"variant {pname}.{vname} does not define "
-                                    f"attribute {attr!r}")
+                raise AnalysisError(f"variant {pname}.{vname} does not define attribute {attr!r}")
             values[vname] = _frac(slots[attr])
         scale = lcm(*(v.denominator for v in values.values()))
         lo, hi = min(values.values()), max(values.values())
-        var = encoder.model.new_int_var(floor(lo * scale), ceil(hi * scale),
-                                        f"{pname}.{attr}")
+        var = encoder.model.new_int_var(floor(lo * scale), ceil(hi * scale), f"{pname}.{attr}")
         for vname, value in values.items():
             encoder.model.add(var == int(value * scale)).only_enforce_if(
-                self._encoder_sel[pname][vname])
+                self._encoder_sel[pname][vname]
+            )
         val = _Val(expr=var, scale=scale, lo=lo, hi=hi)
         self._attr_vars[path] = val
         return val
@@ -495,28 +510,30 @@ class TradeStudy:
 
         bindings: dict[str, Any] = {}
         for pname, vname in selection.items():
-            typ = self._namespace(self.interp.resolver.resolve(
-                self._point_type(pname), self.assembly))
+            typ = self._namespace(
+                self.interp.resolver.resolve(self._point_type(pname), self.assembly)
+            )
             usage = None
             for var in typ.members:
                 if isinstance(var, M.Usage) and var.name == vname:
                     usage = var
                     break
             assert usage is not None
-            source = (self._namespace(self.interp.resolver.resolve(
-                usage.types[0], typ)) if usage.types else usage)
+            source = (
+                self._namespace(self.interp.resolver.resolve(usage.types[0], typ))
+                if usage.types
+                else usage
+            )
             bindings[pname] = self.interp.instantiate(source)
         for name, expr in self.derived_order:
-            bindings[name] = self.interp.evaluate(expr, self.assembly,
-                                                  **bindings)
+            bindings[name] = self.interp.evaluate(expr, self.assembly, **bindings)
         return bindings
 
     def _architecture(self, selection: dict[str, str]) -> Architecture:
         """Re-evaluate a selection exactly with the interpreter."""
 
         bindings = self._bindings(selection)
-        metrics = {name: float(bindings[name])
-                   for name, _ in self.derived_order}
+        metrics = {name: float(bindings[name]) for name, _ in self.derived_order}
         violations: list[str] = []
         for con in named_members(self.interp, self.assembly, ("constraint",)):
             body = constraint_expr(self.interp, con)
@@ -524,8 +541,12 @@ class TradeStudy:
                 continue
             if not bool(self.interp.evaluate(body, self.assembly, **bindings)):
                 violations.append(con.name or con.label)
-        return Architecture(selection=dict(selection), metrics=metrics,
-                            verified=not violations, violations=violations)
+        return Architecture(
+            selection=dict(selection),
+            metrics=metrics,
+            verified=not violations,
+            violations=violations,
+        )
 
     @staticmethod
     def _namespace(element: M.Element) -> M.Definition | M.Usage:
@@ -575,16 +596,11 @@ class TradeStudy:
                 continue
             ok = bool(self.interp.evaluate(body, self.assembly, **bindings))
             margin: float | None = None
-            if isinstance(body, A.Binary) and body.op in ("<", "<=", ">",
-                                                          ">="):
-                lhs = float(self.interp.evaluate(body.left, self.assembly,
-                                                 **bindings))
-                rhs = float(self.interp.evaluate(body.right, self.assembly,
-                                                 **bindings))
-                margin = (rhs - lhs) if body.op in ("<", "<=") \
-                    else (lhs - rhs)
-            out[con.name or con.label] = {"margin": margin, "ok": ok,
-                                          "text": body.to_text()}
+            if isinstance(body, A.Binary) and body.op in ("<", "<=", ">", ">="):
+                lhs = float(self.interp.evaluate(body.left, self.assembly, **bindings))
+                rhs = float(self.interp.evaluate(body.right, self.assembly, **bindings))
+                margin = (rhs - lhs) if body.op in ("<", "<=") else (lhs - rhs)
+            out[con.name or con.label] = {"margin": margin, "ok": ok, "text": body.to_text()}
         return out
 
     def _check_selection(self, selection: dict[str, str]) -> None:
@@ -594,7 +610,8 @@ class TradeStudy:
             if selection[pname] not in point.variants:
                 raise AnalysisError(
                     f"unknown variant {selection[pname]!r} for point "
-                    f"{pname!r} (have: {sorted(point.variants)})")
+                    f"{pname!r} (have: {sorted(point.variants)})"
+                )
         extra = set(selection) - set(self.points)
         if extra:
             raise AnalysisError(f"unknown variation point(s) {sorted(extra)}")
@@ -608,9 +625,10 @@ class TradeStudy:
         """
 
         names = list(self.points)
-        return [self._architecture(dict(zip(names, combo, strict=True)))
-                for combo in product(*(self.points[n].variants
-                                       for n in names))]
+        return [
+            self._architecture(dict(zip(names, combo, strict=True)))
+            for combo in product(*(self.points[n].variants for n in names))
+        ]
 
     def enumerate(self) -> list[Architecture]:
         """All feasible architectures, interpreter-verified."""
@@ -620,10 +638,12 @@ class TradeStudy:
 
         class _Collect(cp.CpSolverSolutionCallback):  # type: ignore[name-defined]
             def on_solution_callback(self) -> None:
-                selections.append({
-                    pname: next(v for v, lit in variants.items()
-                                if self.boolean_value(lit))
-                    for pname, variants in sel.items()})
+                selections.append(
+                    {
+                        pname: next(v for v, lit in variants.items() if self.boolean_value(lit))
+                        for pname, variants in sel.items()
+                    }
+                )
 
         solver = cp.CpSolver()
         solver.parameters.enumerate_all_solutions = True
@@ -645,8 +665,7 @@ class TradeStudy:
 
         cp, model, sel, derived, _ = self._build(enforce=True)
         if metric not in derived:
-            raise AnalysisError(f"{metric!r} is not a derived attribute "
-                                f"(have: {sorted(derived)})")
+            raise AnalysisError(f"{metric!r} is not a derived attribute (have: {sorted(derived)})")
         val = derived[metric]
         if val.const is not None:
             raise AnalysisError(f"{metric!r} is constant")
@@ -655,9 +674,10 @@ class TradeStudy:
         status = solver.solve(model)
         if status not in (cp.OPTIMAL, cp.FEASIBLE):
             return None
-        selection = {pname: next(v for v, lit in variants.items()
-                                 if solver.boolean_value(lit))
-                     for pname, variants in sel.items()}
+        selection = {
+            pname: next(v for v, lit in variants.items() if solver.boolean_value(lit))
+            for pname, variants in sel.items()
+        }
         return self._architecture(selection)
 
     def explain(self) -> list[str]:

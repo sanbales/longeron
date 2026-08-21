@@ -43,8 +43,7 @@ from .errors import EvaluationError, ExecutionError, ResolutionError
 class Instance:
     """A runtime instance of a part/item definition (or anonymous usage)."""
 
-    def __init__(self, type_name: str,
-                 definition: M.Definition | M.Usage | None = None):
+    def __init__(self, type_name: str, definition: M.Definition | M.Usage | None = None):
         self.type_name = type_name
         self.definition = definition
         self.slots: dict[str, Any] = {}
@@ -54,8 +53,7 @@ class Instance:
         for part in path.split("."):
             if isinstance(node, Instance):
                 if part not in node.slots:
-                    raise EvaluationError(
-                        f"instance of {node.type_name} has no feature {part!r}")
+                    raise EvaluationError(f"instance of {node.type_name} has no feature {part!r}")
                 node = node.slots[part]
             else:
                 raise EvaluationError(f"cannot access {part!r} on {node!r}")
@@ -80,8 +78,7 @@ class Instance:
                 return str(value)
             return value
 
-        return {"@type": self.type_name,
-                **{k: convert(v) for k, v in self.slots.items()}}
+        return {"@type": self.type_name, **{k: convert(v) for k, v in self.slots.items()}}
 
     def __repr__(self) -> str:
         inner = ", ".join(f"{k}={v!r}" for k, v in self.slots.items())
@@ -185,13 +182,17 @@ class SimulationResult:
 # Builtin function library
 # ---------------------------------------------------------------------------
 
-def _named_usages(members: list[M.Element],
-                  directions: tuple[str, ...]) -> list[tuple[str, M.Usage]]:
+
+def _named_usages(
+    members: list[M.Element], directions: tuple[str, ...]
+) -> list[tuple[str, M.Usage]]:
     """(name, usage) pairs for named parameters with one of ``directions``."""
 
-    return [(m.name, m) for m in members
-            if isinstance(m, M.Usage) and m.direction in directions
-            and m.name is not None]
+    return [
+        (m.name, m)
+        for m in members
+        if isinstance(m, M.Usage) and m.direction in directions and m.name is not None
+    ]
 
 
 def _seq(value) -> list:
@@ -201,20 +202,34 @@ def _seq(value) -> list:
 
 
 BUILTINS: dict[str, Any] = {
-    "sqrt": math.sqrt, "abs": abs, "floor": math.floor, "ceil": math.ceil,
-    "round": round, "exp": math.exp, "ln": math.log, "log": math.log10,
-    "sin": math.sin, "cos": math.cos, "tan": math.tan, "asin": math.asin,
-    "acos": math.acos, "atan": math.atan, "pow": math.pow,
-    "max": lambda *a: max(_flatten(a)), "min": lambda *a: min(_flatten(a)),
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "floor": math.floor,
+    "ceil": math.ceil,
+    "round": round,
+    "exp": math.exp,
+    "ln": math.log,
+    "log": math.log10,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "asin": math.asin,
+    "acos": math.acos,
+    "atan": math.atan,
+    "pow": math.pow,
+    "max": lambda *a: max(_flatten(a)),
+    "min": lambda *a: min(_flatten(a)),
     "sum": lambda *a: sum(_flatten(a)),
     "size": lambda s: len(_seq(s)),
     "isEmpty": lambda s: len(_seq(s)) == 0,
     "notEmpty": lambda s: len(_seq(s)) > 0,
-    "ToString": lambda v: ("true" if v is True else "false" if v is False
-                           else str(v)),
-    "ToInteger": int, "ToReal": float, "ToNatural": int,
+    "ToString": lambda v: "true" if v is True else "false" if v is False else str(v),
+    "ToInteger": int,
+    "ToReal": float,
+    "ToNatural": int,
     "ToBoolean": lambda v: v in (True, "true", 1),
-    "pi": math.pi, "e": math.e,
+    "pi": math.pi,
+    "e": math.e,
 }
 
 
@@ -259,10 +274,8 @@ IMPLIED_SPECIALIZATIONS: dict[str, tuple[str | None, str | None]] = {
     "enum": ("ScalarValues::DataValue", None),
     "action": ("Actions::Action", "Actions::actions"),
     "calc": ("Calculations::Calculation", "Calculations::calculations"),
-    "constraint": ("Constraints::ConstraintCheck",
-                   "Constraints::constraintChecks"),
-    "requirement": ("Requirements::RequirementCheck",
-                    "Requirements::requirementChecks"),
+    "constraint": ("Constraints::ConstraintCheck", "Constraints::constraintChecks"),
+    "requirement": ("Requirements::RequirementCheck", "Requirements::requirementChecks"),
     "state": ("States::StateAction", "States::stateActions"),
     "connection": ("Connections::Connection", "Connections::connections"),
     "port": ("Ports::Port", "Ports::ports"),
@@ -282,8 +295,7 @@ def _in_library_package(element: M.Element) -> bool:
 
     node: M.Element | None = element
     while node is not None:
-        if isinstance(node, M.Package) and (node.is_library or
-                                            node.is_standard):
+        if isinstance(node, M.Package) and (node.is_library or node.is_standard):
             return True
         node = node.owner
     return False
@@ -314,8 +326,7 @@ class Resolver:
         self.library = library
         self._active_imports: set = set()
         self._active_lookups: set[tuple[int, str]] = set()
-        self._resolve_cache: dict[tuple[tuple[str, ...], int],
-                                  tuple[M.Element, str] | None] = {}
+        self._resolve_cache: dict[tuple[tuple[str, ...], int], tuple[M.Element, str] | None] = {}
         #: how the last successful :meth:`resolve` found its *first*
         #: segment: ``"scope"`` (lexical scoping, incl. imports),
         #: ``"library"`` (a standard-library root package, i.e. qualified
@@ -325,8 +336,7 @@ class Resolver:
         #: ``validate(strict_imports=True)``)
         self.last_hop: str = "scope"
         self._hop: str = "scope"
-        self._member_cache: dict[tuple[int, str, bool, bool],
-                                 M.Element | None] = {}
+        self._member_cache: dict[tuple[int, str, bool, bool], M.Element | None] = {}
         self._generals_cache: dict[tuple[int, bool], list[M.Namespace]] = {}
         self._members_of_cache: dict[tuple[int, bool], list[M.Element]] = {}
         self._library_index: dict[str, M.Namespace] | None = None
@@ -338,8 +348,7 @@ class Resolver:
         self._members_of_cache.clear()
         self._library_index = None
 
-    def resolve(self, qname: str | tuple[str, ...],
-                context: M.Element | None = None) -> M.Element:
+    def resolve(self, qname: str | tuple[str, ...], context: M.Element | None = None) -> M.Element:
         parts = tuple(qname.split("::") if isinstance(qname, str) else qname)
         key = (parts, id(context))
         if key in self._resolve_cache:
@@ -359,31 +368,32 @@ class Resolver:
             self._resolve_cache[key] = (element, self._hop)
         return element
 
-    def _resolve_uncached(self, parts: list[str],
-                          context: M.Element | None) -> M.Element:
+    def _resolve_uncached(self, parts: list[str], context: M.Element | None) -> M.Element:
         if parts and parts[0] == "$":
             parts = parts[1:]
             context = self.model
         element = self._resolve_first(parts[0], context or self.model)
         if element is None:
-            raise ResolutionError(f"cannot resolve name {parts[0]!r}"
-                                  + (f" from {context.qualified_name}"
-                                     if context is not None and
-                                     context.qualified_name else ""))
+            raise ResolutionError(
+                f"cannot resolve name {parts[0]!r}"
+                + (
+                    f" from {context.qualified_name}"
+                    if context is not None and context.qualified_name
+                    else ""
+                )
+            )
         hop = self._hop  # first-segment hop, before deeper lookups clobber it
         for part in parts[1:]:
-            child = self._member(element, part, include_imports=True,
-                                 only_public_imports=True)
+            child = self._member(element, part, include_imports=True, only_public_imports=True)
             if child is None:
                 raise ResolutionError(
-                    f"{element.qualified_name or element.label} has no member "
-                    f"{part!r}")
+                    f"{element.qualified_name or element.label} has no member {part!r}"
+                )
             element = child
         self._hop = hop
         return element
 
-    def _resolve_first(self, name: str, context: M.Element
-                       ) -> M.Element | None:
+    def _resolve_first(self, name: str, context: M.Element) -> M.Element | None:
         # _hop is set at each RETURN point (nested lookups may recurse
         # through this method; the last write before returning wins)
         node: M.Element | None = context
@@ -433,17 +443,20 @@ class Resolver:
                 if not isinstance(package, M.Namespace):
                     continue
                 for member in package.members:
-                    names = (member.name,
-                             getattr(member, "short_name", None))
+                    names = (member.name, getattr(member, "short_name", None))
                     for nm in names:
                         if nm and nm not in index:
                             index[nm] = package
             self._library_index = index
         return index
 
-    def _member(self, element: M.Element, name: str,
-                include_imports: bool = False,
-                only_public_imports: bool = False) -> M.Element | None:
+    def _member(
+        self,
+        element: M.Element,
+        name: str,
+        include_imports: bool = False,
+        only_public_imports: bool = False,
+    ) -> M.Element | None:
         """Find ``name`` in a namespace.
 
         ``include_imports`` follows imports (in-scope lookup).  With
@@ -460,17 +473,16 @@ class Resolver:
             return None  # already searching this namespace for this name
         self._active_lookups.add(lookup_key)
         try:
-            found = self._member_uncached(element, name, include_imports,
-                                          only_public_imports)
+            found = self._member_uncached(element, name, include_imports, only_public_imports)
         finally:
             self._active_lookups.discard(lookup_key)
         if not self._active_imports and not self._active_lookups:
             self._member_cache[key] = found  # only cache top-level lookups
         return found
 
-    def _member_uncached(self, element: M.Element, name: str,
-                         include_imports: bool,
-                         only_public_imports: bool) -> M.Element | None:
+    def _member_uncached(
+        self, element: M.Element, name: str, include_imports: bool, only_public_imports: bool
+    ) -> M.Element | None:
         if not isinstance(element, M.Namespace):
             return None
         for member in element.members:
@@ -479,8 +491,7 @@ class Resolver:
             if name in (member.name, member.short_name):
                 return member
         for member in element.members:
-            if isinstance(member, M.Alias) and name in (member.name,
-                                                        member.short_name):
+            if isinstance(member, M.Alias) and name in (member.name, member.short_name):
                 try:
                     return self.resolve(member.target, element)
                 except ResolutionError:
@@ -502,16 +513,14 @@ class Resolver:
                 self._active_imports.add(key)
                 try:
                     if member.is_namespace:
-                        target = self._resolve_import_target(
-                            member.target, element)
+                        target = self._resolve_import_target(member.target, element)
                         found = self._member(
-                            target, name, include_imports=True,
-                            only_public_imports=True)
+                            target, name, include_imports=True, only_public_imports=True
+                        )
                         if found is not None:
                             return found
                     elif member.target.split("::")[-1] == name:
-                        return self._resolve_import_target(
-                            member.target, element)
+                        return self._resolve_import_target(member.target, element)
                 except ResolutionError:
                     continue
                 finally:
@@ -530,17 +539,13 @@ class Resolver:
         element: M.Element | None = self._member(ns, parts[0])
         if element is None:
             owner = ns.owner
-            element = self._resolve_first(parts[0],
-                                          owner if owner is not None
-                                          else self.model)
+            element = self._resolve_first(parts[0], owner if owner is not None else self.model)
         if element is None:
             raise ResolutionError(f"cannot resolve import target {qname!r}")
         for part in parts[1:]:
-            child = self._member(element, part, include_imports=True,
-                                 only_public_imports=True)
+            child = self._member(element, part, include_imports=True, only_public_imports=True)
             if child is None:
-                raise ResolutionError(
-                    f"import target {qname!r}: no member {part!r}")
+                raise ResolutionError(f"import target {qname!r}: no member {part!r}")
             element = child
         return element
 
@@ -578,8 +583,7 @@ class Resolver:
             return [base]
         return []
 
-    def _generals(self, element: M.Element, *,
-                  implied: bool = False) -> list[M.Namespace]:
+    def _generals(self, element: M.Element, *, implied: bool = False) -> list[M.Namespace]:
         key = (id(element), implied)
         cached = self._generals_cache.get(key)
         if cached is not None:
@@ -588,8 +592,7 @@ class Resolver:
         if isinstance(element, M.Definition):
             names = element.supers
         elif isinstance(element, M.Usage):
-            names = list(element.types) + list(element.subsets) + \
-                list(element.redefines)
+            names = list(element.types) + list(element.subsets) + list(element.redefines)
         out: list[M.Namespace] = []
         for name in names:
             if name.startswith("~"):
@@ -608,8 +611,7 @@ class Resolver:
             self._generals_cache[key] = out
         return out
 
-    def members_of(self, element: M.Namespace, *,
-                   implied: bool = False) -> list[M.Element]:
+    def members_of(self, element: M.Namespace, *, implied: bool = False) -> list[M.Element]:
         """Own + inherited members; redefinitions shadow inherited names.
 
         With ``implied=True`` the implied standard-library bases (see
@@ -656,19 +658,25 @@ class Resolver:
 class Env:
     """Layered lookup: local frames -> instance slots -> model namespace."""
 
-    def __init__(self, interpreter: Interpreter,
-                 context: M.Element | None,
-                 frames: list[dict[str, Any]] | None = None,
-                 instance: Instance | None = None):
+    def __init__(
+        self,
+        interpreter: Interpreter,
+        context: M.Element | None,
+        frames: list[dict[str, Any]] | None = None,
+        instance: Instance | None = None,
+    ):
         self.interpreter = interpreter
         self.context = context
         self.frames = frames if frames is not None else [{}]
         self.instance = instance
 
     def child(self, frame: dict[str, Any] | None = None) -> Env:
-        return Env(self.interpreter, self.context,
-                   [frame if frame is not None else {}, *self.frames],
-                   self.instance)
+        return Env(
+            self.interpreter,
+            self.context,
+            [frame if frame is not None else {}, *self.frames],
+            self.instance,
+        )
 
     def bind(self, name: str, value: Any) -> None:
         self.frames[0][name] = value
@@ -680,8 +688,7 @@ class Env:
                 if "." in path:
                     node = frame[first]
                     if not isinstance(node, Instance):
-                        raise EvaluationError(
-                            f"cannot assign into non-instance {first!r}")
+                        raise EvaluationError(f"cannot assign into non-instance {first!r}")
                     node.set(path.split(".", 1)[1], value)
                 else:
                     frame[first] = value
@@ -722,9 +729,9 @@ class Interpreter:
     def resolve(self, qname: str) -> M.Element:
         return self.resolver.resolve(qname)
 
-    def evaluate(self, expr: str | A.Expr,
-                 context: str | M.Namespace | None = None,
-                 **bindings: Any) -> Any:
+    def evaluate(
+        self, expr: str | A.Expr, context: str | M.Namespace | None = None, **bindings: Any
+    ) -> Any:
         """Evaluate an expression (text or AST) with optional name bindings."""
 
         if isinstance(expr, str):
@@ -733,26 +740,24 @@ class Interpreter:
             expr = parse_expression(expr)
         if isinstance(context, str):
             context = self.resolver.resolve(context)  # type: ignore[assignment]
-        env = Env(self, context if isinstance(context, M.Namespace) else self.model,
-                  [dict(bindings)])
+        env = Env(
+            self, context if isinstance(context, M.Namespace) else self.model, [dict(bindings)]
+        )
         return self.eval(expr, env)
 
-    def instantiate(self, definition: str | M.Definition | M.Usage,
-                    **bindings: Any) -> Instance:
+    def instantiate(self, definition: str | M.Definition | M.Usage, **bindings: Any) -> Instance:
         """Create an instance of a part/item definition, evaluating attribute
         values; ``bindings`` override attribute values by name."""
 
-        defn = (self.resolver.resolve(definition)
-                if isinstance(definition, str) else definition)
+        defn = self.resolver.resolve(definition) if isinstance(definition, str) else definition
         if not isinstance(defn, (M.Definition, M.Usage)):
             raise EvaluationError(f"cannot instantiate {definition!r}")
         return self._instantiate(defn, bindings)
 
-    def call(self, calc: str | M.Definition | M.Usage, *args: Any,
-             **kwargs: Any) -> Any:
+    def call(self, calc: str | M.Definition | M.Usage, *args: Any, **kwargs: Any) -> Any:
         """Invoke a calc (or constraint) definition/usage as a function."""
 
-        target = (self.resolver.resolve(calc) if isinstance(calc, str) else calc)
+        target = self.resolver.resolve(calc) if isinstance(calc, str) else calc
         return self._call_calc(target, list(args), kwargs)
 
     def check(self, instance: Instance) -> list[ConstraintResult]:
@@ -768,19 +773,21 @@ class Interpreter:
                 results.append(self._check_constraint(member, env))
         return results
 
-    def check_requirement(self, requirement: str | M.Definition | M.Usage,
-                          subject: Instance | None = None,
-                          **bindings: Any) -> RequirementResult:
-        req = (self.resolver.resolve(requirement)
-               if isinstance(requirement, str) else requirement)
+    def check_requirement(
+        self,
+        requirement: str | M.Definition | M.Usage,
+        subject: Instance | None = None,
+        **bindings: Any,
+    ) -> RequirementResult:
+        req = self.resolver.resolve(requirement) if isinstance(requirement, str) else requirement
         if not isinstance(req, (M.Definition, M.Usage)):
             raise EvaluationError(f"{requirement!r} is not a requirement")
         frame: dict[str, Any] = dict(bindings)
         members = self.resolver.members_of(req)
         if subject is not None:
-            subject_names = [m.name for m in members
-                             if isinstance(m, M.Usage) and m.kind == "subject"
-                             and m.name]
+            subject_names = [
+                m.name for m in members if isinstance(m, M.Usage) and m.kind == "subject" and m.name
+            ]
             frame[subject_names[0] if subject_names else "subject"] = subject
         env = Env(self, req, [frame], instance=subject)
         result = RequirementResult(name=req.name or "<requirement>")
@@ -794,19 +801,21 @@ class Interpreter:
                 result.requirements.append(outcome)
         return result
 
-    def run_action(self, action: str | M.Definition | M.Usage,
-                   inputs: dict[str, Any] | None = None,
-                   events: list[Any] | None = None) -> ActionResult:
-        target = (self.resolver.resolve(action)
-                  if isinstance(action, str) else action)
+    def run_action(
+        self,
+        action: str | M.Definition | M.Usage,
+        inputs: dict[str, Any] | None = None,
+        events: list[Any] | None = None,
+    ) -> ActionResult:
+        target = self.resolver.resolve(action) if isinstance(action, str) else action
         if not isinstance(target, (M.Definition, M.Usage)):
             raise ExecutionError(f"{action!r} is not an action")
-        executor = _ActionExecutor(self, target, inputs or {},
-                                   deque(events or []))
+        executor = _ActionExecutor(self, target, inputs or {}, deque(events or []))
         return executor.run()
 
-    def snapshot(self, instance: Instance, name: str | None = None,
-                 kind: M.UsageKind = "part") -> M.Usage:
+    def snapshot(
+        self, instance: Instance, name: str | None = None, kind: M.UsageKind = "part"
+    ) -> M.Usage:
         """Convert a runtime :class:`Instance` back into a model usage.
 
         The result is a part usage typed by the instance's definition, with
@@ -826,15 +835,12 @@ class Interpreter:
     def _snapshot_members(self, name: str, value: Any) -> list[M.Element]:
         if isinstance(value, Instance):
             return [self.snapshot(value, name=name)]
-        if isinstance(value, list) and any(isinstance(v, Instance)
-                                           for v in value):
-            return [self.snapshot(v, name=f"{name}_{i + 1}")
-                    for i, v in enumerate(value)]
+        if isinstance(value, list) and any(isinstance(v, Instance) for v in value):
+            return [self.snapshot(v, name=f"{name}_{i + 1}") for i, v in enumerate(value)]
         expr = self._value_to_expr(value)
         if expr is None:
             return []
-        return [M.Usage(kind="attribute", name=name,
-                        value=M.FeatureValue(expr))]
+        return [M.Usage(kind="attribute", name=name, value=M.FeatureValue(expr))]
 
     def _value_to_expr(self, value: Any) -> A.Expr | None:
         if value is None or isinstance(value, (bool, int, float, str)):
@@ -848,10 +854,13 @@ class Interpreter:
             return A.SequenceExpr(tuple(items))  # type: ignore[arg-type]
         return None  # closures, type values, ... are not snapshottable
 
-    def simulate(self, state_machine: str | M.Definition | M.Usage,
-                 events: list[Any] | None = None,
-                 inputs: dict[str, Any] | None = None,
-                 max_steps: int = 1000) -> SimulationResult:
+    def simulate(
+        self,
+        state_machine: str | M.Definition | M.Usage,
+        events: list[Any] | None = None,
+        inputs: dict[str, Any] | None = None,
+        max_steps: int = 1000,
+    ) -> SimulationResult:
         """Simulate a state machine.
 
         ``events`` entries are event names (or ``(name, payload)`` tuples);
@@ -859,8 +868,11 @@ class Interpreter:
         due ``accept after``/``accept at`` transitions.
         """
 
-        target = (self.resolver.resolve(state_machine)
-                  if isinstance(state_machine, str) else state_machine)
+        target = (
+            self.resolver.resolve(state_machine)
+            if isinstance(state_machine, str)
+            else state_machine
+        )
         if not isinstance(target, (M.Definition, M.Usage)):
             raise ExecutionError(f"{state_machine!r} is not a state machine")
         sim = StateMachine(self, target, inputs or {})
@@ -872,16 +884,19 @@ class Interpreter:
                 sim.send(event)
             if len(sim.trace) > max_steps:
                 raise ExecutionError("state machine exceeded max_steps")
-        return SimulationResult(final_state=sim.current, trace=sim.trace,
-                                ignored_events=sim.ignored,
-                                env=dict(sim.env.frames[0]), sends=sim.sends,
-                                time=sim.now,
-                                active_states=sim.active_states())
+        return SimulationResult(
+            final_state=sim.current,
+            trace=sim.trace,
+            ignored_events=sim.ignored,
+            env=dict(sim.env.frames[0]),
+            sends=sim.sends,
+            time=sim.now,
+            active_states=sim.active_states(),
+        )
 
     # -- name-to-value resolution ----------------------------------------------
 
-    def _resolve_value(self, name: str, context: M.Element | None,
-                       env: Env) -> Any:
+    def _resolve_value(self, name: str, context: M.Element | None, env: Env) -> Any:
         if name in BUILTINS:
             return BUILTINS[name]
         try:
@@ -894,24 +909,20 @@ class Interpreter:
         if isinstance(element, M.Usage):
             if element.kind == "enum_literal":
                 enum = element.owner
-                enum_name = ((enum.qualified_name or enum.label)
-                             if enum is not None else "<enum>")
+                enum_name = (enum.qualified_name or enum.label) if enum is not None else "<enum>"
                 return EnumValue(enum_name, element.label)
             if element.kind in ("calc", "constraint"):
                 return TypeValue(element)
             if element.value is not None:
                 key = id(element)
                 if key not in self._const_cache:
-                    owner_env = Env(self, element.owner or self.model, [{}],
-                                    instance=env.instance)
-                    self._const_cache[key] = self.eval(element.value.expr,
-                                                       owner_env)
+                    owner_env = Env(self, element.owner or self.model, [{}], instance=env.instance)
+                    self._const_cache[key] = self.eval(element.value.expr, owner_env)
                 return self._const_cache[key]
             return TypeValue(element)
         if isinstance(element, (M.Definition, M.Package)):
             return TypeValue(element)
-        raise EvaluationError(
-            f"{element.label} ({type(element).__name__}) has no runtime value")
+        raise EvaluationError(f"{element.label} ({type(element).__name__}) has no runtime value")
 
     # -- expression evaluation ----------------------------------------------------
 
@@ -919,8 +930,7 @@ class Interpreter:
         if isinstance(expr, A.Literal):
             return expr.value
         if isinstance(expr, A.FeatureRef):
-            value = env.lookup(expr.parts[0]) if expr.parts[0] != "$" else \
-                TypeValue(self.model)
+            value = env.lookup(expr.parts[0]) if expr.parts[0] != "$" else TypeValue(self.model)
             for part in expr.parts[1:]:
                 value = self._member_value(value, part, env)
             return value
@@ -951,44 +961,39 @@ class Interpreter:
             base = _seq(self.eval(expr.base, env))
             index = self.eval(expr.index[0], env)
             if not isinstance(index, int) or not 1 <= index <= len(base):
-                raise EvaluationError(f"index {index!r} out of range "
-                                      f"(sequences are 1-based)")
+                raise EvaluationError(f"index {index!r} out of range (sequences are 1-based)")
             return base[index - 1]
         if isinstance(expr, A.QuantityOp):
             return self.eval(expr.base, env)  # units are annotations
         if isinstance(expr, A.Invocation):
             return self._invoke(expr, env)
         if isinstance(expr, A.Constructor):
-            return self._construct(expr.type, list(expr.args),
-                                   dict(expr.named), env)
+            return self._construct(expr.type, list(expr.args), dict(expr.named), env)
         if isinstance(expr, A.ArrowOp):
             return self._arrow(expr, env)
         if isinstance(expr, A.CollectOp):
-            return [self._apply_body(expr.body, [v], env)
-                    for v in _seq(self.eval(expr.base, env))]
+            return [self._apply_body(expr.body, [v], env) for v in _seq(self.eval(expr.base, env))]
         if isinstance(expr, A.SelectOp):
-            return [v for v in _seq(self.eval(expr.base, env))
-                    if self._apply_body(expr.body, [v], env)]
+            return [
+                v for v in _seq(self.eval(expr.base, env)) if self._apply_body(expr.body, [v], env)
+            ]
         if isinstance(expr, A.BodyExpr):
             return Closure(expr, env)
         if isinstance(expr, (A.AllOf, A.MetadataAccess)):
-            raise EvaluationError(
-                f"expression form {type(expr).__name__} is not executable")
+            raise EvaluationError(f"expression form {type(expr).__name__} is not executable")
         raise EvaluationError(f"cannot evaluate {expr!r}")
 
     def _member_value(self, value: Any, name: str, env: Env) -> Any:
         if isinstance(value, Instance):
             if name in value.slots:
                 return value.slots[name]
-            raise EvaluationError(
-                f"instance of {value.type_name} has no feature {name!r}")
+            raise EvaluationError(f"instance of {value.type_name} has no feature {name!r}")
         if isinstance(value, list):
             return [self._member_value(v, name, env) for v in value]
         if isinstance(value, TypeValue):
             member = self.resolver._member(value.definition, name)
             if member is None:
-                raise EvaluationError(
-                    f"{value.definition.label} has no member {name!r}")
+                raise EvaluationError(f"{value.definition.label} has no member {name!r}")
             return self._element_value(member, env)
         if isinstance(value, EnumValue):
             raise EvaluationError(f"cannot access {name!r} on enum value {value}")
@@ -1030,7 +1035,7 @@ class Interpreter:
             if op == "%":
                 return left % right
             if op in ("**", "^"):
-                return left ** right
+                return left**right
             if op == "==":
                 return left == right
             if op == "!=":
@@ -1058,24 +1063,20 @@ class Interpreter:
                     raise EvaluationError("range '..' requires integers")
                 return list(range(left, right + 1))
         except TypeError as exc:
-            raise EvaluationError(f"cannot apply {op!r} to {left!r} and "
-                                  f"{right!r}") from exc
+            raise EvaluationError(f"cannot apply {op!r} to {left!r} and {right!r}") from exc
         raise EvaluationError(f"binary operator {op!r} not supported")
 
     _PRIMITIVE_CHECKS: ClassVar[dict[str, Callable[[Any], bool]]] = {
         "Boolean": lambda v: isinstance(v, bool),
         "Integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-        "Natural": lambda v: isinstance(v, int) and not isinstance(v, bool)
-        and v >= 0,
-        "Real": lambda v: isinstance(v, (int, float))
-        and not isinstance(v, bool),
+        "Natural": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+        "Real": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
         "String": lambda v: isinstance(v, str),
     }
 
     def _classify(self, expr: A.Classification, env: Env) -> bool:
         if expr.operand is None:
-            raise EvaluationError("classification without operand is not "
-                                  "executable")
+            raise EvaluationError("classification without operand is not executable")
         value = self.eval(expr.operand, env)
         type_name = expr.type[-1]
         check = self._PRIMITIVE_CHECKS.get(type_name)
@@ -1134,33 +1135,32 @@ class Interpreter:
             return target(*args, **named)
         if isinstance(target, TypeValue):
             defn = target.definition
-            if isinstance(defn, (M.Definition, M.Usage)) and \
-                    defn.kind in ("calc", "constraint"):
+            if isinstance(defn, (M.Definition, M.Usage)) and defn.kind in ("calc", "constraint"):
                 return self._call_calc(defn, args, named)
             return self._construct_from(defn, args, named)
         raise EvaluationError(f"{'::'.join(name)} is not callable")
 
-    def _construct(self, type_name: tuple[str, ...], args: list[Any],
-                   named: dict[str, Any], env: Env) -> Any:
+    def _construct(
+        self, type_name: tuple[str, ...], args: list[Any], named: dict[str, Any], env: Env
+    ) -> Any:
         args = [self.eval(a, env) if isinstance(a, A.Expr) else a for a in args]
-        named = {n: (self.eval(e, env) if isinstance(e, A.Expr) else e)
-                 for n, e in named.items()}
+        named = {n: (self.eval(e, env) if isinstance(e, A.Expr) else e) for n, e in named.items()}
         try:
             defn = self.resolver.resolve(type_name, env.context)
         except ResolutionError as exc:
             raise EvaluationError(str(exc)) from exc
         return self._construct_from(defn, args, named)
 
-    def _construct_from(self, defn, args: list[Any],
-                        named: dict[str, Any]) -> Instance:
+    def _construct_from(self, defn, args: list[Any], named: dict[str, Any]) -> Instance:
         bindings = dict(named)
         if args:
-            attrs = [(m.name, m) for m in self.resolver.members_of(defn)
-                     if isinstance(m, M.Usage) and m.kind == "attribute"
-                     and m.name is not None]
+            attrs = [
+                (m.name, m)
+                for m in self.resolver.members_of(defn)
+                if isinstance(m, M.Usage) and m.kind == "attribute" and m.name is not None
+            ]
             if len(args) > len(attrs):
-                raise EvaluationError(
-                    f"too many positional arguments for {defn.label}")
+                raise EvaluationError(f"too many positional arguments for {defn.label}")
             for (attr_name, _), value in zip(attrs, args, strict=False):
                 bindings[attr_name] = value
         return self._instantiate(defn, bindings)
@@ -1231,8 +1231,7 @@ class Interpreter:
         frame: dict[str, Any] = {}
         env = Env(self, calc, [frame])
         if len(args) > len(params):
-            raise EvaluationError(f"{calc.label} takes {len(params)} "
-                                  f"parameters, got {len(args)}")
+            raise EvaluationError(f"{calc.label} takes {len(params)} parameters, got {len(args)}")
         for (param_name, _), value in zip(params, args, strict=False):
             frame[param_name] = value
         for name, value in named.items():
@@ -1243,8 +1242,8 @@ class Interpreter:
             if param_name not in frame:
                 if param.value is None:
                     raise EvaluationError(
-                        f"missing argument for parameter {param_name!r} of "
-                        f"{calc.label}")
+                        f"missing argument for parameter {param_name!r} of {calc.label}"
+                    )
                 frame[param_name] = self.eval(param.value.expr, env)
         # bind valued locals (calc usages / attributes), then the result
         return_expr: A.Expr | None = None
@@ -1271,24 +1270,28 @@ class Interpreter:
         "constraint action state requirement concern case analysis "
         "verification use_case view viewpoint rendering objective subject "
         "actor stakeholder connection binding event metadata interface "
-        "allocation flow message render satisfy verify frame include".split())
+        "allocation flow message render satisfy verify frame include".split()
+    )
 
-    def _instantiate(self, defn, bindings: dict[str, Any],
-                     _depth: int = 0,
-                     _active: tuple[int, ...] = ()) -> Instance:
+    def _instantiate(
+        self, defn, bindings: dict[str, Any], _depth: int = 0, _active: tuple[int, ...] = ()
+    ) -> Instance:
         if _depth > 32:
-            raise EvaluationError("instantiation recursion limit exceeded "
-                                  "(cyclic part composition?)")
+            raise EvaluationError(
+                "instantiation recursion limit exceeded (cyclic part composition?)"
+            )
         _active = (*_active, id(defn))
         instance = Instance(defn.qualified_name or defn.label, defn)
-        members = [m for m in self.resolver.members_of(defn)
-                   if isinstance(m, M.Usage)
-                   and m.kind not in self._NON_SLOT_KINDS
-                   and not m.is_abstract]
+        members = [
+            m
+            for m in self.resolver.members_of(defn)
+            if isinstance(m, M.Usage) and m.kind not in self._NON_SLOT_KINDS and not m.is_abstract
+        ]
         pending: dict[str, M.Usage] = {}
         for member in members:
-            name = member.name or (member.redefines[0].split("::")[-1]
-                                   if member.redefines else None)
+            name = member.name or (
+                member.redefines[0].split("::")[-1] if member.redefines else None
+            )
             if name is None or name in instance.slots or name in pending:
                 continue
             pending[name] = member
@@ -1296,8 +1299,7 @@ class Interpreter:
         # first pass: explicit bindings
         for name, value in bindings.items():
             if name not in pending:
-                raise EvaluationError(
-                    f"{defn.label} has no feature {name!r} to bind")
+                raise EvaluationError(f"{defn.label} has no feature {name!r} to bind")
             instance.slots[name] = value
 
         # second pass: evaluate remaining features (attributes lazily to allow
@@ -1311,8 +1313,7 @@ class Interpreter:
             if member is None:
                 raise EvaluationError(f"{defn.label} has no feature {name!r}")
             if name in in_progress:
-                raise EvaluationError(
-                    f"cyclic value dependency on {name!r} in {defn.label}")
+                raise EvaluationError(f"cyclic value dependency on {name!r} in {defn.label}")
             in_progress.add(name)
             try:
                 value = compute(member)
@@ -1325,16 +1326,14 @@ class Interpreter:
             instance.slots[name] = value
             return value
 
-        lazy_env = Env(self, defn, [_LazyFrame(materialize, pending)],
-                       instance=instance)
+        lazy_env = Env(self, defn, [_LazyFrame(materialize, pending)], instance=instance)
 
         def compute(member: M.Usage) -> Any:
             if member.value is not None:
                 return self.eval(member.value.expr, lazy_env)
             if member.kind in ("part", "item", "occurrence") and member.types:
                 try:
-                    target = self.resolver.resolve(member.types[0],
-                                                   member.owner or defn)
+                    target = self.resolver.resolve(member.types[0], member.owner or defn)
                 except ResolutionError:
                     return None
                 if id(target) in _active:
@@ -1342,11 +1341,10 @@ class Interpreter:
                 count = self._instance_count(member, lazy_env)
                 overrides = self._inline_overrides(member, lazy_env)
                 if count is None:
-                    return self._instantiate(target, overrides, _depth + 1,
-                                             _active)
-                return [self._instantiate(target, overrides, _depth + 1,
-                                          _active)
-                        for _ in range(count)]
+                    return self._instantiate(target, overrides, _depth + 1, _active)
+                return [
+                    self._instantiate(target, overrides, _depth + 1, _active) for _ in range(count)
+                ]
             if member.kind in ("part", "item") and member.members:
                 return self._instantiate(member, {}, _depth + 1, _active)
             return None
@@ -1383,8 +1381,7 @@ class Interpreter:
         overrides: dict[str, Any] = {}
         for sub in member.members:
             if isinstance(sub, M.Usage) and sub.value is not None:
-                name = sub.name or (sub.redefines[0].split("::")[-1]
-                                    if sub.redefines else None)
+                name = sub.name or (sub.redefines[0].split("::")[-1] if sub.redefines else None)
                 if name:
                     overrides[name] = self.eval(sub.value.expr, env)
         return overrides
@@ -1399,19 +1396,20 @@ class Interpreter:
                 target = self.resolver.resolve(name, usage.owner or self.model)
             except ResolutionError:
                 continue
-            if isinstance(target, (M.Definition, M.Usage)) and \
-                    target.result is not None:
+            if isinstance(target, (M.Definition, M.Usage)) and target.result is not None:
                 return target.result
         return None
 
     def _check_constraint(self, usage: M.Usage, env: Env) -> ConstraintResult:
         kind = usage.constraint_kind or "constraint"
-        name = usage.name or usage.short_name or (
-            usage.subsets[0] if usage.subsets else "<constraint>")
+        name = (
+            usage.name
+            or usage.short_name
+            or (usage.subsets[0] if usage.subsets else "<constraint>")
+        )
         expr = self._constraint_expr(usage)
         if expr is None:
-            return ConstraintResult(name, kind, None, "",
-                                    "no evaluable expression")
+            return ConstraintResult(name, kind, None, "", "no evaluable expression")
         try:
             value = bool(self.eval(expr, env.child()))
         except EvaluationError as exc:
@@ -1465,10 +1463,14 @@ class _ActionExecutor:
     on_step: Callable[[int, M.Element, str], None] | None = None
     _step_index: int = 0
 
-    def __init__(self, interpreter: Interpreter,
-                 action: M.Definition | M.Usage,
-                 inputs: dict[str, Any], events: deque,
-                 parent_env: Env | None = None):
+    def __init__(
+        self,
+        interpreter: Interpreter,
+        action: M.Definition | M.Usage,
+        inputs: dict[str, Any],
+        events: deque,
+        parent_env: Env | None = None,
+    ):
         self.interp = interpreter
         self.action = action
         self.events = events
@@ -1487,14 +1489,12 @@ class _ActionExecutor:
                 elif param.value is not None:
                     frame[name] = interpreter.eval(param.value.expr, self.env)
                 else:
-                    raise ExecutionError(
-                        f"missing input {name!r} for {action.label}")
+                    raise ExecutionError(f"missing input {name!r} for {action.label}")
             else:
                 frame[name] = inputs.get(name)
         unknown = set(inputs) - {name for name, _ in self.params}
         if unknown:
-            raise ExecutionError(
-                f"unknown input(s) {sorted(unknown)} for {action.label}")
+            raise ExecutionError(f"unknown input(s) {sorted(unknown)} for {action.label}")
         self.members = members
         self.clock = 0.0
 
@@ -1504,11 +1504,19 @@ class _ActionExecutor:
             self.run_graph(plan)
         else:
             self.execute_items(self.members)
-        outputs = {name: self.env.lookup(name) for name, p in self.params
-                   if p.direction in ("out", "inout")}
-        return ActionResult(outputs=outputs, sends=self.sends,
-                            trace=self.trace, env=dict(self.env.frames[0]),
-                            terminated=self.terminated, time=self.clock)
+        outputs = {
+            name: self.env.lookup(name)
+            for name, p in self.params
+            if p.direction in ("out", "inout")
+        }
+        return ActionResult(
+            outputs=outputs,
+            sends=self.sends,
+            trace=self.trace,
+            env=dict(self.env.frames[0]),
+            terminated=self.terminated,
+            time=self.clock,
+        )
 
     # -- succession-graph execution ------------------------------------------
 
@@ -1528,8 +1536,7 @@ class _ActionExecutor:
                 return
             node = plan.steps.get(current)
             if node is None:
-                raise ExecutionError(f"succession targets unknown step "
-                                     f"{current!r}")
+                raise ExecutionError(f"succession targets unknown step {current!r}")
             if isinstance(node, M.ControlNode) and node.kind == "fork":
                 current = self._run_fork(current, plan)
                 continue
@@ -1539,14 +1546,12 @@ class _ActionExecutor:
             current = self._next_step(current, plan)
         raise ExecutionError("action exceeded step limit")
 
-    def _next_step(self, current: str, plan: _SuccessionPlan
-                   ) -> str | None:
+    def _next_step(self, current: str, plan: _SuccessionPlan) -> str | None:
         outgoing = [e for e in plan.edges if e.source == current]
         if not outgoing:
             return None
         for edge in outgoing:
-            if edge.guard is not None and \
-                    self.interp.eval(edge.guard, self.env):
+            if edge.guard is not None and self.interp.eval(edge.guard, self.env):
                 return edge.target
         for edge in outgoing:
             if edge.is_else:
@@ -1557,8 +1562,7 @@ class _ActionExecutor:
         self.trace.append(f"no successor guard satisfied after {current}")
         return None
 
-    def _run_fork(self, fork_name: str, plan: _SuccessionPlan
-                  ) -> str | None:
+    def _run_fork(self, fork_name: str, plan: _SuccessionPlan) -> str | None:
         self.trace.append(f"fork {fork_name}")
         join: str | None = None
         for edge in [e for e in plan.edges if e.source == fork_name]:
@@ -1568,8 +1572,7 @@ class _ActionExecutor:
                     break
                 node = plan.steps.get(branch)
                 if node is None:
-                    raise ExecutionError(f"succession targets unknown step "
-                                         f"{branch!r}")
+                    raise ExecutionError(f"succession targets unknown step {branch!r}")
                 if isinstance(node, M.ControlNode) and node.kind == "join":
                     join = branch
                     break
@@ -1610,8 +1613,7 @@ class _ActionExecutor:
             return
         if isinstance(item, M.IfAction):
             branch_taken = bool(interp.eval(item.condition, self.env))
-            self.trace.append(f"if {item.condition.to_text()} -> "
-                              f"{branch_taken}")
+            self.trace.append(f"if {item.condition.to_text()} -> {branch_taken}")
             if branch_taken:
                 self.execute_items(item.then_body)
             elif isinstance(item.else_body, M.IfAction):
@@ -1622,8 +1624,7 @@ class _ActionExecutor:
         if isinstance(item, M.WhileLoop):
             iterations = 0
             while not self.terminated:
-                if item.condition is not None and \
-                        not interp.eval(item.condition, self.env):
+                if item.condition is not None and not interp.eval(item.condition, self.env):
                     break
                 self.execute_items(item.body)
                 iterations += 1
@@ -1646,7 +1647,8 @@ class _ActionExecutor:
             event = SentEvent(
                 payload=interp.eval(item.payload, self.env),
                 to=interp.eval(item.to, self.env) if item.to else None,
-                via=interp.eval(item.via, self.env) if item.via else None)
+                via=interp.eval(item.via, self.env) if item.via else None,
+            )
             self.sends.append(event)
             self.trace.append(f"send {event.payload!r}")
             return
@@ -1680,23 +1682,20 @@ class _ActionExecutor:
             return
         if not self.events:
             raise ExecutionError(
-                f"accept {item.payload_name or item.payload_types}: no more "
-                f"events in the queue")
+                f"accept {item.payload_name or item.payload_types}: no more events in the queue"
+            )
         event = self.events.popleft()
         name, payload = _event_parts(event)
         if item.payload_types:
             wanted = {t.split("::")[-1] for t in item.payload_types}
             if name not in wanted:
-                raise ExecutionError(
-                    f"accept expected one of {sorted(wanted)}, got {name!r}")
+                raise ExecutionError(f"accept expected one of {sorted(wanted)}, got {name!r}")
         if item.payload_name:
-            self.env.bind(item.payload_name, payload if payload is not None
-                          else name)
+            self.env.bind(item.payload_name, payload if payload is not None else name)
         self.trace.append(f"accept {name}")
 
     def _accept_time_trigger(self, item: M.AcceptAction) -> None:
-        value = (self.interp.eval(item.trigger, self.env)
-                 if item.trigger is not None else 0)
+        value = self.interp.eval(item.trigger, self.env) if item.trigger is not None else 0
         if item.trigger_kind == "after":
             self.clock += value
             self.trace.append(f"wait {value} (clock={self.clock})")
@@ -1706,16 +1705,15 @@ class _ActionExecutor:
         else:  # 'when'
             if not value:
                 raise ExecutionError(
-                    "accept when: condition is false and no further "
-                    "progress is possible (deadlock)")
+                    "accept when: condition is false and no further progress is possible (deadlock)"
+                )
             self.trace.append("when condition satisfied")
         if item.payload_name:
             self.env.bind(item.payload_name, self.clock)
 
     def perform(self, item: M.PerformAction) -> None:
         interp = self.interp
-        if item.action is not None and (item.action.members or
-                                        not item.action.subsets):
+        if item.action is not None and (item.action.members or not item.action.subsets):
             self.trace.append(f"perform action {item.action.label}")
             self.execute_items(list(item.action.members))
             return
@@ -1729,14 +1727,12 @@ class _ActionExecutor:
         if not isinstance(target, (M.Definition, M.Usage)):
             raise ExecutionError(f"cannot perform {ref!r}")
         inputs = {}
-        for name, _ in _named_usages(interp.resolver.members_of(target),
-                                     ("in", "inout")):
+        for name, _ in _named_usages(interp.resolver.members_of(target), ("in", "inout")):
             try:
                 inputs[name] = self.env.lookup(name)
             except EvaluationError:
                 continue
-        sub = _ActionExecutor(interp, target, inputs, self.events,
-                              parent_env=self.env)
+        sub = _ActionExecutor(interp, target, inputs, self.events, parent_env=self.env)
         sub.on_step = self.on_step  # nested performs keep reporting steps
         sub._step_index = self._step_index
         result = sub.run()
@@ -1774,9 +1770,17 @@ class _SuccessionPlan:
     initial: str | None
 
 
-_STEP_TYPES = (M.AssignmentAction, M.SendAction, M.AcceptAction,
-               M.PerformAction, M.TerminateAction, M.IfAction, M.WhileLoop,
-               M.ForLoop, M.ControlNode)
+_STEP_TYPES = (
+    M.AssignmentAction,
+    M.SendAction,
+    M.AcceptAction,
+    M.PerformAction,
+    M.TerminateAction,
+    M.IfAction,
+    M.WhileLoop,
+    M.ForLoop,
+    M.ControlNode,
+)
 
 
 def _is_named_step(item: M.Element) -> bool:
@@ -1791,8 +1795,12 @@ def _is_named_step(item: M.Element) -> bool:
         return False
     if isinstance(item, _STEP_TYPES):
         return True
-    return (isinstance(item, M.Usage) and item.kind == "action"
-            and item.direction is None and bool(item.members or item.value))
+    return (
+        isinstance(item, M.Usage)
+        and item.kind == "action"
+        and item.direction is None
+        and bool(item.members or item.value)
+    )
 
 
 def _succession_plan(members: list[M.Element]) -> _SuccessionPlan | None:
@@ -1821,8 +1829,7 @@ def _succession_plan(members: list[M.Element]) -> _SuccessionPlan | None:
         elif isinstance(member, M.Succession):
             if member.source is None:
                 return None  # attached to an anonymous statement
-            edges.append(_Edge(member.source, member.target, member.guard,
-                               member.is_else))
+            edges.append(_Edge(member.source, member.target, member.guard, member.is_else))
     if not edges and initial is None:
         return None
     known = set(steps) | {"start", "done"}
@@ -1847,8 +1854,13 @@ def _succession_plan(members: list[M.Element]) -> _SuccessionPlan | None:
 class _ActiveState:
     """A node in the active-state configuration tree."""
 
-    def __init__(self, usage: M.Usage, container: M.Definition | M.Usage,
-                 parent: _ActiveState | None, entered_at: float):
+    def __init__(
+        self,
+        usage: M.Usage,
+        container: M.Definition | M.Usage,
+        parent: _ActiveState | None,
+        entered_at: float,
+    ):
         self.usage = usage
         self.container = container  # namespace owning this state's transitions
         self.parent = parent
@@ -1887,9 +1899,9 @@ class StateMachine:
 
     _MAX_FIRINGS = 10_000
 
-    def __init__(self, interpreter: Interpreter,
-                 definition: M.Definition | M.Usage,
-                 inputs: dict[str, Any]):
+    def __init__(
+        self, interpreter: Interpreter, definition: M.Definition | M.Usage, inputs: dict[str, Any]
+    ):
         self.interp = interpreter
         self.definition = definition
         frame: dict[str, Any] = dict(inputs)
@@ -1903,15 +1915,16 @@ class StateMachine:
         #: observer hook (see sysml2.replay): called once after start()
         #: completes the initial entry and once after each fired transition,
         #: always AFTER the active configuration has been updated
-        self.on_step: Callable[[float, TransitionFired | None], None] | None \
-            = None
+        self.on_step: Callable[[float, TransitionFired | None], None] | None = None
         for member in interpreter.resolver.members_of(definition):
-            if isinstance(member, M.Usage) and member.name and \
-                    member.value is not None and \
-                    member.kind not in ("state",):
+            if (
+                isinstance(member, M.Usage)
+                and member.name
+                and member.value is not None
+                and member.kind not in ("state",)
+            ):
                 if member.name not in frame:  # inputs take precedence
-                    frame[member.name] = interpreter.eval(member.value.expr,
-                                                          self.env)
+                    frame[member.name] = interpreter.eval(member.value.expr, self.env)
 
     # -- structure queries -------------------------------------------------------
 
@@ -1919,19 +1932,20 @@ class StateMachine:
         return self.interp.resolver.members_of(container)
 
     def _states_of(self, container) -> dict[str, M.Usage]:
-        return {m.name: m for m in self._members(container)
-                if isinstance(m, M.Usage) and m.kind == "state" and m.name}
+        return {
+            m.name: m
+            for m in self._members(container)
+            if isinstance(m, M.Usage) and m.kind == "state" and m.name
+        }
 
     def _transitions_of(self, container) -> list[M.TransitionUsage]:
-        return [m for m in self._members(container)
-                if isinstance(m, M.TransitionUsage)]
+        return [m for m in self._members(container) if isinstance(m, M.TransitionUsage)]
 
     def _initial_of(self, container) -> str | None:
         for transition in self._transitions_of(container):
             if transition.source != M.ENTRY_SOURCE:
                 continue
-            if transition.guard is not None and \
-                    not self.interp.eval(transition.guard, self.env):
+            if transition.guard is not None and not self.interp.eval(transition.guard, self.env):
                 continue
             return transition.target
         return None
@@ -1950,14 +1964,14 @@ class StateMachine:
         return [leaf.path() for root in self.roots for leaf in root.leaves()]
 
     def start(self) -> None:
-        self.roots = self._enter_container(self.definition, parent=None,
-                                           require_entry=True)
+        self.roots = self._enter_container(self.definition, parent=None, require_entry=True)
         if self.on_step is not None:
             self.on_step(self.now, None)
         self._completion_scan()
 
-    def _enter_container(self, container, parent: _ActiveState | None,
-                         require_entry: bool = False) -> list[_ActiveState]:
+    def _enter_container(
+        self, container, parent: _ActiveState | None, require_entry: bool = False
+    ) -> list[_ActiveState]:
         states = self._states_of(container)
         if not states:
             return []
@@ -1969,21 +1983,17 @@ class StateMachine:
             if initial is None:
                 if require_entry:
                     raise ExecutionError(
-                        f"{container.label} has no entry transition "
-                        f"('entry; then <state>;')")
+                        f"{container.label} has no entry transition ('entry; then <state>;')"
+                    )
                 return []
             targets = [initial]
-        return [self._enter_state(name, container, parent)
-                for name in targets]
+        return [self._enter_state(name, container, parent) for name in targets]
 
-    def _enter_state(self, name: str, container,
-                     parent: _ActiveState | None) -> _ActiveState:
+    def _enter_state(self, name: str, container, parent: _ActiveState | None) -> _ActiveState:
         states = self._states_of(container)
         usage = states.get(name)
         if usage is None:
-            raise ExecutionError(
-                f"transition targets unknown state {name!r} in "
-                f"{container.label}")
+            raise ExecutionError(f"transition targets unknown state {name!r} in {container.label}")
         node = _ActiveState(usage, container, parent, self.now)
         self._run_state_actions(usage, "entry")
         self._run_state_actions(usage, "do")
@@ -2002,21 +2012,17 @@ class StateMachine:
         else:
             self._completion_scan()
 
-    def _dispatch(self, nodes: list[_ActiveState], parallel: bool,
-                  name: str, payload: Any) -> bool:
+    def _dispatch(self, nodes: list[_ActiveState], parallel: bool, name: str, payload: Any) -> bool:
         if not nodes:
             return False
         if parallel:
-            results = [self._dispatch_node(node, name, payload)
-                       for node in list(nodes)]
+            results = [self._dispatch_node(node, name, payload) for node in list(nodes)]
             return any(results)
         return self._dispatch_node(nodes[0], name, payload)
 
-    def _dispatch_node(self, node: _ActiveState, name: str,
-                       payload: Any) -> bool:
+    def _dispatch_node(self, node: _ActiveState, name: str, payload: Any) -> bool:
         # innermost states get the first chance to consume the event
-        if self._dispatch(node.children, node.usage.is_parallel,
-                          name, payload):
+        if self._dispatch(node.children, node.usage.is_parallel, name, payload):
             return True
         for transition in self._transitions_of(node.container):
             if transition.source != node.name:
@@ -2024,15 +2030,13 @@ class StateMachine:
             if not self._trigger_matches(transition, name):
                 continue
             local = self._event_env(transition, name, payload)
-            if transition.guard is not None and \
-                    not self.interp.eval(transition.guard, local):
+            if transition.guard is not None and not self.interp.eval(transition.guard, local):
                 continue
             self._fire(node, transition, name, payload)
             return True
         return False
 
-    def _trigger_matches(self, transition: M.TransitionUsage,
-                         name: str) -> bool:
+    def _trigger_matches(self, transition: M.TransitionUsage, name: str) -> bool:
         trigger = transition.trigger
         if trigger is None or trigger.trigger_kind is not None:
             return False  # eventless / time / when triggers
@@ -2041,34 +2045,34 @@ class StateMachine:
             wanted = {trigger.payload_name}
         return name in wanted if wanted else True
 
-    def _event_env(self, transition: M.TransitionUsage, name: str | None,
-                   payload: Any) -> Env:
+    def _event_env(self, transition: M.TransitionUsage, name: str | None, payload: Any) -> Env:
         frame: dict[str, Any] = {}
         if transition.trigger is not None and transition.trigger.payload_name:
-            frame[transition.trigger.payload_name] = (
-                payload if payload is not None else name)
+            frame[transition.trigger.payload_name] = payload if payload is not None else name
         return self.env.child(frame)
 
     # -- firing -------------------------------------------------------------------------
 
-    def _fire(self, node: _ActiveState, transition: M.TransitionUsage,
-              event_name: str | None, payload: Any) -> None:
+    def _fire(
+        self,
+        node: _ActiveState,
+        transition: M.TransitionUsage,
+        event_name: str | None,
+        payload: Any,
+    ) -> None:
         self._firings += 1
         if self._firings > self._MAX_FIRINGS:
             raise ExecutionError("state machine exceeded firing limit")
         prefix = node.parent.path() + "." if node.parent else ""
         self._exit_subtree(node)
         if transition.effect is not None:
-            self._run_statement(transition.effect,
-                                self._event_env(transition, event_name,
-                                                payload))
-        fired = TransitionFired(prefix + node.name, event_name,
-                                prefix + transition.target, time=self.now)
+            self._run_statement(transition.effect, self._event_env(transition, event_name, payload))
+        fired = TransitionFired(
+            prefix + node.name, event_name, prefix + transition.target, time=self.now
+        )
         self.trace.append(fired)
-        replacement = self._enter_state(transition.target, node.container,
-                                        node.parent)
-        siblings = (node.parent.children if node.parent is not None
-                    else self.roots)
+        replacement = self._enter_state(transition.target, node.container, node.parent)
+        siblings = node.parent.children if node.parent is not None else self.roots
         siblings[siblings.index(node)] = replacement
         if self.on_step is not None:
             self.on_step(self.now, fired)
@@ -2085,8 +2089,7 @@ class StateMachine:
         for _ in range(100):
             if not self._fire_one_completion():
                 return
-        raise ExecutionError("state machine livelock: completion "
-                             "transitions kept firing")
+        raise ExecutionError("state machine livelock: completion transitions kept firing")
 
     def _fire_one_completion(self) -> bool:
         for node in self._all_nodes_innermost_first():
@@ -2097,13 +2100,13 @@ class StateMachine:
                 if trigger is None:
                     pass  # plain completion transition
                 elif trigger.trigger_kind == "when":
-                    if trigger.trigger is None or \
-                            not self.interp.eval(trigger.trigger, self.env):
+                    if trigger.trigger is None or not self.interp.eval(trigger.trigger, self.env):
                         continue
                 else:
                     continue
-                if transition.guard is not None and \
-                        not self.interp.eval(transition.guard, self.env):
+                if transition.guard is not None and not self.interp.eval(
+                    transition.guard, self.env
+                ):
                     continue
                 self._fire(node, transition, None, None)
                 return True
@@ -2139,26 +2142,24 @@ class StateMachine:
             self._completion_scan()
         self.now = target_time
 
-    def _earliest_due(self, limit: float
-                      ) -> tuple[_ActiveState, M.TransitionUsage, float] | None:
+    def _earliest_due(self, limit: float) -> tuple[_ActiveState, M.TransitionUsage, float] | None:
         best: tuple[_ActiveState, M.TransitionUsage, float] | None = None
         for node in self._all_nodes_innermost_first():
             for transition in self._transitions_of(node.container):
                 if transition.source != node.name:
                     continue
                 trigger = transition.trigger
-                if trigger is None or trigger.trigger_kind not in ("after",
-                                                                   "at"):
+                if trigger is None or trigger.trigger_kind not in ("after", "at"):
                     continue
                 if trigger.trigger is None:
                     continue
                 offset = self.interp.eval(trigger.trigger, self.env)
-                deadline = (node.entered_at + offset
-                            if trigger.trigger_kind == "after" else offset)
+                deadline = node.entered_at + offset if trigger.trigger_kind == "after" else offset
                 if deadline > limit:
                     continue
-                if transition.guard is not None and \
-                        not self.interp.eval(transition.guard, self.env):
+                if transition.guard is not None and not self.interp.eval(
+                    transition.guard, self.env
+                ):
                     continue
                 if best is None or deadline < best[2]:
                     best = (node, transition, deadline)
@@ -2168,8 +2169,11 @@ class StateMachine:
 
     def _run_state_actions(self, state: M.Usage, kind: str) -> None:
         for member in state.members:
-            if isinstance(member, M.StateAction) and member.kind == kind \
-                    and member.action is not None:
+            if (
+                isinstance(member, M.StateAction)
+                and member.kind == kind
+                and member.action is not None
+            ):
                 self._run_statement(member.action, self.env)
 
     def _run_statement(self, statement: M.Element, env: Env) -> None:

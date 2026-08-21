@@ -52,11 +52,11 @@ _DEF_KEYWORDS: dict[str, str] = {
 _FEATURE_KINDS = frozenset(
     "part item attribute port ref feature enum enum_literal occurrence "
     "individual snapshot timeslice event event_occurrence subject actor "
-    "stakeholder extended".split())
+    "stakeholder extended".split()
+)
 
 #: usage kinds projected as steps (behavioral features)
-_STEP_KINDS = frozenset(
-    "action calc state case analysis verification use_case".split())
+_STEP_KINDS = frozenset("action calc state case analysis verification use_case".split())
 
 
 def to_kerml(element: M.Element, indent: str = "    ") -> str:
@@ -96,8 +96,7 @@ class _KerMLPrinter:
     def prefix(self, el: M.Element) -> str:
         return f"{el.visibility} " if el.visibility else ""
 
-    def body(self, members: list[M.Element], level: int, head: str,
-             result=None) -> None:
+    def body(self, members: list[M.Element], level: int, head: str, result=None) -> None:
         if not members and result is None:
             self.line(level, head.rstrip() + ";")
             return
@@ -127,8 +126,7 @@ class _KerMLPrinter:
                 target += "::**"
             self.line(level, f"{self.prefix(el)}import {target};")
         elif isinstance(el, M.Alias):
-            self.line(level, f"{self.prefix(el)}alias {self.names(el)} "
-                             f"for {fmt_qname(el.target)};")
+            self.line(level, f"{self.prefix(el)}alias {self.names(el)} for {fmt_qname(el.target)};")
         elif isinstance(el, M.Documentation):
             self.line(level, f"doc {el.body}")
         elif isinstance(el, M.Comment):
@@ -159,11 +157,18 @@ class _KerMLPrinter:
             head += "abstract "
         head += f"{keyword} {self.names(el)}".rstrip()
         if el.supers:
-            head += " specializes " + ", ".join(fmt_qname(s)
-                                                for s in el.supers)
-        if el.kind in ("calc", "constraint", "requirement", "concern",
-                       "viewpoint", "case", "analysis", "verification",
-                       "use_case"):
+            head += " specializes " + ", ".join(fmt_qname(s) for s in el.supers)
+        if el.kind in (
+            "calc",
+            "constraint",
+            "requirement",
+            "concern",
+            "viewpoint",
+            "case",
+            "analysis",
+            "verification",
+            "use_case",
+        ):
             self.body(el.members, level, head, result=el.result)
         else:
             self.body(el.members, level, head)
@@ -177,12 +182,10 @@ class _KerMLPrinter:
             decl = self._feature_declaration(el)
             if decl:
                 head += f" {decl}"
-            self.body(el.members, level, head,
-                      result=el.result if el.kind == "calc" else None)
+            self.body(el.members, level, head, result=el.result if el.kind == "calc" else None)
             return
         if el.kind not in _FEATURE_KINDS:
-            self.omitted(level, f"{el.kind} usage"
-                                + (f" '{el.name}'" if el.name else ""))
+            self.omitted(level, f"{el.kind} usage" + (f" '{el.name}'" if el.name else ""))
             return
         head = self.prefix(el) + self._direction(el)
         if el.is_derived:
@@ -219,10 +222,11 @@ class _KerMLPrinter:
         if el.redefines:
             bits.append(":>> " + ", ".join(fmt_qname(r) for r in el.redefines))
         if el.multiplicity is not None:
-            if (el.multiplicity.lower is not None
-                    and el.multiplicity.upper is not None):
-                bits.append(f"[{expr_to_text(el.multiplicity.lower)}.."
-                            f"{expr_to_text(el.multiplicity.upper)}]")
+            if el.multiplicity.lower is not None and el.multiplicity.upper is not None:
+                bits.append(
+                    f"[{expr_to_text(el.multiplicity.lower)}.."
+                    f"{expr_to_text(el.multiplicity.upper)}]"
+                )
             elif el.multiplicity.upper is not None:
                 bits.append(f"[{expr_to_text(el.multiplicity.upper)}]")
             if el.multiplicity.is_ordered:

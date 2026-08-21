@@ -18,17 +18,20 @@ from . import model as M
 from .errors import BuildError
 from .parser import ParseResult, parse_sysml_text
 
-_BodyStyle = Literal["definition", "action", "calculation", "state",
-                     "requirement", "case"]
+_BodyStyle = Literal["definition", "action", "calculation", "state", "requirement", "case"]
 
 _CASE_USAGES: tuple[tuple[str, M.UsageKind], ...] = (
-    ("caseUsage", "case"), ("analysisCaseUsage", "analysis"),
-    ("verificationCaseUsage", "verification"), ("useCaseUsage", "use_case"),
+    ("caseUsage", "case"),
+    ("analysisCaseUsage", "analysis"),
+    ("verificationCaseUsage", "verification"),
+    ("useCaseUsage", "use_case"),
 )
 
 _CONTROL_NODES: tuple[tuple[str, M.ControlNodeKind], ...] = (
-    ("mergeNode", "merge"), ("decisionNode", "decision"),
-    ("joinNode", "join"), ("forkNode", "fork"),
+    ("mergeNode", "merge"),
+    ("decisionNode", "decision"),
+    ("joinNode", "join"),
+    ("forkNode", "fork"),
 )
 
 # ---------------------------------------------------------------------------
@@ -40,8 +43,10 @@ def build_model(result: ParseResult) -> M.Model:
     """Build a model from a :class:`~sysml2.parser.ParseResult` (SysML only)."""
 
     if result.language != "sysml":
-        raise BuildError("model building is only supported for SysML sources; "
-                         "KerML support is parse/validate only")
+        raise BuildError(
+            "model building is only supported for SysML sources; "
+            "KerML support is parse/validate only"
+        )
     return _Builder(result).build()
 
 
@@ -68,17 +73,31 @@ def parse_expression(text: str) -> A.Expr:
 def _unquote_name(text: str) -> str:
     if text.startswith("'") and text.endswith("'") and len(text) >= 2:
         body = text[1:-1]
-        return (body.replace("\\\\", "\x00").replace("\\'", "'")
-                .replace("\\b", "\b").replace("\\f", "\f").replace("\\n", "\n")
-                .replace("\\r", "\r").replace("\\t", "\t").replace("\x00", "\\"))
+        return (
+            body.replace("\\\\", "\x00")
+            .replace("\\'", "'")
+            .replace("\\b", "\b")
+            .replace("\\f", "\f")
+            .replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\\t", "\t")
+            .replace("\x00", "\\")
+        )
     return text
 
 
 def _unquote_string(text: str) -> str:
     body = text[1:-1] if text.startswith('"') and text.endswith('"') else text
-    return (body.replace("\\\\", "\x00").replace('\\"', '"')
-            .replace("\\b", "\b").replace("\\f", "\f").replace("\\n", "\n")
-            .replace("\\r", "\r").replace("\\t", "\t").replace("\x00", "\\"))
+    return (
+        body.replace("\\\\", "\x00")
+        .replace('\\"', '"')
+        .replace("\\b", "\b")
+        .replace("\\f", "\f")
+        .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+        .replace("\x00", "\\")
+    )
 
 
 class _Builder:
@@ -104,8 +123,7 @@ class _Builder:
         return M.Unsupported(text=self.src(ctx), rule=rule or type(ctx).__name__)
 
     def name_of(self, terminal) -> str:
-        return _unquote_name(terminal.getText() if hasattr(terminal, "getText")
-                             else terminal.text)
+        return _unquote_name(terminal.getText() if hasattr(terminal, "getText") else terminal.text)
 
     def identification(self, ctx) -> tuple[str | None, str | None]:
         if ctx is None:
@@ -137,8 +155,7 @@ class _Builder:
                 if sub is not None:
                     return self.chain_str(sub)
         if hasattr(ctx, "ownedFeatureChaining"):  # the chain itself
-            return ".".join(self.qname(c.qualifiedName())
-                            for c in ctx.ownedFeatureChaining())
+            return ".".join(self.qname(c.qualifiedName()) for c in ctx.ownedFeatureChaining())
         raise BuildError(f"cannot extract chain from {type(ctx).__name__}")
 
     def visibility(self, member_prefix_ctx) -> M.Visibility | None:
@@ -211,8 +228,7 @@ class _Builder:
             imp.target = self.qname(ctx.qualifiedName())
             imp.is_namespace = True
             imp.is_recursive = ctx.isRecursive is not None
-        imp.filters = [self.expr(m.ownedExpression())
-                       for m in ctx.filterPackageMember()]
+        imp.filters = [self.expr(m.ownedExpression()) for m in ctx.filterPackageMember()]
 
     def alias(self, ctx) -> M.Alias:
         alias = M.Alias()
@@ -228,20 +244,23 @@ class _Builder:
             short, name = self.identification(c.identification())
             about = [self.qname(a.annotatedElement) for a in c.annotation()]
             locale = _unquote_string(c.locale.text) if c.locale else None
-            return M.Comment(name=name, short_name=short, about=about,
-                             locale=locale, body=c.body.text)
+            return M.Comment(
+                name=name, short_name=short, about=about, locale=locale, body=c.body.text
+            )
         if ctx.documentation() is not None:
             d = ctx.documentation()
             short, name = self.identification(d.identification())
             locale = _unquote_string(d.locale.text) if d.locale else None
-            return M.Documentation(name=name, short_name=short, locale=locale,
-                                   body=d.body.text)
+            return M.Documentation(name=name, short_name=short, locale=locale, body=d.body.text)
         if ctx.textualRepresentation() is not None:
             t = ctx.textualRepresentation()
             short, name = self.identification(t.identification())
             return M.TextualRepresentation(
-                name=name, short_name=short,
-                language=_unquote_string(t.language.text), body=t.body.text)
+                name=name,
+                short_name=short,
+                language=_unquote_string(t.language.text),
+                body=t.body.text,
+            )
         return self.metadata_feature(ctx.metadataFeature())
 
     def metadata_feature(self, ctx) -> M.MetadataUsage:
@@ -249,12 +268,10 @@ class _Builder:
 
         usage = M.MetadataUsage()
         for kw in ctx.prefixMetadataMember():
-            usage.metadata.append(self.chain_str(
-                kw.prefixMetadataUsage().ownedFeatureTyping()))
+            usage.metadata.append(self.chain_str(kw.prefixMetadataUsage().ownedFeatureTyping()))
         decl = ctx.metadataFeatureDeclaration()
         if decl.identification() is not None:
-            usage.short_name, usage.name = self.identification(
-                decl.identification())
+            usage.short_name, usage.name = self.identification(decl.identification())
         usage.typed_by = self.chain_str(decl.ownedFeatureTyping())
         usage.about = [self.qname(a.annotatedElement) for a in ctx.annotation()]
         self._fill_metadata_body(usage, ctx.metadataBody())
@@ -283,8 +300,7 @@ class _Builder:
         body = ctx.metadataBody()
         if body is not None and body.LBRACE() is not None:
             for member in body.metadataBodyUsageMember():
-                value.nested.append(
-                    self.metadata_body_usage(member.metadataBodyUsage()))
+                value.nested.append(self.metadata_body_usage(member.metadataBodyUsage()))
         return value
 
     def dependency(self, ctx) -> M.Element:
@@ -292,20 +308,24 @@ class _Builder:
         short, name = self.identification(decl.identification())
         dep = M.Dependency(name=name, short_name=short)
         for ann in ctx.prefixMetadataAnnotation():
-            dep.metadata.append(self.chain_str(
-                ann.prefixMetadataUsage().ownedFeatureTyping()))
+            dep.metadata.append(self.chain_str(ann.prefixMetadataUsage().ownedFeatureTyping()))
         dep.clients = [self.qname(q) for q in decl.client]
         dep.suppliers = [self.qname(q) for q in decl.supplier]
         return dep
 
     # -- definitions -----------------------------------------------------------
 
-    _DEFINITION_DISPATCH: ClassVar[tuple[
-        tuple[str, tuple[M.DefinitionKind, _BodyStyle] | None], ...]] = (
+    _DEFINITION_DISPATCH: ClassVar[
+        tuple[tuple[str, tuple[M.DefinitionKind, _BodyStyle] | None], ...]
+    ] = (
         # accessor -> (kind, body_style); None kind => special handler
-        ("package", None), ("libraryPackage", None), ("annotatingElement", None),
-        ("dependency", None), ("enumerationDefinition", None),
-        ("interfaceDefinition", None), ("viewDefinition", None),
+        ("package", None),
+        ("libraryPackage", None),
+        ("annotatingElement", None),
+        ("dependency", None),
+        ("enumerationDefinition", None),
+        ("interfaceDefinition", None),
+        ("viewDefinition", None),
         ("extendedDefinition", None),
         ("attributeDefinition", ("attribute", "definition")),
         ("occurrenceDefinition", ("occurrence", "definition")),
@@ -360,8 +380,7 @@ class _Builder:
     def package(self, ctx, library: bool) -> M.Element:
         pkg = M.Package(is_library=library)
         for kw in ctx.prefixMetadataMember():
-            pkg.metadata.append(self.chain_str(
-                kw.prefixMetadataUsage().ownedFeatureTyping()))
+            pkg.metadata.append(self.chain_str(kw.prefixMetadataUsage().ownedFeatureTyping()))
         if library:
             pkg.is_standard = ctx.isStandard is not None
         short, name = self.identification(ctx.packageDeclaration().identification())
@@ -385,8 +404,7 @@ class _Builder:
             typing = kw.prefixMetadataMember().prefixMetadataUsage().ownedFeatureTyping()
             defn.metadata.append(self.chain_str(typing))
 
-    def standard_definition(self, ctx, kind: M.DefinitionKind,
-                            body_style: _BodyStyle) -> M.Element:
+    def standard_definition(self, ctx, kind: M.DefinitionKind, body_style: _BodyStyle) -> M.Element:
         defn = M.Definition(kind=kind)
         for prefix_accessor in ("occurrenceDefinitionPrefix", "definitionPrefix"):
             prefix = self._get(ctx, prefix_accessor)
@@ -431,8 +449,7 @@ class _Builder:
         defn.short_name, defn.name = short, name
         sub = decl_ctx.subclassificationPart()
         if sub is not None:
-            defn.supers = [self.qname(s.superClassifier)
-                           for s in sub.ownedSubclassification()]
+            defn.supers = [self.qname(s.superClassifier) for s in sub.ownedSubclassification()]
 
     def enumeration_definition(self, ctx) -> M.Element:
         defn = M.EnumerationDefinition()
@@ -448,9 +465,9 @@ class _Builder:
                     defn.add(self.annotating_element(child.annotatingElement()))
                 elif rule == "EnumerationUsageMemberContext":
                     literal = self._usage_from_usage_ctx(
-                        "enum_literal", child.enumeratedValue().usage())
-                    literal.metadata = self._metadata_keywords(
-                        child.enumeratedValue())
+                        "enum_literal", child.enumeratedValue().usage()
+                    )
+                    literal.metadata = self._metadata_keywords(child.enumeratedValue())
                     literal.visibility = self.visibility(child.memberPrefix())
                     defn.add(literal)
         return defn
@@ -492,8 +509,8 @@ class _Builder:
             sub = m.interfaceOccurrenceUsageElement()
             if sub.defaultInterfaceEnd() is not None:
                 element = self._usage_from_usage_ctx(
-                    "feature", sub.defaultInterfaceEnd().usage(),
-                    {"is_end": True})
+                    "feature", sub.defaultInterfaceEnd().usage(), {"is_end": True}
+                )
             else:
                 element = self.occurrence_usage_element(sub)
             element.visibility = self.visibility(m.memberPrefix())
@@ -511,8 +528,7 @@ class _Builder:
         if body.LBRACE() is not None:
             for item in body.viewDefinitionBodyItem():
                 if not self._view_body_common(defn, item):
-                    self._definition_body_item(
-                        defn, item.definitionBodyItem())
+                    self._definition_body_item(defn, item.definitionBodyItem())
         return defn
 
     def _view_body_common(self, ns: M.Namespace, item) -> bool:
@@ -656,8 +672,7 @@ class _Builder:
     def structure_usage_element(self, ctx) -> M.Element:
         element = self._try_structure_usage(ctx)
         if element is None:
-            raise BuildError(
-                f"unhandled structure usage: {self.src(ctx)!r}")
+            raise BuildError(f"unhandled structure usage: {self.src(ctx)!r}")
         return element
 
     def _try_structure_usage(self, ctx) -> M.Element | None:
@@ -675,8 +690,7 @@ class _Builder:
         if sub is not None:
             flags = self._basic_usage_prefix_flags(sub.basicUsagePrefix())
             flags["is_individual"] = sub.INDIVIDUAL() is not None
-            flags["portion_kind"] = cast("M.PortionKind",
-                                         sub.portionKindToken().getText())
+            flags["portion_kind"] = cast("M.PortionKind", sub.portionKindToken().getText())
             return self._usage_from_usage_ctx(flags["portion_kind"], sub.usage(), flags)
         sub = self._get(ctx, "eventOccurrenceUsage")
         if sub is not None:
@@ -699,12 +713,14 @@ class _Builder:
             return self.allocation_usage(sub)
         sub = self._get(ctx, "flowUsage")
         if sub is not None:
-            return self.flow_usage(sub.flowDeclaration(), sub.definitionBody(),
-                                   sub.occurrenceUsagePrefix(), "flow")
+            return self.flow_usage(
+                sub.flowDeclaration(), sub.definitionBody(), sub.occurrenceUsagePrefix(), "flow"
+            )
         sub = self._get(ctx, "successionFlowUsage")
         if sub is not None:
-            flow = self.flow_usage(sub.flowDeclaration(), sub.definitionBody(),
-                                   sub.occurrenceUsagePrefix(), "flow")
+            flow = self.flow_usage(
+                sub.flowDeclaration(), sub.definitionBody(), sub.occurrenceUsagePrefix(), "flow"
+            )
             flow.is_succession = True
             return flow
         sub = self._get(ctx, "message")
@@ -715,48 +731,56 @@ class _Builder:
     def behavior_usage_element(self, ctx) -> M.Element:
         if ctx.actionUsage() is not None:
             c = ctx.actionUsage()
-            usage = self._behavioral_usage("action", c.occurrenceUsagePrefix(),
-                                           c.actionUsageDeclaration())
+            usage = self._behavioral_usage(
+                "action", c.occurrenceUsagePrefix(), c.actionUsageDeclaration()
+            )
             self._fill_action_body(usage, c.actionBody())
             return usage
         if ctx.calculationUsage() is not None:
             c = ctx.calculationUsage()
             usage = self._behavioral_usage(
-                "calc", c.occurrenceUsagePrefix(),
-                c.calculationUsageDeclaration().actionUsageDeclaration())
+                "calc",
+                c.occurrenceUsagePrefix(),
+                c.calculationUsageDeclaration().actionUsageDeclaration(),
+            )
             self._fill_calculation_body(usage, c.calculationBody())
             return usage
         if ctx.constraintUsage() is not None:
             c = ctx.constraintUsage()
-            usage = self._behavioral_usage("constraint", c.occurrenceUsagePrefix(),
-                                           c.constraintUsageDeclaration())
+            usage = self._behavioral_usage(
+                "constraint", c.occurrenceUsagePrefix(), c.constraintUsageDeclaration()
+            )
             self._fill_calculation_body(usage, c.calculationBody())
             return usage
         if ctx.assertConstraintUsage() is not None:
             return self.assert_constraint_usage(ctx.assertConstraintUsage())
         if ctx.requirementUsage() is not None:
             c = ctx.requirementUsage()
-            usage = self._behavioral_usage("requirement", c.occurrenceUsagePrefix(),
-                                           c.constraintUsageDeclaration())
+            usage = self._behavioral_usage(
+                "requirement", c.occurrenceUsagePrefix(), c.constraintUsageDeclaration()
+            )
             self._fill_requirement_body(usage, c.requirementBody())
             return usage
         if ctx.concernUsage() is not None:
             c = ctx.concernUsage()
-            usage = self._behavioral_usage("concern", c.occurrenceUsagePrefix(),
-                                           c.constraintUsageDeclaration())
+            usage = self._behavioral_usage(
+                "concern", c.occurrenceUsagePrefix(), c.constraintUsageDeclaration()
+            )
             self._fill_requirement_body(usage, c.requirementBody())
             return usage
         for accessor, kind in _CASE_USAGES:
             sub = getattr(ctx, accessor)()
             if sub is not None:
-                usage = self._behavioral_usage(kind, sub.occurrenceUsagePrefix(),
-                                               sub.constraintUsageDeclaration())
+                usage = self._behavioral_usage(
+                    kind, sub.occurrenceUsagePrefix(), sub.constraintUsageDeclaration()
+                )
                 self._fill_case_body(usage, sub.caseBody())
                 return usage
         if ctx.stateUsage() is not None:
             c = ctx.stateUsage()
-            usage = self._behavioral_usage("state", c.occurrenceUsagePrefix(),
-                                           c.actionUsageDeclaration())
+            usage = self._behavioral_usage(
+                "state", c.occurrenceUsagePrefix(), c.actionUsageDeclaration()
+            )
             body = c.stateUsageBody()
             usage.is_parallel = body.PARALLEL() is not None
             self._fill_state_body(usage, body)
@@ -765,15 +789,16 @@ class _Builder:
             return self.exhibit_state_usage(ctx.exhibitStateUsage())
         if ctx.viewpointUsage() is not None:
             c = ctx.viewpointUsage()
-            usage = self._behavioral_usage("viewpoint", c.occurrenceUsagePrefix(),
-                                           c.constraintUsageDeclaration())
+            usage = self._behavioral_usage(
+                "viewpoint", c.occurrenceUsagePrefix(), c.constraintUsageDeclaration()
+            )
             self._fill_requirement_body(usage, c.requirementBody())
             return usage
         if ctx.performActionUsage() is not None:
             c = ctx.performActionUsage()
-            return self.perform_action(c.performActionUsageDeclaration(),
-                                       c.actionBody(),
-                                       c.occurrenceUsagePrefix())
+            return self.perform_action(
+                c.performActionUsageDeclaration(), c.actionBody(), c.occurrenceUsagePrefix()
+            )
         if ctx.includeUseCaseUsage() is not None:
             return self.include_use_case_usage(ctx.includeUseCaseUsage())
         if ctx.satisfyRequirementUsage() is not None:
@@ -782,8 +807,7 @@ class _Builder:
 
     def include_use_case_usage(self, ctx) -> M.Usage:
         usage = M.Usage(kind="include")
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
             if ctx.featureSpecializationPart() is not None:
@@ -798,8 +822,7 @@ class _Builder:
 
     def satisfy_requirement_usage(self, ctx) -> M.SatisfyUsage:
         usage = M.SatisfyUsage()
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         usage.is_assert = ctx.ASSERT() is not None
         usage.is_negated = ctx.NOT() is not None
         if ctx.ownedReferenceSubsetting() is not None:
@@ -812,17 +835,20 @@ class _Builder:
         if ctx.valuePart() is not None:
             usage.value = self.feature_value(ctx.valuePart().featureValue())
         if ctx.satisfactionSubjectMember() is not None:
-            chain = (ctx.satisfactionSubjectMember().satisfactionParameter()
-                     .satisfactionFeatureValue().satisfactionReferenceExpression()
-                     .featureChainMember())
+            chain = (
+                ctx.satisfactionSubjectMember()
+                .satisfactionParameter()
+                .satisfactionFeatureValue()
+                .satisfactionReferenceExpression()
+                .featureChainMember()
+            )
             usage.by = self.chain_str(chain)
         self._fill_requirement_body(usage, ctx.requirementBody())
         return usage
 
     def view_usage(self, ctx) -> M.Usage:
         usage = M.Usage(kind="view")
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         if ctx.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, ctx.usageDeclaration())
         if ctx.valuePart() is not None:
@@ -839,8 +865,11 @@ class _Builder:
         if item.expose() is not None:
             e = item.expose()
             exp = M.Expose()
-            decl = (e.membershipExpose().membershipImport()
-                    if e.membershipExpose() is not None else None)
+            decl = (
+                e.membershipExpose().membershipImport()
+                if e.membershipExpose() is not None
+                else None
+            )
             if decl is not None:
                 exp.target = self.qname(decl.importedMembership)
                 exp.is_recursive = decl.isRecursive is not None
@@ -857,8 +886,7 @@ class _Builder:
                         exp.target = self.qname(fp.qualifiedName())
                         exp.is_namespace = True
                         exp.is_recursive = fp.isRecursive is not None
-                    exp.filters = [self.expr(m.ownedExpression())
-                                   for m in fp.filterPackageMember()]
+                    exp.filters = [self.expr(m.ownedExpression()) for m in fp.filterPackageMember()]
                 else:
                     exp.target = self.qname(ni.qualifiedName())
                     exp.is_namespace = True
@@ -871,8 +899,7 @@ class _Builder:
         if item.requirementConstraintMember() is not None:
             m = item.requirementConstraintMember()
             kind = cast("M.ConstraintKind", m.requirementKind().getText())
-            usage = self.requirement_constraint_usage(
-                m.requirementConstraintUsage(), kind)
+            usage = self.requirement_constraint_usage(m.requirementConstraintUsage(), kind)
             usage.visibility = self.visibility(m.memberPrefix())
             ns.add(usage)
             return
@@ -880,8 +907,7 @@ class _Builder:
 
     def interface_usage(self, ctx) -> M.InterfaceUsage:
         usage = M.InterfaceUsage()
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         decl = ctx.interfaceUsageDeclaration()
         if decl.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, decl.usageDeclaration())
@@ -890,8 +916,11 @@ class _Builder:
         part = decl.interfacePart()
         if part is not None:
             binary = part.binaryInterfacePart()
-            members = (binary.interfaceEndMember() if binary is not None
-                       else part.naryInterfacePart().interfaceEndMember())
+            members = (
+                binary.interfaceEndMember()
+                if binary is not None
+                else part.naryInterfacePart().interfaceEndMember()
+            )
             usage.ends = [self.connector_end(m.interfaceEnd()) for m in members]
         body = ctx.interfaceBody()
         if body.LBRACE() is not None:
@@ -901,22 +930,23 @@ class _Builder:
 
     def allocation_usage(self, ctx) -> M.AllocationUsage:
         usage = M.AllocationUsage()
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         decl = ctx.allocationUsageDeclaration()
         if decl.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, decl.usageDeclaration())
         part = decl.connectorPart()
         if part is not None:
             binary = part.binaryConnectorPart()
-            members = (binary.connectorEndMember() if binary is not None
-                       else part.naryConnectorPart().connectorEndMember())
+            members = (
+                binary.connectorEndMember()
+                if binary is not None
+                else part.naryConnectorPart().connectorEndMember()
+            )
             usage.ends = [self.connector_end(m.connectorEnd()) for m in members]
         self._fill_definition_body(usage, ctx.usageBody().definitionBody())
         return usage
 
-    def flow_usage(self, decl_ctx, body_ctx, prefix_ctx,
-                   kind: M.UsageKind) -> M.FlowUsage:
+    def flow_usage(self, decl_ctx, body_ctx, prefix_ctx, kind: M.UsageKind) -> M.FlowUsage:
         usage = M.FlowUsage(kind=kind)
         self._apply_flags(usage, self._occurrence_usage_prefix_flags(prefix_ctx))
         ends = decl_ctx.flowEndMember()
@@ -924,11 +954,9 @@ class _Builder:
             if decl_ctx.usageDeclaration() is not None:
                 self._apply_usage_declaration(usage, decl_ctx.usageDeclaration())
             if decl_ctx.valuePart() is not None:
-                usage.value = self.feature_value(
-                    decl_ctx.valuePart().featureValue())
+                usage.value = self.feature_value(decl_ctx.valuePart().featureValue())
         if decl_ctx.flowPayloadFeatureMember() is not None:
-            payload = (decl_ctx.flowPayloadFeatureMember().flowPayloadFeature()
-                       .payloadFeature())
+            payload = decl_ctx.flowPayloadFeatureMember().flowPayloadFeature().payloadFeature()
             usage.payload = self._payload_text(payload)
         if len(ends) == 2:
             usage.source = self._flow_end(ends[0].flowEnd())
@@ -944,8 +972,7 @@ class _Builder:
                 parts.append(self.qname(sub.qualifiedName()))
             else:
                 prefix = sub.featureChainPrefix()
-                parts.extend(self.qname(c.qualifiedName())
-                             for c in prefix.ownedFeatureChaining())
+                parts.extend(self.qname(c.qualifiedName()) for c in prefix.ownedFeatureChaining())
         feature = ctx.flowFeatureMember().flowFeature().flowFeatureRedefinition()
         parts.append(self.qname(feature.redefinedFeature))
         return ".".join(parts)
@@ -965,23 +992,19 @@ class _Builder:
 
     def message_usage(self, ctx) -> M.FlowUsage:
         usage = M.FlowUsage(kind="message")
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         decl = ctx.messageDeclaration()
         if decl.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, decl.usageDeclaration())
         if decl.valuePart() is not None:
             usage.value = self.feature_value(decl.valuePart().featureValue())
         if decl.flowPayloadFeatureMember() is not None:
-            payload = (decl.flowPayloadFeatureMember().flowPayloadFeature()
-                       .payloadFeature())
+            payload = decl.flowPayloadFeatureMember().flowPayloadFeature().payloadFeature()
             usage.payload = self._payload_text(payload)
         events = decl.messageEventMember()
         if len(events) == 2:
-            usage.source = self.chain_str(
-                events[0].messageEvent().ownedReferenceSubsetting())
-            usage.target_end = self.chain_str(
-                events[1].messageEvent().ownedReferenceSubsetting())
+            usage.source = self.chain_str(events[0].messageEvent().ownedReferenceSubsetting())
+            usage.target_end = self.chain_str(events[1].messageEvent().ownedReferenceSubsetting())
         self._fill_definition_body(usage, ctx.definitionBody())
         return usage
 
@@ -999,8 +1022,7 @@ class _Builder:
             element = self._try_structure_usage(ctx)
         if element is None and self._get(ctx, "behaviorUsageElement") is not None:
             element = self.behavior_usage_element(ctx.behaviorUsageElement())
-        return element if element is not None else self.unsupported(
-            ctx, "variantUsageElement")
+        return element if element is not None else self.unsupported(ctx, "variantUsageElement")
 
     # -- prefix flag extraction --------------------------------------------------
 
@@ -1009,8 +1031,7 @@ class _Builder:
         if ctx is None:
             return flags
         if ctx.featureDirection() is not None:
-            flags["direction"] = cast("M.Direction",
-                                      ctx.featureDirection().getText())
+            flags["direction"] = cast("M.Direction", ctx.featureDirection().getText())
         if ctx.DERIVED() is not None:
             flags["is_derived"] = True
         if ctx.ABSTRACT() is not None:
@@ -1057,8 +1078,7 @@ class _Builder:
         if ctx.INDIVIDUAL() is not None:
             flags["is_individual"] = True
         if ctx.portionKindToken() is not None:
-            flags["portion_kind"] = cast("M.PortionKind",
-                                         ctx.portionKindToken().getText())
+            flags["portion_kind"] = cast("M.PortionKind", ctx.portionKindToken().getText())
         flags["metadata"] = self._metadata_keywords(ctx)
         return flags
 
@@ -1069,8 +1089,9 @@ class _Builder:
 
     # -- usage declaration / completion --------------------------------------------
 
-    def _usage_from_usage_ctx(self, kind: M.UsageKind, usage_ctx,
-                              flags: dict | None = None) -> M.Usage:
+    def _usage_from_usage_ctx(
+        self, kind: M.UsageKind, usage_ctx, flags: dict | None = None
+    ) -> M.Usage:
         usage = M.Usage(kind=kind)
         self._apply_flags(usage, flags or {})
         self._apply_usage_declaration(usage, usage_ctx.usageDeclaration())
@@ -1112,8 +1133,7 @@ class _Builder:
             subs = [s.subsets().ownedSubsetting(), *s.ownedSubsetting()]
             usage.subsets.extend(self.chain_str(x) for x in subs)
         elif fs_ctx.references() is not None:
-            usage.references = self.chain_str(
-                fs_ctx.references().ownedReferenceSubsetting())
+            usage.references = self.chain_str(fs_ctx.references().ownedReferenceSubsetting())
         elif fs_ctx.crosses() is not None:
             usage.crosses = self.chain_str(fs_ctx.crosses().ownedCrossSubsetting())
         elif fs_ctx.redefinitions() is not None:
@@ -1126,8 +1146,7 @@ class _Builder:
         owned = mp_ctx.ownedMultiplicity()
         if owned is not None:
             rng = owned.multiplicityRange()
-            bounds = [self._multiplicity_bound(m)
-                      for m in rng.multiplicityExpressionMember()]
+            bounds = [self._multiplicity_bound(m) for m in rng.multiplicityExpressionMember()]
             if len(bounds) == 2:
                 mult.lower, mult.upper = bounds
             else:
@@ -1140,8 +1159,9 @@ class _Builder:
         if ctx.literalExpression() is not None:
             return self.literal(ctx.literalExpression())
         ref = ctx.featureReferenceExpression()
-        return A.FeatureRef(self.qname_parts(
-            ref.featureReferenceMember().featureReference().qualifiedName()))
+        return A.FeatureRef(
+            self.qname_parts(ref.featureReferenceMember().featureReference().qualifiedName())
+        )
 
     def feature_value(self, ctx) -> M.FeatureValue:
         return M.FeatureValue(
@@ -1152,8 +1172,7 @@ class _Builder:
 
     # -- behavioral usages ------------------------------------------------------------
 
-    def _behavioral_usage(self, kind: M.UsageKind, prefix_ctx,
-                          decl_ctx) -> M.Usage:
+    def _behavioral_usage(self, kind: M.UsageKind, prefix_ctx, decl_ctx) -> M.Usage:
         """action/calc/constraint/requirement/case usages share this shape."""
 
         usage = M.Usage(kind=kind)
@@ -1161,14 +1180,12 @@ class _Builder:
         if decl_ctx is not None:
             self._apply_usage_declaration(usage, decl_ctx.usageDeclaration())
             if decl_ctx.valuePart() is not None:
-                usage.value = self.feature_value(
-                    decl_ctx.valuePart().featureValue())
+                usage.value = self.feature_value(decl_ctx.valuePart().featureValue())
         return usage
 
     def assert_constraint_usage(self, ctx) -> M.Usage:
         usage = M.Usage(kind="constraint", constraint_kind="assert")
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         usage.is_negated = ctx.NOT() is not None
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
@@ -1185,8 +1202,7 @@ class _Builder:
 
     def exhibit_state_usage(self, ctx) -> M.Usage:
         usage = M.Usage(kind="state", is_exhibit=True)
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
             if ctx.featureSpecializationPart() is not None:
@@ -1207,7 +1223,8 @@ class _Builder:
         if decl_ctx is not None and decl_ctx.ownedReferenceSubsetting() is not None:
             target = self.chain_str(decl_ctx.ownedReferenceSubsetting())
             if decl_ctx.featureSpecializationPart() is not None or (
-                    body_ctx is not None and body_ctx.LBRACE() is not None):
+                body_ctx is not None and body_ctx.LBRACE() is not None
+            ):
                 inline = M.Usage(kind="action")
                 inline.subsets.append(target)
                 if decl_ctx.featureSpecializationPart() is not None:
@@ -1237,8 +1254,7 @@ class _Builder:
 
     def connection_usage(self, ctx) -> M.Element:
         usage = M.ConnectionUsage()
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         if ctx.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, ctx.usageDeclaration())
         if ctx.valuePart() is not None:
@@ -1246,8 +1262,11 @@ class _Builder:
         part = ctx.connectorPart()
         if part is not None:
             binary = part.binaryConnectorPart()
-            members = (binary.connectorEndMember() if binary is not None
-                       else part.naryConnectorPart().connectorEndMember())
+            members = (
+                binary.connectorEndMember()
+                if binary is not None
+                else part.naryConnectorPart().connectorEndMember()
+            )
             usage.ends = [self.connector_end(m.connectorEnd()) for m in members]
         self._fill_definition_body(usage, ctx.usageBody().definitionBody())
         return usage
@@ -1257,8 +1276,7 @@ class _Builder:
         self._apply_flags(usage, self._usage_prefix_flags(ctx.usagePrefix()))
         if ctx.usageDeclaration() is not None:
             self._apply_usage_declaration(usage, ctx.usageDeclaration())
-        ends = [self.connector_end(m.connectorEnd())
-                for m in ctx.connectorEndMember()]
+        ends = [self.connector_end(m.connectorEnd()) for m in ctx.connectorEndMember()]
         usage.source_end, usage.target_end = ends[0], ends[1]
         self._fill_definition_body(usage, ctx.usageBody().definitionBody())
         return usage
@@ -1266,18 +1284,15 @@ class _Builder:
     def succession_as_usage(self, ctx) -> M.Element:
         succession = M.Succession()
         if ctx.usageDeclaration() is not None:
-            short, name = self.identification(
-                ctx.usageDeclaration().identification())
+            short, name = self.identification(ctx.usageDeclaration().identification())
             succession.short_name, succession.name = short, name
-        ends = [self.connector_end(m.connectorEnd())
-                for m in ctx.connectorEndMember()]
+        ends = [self.connector_end(m.connectorEnd()) for m in ctx.connectorEndMember()]
         succession.source, succession.target = ends[0].target, ends[1].target
         return succession
 
     def event_occurrence_usage(self, ctx) -> M.Usage:
         usage = M.Usage(kind="event")
-        self._apply_flags(usage, self._occurrence_usage_prefix_flags(
-            ctx.occurrenceUsagePrefix()))
+        self._apply_flags(usage, self._occurrence_usage_prefix_flags(ctx.occurrenceUsagePrefix()))
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
             if ctx.featureSpecializationPart() is not None:
@@ -1309,15 +1324,15 @@ class _Builder:
             target = self.qname(init.memberFeature)
             ns.add(M.InitialNode(target=target))
             for succ in item.actionTargetSuccessionMember():
-                ns.add(self.action_target_succession(
-                    succ.actionTargetSuccession(), source=target))
+                ns.add(self.action_target_succession(succ.actionTargetSuccession(), source=target))
             return
         if item.guardedSuccessionMember() is not None:
             g = item.guardedSuccessionMember().guardedSuccession()
             succession = M.Succession(
                 source=self.chain_str(g.featureChainMember()),
                 guard=self.expr(g.guardExpressionMember().ownedExpression()),
-                target=self._transition_target(g.transitionSuccessionMember()))
+                target=self._transition_target(g.transitionSuccessionMember()),
+            )
             if g.usageDeclaration() is not None:
                 short, name = self.identification(g.usageDeclaration().identification())
                 succession.short_name, succession.name = short, name
@@ -1338,8 +1353,7 @@ class _Builder:
             ns.add(element)
         source_name = element.name if element is not None else None
         for succ in item.actionTargetSuccessionMember():
-            ns.add(self.action_target_succession(
-                succ.actionTargetSuccession(), source=source_name))
+            ns.add(self.action_target_succession(succ.actionTargetSuccession(), source=source_name))
 
     def _non_behavior_body_item(self, ns: M.Namespace, ctx) -> None:
         if ctx.import_() is not None:
@@ -1373,18 +1387,21 @@ class _Builder:
             t = ctx.targetSuccession()
             return M.Succession(
                 source=source,
-                target=self.connector_end(
-                    t.connectorEndMember().connectorEnd()).target)
+                target=self.connector_end(t.connectorEndMember().connectorEnd()).target,
+            )
         if ctx.guardedTargetSuccession() is not None:
             g = ctx.guardedTargetSuccession()
             return M.Succession(
                 source=source,
                 guard=self.expr(g.guardExpressionMember().ownedExpression()),
-                target=self._transition_target(g.transitionSuccessionMember()))
+                target=self._transition_target(g.transitionSuccessionMember()),
+            )
         d = ctx.defaultTargetSuccession()
         return M.Succession(
-            source=source, is_else=True,
-            target=self._transition_target(d.transitionSuccessionMember()))
+            source=source,
+            is_else=True,
+            target=self._transition_target(d.transitionSuccessionMember()),
+        )
 
     def _transition_target(self, ctx) -> str:
         connector_end = ctx.transitionSuccession().connectorEndMember().connectorEnd()
@@ -1420,8 +1437,7 @@ class _Builder:
             sub = getattr(ctx, accessor)()
             if sub is not None:
                 node = M.ControlNode(kind=kind)
-                short, name = self.identification(
-                    sub.usageDeclaration().identification())
+                short, name = self.identification(sub.usageDeclaration().identification())
                 node.short_name, node.name = short, name
                 return node
         raise BuildError("unknown control node")
@@ -1441,12 +1457,10 @@ class _Builder:
         send = M.SendAction()
         if ctx.actionNodeUsageDeclaration() is not None:
             # LOCAL PATCH form: `action publish send ...` (see grammar patch 8)
-            send.short_name, send.name = self._decl_name(
-                ctx.actionNodeUsageDeclaration())
+            send.short_name, send.name = self._decl_name(ctx.actionNodeUsageDeclaration())
         elif ctx.actionUsageDeclaration() is not None:
             decl = ctx.actionUsageDeclaration()
-            short, name = self.identification(
-                decl.usageDeclaration().identification())
+            short, name = self.identification(decl.usageDeclaration().identification())
             send.short_name, send.name = short, name
         if ctx.nodeParameterMember() is not None:
             send.payload = self.node_parameter(ctx.nodeParameterMember())
@@ -1492,13 +1506,15 @@ class _Builder:
         trigger = ctx.triggerValuePart().triggerFeatureValue().triggerExpression()
         accept.trigger_kind = cast("M.TriggerKind", trigger.kind.text)
         if trigger.argumentMember() is not None:
-            accept.trigger = self.expr(
-                trigger.argumentMember().argument().argumentValue().value)
+            accept.trigger = self.expr(trigger.argumentMember().argument().argumentValue().value)
         else:
             arg = trigger.argumentExpressionMember().argumentExpression()
             accept.trigger = self.expr(
-                arg.argumentExpressionValue().ownedExpressionReference()
-                .ownedExpressionMember().ownedExpression())
+                arg.argumentExpressionValue()
+                .ownedExpressionReference()
+                .ownedExpressionMember()
+                .ownedExpression()
+            )
 
     def _payload_feature_into(self, accept: M.AcceptAction, pf) -> None:
         if pf.identification() is not None:
@@ -1506,8 +1522,7 @@ class _Builder:
         if pf.ownedFeatureTyping() is not None:
             accept.payload_types.append(self.chain_str(pf.ownedFeatureTyping()))
         if pf.payloadFeatureSpecializationPart() is not None:
-            self._payload_types_from_fsp(
-                accept, pf.payloadFeatureSpecializationPart())
+            self._payload_types_from_fsp(accept, pf.payloadFeatureSpecializationPart())
 
     def _payload_types_from_fsp(self, accept: M.AcceptAction, fsp_ctx) -> None:
         probe = M.Usage()
@@ -1523,7 +1538,8 @@ class _Builder:
         binding = ctx.assignmentTargetMember().assignmentTargetParameter()
         if binding.assignmentTargetBinding() is not None:
             expr = self.non_feature_chain_primary(
-                binding.assignmentTargetBinding().nonFeatureChainPrimaryExpression())
+                binding.assignmentTargetBinding().nonFeatureChainPrimaryExpression()
+            )
             target_parts.append(expr.to_text())
         target_parts.append(self.chain_str(ctx.featureChainMember()))
         assign.target = ".".join(target_parts)
@@ -1534,17 +1550,17 @@ class _Builder:
         node = M.IfAction()
         node.short_name, node.name = self._decl_name(
             ctx.actionNodePrefix().actionNodeUsageDeclaration()
-            if ctx.actionNodePrefix() is not None else None)
-        node.condition = self.expr(
-            ctx.expressionParameterMember().ownedExpression())
+            if ctx.actionNodePrefix() is not None
+            else None
+        )
+        node.condition = self.expr(ctx.expressionParameterMember().ownedExpression())
         bodies = ctx.actionBodyParameterMember()
         node.then_body = self.action_body_parameter(bodies[0])
         if ctx.ELSE() is not None:
             if len(bodies) > 1:
                 node.else_body = self.action_body_parameter(bodies[1])
             else:
-                node.else_body = self.if_node(
-                    ctx.ifNodeParameterMember().ifNode())
+                node.else_body = self.if_node(ctx.ifNodeParameterMember().ifNode())
         return node
 
     def action_body_parameter(self, member_ctx) -> list[M.Element]:
@@ -1569,8 +1585,7 @@ class _Builder:
     def for_node(self, ctx) -> M.ForLoop:
         node = M.ForLoop()
         decl = ctx.forVariableDeclarationMember().forVariableDeclaration()
-        _, name = self.identification(
-            decl.usageDeclaration().identification())
+        _, name = self.identification(decl.usageDeclaration().identification())
         node.var = name or ""
         node.seq = self.node_parameter(ctx.nodeParameterMember())
         node.body = self.action_body_parameter(ctx.actionBodyParameterMember())
@@ -1578,8 +1593,7 @@ class _Builder:
 
     # -- calculation bodies --------------------------------------------------------------------
 
-    def _fill_calculation_body(self, ns: M.Definition | M.Usage,
-                               body_ctx) -> None:
+    def _fill_calculation_body(self, ns: M.Definition | M.Usage, body_ctx) -> None:
         if body_ctx is None or body_ctx.LBRACE() is None:
             return
         part = body_ctx.calculationBodyPart()
@@ -1593,8 +1607,7 @@ class _Builder:
                     element.direction = "return"
                 ns.add(element)
         if part.resultExpressionMember() is not None:
-            ns.result = self.expr(
-                part.resultExpressionMember().ownedExpression())
+            ns.result = self.expr(part.resultExpressionMember().ownedExpression())
 
     # -- requirement / case bodies ---------------------------------------------------------------
 
@@ -1615,8 +1628,7 @@ class _Builder:
         elif item.requirementConstraintMember() is not None:
             m = item.requirementConstraintMember()
             kind = cast("M.ConstraintKind", m.requirementKind().getText())
-            usage = self.requirement_constraint_usage(
-                m.requirementConstraintUsage(), kind)
+            usage = self.requirement_constraint_usage(m.requirementConstraintUsage(), kind)
             usage.visibility = self.visibility(m.memberPrefix())
             ns.add(usage)
         elif item.actorMember() is not None:
@@ -1626,8 +1638,7 @@ class _Builder:
             ns.add(usage)
         elif item.stakeholderMember() is not None:
             m = item.stakeholderMember()
-            usage = self._usage_from_usage_ctx(
-                "stakeholder", m.stakeholderUsage().usage())
+            usage = self._usage_from_usage_ctx("stakeholder", m.stakeholderUsage().usage())
             usage.visibility = self.visibility(m.memberPrefix())
             ns.add(usage)
         else:  # framedConcernMember / requirementVerificationMember
@@ -1670,8 +1681,7 @@ class _Builder:
         usage.visibility = self.visibility(m.memberPrefix())
         ns.add(usage)
 
-    def requirement_constraint_usage(self, ctx,
-                                     kind: M.ConstraintKind) -> M.Usage:
+    def requirement_constraint_usage(self, ctx, kind: M.ConstraintKind) -> M.Usage:
         usage = M.Usage(kind="constraint", constraint_kind=kind)
         if ctx.ownedReferenceSubsetting() is not None:
             usage.subsets.append(self.chain_str(ctx.ownedReferenceSubsetting()))
@@ -1723,8 +1733,7 @@ class _Builder:
                     element.direction = "return"
                 ns.add(element)
         if body_ctx.resultExpressionMember() is not None:
-            ns.result = self.expr(
-                body_ctx.resultExpressionMember().ownedExpression())
+            ns.result = self.expr(body_ctx.resultExpressionMember().ownedExpression())
 
     # -- state bodies ------------------------------------------------------------------------------
 
@@ -1739,25 +1748,21 @@ class _Builder:
             self._non_behavior_body_item(ns, item.nonBehaviorBodyItem())
             return
         if item.entryActionMember() is not None:
-            action = self.state_action_usage(
-                item.entryActionMember().stateActionUsage())
+            action = self.state_action_usage(item.entryActionMember().stateActionUsage())
             ns.add(M.StateAction(kind="entry", action=action))
             for entry in item.entryTransitionMember():
                 ns.add(self.entry_transition(entry))
             return
         if item.doActionMember() is not None:
-            action = self.state_action_usage(
-                item.doActionMember().stateActionUsage())
+            action = self.state_action_usage(item.doActionMember().stateActionUsage())
             ns.add(M.StateAction(kind="do", action=action))
             return
         if item.exitActionMember() is not None:
-            action = self.state_action_usage(
-                item.exitActionMember().stateActionUsage())
+            action = self.state_action_usage(item.exitActionMember().stateActionUsage())
             ns.add(M.StateAction(kind="exit", action=action))
             return
         if item.transitionUsageMember() is not None:
-            ns.add(self.transition_usage(
-                item.transitionUsageMember().transitionUsage()))
+            ns.add(self.transition_usage(item.transitionUsageMember().transitionUsage()))
             return
         # sourceSuccessionMember? behaviorUsageMember targetTransitionUsageMember*
         m = item.behaviorUsageMember()
@@ -1765,8 +1770,7 @@ class _Builder:
         element.visibility = self.visibility(m.memberPrefix())
         ns.add(element)
         for tm in item.targetTransitionUsageMember():
-            ns.add(self.target_transition_usage(
-                tm.targetTransitionUsage(), source=element.name))
+            ns.add(self.target_transition_usage(tm.targetTransitionUsage(), source=element.name))
 
     def state_action_usage(self, ctx) -> M.Element | None:
         if ctx.emptyActionUsage() is not None:
@@ -1787,14 +1791,11 @@ class _Builder:
         transition = M.TransitionUsage(source=M.ENTRY_SOURCE)
         if ctx.guardedTargetSuccession() is not None:
             g = ctx.guardedTargetSuccession()
-            transition.guard = self.expr(
-                g.guardExpressionMember().ownedExpression())
-            transition.target = self._transition_target(
-                g.transitionSuccessionMember())
+            transition.guard = self.expr(g.guardExpressionMember().ownedExpression())
+            transition.target = self._transition_target(g.transitionSuccessionMember())
         else:
             t = ctx.targetSuccession()
-            transition.target = self.connector_end(
-                t.connectorEndMember().connectorEnd()).target
+            transition.target = self.connector_end(t.connectorEndMember().connectorEnd()).target
         return transition
 
     def _trigger_action(self, trigger_member_ctx) -> M.AcceptAction:
@@ -1824,15 +1825,13 @@ class _Builder:
     def transition_usage(self, ctx) -> M.TransitionUsage:
         transition = M.TransitionUsage()
         if ctx.usageDeclaration() is not None:
-            short, name = self.identification(
-                ctx.usageDeclaration().identification())
+            short, name = self.identification(ctx.usageDeclaration().identification())
             transition.short_name, transition.name = short, name
         transition.source = self.chain_str(ctx.featureChainMember())
         if ctx.triggerActionMember() is not None:
             transition.trigger = self._trigger_action(ctx.triggerActionMember())
         if ctx.guardExpressionMember() is not None:
-            transition.guard = self.expr(
-                ctx.guardExpressionMember().ownedExpression())
+            transition.guard = self.expr(ctx.guardExpressionMember().ownedExpression())
         if ctx.effectBehaviorMember() is not None:
             transition.effect = self.effect_behavior(ctx.effectBehaviorMember())
         transition.target = self._transition_target(ctx.transitionSuccessionMember())
@@ -1843,68 +1842,72 @@ class _Builder:
         if ctx.triggerActionMember() is not None:
             transition.trigger = self._trigger_action(ctx.triggerActionMember())
         if ctx.guardExpressionMember() is not None:
-            transition.guard = self.expr(
-                ctx.guardExpressionMember().ownedExpression())
+            transition.guard = self.expr(ctx.guardExpressionMember().ownedExpression())
         if ctx.effectBehaviorMember() is not None:
             transition.effect = self.effect_behavior(ctx.effectBehaviorMember())
-        transition.target = self._transition_target(
-            ctx.transitionSuccessionMember())
+        transition.target = self._transition_target(ctx.transitionSuccessionMember())
         return transition
 
     # -- expressions ---------------------------------------------------------
 
     _BINARY_ACCESSORS: ClassVar[tuple[str, ...]] = (
-        "exponentialOperator", "multiplicativeOperator", "additiveOperator",
-        "rangeOperator", "relationalOperator", "equalityOperator",
-        "bitwiseOperator", "conditionalBinaryOperator",
+        "exponentialOperator",
+        "multiplicativeOperator",
+        "additiveOperator",
+        "rangeOperator",
+        "relationalOperator",
+        "equalityOperator",
+        "bitwiseOperator",
+        "conditionalBinaryOperator",
     )
 
     def expr(self, ctx) -> A.Expr:
         if ctx.IF() is not None:
             exprs = ctx.ownedExpression()
-            return A.Conditional(self.expr(exprs[0]), self.expr(exprs[1]),
-                                 self.expr(exprs[2]))
+            return A.Conditional(self.expr(exprs[0]), self.expr(exprs[1]), self.expr(exprs[2]))
         if ctx.primaryExpression() is not None:
             return self.primary(ctx.primaryExpression())
         if ctx.unaryOperator() is not None:
-            return A.Unary(cast("A.UnaryOp", ctx.unaryOperator().getText()),
-                           self.expr(ctx.ownedExpression(0)))
+            return A.Unary(
+                cast("A.UnaryOp", ctx.unaryOperator().getText()), self.expr(ctx.ownedExpression(0))
+            )
         if ctx.classificationTestOperator() is not None:
             type_ = self._type_ref(ctx.typeReferenceMember().typeReference())
-            operand = (self.expr(ctx.ownedExpression(0))
-                       if ctx.ownedExpression() else None)
+            operand = self.expr(ctx.ownedExpression(0)) if ctx.ownedExpression() else None
             return A.Classification(
-                cast("A.ClassificationOp",
-                     ctx.classificationTestOperator().getText()),
-                type_, operand)
+                cast("A.ClassificationOp", ctx.classificationTestOperator().getText()),
+                type_,
+                operand,
+            )
         if ctx.castOperator() is not None:
             type_ = self._type_ref(ctx.typeResultMember().typeReference())
-            operand = (self.expr(ctx.ownedExpression(0))
-                       if ctx.ownedExpression() else None)
+            operand = self.expr(ctx.ownedExpression(0)) if ctx.ownedExpression() else None
             return A.Cast(type_, operand)
         if ctx.metadataAccessExpression() is not None:
-            meta = A.MetadataAccess(self.qname_parts(
-                ctx.metadataAccessExpression().elementReferenceMember()
-                .qualifiedName()))
+            meta = A.MetadataAccess(
+                self.qname_parts(
+                    ctx.metadataAccessExpression().elementReferenceMember().qualifiedName()
+                )
+            )
             if ctx.metaclassificationTestOperator() is not None:
                 type_ = self._type_ref(ctx.typeReferenceMember().typeReference())
                 return A.Classification("@@", type_, meta)
             type_ = self._type_ref(ctx.typeResultMember().typeReference())
             return A.Cast(type_, meta, op="meta")
         if ctx.ALL() is not None:
-            return A.AllOf(self._type_ref(
-                ctx.typeReferenceMember().typeReference()))
+            return A.AllOf(self._type_ref(ctx.typeReferenceMember().typeReference()))
         for accessor in self._BINARY_ACCESSORS:
             op_ctx = getattr(ctx, accessor)()
             if op_ctx is not None:
-                return A.Binary(cast("A.BinaryOp", op_ctx.getText()),
-                                self.expr(ctx.ownedExpression(0)),
-                                self.expr(ctx.ownedExpression(1)))
+                return A.Binary(
+                    cast("A.BinaryOp", op_ctx.getText()),
+                    self.expr(ctx.ownedExpression(0)),
+                    self.expr(ctx.ownedExpression(1)),
+                )
         raise BuildError(f"unhandled expression form: {self.src(ctx)!r}")
 
     def _type_ref(self, type_reference_ctx) -> tuple[str, ...]:
-        return self.qname_parts(
-            type_reference_ctx.referenceTyping().qualifiedName())
+        return self.qname_parts(type_reference_ctx.referenceTyping().qualifiedName())
 
     def primary(self, ctx) -> A.Expr:
         if ctx.baseExpression() is not None:
@@ -1914,36 +1917,48 @@ class _Builder:
         base = self.primary(ctx.primaryExpression())
         if ctx.LBRACKET() is not None:
             items, _ = self._sequence_items(
-                ctx.sequenceExpressionListMember().sequenceExpressionList())
+                ctx.sequenceExpressionListMember().sequenceExpressionList()
+            )
             unit = items[0] if len(items) == 1 else A.SequenceExpr(tuple(items))
             return A.QuantityOp(base, unit)
         if ctx.HASH() is not None:
             items, _ = self._sequence_items(
-                ctx.sequenceExpressionListMember().sequenceExpressionList())
+                ctx.sequenceExpressionListMember().sequenceExpressionList()
+            )
             return A.IndexOp(base, tuple(items))
         if ctx.featureChainMember() is not None:
             chain = self.chain_str(ctx.featureChainMember())
             return A.ChainAccess(base, tuple(chain.split(".")))
         if ctx.DOT_QUESTION() is not None:
-            return A.SelectOp(base, self.body_expr(
-                ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue()
-                .bodyExpression()))
+            return A.SelectOp(
+                base,
+                self.body_expr(
+                    ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue().bodyExpression()
+                ),
+            )
         if ctx.DOT() is not None:  # collect
-            return A.CollectOp(base, self.body_expr(
-                ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue()
-                .bodyExpression()))
+            return A.CollectOp(
+                base,
+                self.body_expr(
+                    ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue().bodyExpression()
+                ),
+            )
         # ARROW invocationTypeMember (...)
-        name = self.chain_str(
-            ctx.invocationTypeMember().invocationType().ownedFeatureTyping())
+        name = self.chain_str(ctx.invocationTypeMember().invocationType().ownedFeatureTyping())
         arrow = A.ArrowOp(base, tuple(name.split("::")))
         if ctx.bodyArgumentMember() is not None:
             arrow.body = self.body_expr(
-                ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue()
-                .bodyExpression())
+                ctx.bodyArgumentMember().bodyArgument().bodyArgumentValue().bodyExpression()
+            )
         elif ctx.functionReferenceArgumentMember() is not None:
-            ref = (ctx.functionReferenceArgumentMember().functionReferenceArgument()
-                   .functionReferenceArgumentValue().functionReferenceExpression()
-                   .functionReferenceMember().functionReference())
+            ref = (
+                ctx.functionReferenceArgumentMember()
+                .functionReferenceArgument()
+                .functionReferenceArgumentValue()
+                .functionReferenceExpression()
+                .functionReferenceMember()
+                .functionReference()
+            )
             arrow.func = self.qname_parts(ref.referenceTyping().qualifiedName())
         else:
             args, _named = self.argument_list(ctx.argumentList())
@@ -1969,8 +1984,7 @@ class _Builder:
             return [self.expr(list_ctx.ownedExpression())], had_comma
         op = list_ctx.sequenceOperatorExpression()
         first = self.expr(op.ownedExpressionMember().ownedExpression())
-        rest, _ = self._sequence_items(
-            op.sequenceExpressionListMember().sequenceExpressionList())
+        rest, _ = self._sequence_items(op.sequenceExpressionListMember().sequenceExpressionList())
         return [first, *rest], True
 
     def _sequence_from_list(self, list_ctx) -> A.Expr:
@@ -1985,13 +1999,19 @@ class _Builder:
         if ctx.literalExpression() is not None:
             return self.literal(ctx.literalExpression())
         if ctx.featureReferenceExpression() is not None:
-            qn = (ctx.featureReferenceExpression().featureReferenceMember()
-                  .featureReference().qualifiedName())
+            qn = (
+                ctx.featureReferenceExpression()
+                .featureReferenceMember()
+                .featureReference()
+                .qualifiedName()
+            )
             return A.FeatureRef(self.qname_parts(qn))
         if ctx.metadataAccessExpression() is not None:
-            return A.MetadataAccess(self.qname_parts(
-                ctx.metadataAccessExpression().elementReferenceMember()
-                .qualifiedName()))
+            return A.MetadataAccess(
+                self.qname_parts(
+                    ctx.metadataAccessExpression().elementReferenceMember().qualifiedName()
+                )
+            )
         if ctx.invocationExpression() is not None:
             c = ctx.invocationExpression()
             target = self._instantiated_type(c.instantiatedTypeMember())
@@ -2001,7 +2021,8 @@ class _Builder:
             c = ctx.constructorExpression()
             target = self._instantiated_type(c.instantiatedTypeMember())
             args, named = self.argument_list(
-                c.constructorResultMember().constructorResult().argumentList())
+                c.constructorResultMember().constructorResult().argumentList()
+            )
             return A.Constructor(target, tuple(args), tuple(named))
         return self.body_expr(ctx.bodyExpression())
 
@@ -2025,11 +2046,9 @@ class _Builder:
         return args, named
 
     def body_expr(self, body_expression_ctx) -> A.BodyExpr:
-        expression_body = (body_expression_ctx.expressionBodyMember()
-                           .expressionBody())
+        expression_body = body_expression_ctx.expressionBodyMember().expressionBody()
         holder = M.Usage(kind="calc")
-        self._fill_calculation_body_from_part(
-            holder, expression_body.calculationBodyPart())
+        self._fill_calculation_body_from_part(holder, expression_body.calculationBodyPart())
         params: list[A.Param] = []
         lets: list[tuple[str, A.Expr]] = []
         for member in holder.members:
@@ -2041,8 +2060,7 @@ class _Builder:
                 params.append(A.Param(member.name, member.direction))
         return A.BodyExpr(tuple(params), tuple(lets), holder.result)
 
-    def _fill_calculation_body_from_part(self, ns: M.Definition | M.Usage,
-                                         part_ctx) -> None:
+    def _fill_calculation_body_from_part(self, ns: M.Definition | M.Usage, part_ctx) -> None:
         for item in part_ctx.calculationBodyItem():
             if item.actionBodyItem() is not None:
                 self._action_body_item(ns, item.actionBodyItem())
@@ -2053,8 +2071,7 @@ class _Builder:
                     element.direction = "return"
                 ns.add(element)
         if part_ctx.resultExpressionMember() is not None:
-            ns.result = self.expr(
-                part_ctx.resultExpressionMember().ownedExpression())
+            ns.result = self.expr(part_ctx.resultExpressionMember().ownedExpression())
 
     def literal(self, ctx) -> A.Literal:
         if ctx.literalBoolean() is not None:

@@ -135,7 +135,7 @@ def test_expression_precedence_printing():
     cases = [
         "(1 + 2) * 3",
         "1 + 2 * 3",
-        "2 ** 3 ** 4",       # left-assoc in this grammar
+        "2 ** 3 ** 4",  # left-assoc in this grammar
         "not (a and b)",
         "a and not b",
         "-x ** 2",
@@ -149,7 +149,8 @@ def test_expression_precedence_printing():
         printed = sysml2.ast.expr_to_text(expr)
         reparsed = sysml2.parse_expression(printed)
         assert sysml2.to_dict(expr) == sysml2.to_dict(reparsed), (
-            f"{text!r} printed as {printed!r} which parses differently")
+            f"{text!r} printed as {printed!r} which parses differently"
+        )
 
 
 def test_quoted_name_export():

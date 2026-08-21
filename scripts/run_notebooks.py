@@ -48,8 +48,11 @@ def process(path: Path, execute: bool) -> None:
         from nbclient import NotebookClient
 
         client = NotebookClient(
-            notebook, timeout=600, kernel_name="python3",
-            resources={"metadata": {"path": str(ROOT / "notebooks")}})
+            notebook,
+            timeout=600,
+            kernel_name="python3",
+            resources={"metadata": {"path": str(ROOT / "notebooks")}},
+        )
         client.execute()
         print(f"executed {path.name}")
     strip(notebook)

@@ -49,18 +49,15 @@ def test_enum_definition(vehicle_model):
 def test_calc_definition(vehicle_model):
     calc = vehicle_model.find("Vehicles::TotalMass")
     assert calc.kind == "calc"
-    params = [m for m in calc.members
-              if isinstance(m, M.Usage) and m.direction == "in"]
+    params = [m for m in calc.members if isinstance(m, M.Usage) and m.direction == "in"]
     assert [p.name for p in params] == ["vehicleMass", "cargoMass"]
-    ret = [m for m in calc.members
-           if isinstance(m, M.Usage) and m.direction == "return"]
+    ret = [m for m in calc.members if isinstance(m, M.Usage) and m.direction == "return"]
     assert ret[0].value.expr.to_text() == "vehicleMass + cargoMass"
 
 
 def test_assert_constraint(vehicle_model):
     vehicle = vehicle_model.find("Vehicles::Vehicle")
-    constraints = [m for m in vehicle.members
-                   if isinstance(m, M.Usage) and m.kind == "constraint"]
+    constraints = [m for m in vehicle.members if isinstance(m, M.Usage) and m.kind == "constraint"]
     assert len(constraints) == 1
     assert constraints[0].constraint_kind == "assert"
     assert constraints[0].result.to_text() == "mass <= maxMass"
@@ -68,11 +65,11 @@ def test_assert_constraint(vehicle_model):
 
 def test_requirement_body(vehicle_model):
     req = vehicle_model.find("Vehicles::MassRequirement")
-    subjects = [m for m in req.members
-                if isinstance(m, M.Usage) and m.kind == "subject"]
+    subjects = [m for m in req.members if isinstance(m, M.Usage) and m.kind == "subject"]
     assert subjects[0].name == "vehicle"
-    kinds = [m.constraint_kind for m in req.members
-             if isinstance(m, M.Usage) and m.kind == "constraint"]
+    kinds = [
+        m.constraint_kind for m in req.members if isinstance(m, M.Usage) and m.kind == "constraint"
+    ]
     assert kinds == ["assume", "require"]
 
 
@@ -86,15 +83,17 @@ def test_action_statements(action_model):
 
 def test_state_machine_structure(state_model):
     sm = state_model.find("Machines::TrafficLight")
-    states = [m.name for m in sm.members
-              if isinstance(m, M.Usage) and m.kind == "state"]
+    states = [m.name for m in sm.members if isinstance(m, M.Usage) and m.kind == "state"]
     assert states == ["red", "green", "yellow"]
     transitions = [m for m in sm.members if isinstance(m, M.TransitionUsage)]
     entry = [t for t in transitions if t.source == M.ENTRY_SOURCE]
     assert entry[0].target == "red"
     triggered = [t for t in transitions if t.trigger is not None]
     assert {(t.source, t.target) for t in triggered} == {
-        ("red", "green"), ("green", "yellow"), ("yellow", "red")}
+        ("red", "green"),
+        ("green", "yellow"),
+        ("yellow", "red"),
+    }
 
 
 def test_visibility_and_imports():
@@ -158,8 +157,14 @@ def test_quoted_names():
 def test_programmatic_definition():
     pkg = M.Package(name="Prog")
     part = M.Definition(kind="part", name="Widget")
-    part.add(M.Usage(kind="attribute", name="size", types=["Real"],
-                     value=M.FeatureValue(sysml2.parse_expression("2 + 3"))))
+    part.add(
+        M.Usage(
+            kind="attribute",
+            name="size",
+            types=["Real"],
+            value=M.FeatureValue(sysml2.parse_expression("2 + 3")),
+        )
+    )
     pkg.add(part)
     model = M.Model()
     model.add(pkg)
@@ -179,11 +184,8 @@ def test_library_package_standard_flag():
 
 def test_named_send_action_keeps_name():
     # regression: the 'action <name> send ...' corpus form dropped the name
-    model = sysml2.loads(
-        "package P { action def A {"
-        " action publish send new Publish(t) via p; } }")
-    sends = [m for m in model.find("P::A").members
-             if isinstance(m, M.SendAction)]
+    model = sysml2.loads("package P { action def A { action publish send new Publish(t) via p; } }")
+    sends = [m for m in model.find("P::A").members if isinstance(m, M.SendAction)]
     assert sends[0].name == "publish"
     assert sends[0].via.to_text() == "p"
 
