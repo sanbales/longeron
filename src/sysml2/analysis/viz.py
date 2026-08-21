@@ -8,9 +8,10 @@ Two kinds of output over the mix tables produced by
   candidate space; the frontier is computed *from the plotted axes* so a
   many-objective front can never masquerade as a two-objective one) and
   :func:`margin_sweep_figure` (requirement margins across a
-  design-variable sweep of an OpenMDAO problem, the sweep axis split
-  into feasible bands -- accent-shaded -- and INFEASIBLE bands, warm and
-  hatched, each labeled with the constraint that binds there);
+  design-variable sweep of an OpenMDAO problem; every stretch where ANY
+  margin goes negative is shaded warm and hatched and labeled with the
+  constraint(s) binding there -- feasible stretches stay unshaded, the
+  absence of shading IS the feasible region);
 * an interactive parallel-coordinates anywidget -- :func:`parcoords` --
   following the house widget pattern (:mod:`sysml2.replay`): Python bakes
   the whole payload (axis specs, tick labels, normalized line positions)
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from ._expr import AnalysisError
@@ -206,20 +208,25 @@ function resizeInterval(brush, end, t) {
 }
 """
 
-# Conventions follow sysml2.replay: DOM built once, per-interaction work is
-# class toggles + one tooltip move; payload is pre-normalized so the JS
-# never sees raw metric values (only t in [0,1] and baked display strings).
-# Interaction separation: brush gestures start ONLY inside a +/-12 px zone
-# around each axis (crosshair cursor); the zone rects are appended AFTER
-# the fat line-hit twins so they win the pointer there, while polyline
-# hover/click owns everywhere else.  Brushes are editable intervals: drag
-# the body to move (grab cursor), drag an end handle to resize
-# (ns-resize), click the axis outside the brush -- or double-click
-# anywhere in the zone -- to clear.
+# Conventions follow sysml2.replay: DOM built once per bake, per-interaction
+# work is class toggles + one tooltip move; payload is pre-normalized so the
+# JS never sees raw metric values (only t in [0,1] and baked display
+# strings).  Interaction separation: brush gestures start ONLY inside a
+# +/-12 px zone around each axis (crosshair cursor); the zone rects are
+# appended AFTER the fat line-hit twins so they win the pointer there,
+# while polyline hover/click owns everywhere else.  Brushes are editable
+# intervals: drag the body to move (grab cursor), drag an end handle to
+# resize (ns-resize), click the axis outside the brush -- or double-click
+# anywhere in the zone -- to clear.  Re-assigning table_json from Python
+# re-renders in place; brush intervals persist across re-bakes by AXIS
+# NAME (a dashboard re-scoring an axis keeps the user's downselect).
 _PC_ESM = (
     _PC_MATH_JS
     + r"""
 function render({ model, el }) {
+  const saved = {};  // brush intervals by axis name: survive re-bakes
+
+  function draw() {
   const table = JSON.parse(model.get("table_json"));
   const axes = table.axes;
   const lines = table.lines;
@@ -281,11 +288,16 @@ function render({ model, el }) {
     }
   });
 
-  // --- brushing: one optional editable [lo, hi] interval per axis
+  // --- brushing: one optional editable [lo, hi] interval per axis,
+  // restored by axis name across table_json re-bakes
   const ZONE_PX = 12;    // half-width of the axis gesture zone
   const HANDLE_PX = 6;   // grab tolerance around each brush end
   const CLICK_PX = 3;    // below this a gesture is a click, not a drag
-  const brushes = axes.map(() => null);
+  const brushes = axes.map((a) => saved[a.name] || null);
+  const keep = (i) => {
+    if (brushes[i]) saved[axes[i].name] = brushes[i];
+    else delete saved[axes[i].name];
+  };
   const brushRects = axes.map((a, i) =>
     make("rect", { x: xs[i] - 7, width: 14, rx: 3, y: 0, height: 0,
                    class: "sysml2-pc-brush", display: "none" },
@@ -372,6 +384,7 @@ function render({ model, el }) {
         brushes[i] = r.brush;
         drag.end = r.end;
       }
+      keep(i);
       drawBrush(i);
       update(false);
     });
@@ -379,6 +392,7 @@ function render({ model, el }) {
       if (!drag) return;
       if (drag.mode === "create" && !drag.made) {
         brushes[i] = null;  // click on the axis outside the brush: clear
+        keep(i);
         drawBrush(i);
       }
       drag = null;
@@ -387,9 +401,11 @@ function render({ model, el }) {
     });
     zone.addEventListener("dblclick", () => {
       brushes[i] = null;  // double-click anywhere in the zone: clear
+      keep(i);
       drawBrush(i);
       update(true);
     });
+    drawBrush(i);  // restore a saved brush after a re-bake
   });
 
   // --- hover: fat invisible twin paths for hit area; tooltip follows
@@ -416,6 +432,10 @@ function render({ model, el }) {
   });
 
   update(true);
+  }
+
+  model.on("change:table_json", draw);
+  draw();
 }
 export default { render };
 """
@@ -505,7 +525,9 @@ def parcoords(
     and click the axis outside the brush -- or double-click anywhere in
     the zone -- to clear it.  The indices of rows passing every brush
     sync back through the ``selected`` traitlet
-    (``widget.selected_indices()``).
+    (``widget.selected_indices()``).  Re-assigning ``table_json`` re-bakes
+    the view in place (brushes survive by axis name), so a dashboard can
+    re-score an axis live.
     """
 
     cls = _parcoords_class()
@@ -708,49 +730,57 @@ def pareto_figure(
 def _sweep_bands(
     values: Sequence[float], curves: Mapping[str, Sequence[float]]
 ) -> list[dict[str, Any]]:
-    """Feasible/infeasible bands of a margin sweep (pure, unit-tested).
+    """The INFEASIBLE bands of a margin sweep (pure, unit-tested).
 
-    Splits the sweep axis wherever the tightest margin crosses zero
-    (linearly interpolated) into contiguous bands ``{x0, x1, feasible,
-    binding}``.  ``binding`` names the constraint that binds in an
-    infeasible band -- the one whose margin dips lowest there -- and is
-    ``None`` for feasible bands.  A band's feasibility is the sign
-    structure of the sampled margins: ``min >= 0`` over every curve.
+    The union over ALL margin curves: every constraint whose margin dips
+    below zero anywhere in the sweep contributes an interval (edges at
+    linearly interpolated zero crossings, ``margin >= 0`` counts as
+    holding), and the union is split wherever the set of violated
+    constraints changes.  Each band is ``{x0, x1, binding}`` with
+    ``binding`` the list of constraints violated throughout that band
+    (several where intervals overlap), in ``curves`` order.  Feasible
+    stretches produce NO band -- a view shades only the no-go regions.
     """
 
     if not curves:
         raise AnalysisError("margin bands need at least one margin curve")
-    mins = [min(column) for column in zip(*curves.values(), strict=True)]
 
-    def binding(i0: int, i1: int) -> str:
-        return min(curves, key=lambda label: min(curves[label][i0 : i1 + 1]))
+    def negative_intervals(ys: Sequence[float]) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        start: float | None = None
+        for i, y in enumerate(ys):
+            if y < 0 and start is None:
+                if i == 0:
+                    start = float(values[0])
+                else:  # interpolate the entry crossing
+                    frac = ys[i - 1] / (ys[i - 1] - y)
+                    start = float(values[i - 1]) + frac * float(values[i] - values[i - 1])
+            elif y >= 0 and start is not None:  # interpolate the exit
+                frac = ys[i - 1] / (ys[i - 1] - y)
+                out.append((start, float(values[i - 1]) + frac * float(values[i] - values[i - 1])))
+                start = None
+        if start is not None:
+            out.append((start, float(values[-1])))
+        return out
 
+    intervals = {
+        name: segs for name, ys in curves.items() if (segs := negative_intervals(list(ys)))
+    }
+    edges = sorted({edge for segs in intervals.values() for seg in segs for edge in seg})
     bands: list[dict[str, Any]] = []
-    start_x, start_i = float(values[0]), 0
-    for i in range(1, len(values)):
-        if (mins[i] >= 0) == (mins[i - 1] >= 0):
-            continue
-        frac = mins[i - 1] / (mins[i - 1] - mins[i])
-        cross = float(values[i - 1]) + frac * float(values[i] - values[i - 1])
-        ok = mins[i - 1] >= 0
-        bands.append(
-            {
-                "x0": start_x,
-                "x1": cross,
-                "feasible": ok,
-                "binding": None if ok else binding(start_i, i - 1),
-            }
-        )
-        start_x, start_i = cross, i
-    ok = mins[-1] >= 0
-    bands.append(
-        {
-            "x0": start_x,
-            "x1": float(values[-1]),
-            "feasible": ok,
-            "binding": None if ok else binding(start_i, len(values) - 1),
-        }
-    )
+    for x0, x1 in pairwise(edges):
+        mid = (x0 + x1) / 2
+        binding = [
+            name
+            for name in curves
+            if name in intervals and any(a <= mid <= b for a, b in intervals[name])
+        ]
+        if not binding:
+            continue  # a feasible gap between violations
+        if bands and bands[-1]["x1"] == x0 and bands[-1]["binding"] == binding:
+            bands[-1]["x1"] = x1
+        else:
+            bands.append({"x0": x0, "x1": x1, "binding": binding})
     return bands
 
 
@@ -769,16 +799,17 @@ def margin_sweep_figure(
     stops it": re-runs ``problem`` (an OpenMDAO ``Problem``, duck-typed:
     ``set_val``/``run_model``/``get_val``) for each entry of ``values``,
     plotting every margin output (>= 0 iff the constraint holds, per
-    :mod:`sysml2.analysis.mdao`) with direct end labels.  The sweep axis
-    is split at every zero crossing of the tightest margin
-    (:func:`_sweep_bands`): feasible bands are shaded in the accent and
-    labeled, INFEASIBLE bands are tinted warm and hatched, and each one
-    is labeled with the constraint that binds there (the margin that
-    dips lowest in that band) -- so a sweep that leaves and re-enters
-    feasibility shows every no-go region and its reason.  Each loss of
-    feasibility is also marked and named at its crossing.  Restores the
-    original value afterwards.  Give ``title`` as the finding the chart
-    shows ("Payloads above 0.46 kg cannot fly").
+    :mod:`sysml2.analysis.mdao`) with direct end labels.  Only the
+    INFEASIBLE stretches are shaded (:func:`_sweep_bands`): wherever ANY
+    margin goes negative the band is tinted warm and hatched, labeled
+    with every constraint binding there (stacked when several overlap),
+    and its boundaries are marked -- the union over all constraints, so
+    a floor broken at the slow end, a ceiling broken at the fast end,
+    and a requirement lost in the middle all show up with their own
+    names.  Feasible stretches stay unshaded: the clear axis IS the
+    go region.  Restores the original value afterwards.  Give ``title``
+    as the finding the chart shows ("Payloads above 0.46 kg cannot
+    fly").
     """
 
     named = dict(margins) if isinstance(margins, Mapping) else {m: m for m in margins}
@@ -822,40 +853,24 @@ def margin_sweep_figure(
 
     halo = [_pe().withStroke(linewidth=2.5, foreground="white")]
     bands = _sweep_bands(values, curves)
-    crossings = 0
-    for index, band in enumerate(bands):
+    for band in bands:
         x0, x1 = band["x0"], band["x1"]
-        if band["feasible"]:
-            ax.axvspan(x0, x1, facecolor=ACCENT, alpha=0.06, linewidth=0)
-            caption, color = "feasible", ACCENT
-        else:
-            ax.axvspan(x0, x1, facecolor=WARM, alpha=0.07, linewidth=0)
-            ax.axvspan(
-                x0, x1, facecolor="none", edgecolor=WARM, alpha=0.30, hatch="//", linewidth=0
-            )
-            caption, color = f"infeasible: {shorten(band['binding'])}", WARM
-        if index > 0:  # an interior zero crossing of the tightest margin
-            ax.axvline(x0, color=WARM, linewidth=1.0)
-            if not band["feasible"]:  # feasibility lost here: name the culprit
-                ax.annotate(
-                    f"{shorten(band['binding'])} binds at {x0:.2f}",
-                    (x0, ax.get_ylim()[1]),
-                    xytext=(5, -4 - 11 * crossings),
-                    textcoords="offset points",
-                    va="top",
-                    fontsize=8,
-                    color=WARM,
-                )
-                crossings += 1
-        if x1 - x0 > 0.04 * span:  # skip labels in slivers
+        ax.axvspan(x0, x1, facecolor=WARM, alpha=0.07, linewidth=0)
+        ax.axvspan(x0, x1, facecolor="none", edgecolor=WARM, alpha=0.30, hatch="//", linewidth=0)
+        for edge in (x0, x1):  # mark interior no-go boundaries
+            if values[0] < edge < values[-1]:
+                ax.axvline(edge, color=WARM, linewidth=1.0)
+        if x1 - x0 > 0.03 * span:  # skip labels in slivers
+            caption = "\n".join(["infeasible:", *(shorten(b) for b in band["binding"])])
             ax.text(
                 (x0 + x1) / 2,
                 0.04,
                 caption,
                 transform=ax.get_xaxis_transform(),
                 ha="center",
+                va="bottom",
                 fontsize=8,
-                color=color,
+                color=WARM,
                 path_effects=halo,
             )
 

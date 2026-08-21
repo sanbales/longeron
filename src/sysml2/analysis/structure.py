@@ -12,11 +12,14 @@ payload; the inline vanilla-JS front-end only paints):
   flow reads clockwise -- out along the source's row, then down the
   column to the receiver -- FEED-FORWARD couplings fill the UPPER
   triangle and FEEDBACK couplings (a source that runs *after* its
-  receiver) land in the LOWER triangle, drawn warm and ringed.  Hovering
-  a cell highlights its row and column and lists the coupled variables;
-  clicking pins the tooltip.  (:func:`openmdao_n2` embeds OpenMDAO's own
-  full-strength diagram for the deep dive; this widget is the
-  lightweight dependency-free in-notebook map.)
+  receiver) land in the LOWER triangle, drawn warm and ringed.
+  DISCIPLINE blocks -- components grouped by build_problem from the
+  model's own package structure -- are outlined and named along the
+  diagonal.  Hovering a cell highlights its row and column and lists
+  the coupled variables; clicking pins the tooltip.
+  (:func:`openmdao_n2` embeds OpenMDAO's own full-strength diagram for
+  the deep dive; this widget is the lightweight dependency-free
+  in-notebook map.)
 * :func:`openmdao_n2` -- the official interactive N2 application
   (``openmdao.api.n2``) generated headlessly and returned inline as a
   sandboxed ``srcdoc`` iframe, so the full tool (solver hierarchy,
@@ -76,9 +79,13 @@ def n2_payload(problem: Any) -> dict[str, Any]:
     = the TARGET -- so feed-forward couplings (source runs first) fill
     the upper triangle and the flow reads clockwise: out along the
     source's row, down the target's column.  Feedback (a source that
-    runs *after* its receiver) sits below the diagonal.  The synthetic
-    ``_auto_ivc`` outputs (unconnected-input defaults) are skipped --
-    they are bookkeeping, not couplings.
+    runs *after* its receiver) sits below the diagonal.  ``groups``
+    records one level of grouping -- contiguous components sharing a
+    top-level OpenMDAO group (a SysML discipline package or a nested
+    part) as ``{name, start, end}`` index runs, so the view can outline
+    the discipline blocks.  The synthetic ``_auto_ivc`` outputs
+    (unconnected-input defaults) are skipped -- they are bookkeeping,
+    not couplings.
     """
 
     prob = getattr(problem, "problem", problem)
@@ -111,8 +118,24 @@ def n2_payload(problem: Any) -> dict[str, Any]:
         leaf = path.rsplit(".", 1)[-1]
         return leaf.removesuffix("_comp") or leaf
 
+    # one level of grouping: contiguous runs sharing a top-level group
+    # (a discipline package or a nested part) become outlined blocks
+    groups: list[dict[str, Any]] = []
+    for i, path in enumerate(paths):
+        name = path.split(".", 1)[0] if "." in path else None
+        if (
+            name is not None
+            and groups
+            and groups[-1]["name"] == name
+            and groups[-1]["end"] == i - 1
+        ):
+            groups[-1]["end"] = i
+        elif name is not None:
+            groups.append({"name": name, "start": i, "end": i})
+
     return {
         "components": [{"name": short(p), "path": p} for p in paths],
+        "groups": groups,
         "cells": [
             {"row": row, "col": col, "feedback": col < row, "vars": names}
             for (row, col), names in sorted(cells.items())
@@ -150,7 +173,7 @@ function render({ model, el }) {
   if (!n) return;
 
   const W = model.get("width_px");
-  const M = 10;
+  const M = 24;  // headroom for group labels above the matrix
   const s = Math.max(30, Math.min(72, (W - 2 * M) / n));
   const size = n * s + 2 * M;
   const NS = "http://www.w3.org/2000/svg";
@@ -214,6 +237,17 @@ function render({ model, el }) {
                                              hideTip(); });
   });
 
+  // discipline blocks: outline each contiguous group along the diagonal
+  // and name it above its first tile (one level of grouping)
+  (P.groups || []).forEach((grp) => {
+    const x = at(grp.start), size = (grp.end - grp.start + 1) * s;
+    make("rect", { x, y: x, width: size, height: size, rx: 6,
+                   class: "sysml2-n2-group" }, svg);
+    const label = make("text", { x: x + 3, y: x - 3,
+                                 class: "sysml2-n2-group-label" }, svg);
+    label.textContent = grp.name;
+  });
+
   P.cells.forEach((cell, k) => {  // the couplings
     const g = make("g", {}, svg);
     if (cell.feedback)
@@ -262,6 +296,10 @@ _N2_CSS = """
 .sysml2-n2-band { fill: transparent; pointer-events: none; }
 .sysml2-n2-band.on { fill: rgba(47, 107, 143, 0.07); }
 .sysml2-n2-diag { fill: #eef1f3; stroke: #b9bec5; stroke-width: 1; }
+.sysml2-n2-group { fill: none; stroke: #2f6b8f; stroke-width: 1.2;
+  stroke-dasharray: 5 3; opacity: 0.55; pointer-events: none; }
+.sysml2-n2-group-label { fill: #2f6b8f; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.05em; }
 .sysml2-n2-label { fill: #2b2d31; font-size: 9.5px; text-anchor: middle; }
 .sysml2-n2-dot { fill: #2f6b8f; }
 .sysml2-n2-dot.feedback { fill: #c2603e; }
@@ -526,9 +564,11 @@ def n2_view(problem: Any, *, width_px: int = 640) -> anywidget.AnyWidget:
     order; dots = data couplings in the source's row and the target's
     column, so the flow reads clockwise (out along the row, down the
     column) and feed-forward fills the upper triangle; feedback
-    couplings sit below the diagonal, warm and dash-ringed.  Hover
-    highlights a cell's row and column and lists the coupled variables;
-    click pins the tooltip.
+    couplings sit below the diagonal, warm and dash-ringed.  Discipline
+    groups (from the model's package structure, via
+    :func:`~sysml2.analysis.mdao.build_problem`) are outlined and named
+    along the diagonal.  Hover highlights a cell's row and column and
+    lists the coupled variables; click pins the tooltip.
     """
 
     cls = _payload_widget("N2Widget", _N2_ESM, _N2_CSS, "N2 matrix over a baked problem payload.")

@@ -112,6 +112,29 @@ class TestN2Payload:
         payload = structure.n2_payload(build)
         assert all(c["name"] != "_auto_ivc" for c in payload["components"])
 
+    def test_discipline_groups_outline_the_blocks(self, build):
+        """The four discipline packages of the SysML model arrive as
+        contiguous {name, start, end} runs over the execution order --
+        the payload the widget outlines as discipline blocks."""
+
+        payload = structure.n2_payload(build)
+        groups = {g["name"]: g for g in payload["groups"]}
+        assert {"Aerodynamics", "Propulsion", "Structures", "Performance"} <= set(groups)
+        n = len(payload["components"])
+        for grp in payload["groups"]:
+            assert 0 <= grp["start"] <= grp["end"] < n
+            for i in range(grp["start"], grp["end"] + 1):
+                assert payload["components"][i]["path"].startswith(grp["name"] + ".")
+        # Propulsion is a real block, not a single tile
+        assert groups["Propulsion"]["end"] - groups["Propulsion"]["start"] == 2
+
+    def test_ungrouped_problem_has_no_groups(self):
+        om = pytest.importorskip("openmdao.api")
+        prob = om.Problem(reports=False)
+        prob.model.add_subsystem("a", om.ExecComp("y = 2 * x"))
+        prob.setup()
+        assert structure.n2_payload(prob)["groups"] == []
+
 
 class TestOpenMdaoN2:
     def test_embeds_the_official_diagram(self, build):
@@ -195,8 +218,15 @@ class TestWidgets:
         widget = structure.n2_view(build, width_px=500)
         payload = json.loads(widget.payload_json)
         assert payload["components"] and payload["cells"]
+        assert payload["groups"]  # the discipline blocks reach the JS
         assert widget.width_px == 500
-        for token in ("mouseenter", "click", "pinned", "sysml2-n2-feedback-ring"):
+        for token in (
+            "mouseenter",
+            "click",
+            "pinned",
+            "sysml2-n2-feedback-ring",
+            "sysml2-n2-group",
+        ):
             assert token in widget._esm, token
 
     def test_constraint_network_widget(self, study):

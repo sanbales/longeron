@@ -88,9 +88,9 @@ class TestExternalAnalysisBinding:
     """@ExternalAnalysis: SysML declares the contract, the tool computes."""
 
     def test_annotation_is_read(self, missions):
-        calc = missions.find("UavMissions::CruisePower")
+        calc = missions.find("UavMissions::Propulsion::CruisePower")
         assert mdao.external_binding(calc) == "uav_aero:CruisePowerPolar"
-        assert mdao.external_binding(missions.find("UavMissions::HoverPower")) is None
+        assert mdao.external_binding(missions.find("UavMissions::Propulsion::HoverPower")) is None
 
     def test_default_fidelity_is_the_model_body(self, missions):
         build = mdao.build_problem(missions, "UavMissions::IsrPrime")
@@ -109,11 +109,14 @@ class TestExternalAnalysisBinding:
         assert power == pytest.approx(84.27, abs=0.5)  # Re + stall terms
         # the external output composes with interpreter-backed components
         station = build.problem.get_val("stationMinutes")[0]
-        assert station == pytest.approx(891757.0 / (power + 22.0) / 60.0, rel=1e-6)
+        energy = build.problem.get_val("usableEnergyJ")[0]
+        assert station == pytest.approx(energy / (power + 22.0) / 60.0, rel=1e-6)
 
     def test_qualified_fidelity_key(self, missions):
         build = mdao.build_problem(
-            missions, "UavMissions::IsrPrime", fidelity={"UavMissions::CruisePower": "external"}
+            missions,
+            "UavMissions::IsrPrime",
+            fidelity={"UavMissions::Propulsion::CruisePower": "external"},
         )
         assert build.externals
 
@@ -165,7 +168,7 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_aero")
         fake.WrongIo = WrongIo
         monkeypatch.setitem(__import__("sys").modules, "fake_aero", fake)
-        calc = missions.find("UavMissions::CruisePower")
+        calc = missions.find("UavMissions::Propulsion::CruisePower")
         annotation = next(m for m in calc.members if type(m).__name__ == "MetadataUsage")
         value = annotation.members[0].value
         monkeypatch.setattr(value.expr, "value", "fake_aero:WrongIo", raising=False)
@@ -270,6 +273,64 @@ class TestExternalAnalysisBinding:
             mdao._load_component(om, "uav_aero:Nope")
         with pytest.raises(sysml2.analysis.AnalysisError, match="ExplicitComponent"):
             mdao._load_component(om, "uav_aero:RHO")
+
+
+@pytest.fixture(scope="module")
+def grouped(missions):
+    build = mdao.build_problem(
+        missions, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+    )
+    build.problem.run_model()
+    return build
+
+
+class TestDisciplineGrouping:
+    """The SysML package structure IS the N2 grouping: an attribute whose
+    value invokes a calc def living in a discipline package lands in an
+    OpenMDAO group named after that package (outputs promoted, so flat
+    names keep working); calcs beside the part def are shared context
+    and stay flat."""
+
+    def test_disciplines_follow_the_calc_packages(self, grouped):
+        assert grouped.disciplines == {
+            "Aerodynamics": ["dragArea"],
+            "Structures": ["sparWall", "sparMassKg"],
+            "Propulsion": ["hoverPowerW", "usableEnergyJ", "loiterPowerW"],
+            "Performance": ["stationMinutes"],
+        }
+
+    def test_components_live_inside_their_groups(self, grouped):
+        from openmdao.core.component import Component
+
+        paths = {s.pathname for s in grouped.problem.model.system_iter(recurse=True, typ=Component)}
+        assert "Aerodynamics.dragArea_comp" in paths
+        assert "Structures.sparWall_comp" in paths
+        assert "Propulsion.loiterPowerW_comp" in paths
+        assert "Performance.stationMinutes_comp" in paths
+        # requirement/constraint margins stay at the system level
+        assert "aboveStall_margin_comp" in paths
+        assert "IsrStation_stationFloor_margin_comp" in paths
+
+    def test_flat_promoted_names_keep_working(self, grouped):
+        p = grouped.problem
+        assert p.get_val("stationMinutes")[0] == pytest.approx(147.386, abs=0.01)
+        assert p.get_val("dragArea")[0] == pytest.approx(0.019574, abs=1e-6)
+        assert p.get_val("massKg")[0] == pytest.approx(5.5528, abs=1e-3)
+
+    def test_external_component_joins_its_discipline(self, missions):
+        from openmdao.core.component import Component
+
+        build = mdao.build_problem(
+            missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+        )
+        paths = {s.pathname for s in build.problem.model.system_iter(recurse=True, typ=Component)}
+        assert "Propulsion.loiterPowerW_ext" in paths
+        assert "loiterPowerW" in build.disciplines["Propulsion"]
+
+    def test_shared_context_calcs_stay_flat(self, drone):
+        # drone.sysml keeps its calcs beside the parts: no grouping
+        build = mdao.build_problem(drone, "Drone::QuadCopter")
+        assert build.disciplines == {}
 
 
 class TestOptimization:

@@ -656,6 +656,84 @@ class TestLineup:
             min(m["bounds"][0][1] for m in (winged, dart)), abs=1e-3
         )
 
+    def test_grid_shape_mapping(self):
+        """The user-visible contract: wider-than-tall, visually balanced
+        grids -- 4 is 2x2 (not a wonky 4x1), 6 is 2x3, 8 is 2x4."""
+
+        assert {n: geometry._grid_shape(n) for n in (1, 2, 3, 4, 5, 6, 7, 8, 9)} == {
+            1: (1, 1),
+            2: (1, 2),
+            3: (1, 3),
+            4: (2, 2),
+            5: (2, 3),
+            6: (2, 3),
+            7: (2, 4),
+            8: (2, 4),
+            9: (3, 3),
+        }
+
+    @staticmethod
+    def _cell_centers(scene, labels):
+        centers = {}
+        for label in labels:
+            xs = [
+                v
+                for p in scene["parts"]
+                if p["name"].startswith(label + ":")
+                for v in p["vertices"][0::3]
+            ]
+            zs = [
+                v
+                for p in scene["parts"]
+                if p["name"].startswith(label + ":")
+                for v in p["vertices"][2::3]
+            ]
+            centers[label] = (
+                round((min(xs) + max(xs)) / 2, 3),
+                round((min(zs) + max(zs)) / 2, 3),
+            )
+        return centers
+
+    def test_four_fold_into_two_by_two(self):
+        dart = geometry.interceptor_geometry(**DART)
+        labels = ["a", "b", "c", "d"]
+        scene = geometry.lineup([dart] * 4, labels=labels)
+        centers = self._cell_centers(scene, labels)
+        assert len({x for x, _ in centers.values()}) == 2  # two columns
+        assert len({z for _, z in centers.values()}) == 2  # two rows
+        # row-major: a and b share the front row, a and c share a column
+        assert centers["a"][1] == centers["b"][1]
+        assert centers["a"][0] == centers["c"][0]
+        assert centers["a"][1] > centers["c"][1]  # row 0 in front
+
+    def test_six_fold_into_two_by_three(self):
+        dart = geometry.interceptor_geometry(**DART)
+        labels = list("abcdef")
+        scene = geometry.lineup([dart] * 6, labels=labels)
+        centers = self._cell_centers(scene, labels)
+        assert len({x for x, _ in centers.values()}) == 3
+        assert len({z for _, z in centers.values()}) == 2
+
+    def test_labels_ride_above_their_cells(self):
+        winged = geometry.winged_vtol_geometry(**WINGED)
+        dart = geometry.interceptor_geometry(**DART)
+        scene = geometry.lineup([winged, dart, winged, dart], labels=["1", "2", "3", "4"])
+        assert [entry["text"] for entry in scene["labels"]] == ["1", "2", "3", "4"]
+        centers = self._cell_centers(scene, ["1", "2", "3", "4"])
+        for entry, label in zip(scene["labels"], ["1", "2", "3", "4"], strict=True):
+            x, y, z = entry["anchor"]
+            assert x == pytest.approx(centers[label][0], abs=0.02)
+            assert z == pytest.approx(centers[label][1], abs=0.02)
+            top = max(
+                v
+                for p in scene["parts"]
+                if p["name"].startswith(label + ":")
+                for v in p["vertices"][1::3]
+            )
+            assert y > top  # the caption floats above its own cell
+        # unlabeled lineups carry no labels key
+        assert "labels" not in geometry.lineup([dart, dart])
+
     def test_validates(self):
         with pytest.raises(AnalysisError):
             geometry.lineup([])
