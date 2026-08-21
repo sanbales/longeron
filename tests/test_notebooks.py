@@ -12,7 +12,7 @@ NOTEBOOKS = sorted((ROOT / "notebooks").glob("*.ipynb"))
 
 
 def test_notebooks_exist():
-    assert len(NOTEBOOKS) >= 7
+    assert len(NOTEBOOKS) >= 8
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.stem)

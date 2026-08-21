@@ -27,6 +27,7 @@ dev = [
     "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
     # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
+    "rdflib>=7.0",  # mirrors [rdf] so notebook 08 executes in CI
     # cadquery ([cad]) stays OUT of dev: the OCC kernel is ~1 GB and the
     # notebook's cadquery cell degrades to a printed note without it
 ]
@@ -42,6 +43,7 @@ docs = [
     "sphinx-design>=0.6",
 ]
 ecore = ["pyecore>=0.15"]
+rdf = ["rdflib>=7.0"]  # sysml2.rdf; sysml2.rag deliberately needs NO extra
 replay = ["anywidget>=0.9"]
 mdao = ["openmdao>=3.30"]
 trades = ["ortools>=9.8"]
@@ -126,6 +128,12 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["openmdao.*", "ortools.*", "z3.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# lazy import behind the [rdf] extra
+module = "rdflib.*"
 ignore_missing_imports = true
 follow_imports = "skip"
 

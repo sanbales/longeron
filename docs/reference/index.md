@@ -16,7 +16,7 @@ objects are defined.
 | [Interpreter](interpreter.md) | `sysml2.interpreter` | evaluation, instantiation, actions, states |
 | [Validation](validation.md) | `sysml2.validation` | `validate()` / `sysml2 lint` diagnostics |
 | [Standard library](stdlib.md) | `sysml2.stdlib` | the vendored OMG model library |
-| [Interchange](interchange.md) | `sysml2.export`, `sysml2.importer`, `sysml2.kerml`, `sysml2.ecore`, `sysml2.api` | JSON/SysML/KerML exports, spec metamodel, API JSON |
+| [Interchange](interchange.md) | `sysml2.export`, `sysml2.importer`, `sysml2.kerml`, `sysml2.ecore`, `sysml2.api`, `sysml2.rdf`, `sysml2.rag` | JSON/SysML/KerML exports, spec metamodel, API JSON, RDF/SPARQL, LLM retrieval substrate |
 | [Command line](cli.md) | `sysml2.cli` | the `sysml2` console command |
 
 ## Visualization

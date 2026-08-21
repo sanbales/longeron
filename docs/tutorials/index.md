@@ -1,6 +1,6 @@
 # Tutorials
 
-Seven executable notebooks live in
+Eight executable notebooks live in
 [`notebooks/`](https://github.com/sanbales/longeron/tree/main/notebooks).
 The committed notebooks are output-free by repo convention (the test suite
 executes them; git hooks strip outputs) — **every output you see on these
@@ -33,6 +33,7 @@ so that cell degrades — as designed — to a printed pointer at the extra.
 | {doc}`5. Stdlib and validation <05_stdlib_and_validation>` | the vendored standard library, `sysml2 lint` |
 | {doc}`6. Interactive diagrams <06_interactive_diagrams>` | ipyelk structure/state/action diagrams, click-selection, headless SVG/PNG |
 | {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views |
+| {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |
 
 ```{toctree}
 :hidden:
@@ -45,4 +46,5 @@ so that cell degrades — as designed — to a printed pointer at the extra.
 05_stdlib_and_validation
 06_interactive_diagrams
 07_analysis_and_trades
+08_semantic_web_and_rag
 ```
