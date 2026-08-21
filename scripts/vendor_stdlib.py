@@ -2,9 +2,9 @@
 """(Re)vendor the SysML v2 standard library subset into src/sysml2/_stdlib.
 
 Downloads the pinned file set from Systems-Modeling/SysML-v2-Release and
-rebuilds the prebuilt pickle. Run after changing the file lists, to bump the
+rebuilds the prebuilt JSON. Run after changing the file lists, to bump the
 pinned upstream revision, or after builder changes (`make stdlib` shortcut
-rebuilds only the pickle).
+rebuilds only the prebuilt JSON).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def main() -> None:
     text = re.sub(r"Pinned commit: \S+", f"Pinned commit: {sha}", text)
     readme.write_text(text)
 
-    print("rebuilding prebuilt pickle ...")
+    print("rebuilding prebuilt JSON ...")
     sys.path.insert(0, str(ROOT / "src"))
     rebuild_prebuilt()
 

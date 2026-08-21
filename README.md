@@ -234,7 +234,7 @@ src/sysml2/
     workspace.py           multi-file loading + content-addressed model cache
     kerml.py               model -> KerML projection
     validation.py          sysml2 lint / validate()
-    stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt pickle)
+    stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt JSON)
     ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
     api.py                 OMG Systems Modeling API JSON interchange
     diagrams.py            interactive ELK diagrams (ipyelk)
@@ -295,7 +295,7 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
   `sysml2.add_standard_library(model)` or `--stdlib` on the CLI: library
   types resolve (`Parts::Part`, `ISQ::mass`, `SI::kg`), `public import`
   re-exports and aliases follow, and `istype` checks work against library
-  definitions. A bundled prebuilt pickle makes loading instant; the KerML
+  definitions. A bundled prebuilt JSON snapshot makes loading instant; the KerML
   Kernel Libraries themselves are not loaded (KerML is parse-only), so
   inherited library defaults that need unimplemented kernel functions
   degrade to `None` instead of failing. The prebuilt ships as plain JSON
