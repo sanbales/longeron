@@ -30,7 +30,7 @@ typecheck:
 parsers:  ## regenerate ANTLR parsers from grammars/*.g4 (needs Java)
 	$(VENV)/python scripts/generate_parsers.py
 
-stdlib:  ## rebuild the prebuilt standard-library pickle
+stdlib:  ## rebuild the prebuilt standard-library JSON
 	$(VENV)/python scripts/vendor_stdlib.py --prebuilt-only
 
 demo:
