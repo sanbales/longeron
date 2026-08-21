@@ -27,16 +27,14 @@ class TestSvg:
         assert "capacity : Real = 5200.0" in svg
 
     def test_state_svg_has_transitions(self, drone_model):
-        svg = render.to_svg(
-            diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
         assert "launch" in svg and "touchdown" in svg
         assert 'marker-end="url(#arrow-b58900)"' in svg  # gold arrowheads
         assert 'markerUnits="userSpaceOnUse"' in svg  # constant-size heads
         assert "#b58900" in svg  # state/transition styling applied
 
     def test_action_svg(self, drone_model):
-        svg = render.to_svg(
-            diagrams.action_diagram(drone_model.find("Drone::PlanBattery")))
+        svg = render.to_svg(diagrams.action_diagram(drone_model.find("Drone::PlanBattery")))
         assert "start" in svg and "done" in svg
 
     def test_accepts_model_elements_directly(self, drone_model):
@@ -109,8 +107,7 @@ class TestSvg:
         """)
         widget = diagrams.state_diagram(model.find("P::M"))
         graph = render.layout(render._to_elk_json(widget.source.value))
-        inner = [e for e in graph.get("edges", [])
-                 if e.get("container", "").endswith("::outer")]
+        inner = [e for e in graph.get("edges", []) if e.get("container", "").endswith("::outer")]
         assert inner, "expected inner edges re-containered by elkjs"
 
         # compute absolute geometry and check each inner edge's endpoints
@@ -120,8 +117,7 @@ class TestSvg:
         def index(node, ox, oy):
             x, y = ox + node.get("x", 0), oy + node.get("y", 0)
             origins[node["id"]] = (x, y)
-            boxes[node["id"]] = (x, y, node.get("width", 0),
-                                 node.get("height", 0))
+            boxes[node["id"]] = (x, y, node.get("width", 0), node.get("height", 0))
             for child in node.get("children", []):
                 index(child, x, y)
 
@@ -129,18 +125,17 @@ class TestSvg:
         for edge in inner:
             ox, oy = origins[edge["container"]]
             section = edge["sections"][0]
-            for point, endpoint in ((section["startPoint"], edge["sources"][0]),
-                                    (section["endPoint"], edge["targets"][0])):
+            for point, endpoint in (
+                (section["startPoint"], edge["sources"][0]),
+                (section["endPoint"], edge["targets"][0]),
+            ):
                 px, py = ox + point["x"], oy + point["y"]
                 bx, by, bw, bh = boxes[endpoint]
-                assert bx - 1 <= px <= bx + bw + 1, \
-                    f"edge endpoint x={px} misses box {endpoint}"
-                assert by - 1 <= py <= by + bh + 1, \
-                    f"edge endpoint y={py} misses box {endpoint}"
+                assert bx - 1 <= px <= bx + bw + 1, f"edge endpoint x={px} misses box {endpoint}"
+                assert by - 1 <= py <= by + bh + 1, f"edge endpoint y={py} misses box {endpoint}"
 
     def test_escaping(self):
-        model = sysml2.loads(
-            'package P { part def A { attribute note : String = "<b>&"; } }')
+        model = sysml2.loads('package P { part def A { attribute note : String = "<b>&"; } }')
         svg = render.to_svg(diagrams.structure_diagram(model))
         assert "&lt;b&gt;&amp;" in svg
 

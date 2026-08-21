@@ -27,35 +27,35 @@ Quick start::
 from . import ast, model
 from .builder import build_model, loads, parse_expression
 from .errors import (
-                     BuildError,
-                     EvaluationError,
-                     ExecutionError,
-                     ParseError,
-                     ResolutionError,
-                     SyntaxIssue,
-                     SysMLError,
+    BuildError,
+    EvaluationError,
+    ExecutionError,
+    ParseError,
+    ResolutionError,
+    SyntaxIssue,
+    SysMLError,
 )
 from .export import save, to_dict, to_json, to_sysml
 from .importer import from_dict, from_json
 from .interpreter import (
-                     ActionResult,
-                     ConstraintResult,
-                     EnumValue,
-                     Instance,
-                     Interpreter,
-                     RequirementResult,
-                     SentEvent,
-                     SimulationResult,
-                     TransitionFired,
+    ActionResult,
+    ConstraintResult,
+    EnumValue,
+    Instance,
+    Interpreter,
+    RequirementResult,
+    SentEvent,
+    SimulationResult,
+    TransitionFired,
 )
 from .kerml import to_kerml
 from .model import *
 from .parser import (
-                     ParseResult,
-                     parse_expression_text,
-                     parse_file,
-                     parse_kerml_text,
-                     parse_sysml_text,
+    ParseResult,
+    parse_expression_text,
+    parse_file,
+    parse_kerml_text,
+    parse_sysml_text,
 )
 from .stdlib import add_standard_library, standard_library_model
 from .validation import Diagnostic, validate
@@ -66,27 +66,56 @@ __version__ = "0.2.0"
 __all__ = [
     "__version__",
     # parsing
-    "parse_sysml_text", "parse_kerml_text", "parse_file",
-    "parse_expression_text", "ParseResult",
+    "parse_sysml_text",
+    "parse_kerml_text",
+    "parse_file",
+    "parse_expression_text",
+    "ParseResult",
     # building / importing
-    "build_model", "loads", "load", "parse_expression",
-    "from_dict", "from_json",
-    "load_dir", "load_file", "load_many", "merge_models",
-    "cache_dir", "clear_cache",
+    "build_model",
+    "loads",
+    "load",
+    "parse_expression",
+    "from_dict",
+    "from_json",
+    "load_dir",
+    "load_file",
+    "load_many",
+    "merge_models",
+    "cache_dir",
+    "clear_cache",
     # exporting
-    "to_dict", "to_json", "to_sysml", "to_kerml", "save",
+    "to_dict",
+    "to_json",
+    "to_sysml",
+    "to_kerml",
+    "save",
     # validating
-    "validate", "Diagnostic",
+    "validate",
+    "Diagnostic",
     # standard library
-    "add_standard_library", "standard_library_model",
+    "add_standard_library",
+    "standard_library_model",
     # executing
-    "Interpreter", "Instance", "EnumValue", "ConstraintResult",
-    "RequirementResult", "ActionResult", "SimulationResult", "SentEvent",
+    "Interpreter",
+    "Instance",
+    "EnumValue",
+    "ConstraintResult",
+    "RequirementResult",
+    "ActionResult",
+    "SimulationResult",
+    "SentEvent",
     "TransitionFired",
     # errors
-    "SysMLError", "ParseError", "SyntaxIssue", "BuildError",
-    "ResolutionError", "EvaluationError", "ExecutionError",
+    "SysMLError",
+    "ParseError",
+    "SyntaxIssue",
+    "BuildError",
+    "ResolutionError",
+    "EvaluationError",
+    "ExecutionError",
     # modules
-    "ast", "model",
+    "ast",
+    "model",
     *model.__all__,
 ]

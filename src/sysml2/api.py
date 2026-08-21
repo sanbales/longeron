@@ -29,8 +29,7 @@ from .interpreter import Resolver
 _SKIP_FEATURES = frozenset({"elementId"})
 
 
-def to_api_records(model: M.Model | SpecModel, *,
-                   implied: bool = False) -> list[dict[str, Any]]:
+def to_api_records(model: M.Model | SpecModel, *, implied: bool = False) -> list[dict[str, Any]]:
     """Flat API-style records for a model (or an existing projection).
 
     With ``implied=True`` (requires a :class:`~sysml2.model.Model`), the
@@ -54,8 +53,7 @@ def to_api_records(model: M.Model | SpecModel, *,
         }
         for feature in obj.eClass.eAllStructuralFeatures():
             name = feature.name
-            if feature.derived or feature.transient or \
-                    name in _SKIP_FEATURES:
+            if feature.derived or feature.transient or name in _SKIP_FEATURES:
                 continue
             value = obj.eGet(name)
             encoded = _encode(feature, value)
@@ -64,15 +62,16 @@ def to_api_records(model: M.Model | SpecModel, *,
         records.append(record)
     if implied:
         if not isinstance(model, M.Model):
-            raise SysMLError("implied=True needs a sysml2 Model (an "
-                             "existing SpecModel no longer knows its "
-                             "source elements)")
+            raise SysMLError(
+                "implied=True needs a sysml2 Model (an "
+                "existing SpecModel no longer knows its "
+                "source elements)"
+            )
         records.extend(_implied_records(model, spec))
     return records
 
 
-def _implied_records(model: M.Model,
-                     spec: SpecModel) -> list[dict[str, Any]]:
+def _implied_records(model: M.Model, spec: SpecModel) -> list[dict[str, Any]]:
     """``isImplied`` Subclassification/Subsetting records (see
     :func:`to_api_records`).  Bases are resolved against the vendored
     standard library; unresolvable bases are skipped silently (mirroring
@@ -98,26 +97,30 @@ def _implied_records(model: M.Model,
             source_role, target_role = "subclassifier", "superclassifier"
         else:
             class_name = "Subsetting"
-            source_role, target_role = ("subsettingFeature",
-                                        "subsettedFeature")
+            source_role, target_role = ("subsettingFeature", "subsettedFeature")
         for base in resolver.implied_generals(element):
             base_qname = base.qualified_name or base.label
             base_instance = instances.get(id(base))
-            base_id = (base_instance.elementId
-                       if base_instance is not None else
-                       str(uuid.uuid5(_UUID_NAMESPACE,
-                                      f"$library/{base_qname}")))
-            record_id = str(uuid.uuid5(
-                _UUID_NAMESPACE,
-                f"{instance.elementId}#Implied{class_name}/{base_qname}"))
-            records.append({
-                "@type": class_name,
-                "@id": record_id,
-                "elementId": record_id,
-                "isImplied": True,
-                source_role: {"@id": instance.elementId},
-                target_role: {"@id": base_id},
-            })
+            base_id = (
+                base_instance.elementId
+                if base_instance is not None
+                else str(uuid.uuid5(_UUID_NAMESPACE, f"$library/{base_qname}"))
+            )
+            record_id = str(
+                uuid.uuid5(
+                    _UUID_NAMESPACE, f"{instance.elementId}#Implied{class_name}/{base_qname}"
+                )
+            )
+            records.append(
+                {
+                    "@type": class_name,
+                    "@id": record_id,
+                    "elementId": record_id,
+                    "isImplied": True,
+                    source_role: {"@id": instance.elementId},
+                    target_role: {"@id": base_id},
+                }
+            )
     return records
 
 
@@ -145,8 +148,7 @@ def _scalar(value: Any) -> Any:
     return str(value)  # enum literals and other EDataTypes
 
 
-def to_api_json(model: M.Model | SpecModel, indent: int = 2, *,
-                implied: bool = False) -> str:
+def to_api_json(model: M.Model | SpecModel, indent: int = 2, *, implied: bool = False) -> str:
     return json.dumps(to_api_records(model, implied=implied), indent=indent)
 
 
@@ -189,8 +191,7 @@ def from_api_records(records: list[dict[str, Any]]) -> SpecModel:
     return SpecModel(namespace, report)
 
 
-def _apply(obj: Any, feature: Any, value: Any,
-           instances: dict[str, Any]) -> None:
+def _apply(obj: Any, feature: Any, value: Any, instances: dict[str, Any]) -> None:
     is_reference = feature.eClass.name == "EReference"
     if feature.many:
         target = obj.eGet(feature.name)

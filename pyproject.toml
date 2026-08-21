@@ -61,6 +61,7 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+extend-include = ["*.ipynb"]  # lint + format notebook code cells too
 extend-exclude = ["src/sysml2/_gen"]
 
 [tool.ruff.lint]
@@ -186,8 +187,8 @@ py313 = ["py313"]
 [tool.pixi.tasks]
 test = "pytest -q"
 test-vendor = "pytest -c pyproject.toml -q vendor/ipyelk/tests"
-lint = "ruff check src tests examples scripts"
-format = "ruff check --fix src tests examples scripts"
+lint = "ruff format --check src tests examples scripts notebooks && ruff check src tests examples scripts notebooks"
+format = "ruff format src tests examples scripts notebooks && ruff check --fix src tests examples scripts notebooks"
 typecheck = "mypy"
 coverage = "pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered"
 demo = "python examples/demo.py"

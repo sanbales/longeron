@@ -26,9 +26,18 @@ class TestMetamodel:
 
     def test_expected_metaclasses_present(self):
         names = set(ecore.spec_class_names())
-        assert {"Element", "Namespace", "Feature", "Type", "Classifier",
-                "OwningMembership", "PartDefinition", "PartUsage",
-                "FeatureTyping", "Subclassification"} <= names
+        assert {
+            "Element",
+            "Namespace",
+            "Feature",
+            "Type",
+            "Classifier",
+            "OwningMembership",
+            "PartDefinition",
+            "PartUsage",
+            "FeatureTyping",
+            "Subclassification",
+        } <= names
 
     def test_unknown_class_raises(self):
         with pytest.raises(sysml2.SysMLError, match="no metaclass"):
@@ -40,57 +49,64 @@ class TestProjection:
         assert spec.root.eClass.name == "Namespace"
 
     def test_definitions_get_spec_classes(self, spec):
-        by_name = {getattr(obj, "declaredName", None): obj.eClass.name
-                   for obj in spec.all_instances()}
+        by_name = {
+            getattr(obj, "declaredName", None): obj.eClass.name for obj in spec.all_instances()
+        }
         assert by_name["Vehicle"] == "PartDefinition"
         assert by_name["Color"] == "EnumerationDefinition"
         assert by_name["TotalMass"] == "CalculationDefinition"
         assert by_name["MassRequirement"] == "RequirementDefinition"
 
     def test_ownership_is_reified(self, spec):
-        pkg = next(o for o in spec.all_instances()
-                   if getattr(o, "declaredName", None) == "Vehicles")
+        pkg = next(
+            o for o in spec.all_instances() if getattr(o, "declaredName", None) == "Vehicles"
+        )
         memberships = list(pkg.ownedRelationship)
         assert memberships
-        assert all("Membership" in m.eClass.name or
-                   m.eClass.name.endswith("ing") or
-                   "Relationship" in m.eClass.name or
-                   m.eClass.name in ("Subclassification",)
-                   for m in memberships)
-        owned = [e for m in memberships
-                 for e in getattr(m, "ownedRelatedElement", [])]
+        assert all(
+            "Membership" in m.eClass.name
+            or m.eClass.name.endswith("ing")
+            or "Relationship" in m.eClass.name
+            or m.eClass.name in ("Subclassification",)
+            for m in memberships
+        )
+        owned = [e for m in memberships for e in getattr(m, "ownedRelatedElement", [])]
         names = {getattr(e, "declaredName", None) for e in owned}
         assert "Vehicle" in names
 
     def test_feature_typing_resolved_in_model(self, spec):
-        typings = [o for o in spec.all_instances()
-                   if o.eClass.name == "FeatureTyping"]
-        typed = {(t.typedFeature.declaredName, t.type.declaredName)
-                 for t in typings if t.typedFeature is not None
-                 and t.type is not None}
+        typings = [o for o in spec.all_instances() if o.eClass.name == "FeatureTyping"]
+        typed = {
+            (t.typedFeature.declaredName, t.type.declaredName)
+            for t in typings
+            if t.typedFeature is not None and t.type is not None
+        }
         assert ("engine", "Engine") in typed
         assert ("wheels", "Wheel") in typed
 
     def test_subclassification(self, spec):
-        subs = [o for o in spec.all_instances()
-                if o.eClass.name == "Subclassification"]
-        pairs = {(s.subclassifier.declaredName,
-                  s.superclassifier.declaredName)
-                 for s in subs if s.subclassifier and s.superclassifier}
+        subs = [o for o in spec.all_instances() if o.eClass.name == "Subclassification"]
+        pairs = {
+            (s.subclassifier.declaredName, s.superclassifier.declaredName)
+            for s in subs
+            if s.subclassifier and s.superclassifier
+        }
         assert ("Vehicle", "Machine") in pairs
 
     def test_unresolved_stdlib_refs_reported(self, spec):
         assert "Real" in spec.report.unresolved_references
 
     def test_parameters_use_parameter_membership(self, spec):
-        calc = next(o for o in spec.all_instances()
-                    if getattr(o, "declaredName", None) == "TotalMass")
+        calc = next(
+            o for o in spec.all_instances() if getattr(o, "declaredName", None) == "TotalMass"
+        )
         kinds = [m.eClass.name for m in calc.ownedRelationship]
         assert "ParameterMembership" in kinds
 
     def test_direction_mapped(self, spec):
-        param = next(o for o in spec.all_instances()
-                     if getattr(o, "declaredName", None) == "vehicleMass")
+        param = next(
+            o for o in spec.all_instances() if getattr(o, "declaredName", None) == "vehicleMass"
+        )
         assert str(param.direction) == "in"
 
     def test_element_ids_stable(self):
@@ -116,12 +132,10 @@ class TestXMI:
         from pyecore.resources import URI, ResourceSet
 
         rset = ResourceSet()
-        rset.metamodel_registry[ecore.spec_metamodel().nsURI] = \
-            ecore.spec_metamodel()
+        rset.metamodel_registry[ecore.spec_metamodel().nsURI] = ecore.spec_metamodel()
         resource = rset.get_resource(URI(str(path)))
         root = resource.contents[0]
-        names = {getattr(o, "declaredName", None)
-                 for o in root.eAllContents()}
+        names = {getattr(o, "declaredName", None) for o in root.eAllContents()}
         assert "Vehicle" in names
 
 
@@ -141,5 +155,11 @@ def test_statements_projected():
     """)
     spec = ecore.to_spec(model)
     class_names = {o.eClass.name for o in spec.all_instances()}
-    assert {"AssignmentActionUsage", "IfActionUsage", "SendActionUsage",
-            "ForkNode", "TransitionUsage", "StateUsage"} <= class_names
+    assert {
+        "AssignmentActionUsage",
+        "IfActionUsage",
+        "SendActionUsage",
+        "ForkNode",
+        "TransitionUsage",
+        "StateUsage",
+    } <= class_names

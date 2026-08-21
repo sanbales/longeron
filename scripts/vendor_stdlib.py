@@ -35,14 +35,13 @@ def fetch(url: str) -> bytes:
 
 
 def main() -> None:
-    sha = json.loads(fetch(
-        f"https://api.github.com/repos/{REPO}/commits/{BRANCH}"))["sha"]
+    sha = json.loads(fetch(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}"))["sha"]
     print(f"pinning {REPO}@{sha}")
     base = f"https://raw.githubusercontent.com/{REPO}/{sha}/sysml.library"
     for subdir, names, upstream in (
-            ("systems", SYSTEMS, "Systems%20Library"),
-            ("quantities", QUANTITIES,
-             "Domain%20Libraries/Quantities%20and%20Units")):
+        ("systems", SYSTEMS, "Systems%20Library"),
+        ("quantities", QUANTITIES, "Domain%20Libraries/Quantities%20and%20Units"),
+    ):
         target = STDLIB / subdir
         target.mkdir(parents=True, exist_ok=True)
         for name in names:
@@ -68,8 +67,7 @@ def rebuild_prebuilt() -> None:
     stdlib._raw_prebuilt = None
     stdlib._fingerprint_cache = None
     model = stdlib.standard_library_model()
-    print(f"prebuilt: {len(model.members)} packages, "
-          f"{stdlib._PREBUILT.stat().st_size} bytes")
+    print(f"prebuilt: {len(model.members)} packages, {stdlib._PREBUILT.stat().st_size} bytes")
 
 
 if __name__ == "__main__":

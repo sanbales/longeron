@@ -37,8 +37,8 @@ def _z3() -> Any:
         import z3
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError(
-            "sysml2.analysis.smt needs Z3; install the extra with "
-            "'pip install \"longeron[smt]\"'") from err
+            "sysml2.analysis.smt needs Z3; install the extra with 'pip install \"longeron[smt]\"'"
+        ) from err
     return z3
 
 
@@ -77,8 +77,7 @@ class SmtSystem:
             return SmtResult("unsat", core=sorted(labels))
         return SmtResult(status)
 
-    def maximize(self, path: str,
-                 exclude: tuple[str, ...] = ()) -> tuple[str, SmtResult]:
+    def maximize(self, path: str, exclude: tuple[str, ...] = ()) -> tuple[str, SmtResult]:
         """Supremum of a variable over the feasible region (exact, as text).
 
         Strict inequalities yield open bounds: Z3 reports the supremum with
@@ -94,8 +93,7 @@ class SmtSystem:
         status = str(opt.check())
         if status != "sat":
             return "", SmtResult(status)
-        return str(opt.upper(handle)), SmtResult(
-            "sat", witness=self._witness(opt.model()))
+        return str(opt.upper(handle)), SmtResult("sat", witness=self._witness(opt.model()))
 
     def _witness(self, model: Any) -> dict[str, float | bool]:
         out: dict[str, float | bool] = {}
@@ -117,13 +115,15 @@ class SmtSystem:
 # building
 # ---------------------------------------------------------------------------
 
-_TYPE_SORTS = {"Real": "real", "Integer": "int", "Natural": "int",
-               "Boolean": "bool"}
+_TYPE_SORTS = {"Real": "real", "Integer": "int", "Natural": "int", "Boolean": "bool"}
 
 
-def to_smt(model: M.Model, part: str | M.Definition | M.Usage,
-           requirements: tuple[str, ...] = (),
-           free: tuple[str, ...] = ()) -> SmtSystem:
+def to_smt(
+    model: M.Model,
+    part: str | M.Definition | M.Usage,
+    requirements: tuple[str, ...] = (),
+    free: tuple[str, ...] = (),
+) -> SmtSystem:
     """Encode a part definition's tree (and requirements) for Z3."""
 
     interp = Interpreter(model)
@@ -140,15 +140,13 @@ def to_smt(model: M.Model, part: str | M.Definition | M.Usage,
 
 
 class _Builder:
-    def __init__(self, interp: Interpreter, system: SmtSystem,
-                 free: frozenset[str]):
+    def __init__(self, interp: Interpreter, system: SmtSystem, free: frozenset[str]):
         self.z3 = _z3()
         self.interp = interp
         self.system = system
         self.free = free
 
-    def tree(self, defn: M.Definition | M.Usage, instance: Instance,
-             prefix: str) -> None:
+    def tree(self, defn: M.Definition | M.Usage, instance: Instance, prefix: str) -> None:
         for attr in named_members(self.interp, defn, ("attribute",)):
             name = attr.name or attr.short_name
             assert name is not None
@@ -163,14 +161,12 @@ class _Builder:
             if expr is not None:
                 try:
                     encoded = self._encode(expr, defn, prefix, {})
-                    self.system.assertions.append((f"{path}.value",
-                                                   const == encoded))
+                    self.system.assertions.append((f"{path}.value", const == encoded))
                     continue
                 except AnalysisError as err:
                     self.system.gaps.append(f"{path}: {err}")
             if is_scalar(slot) or isinstance(slot, bool):
-                self.system.assertions.append((f"{path}.value",
-                                               const == slot))
+                self.system.assertions.append((f"{path}.value", const == slot))
         for con in named_members(self.interp, defn, ("constraint",)):
             expr = constraint_expr(self.interp, con)
             if expr is None:
@@ -187,19 +183,20 @@ class _Builder:
         for name, slot in instance.slots.items():
             if isinstance(slot, Instance) and slot.definition is not None:
                 self.tree(slot.definition, slot, prefix=f"{prefix}{name}.")
-            elif isinstance(slot, list) and slot and \
-                    isinstance(slot[0], Instance):
+            elif isinstance(slot, list) and slot and isinstance(slot[0], Instance):
                 for i, item in enumerate(slot):
                     if item.definition is not None:
-                        self.tree(item.definition, item,
-                                  prefix=f"{prefix}{name}_{i + 1}.")
+                        self.tree(item.definition, item, prefix=f"{prefix}{name}_{i + 1}.")
 
     def requirement(self, req_name: str) -> None:
         req = self.interp.resolve(req_name)
         if not isinstance(req, (M.Definition, M.Usage)):
             raise AnalysisError(f"{req_name!r} is not a requirement")
-        subjects = [m.name for m in self.interp.resolver.members_of(req)
-                    if isinstance(m, M.Usage) and m.kind == "subject" and m.name]
+        subjects = [
+            m.name
+            for m in self.interp.resolver.members_of(req)
+            if isinstance(m, M.Usage) and m.kind == "subject" and m.name
+        ]
         prefixes = {subjects[0]: ""} if subjects else {}
         for con in named_members(self.interp, req, ("constraint",)):
             expr = constraint_expr(self.interp, con)
@@ -238,9 +235,14 @@ class _Builder:
 
     # -- expression encoding --------------------------------------------------
 
-    def _encode(self, expr: A.Expr, context: M.Namespace, prefix: str,
-                frame: dict[str, Any],
-                prefixes: dict[str, str] | None = None) -> Any:
+    def _encode(
+        self,
+        expr: A.Expr,
+        context: M.Namespace,
+        prefix: str,
+        frame: dict[str, Any],
+        prefixes: dict[str, str] | None = None,
+    ) -> Any:
         z3 = self.z3
         if isinstance(expr, A.Literal):
             if isinstance(expr.value, bool):
@@ -255,8 +257,7 @@ class _Builder:
         if isinstance(expr, A.QuantityOp):
             return self._encode(expr.base, context, prefix, frame, prefixes)
         if isinstance(expr, A.Unary):
-            operand = self._encode(expr.operand, context, prefix, frame,
-                                   prefixes)
+            operand = self._encode(expr.operand, context, prefix, frame, prefixes)
             if expr.op == "not":
                 return z3.Not(operand)
             return -operand if expr.op == "-" else operand
@@ -264,17 +265,22 @@ class _Builder:
             return z3.If(
                 self._encode(expr.test, context, prefix, frame, prefixes),
                 self._encode(expr.then, context, prefix, frame, prefixes),
-                self._encode(expr.orelse, context, prefix, frame, prefixes))
+                self._encode(expr.orelse, context, prefix, frame, prefixes),
+            )
         if isinstance(expr, A.Binary):
             return self._binary(expr, context, prefix, frame, prefixes)
         if isinstance(expr, A.Invocation):
             return self._invoke(expr, context, prefix, frame, prefixes)
-        raise AnalysisError(f"'{expr.to_text()}' ({type(expr).__name__}) is "
-                            "not encodable for Z3")
+        raise AnalysisError(f"'{expr.to_text()}' ({type(expr).__name__}) is not encodable for Z3")
 
-    def _binary(self, expr: A.Binary, context: M.Namespace, prefix: str,
-                frame: dict[str, Any],
-                prefixes: dict[str, str] | None) -> Any:
+    def _binary(
+        self,
+        expr: A.Binary,
+        context: M.Namespace,
+        prefix: str,
+        frame: dict[str, Any],
+        prefixes: dict[str, str] | None,
+    ) -> Any:
         z3 = self.z3
         left = self._encode(expr.left, context, prefix, frame, prefixes)
         right = self._encode(expr.right, context, prefix, frame, prefixes)
@@ -288,22 +294,33 @@ class _Builder:
         if op == "xor":
             return z3.Xor(left, right)
         if op in ("**", "^"):
-            return left ** right
+            return left**right
         if op in ("==", "==="):
             return left == right
         if op in ("!=", "!=="):
             return left != right
-        table = {"+": lambda a, b: a + b, "-": lambda a, b: a - b,
-                 "*": lambda a, b: a * b, "/": lambda a, b: a / b,
-                 "<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
-                 ">": lambda a, b: a > b, ">=": lambda a, b: a >= b}
+        table = {
+            "+": lambda a, b: a + b,
+            "-": lambda a, b: a - b,
+            "*": lambda a, b: a * b,
+            "/": lambda a, b: a / b,
+            "<": lambda a, b: a < b,
+            "<=": lambda a, b: a <= b,
+            ">": lambda a, b: a > b,
+            ">=": lambda a, b: a >= b,
+        }
         if op in table:
             return table[op](left, right)
         raise AnalysisError(f"operator {op!r} is not encodable for Z3")
 
-    def _ref(self, expr: A.FeatureRef | A.ChainAccess, context: M.Namespace,
-             prefix: str, frame: dict[str, Any],
-             prefixes: dict[str, str]) -> Any:
+    def _ref(
+        self,
+        expr: A.FeatureRef | A.ChainAccess,
+        context: M.Namespace,
+        prefix: str,
+        frame: dict[str, Any],
+        prefixes: dict[str, str],
+    ) -> Any:
         if isinstance(expr, A.FeatureRef):
             parts: QName = expr.parts
         else:
@@ -311,8 +328,7 @@ class _Builder:
             parts = (*expr.base.parts, *expr.parts)
         if parts[0] in frame:
             if len(parts) > 1:
-                raise AnalysisError(f"member access on parameter "
-                                    f"{parts[0]!r} is not supported")
+                raise AnalysisError(f"member access on parameter {parts[0]!r} is not supported")
             return frame[parts[0]]
         if parts[0] in prefixes:
             parts = (*filter(None, prefixes[parts[0]].split(".")), *parts[1:])
@@ -329,32 +345,38 @@ class _Builder:
             return self.z3.RealVal(str(float(value)))
         raise AnalysisError(f"'{'.'.join(parts)}' is not scalar ({value!r})")
 
-    def _invoke(self, expr: A.Invocation, context: M.Namespace, prefix: str,
-                frame: dict[str, Any],
-                prefixes: dict[str, str] | None) -> Any:
+    def _invoke(
+        self,
+        expr: A.Invocation,
+        context: M.Namespace,
+        prefix: str,
+        frame: dict[str, Any],
+        prefixes: dict[str, str] | None,
+    ) -> Any:
         z3 = self.z3
         name = expr.target[-1]
-        args = [self._encode(a, context, prefix, frame, prefixes)
-                for a in expr.args]
-        named = {n: self._encode(e, context, prefix, frame, prefixes)
-                 for n, e in expr.named}
+        args = [self._encode(a, context, prefix, frame, prefixes) for a in expr.args]
+        named = {n: self._encode(e, context, prefix, frame, prefixes) for n, e in expr.named}
         try:
             target = self.interp.resolver.resolve(expr.target, context)
         except ResolutionError:
             target = None
-        if isinstance(target, (M.Definition, M.Usage)) and \
-                target.kind in ("calc", "constraint"):
+        if isinstance(target, (M.Definition, M.Usage)) and target.kind in ("calc", "constraint"):
             return self._inline_calc(target, args, named)
         if name == "abs" and len(args) == 1 and not named:
             return z3.If(args[0] >= 0, args[0], -args[0])
-        raise AnalysisError(f"invocation of {'::'.join(expr.target)!r} is "
-                            "not encodable (only calc defs and abs)")
+        raise AnalysisError(
+            f"invocation of {'::'.join(expr.target)!r} is not encodable (only calc defs and abs)"
+        )
 
-    def _inline_calc(self, calc: M.Definition | M.Usage, args: list[Any],
-                     named: dict[str, Any]) -> Any:
-        params = [m for m in self.interp.resolver.members_of(calc)
-                  if isinstance(m, M.Usage) and m.direction in ("in", "inout")
-                  and m.name]
+    def _inline_calc(
+        self, calc: M.Definition | M.Usage, args: list[Any], named: dict[str, Any]
+    ) -> Any:
+        params = [
+            m
+            for m in self.interp.resolver.members_of(calc)
+            if isinstance(m, M.Usage) and m.direction in ("in", "inout") and m.name
+        ]
         frame: dict[str, Any] = {}
         for param, value in zip(params, args, strict=False):
             assert param.name is not None
@@ -371,8 +393,7 @@ class _Builder:
             if member.name is None or member.name in frame:
                 continue
             if member.value is not None:  # defaults and locals
-                frame[member.name] = self._encode(member.value.expr, calc, "",
-                                                  dict(frame))
+                frame[member.name] = self._encode(member.value.expr, calc, "", dict(frame))
         if result is None:
             raise AnalysisError(f"calc {calc.label} has no result expression")
         return self._encode(result, calc, "", frame)

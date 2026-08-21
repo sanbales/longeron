@@ -48,8 +48,9 @@ def test_json_import_state_machine():
 
 def test_from_dict_single_element():
     part = M.Definition(kind="part", name="Widget")
-    part.add(M.Usage(kind="attribute", name="w",
-                     value=M.FeatureValue(sysml2.parse_expression("3 + 4"))))
+    part.add(
+        M.Usage(kind="attribute", name="w", value=M.FeatureValue(sysml2.parse_expression("3 + 4")))
+    )
     rebuilt = sysml2.from_dict(sysml2.to_dict(part))
     assert isinstance(rebuilt, M.Definition)
     assert rebuilt.members[0].value.expr.to_text() == "3 + 4"
@@ -111,13 +112,15 @@ def test_full_loop(tmp_path):
 
     # run: instantiate with overrides and evaluate a calc
     car = interp.instantiate("Vehicles::Vehicle", mass=1400.0)
-    total = interp.call("Vehicles::TotalMass",
-                        vehicleMass=car.slots["mass"], cargoMass=150.0)
+    total = interp.call("Vehicles::TotalMass", vehicleMass=car.slots["mass"], cargoMass=150.0)
 
     # write results back into the model as a snapshot part
     snapshot = interp.snapshot(car, name="measuredCar")
-    snapshot.add(M.Usage(kind="attribute", name="totalWithCargo",
-                         value=M.FeatureValue(sysml2.ast.Literal(total))))
+    snapshot.add(
+        M.Usage(
+            kind="attribute", name="totalWithCargo", value=M.FeatureValue(sysml2.ast.Literal(total))
+        )
+    )
     model.find("Vehicles").add(snapshot)
 
     # save and reload in both formats

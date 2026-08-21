@@ -24,9 +24,15 @@ class TestExport:
 
     def test_metaclass_names(self, records):
         types = {r["@type"] for r in records}
-        assert {"Namespace", "Package", "PartDefinition",
-                "CalculationDefinition", "OwningMembership",
-                "FeatureMembership", "FeatureTyping"} <= types
+        assert {
+            "Namespace",
+            "Package",
+            "PartDefinition",
+            "CalculationDefinition",
+            "OwningMembership",
+            "FeatureMembership",
+            "FeatureTyping",
+        } <= types
 
     def test_references_are_id_objects(self, records):
         pkg = next(r for r in records if r.get("declaredName") == "Vehicles")
@@ -52,19 +58,19 @@ class TestImport:
 
     def test_round_trip_names_and_ownership(self, records):
         spec = api.from_api_records(records)
-        by_name = {getattr(o, "declaredName", None): o
-                   for o in spec.all_instances()}
+        by_name = {getattr(o, "declaredName", None): o for o in spec.all_instances()}
         vehicle = by_name["Vehicle"]
         assert vehicle.eClass.name == "PartDefinition"
         assert vehicle.eContainer() is not None  # re-parented via containment
 
     def test_round_trip_typing_references(self, records):
         spec = api.from_api_records(records)
-        typings = [o for o in spec.all_instances()
-                   if o.eClass.name == "FeatureTyping"]
-        pairs = {(t.typedFeature.declaredName, t.type.declaredName)
-                 for t in typings
-                 if t.typedFeature is not None and t.type is not None}
+        typings = [o for o in spec.all_instances() if o.eClass.name == "FeatureTyping"]
+        pairs = {
+            (t.typedFeature.declaredName, t.type.declaredName)
+            for t in typings
+            if t.typedFeature is not None and t.type is not None
+        }
         assert ("engine", "Engine") in pairs
 
     def test_records_survive_second_export(self, records):
@@ -81,12 +87,10 @@ class TestImport:
 
 
 def test_direction_survives_round_trip():
-    model = sysml2.loads(
-        "package P { calc def C { in x : Real; return : Real = x; } }")
+    model = sysml2.loads("package P { calc def C { in x : Real; return : Real = x; } }")
     records = api.to_api_records(model)
     spec = api.from_api_records(records)
-    param = next(o for o in spec.all_instances()
-                 if getattr(o, "declaredName", None) == "x")
+    param = next(o for o in spec.all_instances() if getattr(o, "declaredName", None) == "x")
     assert str(param.direction) == "in"
 
 
@@ -108,8 +112,7 @@ class TestImpliedSpecializations:
         assert by_type == {"Subclassification", "Subsetting"}
         assert len(implied) == 2
         sub = next(r for r in implied if r["@type"] == "Subclassification")
-        a_record = next(r for r in records
-                        if r.get("declaredName") == "A")
+        a_record = next(r for r in records if r.get("declaredName") == "A")
         assert sub["subclassifier"] == {"@id": a_record["@id"]}
         # the library base is not part of the export: its @id is a
         # deterministic UUID of the qualified name, dangling by design
@@ -118,8 +121,8 @@ class TestImpliedSpecializations:
 
     def test_explicit_specializations_not_flagged(self):
         records = api.to_api_records(
-            sysml2.loads("package P { part def A; part def B :> A; }"),
-            implied=True)
+            sysml2.loads("package P { part def A; part def B :> A; }"), implied=True
+        )
         implied = [r for r in records if r.get("isImplied")]
         # B specializes A explicitly -> only A gets an implied record
         assert len(implied) == 1
@@ -128,15 +131,15 @@ class TestImpliedSpecializations:
         model_text = self.MODEL
         first = api.to_api_records(sysml2.loads(model_text), implied=True)
         second = api.to_api_records(sysml2.loads(model_text), implied=True)
-        assert sorted(r["@id"] for r in first) == \
-            sorted(r["@id"] for r in second)
+        assert sorted(r["@id"] for r in first) == sorted(r["@id"] for r in second)
         assert len({r["@id"] for r in first}) == len(first)
 
     def test_implied_records_reimport(self):
         records = api.to_api_records(sysml2.loads(self.MODEL), implied=True)
         spec = api.from_api_records(records)
-        implied = [o for o in spec.all_instances()
-                   if o.eClass.name in ("Subclassification", "Subsetting")]
+        implied = [
+            o for o in spec.all_instances() if o.eClass.name in ("Subclassification", "Subsetting")
+        ]
         assert len(implied) == 2
         assert all(o.isImplied for o in implied)
 

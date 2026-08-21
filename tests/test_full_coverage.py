@@ -155,8 +155,7 @@ def test_metadata_structure():
     pkg = model.find("Meta")
     annotations = [m for m in pkg.members if isinstance(m, M.MetadataUsage)]
     assert annotations[0].typed_by == "Safety"
-    values = [m for m in annotations[0].members
-              if isinstance(m, M.MetadataValue)]
+    values = [m for m in annotations[0].members if isinstance(m, M.MetadataValue)]
     assert values[0].redefines == "level"
     assert values[0].value.expr.to_text() == "3"
     critical = pkg.find("Critical")
@@ -175,8 +174,7 @@ def test_satisfy_structure():
 
 def test_filtered_import():
     model = sysml2.loads(FULL_COVERAGE_SOURCES[6])
-    imports = [m for m in model.find("Filtered").members
-               if isinstance(m, M.Import)]
+    imports = [m for m in model.find("Filtered").members if isinstance(m, M.Import)]
     assert imports[0].filters and imports[0].filters[0].to_text() == "@Safety"
     assert imports[1].is_recursive
 

@@ -14,14 +14,12 @@ class TestCalc:
         assert vehicle_interp.call("Vehicles::TotalMass", 1000.0) == 1000.0
 
     def test_named_arguments(self, vehicle_interp):
-        result = vehicle_interp.call("Vehicles::TotalMass",
-                                     vehicleMass=800.0, cargoMass=50.0)
+        result = vehicle_interp.call("Vehicles::TotalMass", vehicleMass=800.0, cargoMass=50.0)
         assert result == 850.0
 
     def test_local_bindings(self, vehicle_interp):
         # KineticEnergy uses an intermediate attribute (vSquared)
-        assert vehicle_interp.call("Vehicles::KineticEnergy",
-                                   m=2.0, v=3.0) == 9.0
+        assert vehicle_interp.call("Vehicles::KineticEnergy", m=2.0, v=3.0) == 9.0
 
     def test_missing_argument(self, vehicle_interp):
         with pytest.raises(EvaluationError, match="missing argument"):
@@ -95,23 +93,20 @@ class TestConstraints:
 class TestRequirements:
     def test_requirement_satisfied(self, vehicle_interp):
         car = vehicle_interp.instantiate("Vehicles::Vehicle")
-        result = vehicle_interp.check_requirement(
-            "Vehicles::MassRequirement", subject=car)
+        result = vehicle_interp.check_requirement("Vehicles::MassRequirement", subject=car)
         assert result.applicable
         assert result.satisfied is True
         assert result.requirements[0].name == "underLimit"
 
     def test_requirement_violated(self, vehicle_interp):
         car = vehicle_interp.instantiate("Vehicles::Vehicle", mass=3000.0)
-        result = vehicle_interp.check_requirement(
-            "Vehicles::MassRequirement", subject=car)
+        result = vehicle_interp.check_requirement("Vehicles::MassRequirement", subject=car)
         assert result.applicable
         assert result.satisfied is False
 
     def test_requirement_not_applicable(self, vehicle_interp):
         car = vehicle_interp.instantiate("Vehicles::Vehicle", mass=-5.0)
-        result = vehicle_interp.check_requirement(
-            "Vehicles::MassRequirement", subject=car)
+        result = vehicle_interp.check_requirement("Vehicles::MassRequirement", subject=car)
         assert not result.applicable
         assert result.satisfied is None
 

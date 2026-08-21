@@ -22,8 +22,10 @@ GRAMMARS = {
     "SysML.g4": "sysml",
     "KerML.g4": "kerml",
 }
-MAVEN_URL = (f"https://repo1.maven.org/maven2/org/antlr/antlr4/{ANTLR_VERSION}"
-             f"/antlr4-{ANTLR_VERSION}-complete.jar")
+MAVEN_URL = (
+    f"https://repo1.maven.org/maven2/org/antlr/antlr4/{ANTLR_VERSION}"
+    f"/antlr4-{ANTLR_VERSION}-complete.jar"
+)
 
 
 def find_antlr4() -> list[str] | None:
@@ -48,10 +50,12 @@ def find_java() -> str:
                 return str(candidate)
     if shutil.which("java"):
         return "java"
-    for pattern in ("~/mamba/envs/*/lib/jvm/bin/java",
-                    "~/mamba/envs/*/bin/java",
-                    "~/miniforge3/envs/*/lib/jvm/bin/java",
-                    "~/miniconda3/envs/*/bin/java"):
+    for pattern in (
+        "~/mamba/envs/*/lib/jvm/bin/java",
+        "~/mamba/envs/*/bin/java",
+        "~/miniforge3/envs/*/lib/jvm/bin/java",
+        "~/miniconda3/envs/*/bin/java",
+    ):
         matches = sorted(Path.home().glob(pattern.replace("~/", "")))
         if matches:
             return str(matches[0])
@@ -61,8 +65,12 @@ def find_java() -> str:
 def find_jar() -> str:
     if os.environ.get("ANTLR_JAR"):
         return os.environ["ANTLR_JAR"]
-    m2 = (Path.home() / ".m2/repository/org/antlr/antlr4" / ANTLR_VERSION /
-          f"antlr4-{ANTLR_VERSION}-complete.jar")
+    m2 = (
+        Path.home()
+        / ".m2/repository/org/antlr/antlr4"
+        / ANTLR_VERSION
+        / f"antlr4-{ANTLR_VERSION}-complete.jar"
+    )
     if m2.exists():
         return str(m2)
     m2.parent.mkdir(parents=True, exist_ok=True)
@@ -80,14 +88,20 @@ def main() -> None:
         out = ROOT / "src/sysml2/_gen" / subdir
         out.mkdir(parents=True, exist_ok=True)
         (out / "__init__.py").touch()
-        cmd = [*runner, "-Dlanguage=Python3", "-visitor",
-               "-no-listener", "-Xexact-output-dir", "-o", str(out),
-               f"grammars/{grammar}"]
+        cmd = [
+            *runner,
+            "-Dlanguage=Python3",
+            "-visitor",
+            "-no-listener",
+            "-Xexact-output-dir",
+            "-o",
+            str(out),
+            f"grammars/{grammar}",
+        ]
         print("$", " ".join(cmd))
         # run from the repo root with a relative grammar path so the header
         # comment in generated files is machine-independent
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                cwd=ROOT)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
         for line in result.stderr.splitlines():
             if "warning(154)" not in line:  # rule-can-match-empty warnings
                 print(line)

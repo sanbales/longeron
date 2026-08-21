@@ -41,24 +41,80 @@ StateActionKind = Literal["entry", "do", "exit"]
 
 #: definition ``kind`` values map 1:1 to declaration keywords
 DefinitionKind = Literal[
-    "part", "item", "attribute", "port", "action", "calc", "constraint",
-    "requirement", "concern", "state", "occurrence", "individual", "enum",
-    "connection", "flow", "allocation", "metadata", "rendering", "case",
-    "analysis", "verification", "use_case", "view", "viewpoint", "interface",
+    "part",
+    "item",
+    "attribute",
+    "port",
+    "action",
+    "calc",
+    "constraint",
+    "requirement",
+    "concern",
+    "state",
+    "occurrence",
+    "individual",
+    "enum",
+    "connection",
+    "flow",
+    "allocation",
+    "metadata",
+    "rendering",
+    "case",
+    "analysis",
+    "verification",
+    "use_case",
+    "view",
+    "viewpoint",
+    "interface",
     "extended",
 ]
 
 #: usage ``kind`` values; mostly declaration keywords plus a few synthetic
 #: ones (``feature`` for keyword-less usages, ``enum_literal``, ...)
 UsageKind = Literal[
-    "part", "item", "attribute", "port", "ref", "feature", "enum",
-    "enum_literal", "occurrence", "individual", "snapshot", "timeslice",
-    "event", "event_occurrence", "action", "calc", "constraint",
-    "requirement", "concern", "state", "case", "analysis", "verification",
-    "use_case", "subject", "actor", "stakeholder", "objective",
-    "connection", "binding", "interface", "allocation", "flow", "message",
-    "view", "viewpoint", "rendering", "render", "satisfy", "verify",
-    "frame", "include", "extended",
+    "part",
+    "item",
+    "attribute",
+    "port",
+    "ref",
+    "feature",
+    "enum",
+    "enum_literal",
+    "occurrence",
+    "individual",
+    "snapshot",
+    "timeslice",
+    "event",
+    "event_occurrence",
+    "action",
+    "calc",
+    "constraint",
+    "requirement",
+    "concern",
+    "state",
+    "case",
+    "analysis",
+    "verification",
+    "use_case",
+    "subject",
+    "actor",
+    "stakeholder",
+    "objective",
+    "connection",
+    "binding",
+    "interface",
+    "allocation",
+    "flow",
+    "message",
+    "view",
+    "viewpoint",
+    "rendering",
+    "render",
+    "satisfy",
+    "verify",
+    "frame",
+    "include",
+    "extended",
 ]
 
 DEFINITION_KINDS: tuple[str, ...] = get_args(DefinitionKind)
@@ -261,6 +317,7 @@ class ConnectorEnd:
 # ---------------------------------------------------------------------------
 # Definitions and usages
 # ---------------------------------------------------------------------------
+
 
 @dataclass(eq=False)
 class Definition(Namespace):

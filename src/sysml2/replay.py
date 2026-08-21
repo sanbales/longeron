@@ -44,8 +44,13 @@ if TYPE_CHECKING:
 
     from .interpreter import _ActiveState
 
-__all__ = ["FiredTransition", "Timeline", "record_action_timeline",
-           "record_timeline", "replay_widget"]
+__all__ = [
+    "FiredTransition",
+    "Timeline",
+    "record_action_timeline",
+    "record_timeline",
+    "replay_widget",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -96,57 +101,66 @@ class Timeline:
     #: per-step scalar env snapshots [(t_or_index, {name: value})], shown
     #: as the readout line under the widget's controls (step semantics,
     #: like tracks)
-    env_steps: list[tuple[float, dict[str, Any]]] = field(
-        default_factory=list)
+    env_steps: list[tuple[float, dict[str, Any]]] = field(default_factory=list)
 
     def to_json(self) -> str:
         """The replay payload (times and float values rounded to 3
         decimals)."""
 
-        return json.dumps({
-            "t_start": round(self.t_start, 3),
-            "t_end": round(self.t_end, 3),
-            "step_mode": self.step_mode,
-            "n_steps": self.n_steps,
-            "final_state": self.final_state,
-            "tracks": {
-                qname: [[round(t, 3), active] for t, active in keyframes]
-                for qname, keyframes in self.tracks.items()
-            },
-            "fired": [
-                {"t": round(f.t, 3), "source": f.source, "target": f.target,
-                 "event": f.event}
-                for f in self.fired
-            ],
-            "parents": self.parents,
-            "env_steps": [
-                [round(t, 3),
-                 {name: round(value, 3) if isinstance(value, float)
-                  else value for name, value in values.items()}]
-                for t, values in self.env_steps
-            ],
-        })
+        return json.dumps(
+            {
+                "t_start": round(self.t_start, 3),
+                "t_end": round(self.t_end, 3),
+                "step_mode": self.step_mode,
+                "n_steps": self.n_steps,
+                "final_state": self.final_state,
+                "tracks": {
+                    qname: [[round(t, 3), active] for t, active in keyframes]
+                    for qname, keyframes in self.tracks.items()
+                },
+                "fired": [
+                    {"t": round(f.t, 3), "source": f.source, "target": f.target, "event": f.event}
+                    for f in self.fired
+                ],
+                "parents": self.parents,
+                "env_steps": [
+                    [
+                        round(t, 3),
+                        {
+                            name: round(value, 3) if isinstance(value, float) else value
+                            for name, value in values.items()
+                        },
+                    ]
+                    for t, values in self.env_steps
+                ],
+            }
+        )
 
 
-def record_timeline(interpreter: Interpreter,
-                    state_machine: str | M.Definition | M.Usage,
-                    events: list[Any] | None = None, *,
-                    inputs: dict[str, Any] | None = None,
-                    max_steps: int = 1000) -> Timeline:
+def record_timeline(
+    interpreter: Interpreter,
+    state_machine: str | M.Definition | M.Usage,
+    events: list[Any] | None = None,
+    *,
+    inputs: dict[str, Any] | None = None,
+    max_steps: int = 1000,
+) -> Timeline:
     """Simulate a state machine and record a replayable :class:`Timeline`.
 
     Mirrors ``Interpreter.simulate`` semantics: ``events`` entries are event
     names or ``(name, payload)`` tuples; plain numbers advance the clock.
     """
 
-    target = (interpreter.resolver.resolve(state_machine)
-              if isinstance(state_machine, str) else state_machine)
+    target = (
+        interpreter.resolver.resolve(state_machine)
+        if isinstance(state_machine, str)
+        else state_machine
+    )
     if not isinstance(target, (M.Definition, M.Usage)):
         raise ExecutionError(f"{state_machine!r} is not a state machine")
     machine = StateMachine(interpreter, target, dict(inputs or {}))
 
-    steps: list[tuple[float, TransitionFired | None, list[str],
-                      dict[str, Any]]] = []
+    steps: list[tuple[float, TransitionFired | None, list[str], dict[str, Any]]] = []
     # dotted active-state paths (TransitionFired.source/target format) to
     # qualified names, learned from live configurations rather than parsed
     path_to_qname: dict[str, str] = {}
@@ -161,20 +175,18 @@ def record_timeline(interpreter: Interpreter,
             qname = node.usage.qualified_name
             if qname is None:
                 raise ExecutionError(
-                    f"replay needs named states: active state "
-                    f"{node.path()!r} has no qualified name")
+                    f"replay needs named states: active state {node.path()!r} has no qualified name"
+                )
             path_to_qname[node.path()] = qname
             if node.parent is not None:  # recorded, not prefix-guessed
-                parents.setdefault(qname,
-                                   path_to_qname[node.parent.path()])
+                parents.setdefault(qname, path_to_qname[node.parent.path()])
             active.append(qname)
             for child in node.children:
                 visit(child)
 
         for root in machine.roots:
             visit(root)
-        steps.append((now, fired, active,
-                      _scalar_env(machine.env.frames[0])))
+        steps.append((now, fired, active, _scalar_env(machine.env.frames[0])))
 
     machine.on_step = observe
     machine.start()
@@ -191,15 +203,17 @@ def record_timeline(interpreter: Interpreter,
 def _scalar_env(frame: dict[str, Any]) -> dict[str, Any]:
     """The scalar (str/int/float/bool) slice of an env frame."""
 
-    return {name: value for name, value in frame.items()
-            if isinstance(value, (str, int, float, bool))}
+    return {
+        name: value for name, value in frame.items() if isinstance(value, (str, int, float, bool))
+    }
 
 
-def _build_timeline(machine: StateMachine,
-                    steps: list[tuple[float, TransitionFired | None,
-                                      list[str], dict[str, Any]]],
-                    path_to_qname: dict[str, str],
-                    parents: dict[str, str]) -> Timeline:
+def _build_timeline(
+    machine: StateMachine,
+    steps: list[tuple[float, TransitionFired | None, list[str], dict[str, Any]]],
+    path_to_qname: dict[str, str],
+    parents: dict[str, str],
+) -> Timeline:
     t_end = machine.now
     step_mode = t_end == 0.0  # no clock advance: scrub over step index
 
@@ -220,29 +234,40 @@ def _build_timeline(machine: StateMachine,
         if fired is None:  # the initial-entry step
             continue
         try:
-            source, target = (path_to_qname[fired.source],
-                              path_to_qname[fired.target])
+            source, target = (path_to_qname[fired.source], path_to_qname[fired.target])
         except KeyError as err:
             raise ExecutionError(
                 f"replay could not map transition {fired!r} to qualified "
-                f"names (unknown state path {err.args[0]!r})") from err
-        fired_records.append(FiredTransition(key, source, target,
-                                             fired.event))
+                f"names (unknown state path {err.args[0]!r})"
+            ) from err
+        fired_records.append(FiredTransition(key, source, target, fired.event))
 
     return Timeline(
-        t_start=0.0, t_end=t_end, step_mode=step_mode, n_steps=len(steps),
-        tracks=tracks, fired=fired_records,
-        final_state=machine.current, trace=list(machine.trace),
+        t_start=0.0,
+        t_end=t_end,
+        step_mode=step_mode,
+        n_steps=len(steps),
+        tracks=tracks,
+        fired=fired_records,
+        final_state=machine.current,
+        trace=list(machine.trace),
         ignored_events=list(machine.ignored),
-        env=dict(machine.env.frames[0]), sends=list(machine.sends),
-        time=machine.now, active_states=machine.active_states(),
-        parents=parents, env_steps=env_steps)
+        env=dict(machine.env.frames[0]),
+        sends=list(machine.sends),
+        time=machine.now,
+        active_states=machine.active_states(),
+        parents=parents,
+        env_steps=env_steps,
+    )
 
 
-def record_action_timeline(interpreter: Interpreter,
-                           action: str | M.Definition | M.Usage,
-                           events: list[Any] | None = None, *,
-                           inputs: dict[str, Any] | None = None) -> Timeline:
+def record_action_timeline(
+    interpreter: Interpreter,
+    action: str | M.Definition | M.Usage,
+    events: list[Any] | None = None,
+    *,
+    inputs: dict[str, Any] | None = None,
+) -> Timeline:
     """Run an action and record a replayable :class:`Timeline`.
 
     Mirrors ``Interpreter.run_action`` semantics (``events`` feed
@@ -258,12 +283,10 @@ def record_action_timeline(interpreter: Interpreter,
     are inert.
     """
 
-    target = (interpreter.resolver.resolve(action)
-              if isinstance(action, str) else action)
+    target = interpreter.resolver.resolve(action) if isinstance(action, str) else action
     if not isinstance(target, (M.Definition, M.Usage)):
         raise ExecutionError(f"{action!r} is not an action")
-    executor = _ActionExecutor(interpreter, target, dict(inputs or {}),
-                               deque(events or []))
+    executor = _ActionExecutor(interpreter, target, dict(inputs or {}), deque(events or []))
 
     # the top-level succession plan (the graph action_diagram draws):
     # used to route fired records through control-node intermediates
@@ -281,8 +304,7 @@ def record_action_timeline(interpreter: Interpreter,
             successors.setdefault(edge.source, []).append(edge.target)
     name_of = {qname: name for name, qname in qname_of.items()}
 
-    def succession_hops(prev_qname: str,
-                        qname: str) -> list[tuple[str, str]]:
+    def succession_hops(prev_qname: str, qname: str) -> list[tuple[str, str]]:
         """The drawn edges from ``prev_qname`` to ``qname``: the shortest
         plan path whose intermediate nodes are all control nodes (BFS),
         else the direct pair (inert unless the diagram has that edge)."""
@@ -325,8 +347,8 @@ def record_action_timeline(interpreter: Interpreter,
         qname = element.qualified_name
         if qname is None:
             raise ExecutionError(
-                f"replay needs named steps: {element.label!r} has no "
-                f"qualified name")
+                f"replay needs named steps: {element.label!r} has no qualified name"
+            )
         key = float(index)
         n_keys = max(n_keys, index + 1)
         if phase == "enter":
@@ -337,8 +359,8 @@ def record_action_timeline(interpreter: Interpreter,
             if previous is not None and previous != qname:
                 fired_records.extend(
                     FiredTransition(key, source, hop_target, None)
-                    for source, hop_target in succession_hops(previous,
-                                                              qname))
+                    for source, hop_target in succession_hops(previous, qname)
+                )
             for deeper in [d for d in last_at_depth if d > depth]:
                 del last_at_depth[deeper]  # stale once a new step opens
             stack.append(qname)
@@ -359,11 +381,22 @@ def record_action_timeline(interpreter: Interpreter,
     if not env_steps:  # no named steps: still expose the final env
         env_steps.append((0.0, _scalar_env(executor.env.frames[0])))
     return Timeline(
-        t_start=0.0, t_end=0.0, step_mode=True, n_steps=max(n_keys, 1),
-        tracks=tracks, fired=fired_records, final_state=None,
-        trace=list(result.trace), ignored_events=[], env=dict(result.env),
-        sends=list(result.sends), time=result.time, active_states=[],
-        parents=parents, env_steps=env_steps)
+        t_start=0.0,
+        t_end=0.0,
+        step_mode=True,
+        n_steps=max(n_keys, 1),
+        tracks=tracks,
+        fired=fired_records,
+        final_state=None,
+        trace=list(result.trace),
+        ignored_events=[],
+        env=dict(result.env),
+        sends=list(result.sends),
+        time=result.time,
+        active_states=[],
+        parents=parents,
+        env_steps=env_steps,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +702,8 @@ def _widget_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise ImportError(
             "the replay widget needs anywidget; install the extra with "
-            "'pip install \"longeron[replay]\"'") from err
+            "'pip install \"longeron[replay]\"'"
+        ) from err
 
     class ReplayWidget(_anywidget.AnyWidget):
         """Animated replay of a recorded Timeline over the state SVG."""
@@ -686,12 +720,15 @@ def _widget_class() -> type[anywidget.AnyWidget]:
     return ReplayWidget
 
 
-def replay_widget(interpreter: Interpreter,
-                  element: str | M.Definition | M.Usage,
-                  events: list[Any] | None = None, *,
-                  inputs: dict[str, Any] | None = None,
-                  width_px: int = 760,
-                  kind: str | None = None) -> anywidget.AnyWidget:
+def replay_widget(
+    interpreter: Interpreter,
+    element: str | M.Definition | M.Usage,
+    events: list[Any] | None = None,
+    *,
+    inputs: dict[str, Any] | None = None,
+    width_px: int = 760,
+    kind: str | None = None,
+) -> anywidget.AnyWidget:
     """Simulate ``element`` and replay it over its diagram.
 
     ``kind`` picks the view and recorder: ``"state"``
@@ -705,23 +742,19 @@ def replay_widget(interpreter: Interpreter,
     """
 
     cls = _widget_class()
-    target = (interpreter.resolver.resolve(element)
-              if isinstance(element, str) else element)
+    target = interpreter.resolver.resolve(element) if isinstance(element, str) else element
     if not isinstance(target, (M.Definition, M.Usage)):
         raise ExecutionError(f"{element!r} is not a state machine or action")
     if kind is None:
         kind = "action" if target.kind == "action" else "state"
     if kind not in ("state", "action"):
-        raise ExecutionError(f"unknown replay kind {kind!r} "
-                             f"(expected 'state' or 'action')")
+        raise ExecutionError(f"unknown replay kind {kind!r} (expected 'state' or 'action')")
     from . import diagrams, render  # need ipyelk + node; import late
 
     if kind == "action":
-        timeline = record_action_timeline(interpreter, target, events,
-                                          inputs=inputs)
+        timeline = record_action_timeline(interpreter, target, events, inputs=inputs)
         svg = render.to_svg(diagrams.action_diagram(target))
     else:
-        timeline = record_timeline(interpreter, target, events,
-                                   inputs=inputs)
+        timeline = record_timeline(interpreter, target, events, inputs=inputs)
         svg = render.to_svg(diagrams.state_diagram(target))
     return cls(svg=svg, timeline_json=timeline.to_json(), width_px=width_px)

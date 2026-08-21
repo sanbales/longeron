@@ -31,29 +31,31 @@ def model():
 
 @pytest.fixture(scope="module")
 def studies(model):
-    return {name: trades.TradeStudy(model, qname)
-            for name, (qname, _) in MISSIONS.items()}
+    return {name: trades.TradeStudy(model, qname) for name, (qname, _) in MISSIONS.items()}
 
 
 @pytest.fixture(scope="module")
 def spaces(studies):
-    return {name: study.all_architectures()
-            for name, study in studies.items()}
+    return {name: study.all_architectures() for name, study in studies.items()}
 
 
 def front_2d(archs, metric):
     """The feasible (min missionCost, max metric) front."""
 
     feasible = [a for a in archs if a.verified]
-    return trades.pareto(feasible, minimize=("missionCost",),
-                         maximize=(metric,))
+    return trades.pareto(feasible, minimize=("missionCost",), maximize=(metric,))
 
 
 def base_mix(arch):
     """A mix projected onto the shared points (equipment stripped)."""
 
-    return tuple(sorted((k, v) for k, v in arch.selection.items()
-                        if k in ("airframe", "motors", "props", "battery")))
+    return tuple(
+        sorted(
+            (k, v)
+            for k, v in arch.selection.items()
+            if k in ("airframe", "motors", "props", "battery")
+        )
+    )
 
 
 class TestModelShape:
@@ -66,7 +68,11 @@ class TestModelShape:
         assert set(studies["logistics"].points) == shared | {"cargo"}
         assert set(studies["intercept"].points) == shared
         assert set(studies["intercept"].points["airframe"].variants) == {
-            "boxQuad", "teardropQuad", "vtolWing", "dartInterceptor"}
+            "boxQuad",
+            "teardropQuad",
+            "vtolWing",
+            "dartInterceptor",
+        }
 
     def test_candidate_space_sizes(self, spaces):
         assert len(spaces["isr"]) == 4 * 3 * 3 * 3 * 3
@@ -81,10 +87,10 @@ class TestModelShape:
             names = [n for n, _ in study.derived_order]
             for name, expr in study.derived_order:
                 from sysml2.analysis._expr import free_refs
+
                 for ref in free_refs(expr):
                     if ref[0] in names:
-                        assert ref[0] in seen, \
-                            f"{name} evaluated before its input {ref[0]}"
+                        assert ref[0] in seen, f"{name} evaluated before its input {ref[0]}"
                 seen.add(name)
 
     def test_cpsat_mapper_refuses_the_physics(self, studies):
@@ -108,17 +114,18 @@ class TestFronts:
             return any(
                 b.metrics["missionCost"] <= a.metrics["missionCost"]
                 and b.metrics[metric] >= a.metrics[metric]
-                and (b.metrics["missionCost"] < a.metrics["missionCost"]
-                     or b.metrics[metric] > a.metrics[metric])
-                for b in feasible)
+                and (
+                    b.metrics["missionCost"] < a.metrics["missionCost"]
+                    or b.metrics[metric] > a.metrics[metric]
+                )
+                for b in feasible
+            )
 
-        brute = {tuple(sorted(a.selection.items()))
-                 for a in feasible if not dominated(a)}
+        brute = {tuple(sorted(a.selection.items())) for a in feasible if not dominated(a)}
         assert {tuple(sorted(a.selection.items())) for a in front} == brute
 
     def test_feasible_counts(self, spaces):
-        counts = {name: sum(a.verified for a in archs)
-                  for name, archs in spaces.items()}
+        counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
         # teardropQuad adds ISR mixes (its bay takes the grade-2 sensor)
         # and intercept mixes; its 1.0 kg bay excludes every parcel
         assert counts == {"isr": 23, "logistics": 20, "intercept": 56}
@@ -135,14 +142,17 @@ class TestFronts:
 
 class TestFamilyWinners:
     def test_winged_vtol_wins_isr(self, spaces):
-        best = max((a for a in spaces["isr"] if a.verified),
-                   key=lambda a: a.metrics["stationMinutes"])
+        best = max(
+            (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
+        )
         assert best.selection["airframe"] == "vtolWing"
         assert best.metrics["stationMinutes"] > 100.0
 
     def test_winged_vtol_wins_logistics(self, spaces):
-        best = max((a for a in spaces["logistics"] if a.verified),
-                   key=lambda a: a.metrics["payloadRangeKgKm"])
+        best = max(
+            (a for a in spaces["logistics"] if a.verified),
+            key=lambda a: a.metrics["payloadRangeKgKm"],
+        )
         assert best.selection["airframe"] == "vtolWing"
 
     def test_interceptor_wins_the_dash(self, spaces):
@@ -151,23 +161,33 @@ class TestFamilyWinners:
         assert best.selection["airframe"] == "dartInterceptor"
         assert best.selection["motors"] == "sprintMotor"
         # every non-interceptor stays below the interceptor's top three
-        darts = sorted((a.metrics["maxTargetSpeed"] for a in feasible
-                        if a.selection["airframe"] == "dartInterceptor"),
-                       reverse=True)
-        others = max(a.metrics["maxTargetSpeed"] for a in feasible
-                     if a.selection["airframe"] != "dartInterceptor")
+        darts = sorted(
+            (
+                a.metrics["maxTargetSpeed"]
+                for a in feasible
+                if a.selection["airframe"] == "dartInterceptor"
+            ),
+            reverse=True,
+        )
+        others = max(
+            a.metrics["maxTargetSpeed"]
+            for a in feasible
+            if a.selection["airframe"] != "dartInterceptor"
+        )
         assert others < darts[2]
 
     def test_cheap_quad_wins_the_low_cost_corners(self, spaces):
         for name in ("isr", "logistics", "intercept"):
-            cheapest = min((a for a in spaces[name] if a.verified),
-                           key=lambda a: a.metrics["missionCost"])
+            cheapest = min(
+                (a for a in spaces[name] if a.verified), key=lambda a: a.metrics["missionCost"]
+            )
             assert cheapest.selection["airframe"] == "boxQuad", name
 
     def test_a_robust_mix_sits_on_two_fronts(self, spaces):
-        fronts = {name: {base_mix(a)
-                         for a in front_2d(spaces[name], MISSIONS[name][1])}
-                  for name in MISSIONS}
+        fronts = {
+            name: {base_mix(a) for a in front_2d(spaces[name], MISSIONS[name][1])}
+            for name in MISSIONS
+        }
         overlap = fronts["isr"] & fronts["logistics"]
         assert overlap  # the winged std/slim/packMax bird serves both
         assert any(dict(mix)["airframe"] == "vtolWing" for mix in overlap)
@@ -177,89 +197,121 @@ class TestFamilyWinners:
 
 class TestExplainableInfeasibility:
     def test_interceptor_cannot_do_logistics(self, spaces):
-        darts = [a for a in spaces["logistics"]
-                 if a.selection["airframe"] == "dartInterceptor"]
+        darts = [a for a in spaces["logistics"] if a.selection["airframe"] == "dartInterceptor"]
         assert darts and all(not a.verified for a in darts)
         assert all("cargoFits" in a.violations for a in darts)
 
     def test_teardrop_bay_too_slim_for_parcels(self, spaces):
         # 1.0 kg capacity < the smallest bay + parcel (1.12 kg): the
         # dash specialist is honestly excluded from the freight trade
-        tears = [a for a in spaces["logistics"]
-                 if a.selection["airframe"] == "teardropQuad"]
+        tears = [a for a in spaces["logistics"] if a.selection["airframe"] == "teardropQuad"]
         assert tears and all(not a.verified for a in tears)
         assert all("cargoFits" in a.violations for a in tears)
 
     def test_interceptor_cannot_carry_the_isr_sensor(self, spaces):
-        darts = [a for a in spaces["isr"]
-                 if a.selection["airframe"] == "dartInterceptor"]
+        darts = [a for a in spaces["isr"] if a.selection["airframe"] == "dartInterceptor"]
         assert darts and all(not a.verified for a in darts)
         for arch in darts:
             assert {"sensorFits", "sensorGrade"} & set(arch.violations)
 
     def test_sprint_motors_need_more_battery_than_exists(self, studies):
-        arch = studies["intercept"].evaluate({
-            "airframe": "boxQuad", "motors": "sprintMotor",
-            "props": "slimProp", "battery": "packMax"})
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "boxQuad",
+                "motors": "sprintMotor",
+                "props": "slimProp",
+                "battery": "packMax",
+            }
+        )
         assert not arch.verified
         assert "packPower" in arch.violations  # 4 x 950 W > any pack
 
     def test_eco_motors_cannot_vtol_the_big_pack(self, studies):
-        arch = studies["isr"].evaluate({
-            "airframe": "vtolWing", "motors": "ecoMotor",
-            "props": "slimProp", "battery": "packMax",
-            "sensor": "stareEoIr"})
+        arch = studies["isr"].evaluate(
+            {
+                "airframe": "vtolWing",
+                "motors": "ecoMotor",
+                "props": "slimProp",
+                "battery": "packMax",
+                "sensor": "stareEoIr",
+            }
+        )
         assert not arch.verified
         assert arch.violations == ["isrLift"]
 
     def test_feasible_mix_has_no_violations(self, studies):
-        arch = studies["isr"].evaluate({
-            "airframe": "vtolWing", "motors": "stdMotor",
-            "props": "slimProp", "battery": "packMax",
-            "sensor": "stareEoIr"})
+        arch = studies["isr"].evaluate(
+            {
+                "airframe": "vtolWing",
+                "motors": "stdMotor",
+                "props": "slimProp",
+                "battery": "packMax",
+                "sensor": "stareEoIr",
+            }
+        )
         assert arch.verified and arch.violations == []
-        assert arch.metrics["stationMinutes"] == pytest.approx(115.137,
-                                                               abs=0.01)
+        assert arch.metrics["stationMinutes"] == pytest.approx(115.137, abs=0.01)
 
 
 class TestPhysicsSanity:
     def test_wing_beats_rotor_loiter(self, studies):
         """The whole point of the wing: loiter power is a fraction of hover."""
 
-        winged = studies["isr"].evaluate({
-            "airframe": "vtolWing", "motors": "stdMotor",
-            "props": "slimProp", "battery": "packMax",
-            "sensor": "stareEoIr"})
-        assert winged.metrics["loiterPowerW"] < \
-            0.15 * winged.metrics["hoverPowerW"]
+        winged = studies["isr"].evaluate(
+            {
+                "airframe": "vtolWing",
+                "motors": "stdMotor",
+                "props": "slimProp",
+                "battery": "packMax",
+                "sensor": "stareEoIr",
+            }
+        )
+        assert winged.metrics["loiterPowerW"] < 0.15 * winged.metrics["hoverPowerW"]
 
     def test_asymmetric_logistics_legs(self, studies):
-        arch = studies["logistics"].evaluate({
-            "airframe": "vtolWing", "motors": "stdMotor",
-            "props": "slimProp", "battery": "packMax",
-            "cargo": "parcelBayL"})
+        arch = studies["logistics"].evaluate(
+            {
+                "airframe": "vtolWing",
+                "motors": "stdMotor",
+                "props": "slimProp",
+                "battery": "packMax",
+                "cargo": "parcelBayL",
+            }
+        )
         assert arch.metrics["outboundPowerW"] > arch.metrics["returnPowerW"]
 
     def test_intercept_triangle(self, studies):
-        arch = studies["intercept"].evaluate({
-            "airframe": "dartInterceptor", "motors": "sprintMotor",
-            "props": "slimProp", "battery": "packLite"})
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "dartInterceptor",
+                "motors": "sprintMotor",
+                "props": "slimProp",
+                "battery": "packLite",
+            }
+        )
         vd = arch.metrics["dashSpeed"]
         vt = 25.0
         d0 = 3000.0
         assert arch.metrics["interceptSeconds"] == pytest.approx(
-            d0 / (vd * vd - vt * vt) ** 0.5, rel=1e-9)
+            d0 / (vd * vd - vt * vt) ** 0.5, rel=1e-9
+        )
         # the battery-limited reachable target speed inverts the triangle
         t_max = arch.metrics["dashSeconds"]
         assert arch.metrics["maxTargetSpeed"] == pytest.approx(
-            (vd * vd - (d0 / t_max) ** 2) ** 0.5, rel=1e-9)
+            (vd * vd - (d0 / t_max) ** 2) ** 0.5, rel=1e-9
+        )
 
     def test_unreachable_dash_clamps_to_zero(self, studies):
         # eco quad with a lifter prop: dash speed under the target's --
         # the guarded sqrt keeps the metric at a clean 0, not a crash
-        arch = studies["intercept"].evaluate({
-            "airframe": "boxQuad", "motors": "stdMotor",
-            "props": "lifterProp", "battery": "packLite"})
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "boxQuad",
+                "motors": "stdMotor",
+                "props": "lifterProp",
+                "battery": "packLite",
+            }
+        )
         assert not arch.verified
         assert "canCatch" in arch.violations
 
@@ -272,16 +324,28 @@ class TestPhysicsSanity:
         advantage, but only narrowly."""
 
         def dash(airframe):
-            return studies["intercept"].evaluate({
-                "airframe": airframe, "motors": "stdMotor",
-                "props": "slimProp", "battery": "packMid",
-            }).metrics["dashSpeed"]
+            return (
+                studies["intercept"]
+                .evaluate(
+                    {
+                        "airframe": airframe,
+                        "motors": "stdMotor",
+                        "props": "slimProp",
+                        "battery": "packMid",
+                    }
+                )
+                .metrics["dashSpeed"]
+            )
 
         assert dash("teardropQuad") > 1.3 * dash("boxQuad")
-        best = {af: max(a.metrics["maxTargetSpeed"]
-                        for a in spaces["intercept"] if a.verified
-                        and a.selection["airframe"] == af)
-                for af in ("boxQuad", "teardropQuad", "dartInterceptor")}
+        best = {
+            af: max(
+                a.metrics["maxTargetSpeed"]
+                for a in spaces["intercept"]
+                if a.verified and a.selection["airframe"] == af
+            )
+            for af in ("boxQuad", "teardropQuad", "dartInterceptor")
+        }
         assert best["teardropQuad"] > best["boxQuad"] + 5.0
         gap = best["dartInterceptor"] - best["teardropQuad"]
         assert 0.0 < gap < 5.0  # wings win the top end, narrowly

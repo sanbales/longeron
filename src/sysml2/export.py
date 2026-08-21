@@ -16,7 +16,8 @@ from . import model as M
 from .ast import Expr, expr_to_dict, expr_to_text
 
 # Reserved words of the SysML grammar (cannot be used as basic names).
-RESERVED_WORDS = frozenset("""
+RESERVED_WORDS = frozenset(
+    """
 about abstract accept action actor after alias all allocate allocation
 analysis and as assert assign assume at attribute bind binding by calc case
 comment concern connect connection constant constraint crosses decide def
@@ -30,7 +31,8 @@ require requirement return satisfy send snapshot specializes stakeholder
 standard state subject subsets succession terminate then timeslice to
 transition true until use variant variation verification verify via view
 viewpoint when while xor
-""".split())
+""".split()
+)
 
 _BASIC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -51,8 +53,7 @@ def fmt_qname(qname: str) -> str:
 
     dotted = []
     for chain_part in qname.split("."):
-        dotted.append("::".join(
-            p if p == "$" else fmt_name(p) for p in chain_part.split("::")))
+        dotted.append("::".join(p if p == "$" else fmt_name(p) for p in chain_part.split("::")))
     return ".".join(dotted)
 
 
@@ -107,8 +108,7 @@ def save(element: M.Element, path, format: str | None = None) -> None:
 
     target = Path(path)
     if format is None:
-        format = {".json": "json", ".kerml": "kerml"}.get(
-            target.suffix.lower(), "sysml")
+        format = {".json": "json", ".kerml": "kerml"}.get(target.suffix.lower(), "sysml")
     if format == "json":
         text = to_json(element)
     elif format == "kerml":
@@ -134,8 +134,7 @@ _KIND_KEYWORDS = {
     "event_occurrence": "event occurrence",
 }
 
-_CONTROL_KEYWORDS = {"merge": "merge", "decision": "decide",
-                     "join": "join", "fork": "fork"}
+_CONTROL_KEYWORDS = {"merge": "merge", "decision": "decide", "join": "join", "fork": "fork"}
 
 #: usage kinds with a reference form and an inline-declaration form
 _REF_OR_INLINE_KINDS = {
@@ -226,8 +225,14 @@ class _Printer:
             bits.append(self.value_text(u.value))
         return " ".join(bits)
 
-    def body(self, ns: M.Namespace, level: int, head: str,
-             result: Expr | None = None, parallel: bool = False) -> None:
+    def body(
+        self,
+        ns: M.Namespace,
+        level: int,
+        head: str,
+        result: Expr | None = None,
+        parallel: bool = False,
+    ) -> None:
         opener = "parallel {" if parallel else "{"
         if not ns.members and result is None:
             self.line(level, head.rstrip() + ";")
@@ -249,7 +254,8 @@ class _Printer:
                 inline = el.action
                 if inline.subsets and not inline.name:
                     return fmt_qname(inline.subsets[0]) + (
-                        " " + self.value_text(inline.value) if inline.value else "")
+                        " " + self.value_text(inline.value) if inline.value else ""
+                    )
                 decl = self.usage_declaration(inline)
                 return f"action {decl}" if decl else "action"
             return fmt_qname(el.target or "")
@@ -314,8 +320,7 @@ class _Printer:
         self.line(level, f"{self.prefix(el)}import {allkw}{target};")
 
     def emit_ElementFilter(self, el: M.ElementFilter, level: int) -> None:
-        self.line(level,
-                  f"{self.prefix(el)}filter {expr_to_text(el.condition)};")
+        self.line(level, f"{self.prefix(el)}filter {expr_to_text(el.condition)};")
 
     def emit_Expose(self, el: M.Expose, level: int) -> None:
         target = fmt_qname(el.target)
@@ -350,8 +355,7 @@ class _Printer:
         self.line(level, "}")
 
     def emit_Alias(self, el: M.Alias, level: int) -> None:
-        self.line(level, f"{self.prefix(el)}alias {self.names(el)} "
-                         f"for {fmt_qname(el.target)};")
+        self.line(level, f"{self.prefix(el)}alias {self.names(el)} for {fmt_qname(el.target)};")
 
     def emit_Comment(self, el: M.Comment, level: int) -> None:
         head = ""
@@ -378,8 +382,7 @@ class _Printer:
         self.line(level, head)
         self.line(level, el.body)
 
-    def emit_TextualRepresentation(self, el: M.TextualRepresentation,
-                                   level: int) -> None:
+    def emit_TextualRepresentation(self, el: M.TextualRepresentation, level: int) -> None:
         head = ""
         if el.name or el.short_name:
             head = f"rep {self.names(el)} "
@@ -418,8 +421,7 @@ class _Printer:
             head += " :> " + ", ".join(fmt_qname(s) for s in el.supers)
         self.body(el, level, head, result=el.result, parallel=el.is_parallel)
 
-    def emit_EnumerationDefinition(self, el: M.EnumerationDefinition,
-                                   level: int) -> None:
+    def emit_EnumerationDefinition(self, el: M.EnumerationDefinition, level: int) -> None:
         self.emit_Definition(el, level)
 
     def emit_Model(self, el: M.Model, level: int) -> None:
@@ -457,18 +459,21 @@ class _Printer:
         head = self._usage_head(el)
 
         if el.kind == "constraint" and el.constraint_kind:
-            kw = {"assert": "assert", "assume": "assume",
-                  "require": "require"}[el.constraint_kind]
+            kw = {"assert": "assert", "assume": "assume", "require": "require"}[el.constraint_kind]
             head += kw + " "
             if el.constraint_kind == "assert" and el.is_negated:
                 head += "not "
-            reference_form = (el.subsets and not el.name and not el.short_name
-                              and not el.types)
+            reference_form = el.subsets and not el.name and not el.short_name and not el.types
             if reference_form:
                 ref = fmt_qname(el.subsets[0])
-                probe = M.Usage(kind=el.kind, subsets=el.subsets[1:],
-                                redefines=el.redefines, types=[],
-                                multiplicity=el.multiplicity, value=el.value)
+                probe = M.Usage(
+                    kind=el.kind,
+                    subsets=el.subsets[1:],
+                    redefines=el.redefines,
+                    types=[],
+                    multiplicity=el.multiplicity,
+                    value=el.value,
+                )
                 rest = self.usage_declaration(probe)
                 text = f"{head}{ref}" + (f" {rest}" if rest else "")
                 self.body(el, level, text, result=el.result)
@@ -517,9 +522,13 @@ class _Printer:
         keyword, inline_keyword = _REF_OR_INLINE_KINDS[el.kind]
         head += keyword
         if el.subsets and not el.name and not el.short_name and not el.types:
-            probe = M.Usage(kind=el.kind, subsets=el.subsets[1:],
-                            redefines=el.redefines,
-                            multiplicity=el.multiplicity, value=el.value)
+            probe = M.Usage(
+                kind=el.kind,
+                subsets=el.subsets[1:],
+                redefines=el.redefines,
+                multiplicity=el.multiplicity,
+                value=el.value,
+            )
             rest = self.usage_declaration(probe)
             text = f"{head} {fmt_qname(el.subsets[0])}"
             if rest:
@@ -556,8 +565,10 @@ class _Printer:
         head = self._usage_head(el)
         if el.name or el.short_name:
             head += f"binding {self.names(el)} "
-        head += (f"bind {self._end(el.source_end or M.ConnectorEnd())} "
-                 f"= {self._end(el.target_end or M.ConnectorEnd())}")
+        head += (
+            f"bind {self._end(el.source_end or M.ConnectorEnd())} "
+            f"= {self._end(el.target_end or M.ConnectorEnd())}"
+        )
         self.body(el, level, head)
 
     def emit_SatisfyUsage(self, el: M.SatisfyUsage, level: int) -> None:
@@ -621,11 +632,9 @@ class _Printer:
             head += f" of {el.payload}"
         if el.source and el.target_end:
             if declared:
-                head += (f" from {fmt_qname(el.source)}"
-                         f" to {fmt_qname(el.target_end)}")
+                head += f" from {fmt_qname(el.source)} to {fmt_qname(el.target_end)}"
             else:
-                head += (f" {fmt_qname(el.source)}"
-                         f" to {fmt_qname(el.target_end)}")
+                head += f" {fmt_qname(el.source)} to {fmt_qname(el.target_end)}"
         self.body(el, level, head)
 
     # -- action statements ----------------------------------------------------

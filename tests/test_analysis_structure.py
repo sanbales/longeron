@@ -23,8 +23,9 @@ def model():
 def build(model):
     mdao = pytest.importorskip("sysml2.analysis.mdao")
     pytest.importorskip("openmdao")
-    return mdao.build_problem(model, "UavMissions::IsrPrime",
-                              requirements=("UavMissions::IsrStation",))
+    return mdao.build_problem(
+        model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+    )
 
 
 class TestN2Payload:
@@ -32,8 +33,7 @@ class TestN2Payload:
         payload = structure.n2_payload(build)
         names = [c["name"] for c in payload["components"]]
         assert names[0] == "consts"  # independents run first
-        assert {"loiterPowerW", "stationMinutes",
-                "IsrStation_stationFloor_margin"} <= set(names)
+        assert {"loiterPowerW", "stationMinutes", "IsrStation_stationFloor_margin"} <= set(names)
         # every cell indexes a real component, no self-couplings
         n = len(names)
         for cell in payload["cells"]:
@@ -45,8 +45,7 @@ class TestN2Payload:
         names = [c["name"] for c in payload["components"]]
         i_power = names.index("loiterPowerW")
         i_station = names.index("stationMinutes")
-        cell = next(c for c in payload["cells"]
-                    if c["row"] == i_station and c["col"] == i_power)
+        cell = next(c for c in payload["cells"] if c["row"] == i_station and c["col"] == i_power)
         assert cell["vars"] == ["loiterPowerW \u2192 loiterPowerW"]
 
     def test_feedforward_problem_has_no_feedback(self, build):
@@ -66,10 +65,8 @@ class TestN2Payload:
 
         om = pytest.importorskip("openmdao.api")
         prob = om.Problem(reports=False)
-        prob.model.add_subsystem(
-            "a", om.ExecComp("y = 2 * x"), promotes=[])
-        prob.model.add_subsystem(
-            "b", om.ExecComp("z = y - 1"), promotes=[])
+        prob.model.add_subsystem("a", om.ExecComp("y = 2 * x"), promotes=[])
+        prob.model.add_subsystem("b", om.ExecComp("z = y - 1"), promotes=[])
         prob.model.connect("a.y", "b.y")
         prob.model.connect("b.z", "a.x")  # the feedback edge
         prob.model.nonlinear_solver = om.NonlinearBlockGS()
@@ -78,10 +75,8 @@ class TestN2Payload:
         payload = structure.n2_payload(prob)
         names = [c["name"] for c in payload["components"]]
         ia, ib = names.index("a"), names.index("b")
-        forward = next(c for c in payload["cells"]
-                       if c["row"] == ib and c["col"] == ia)
-        back = next(c for c in payload["cells"]
-                    if c["row"] == ia and c["col"] == ib)
+        forward = next(c for c in payload["cells"] if c["row"] == ib and c["col"] == ia)
+        back = next(c for c in payload["cells"] if c["row"] == ia and c["col"] == ib)
         assert forward["feedback"] is False
         assert back["feedback"] is True
         assert back["col"] > back["row"]  # above the diagonal
@@ -100,9 +95,17 @@ class TestConstraintNetworkPayload:
     def test_bipartite_shape(self, study):
         payload = structure.constraint_network_payload(study)
         assert [v["name"] for v in payload["variables"]] == [
-            "airframe", "motors", "props", "battery"]
+            "airframe",
+            "motors",
+            "props",
+            "battery",
+        ]
         assert {c["name"] for c in payload["constraints"]} == {
-            "propFit", "packPower", "launchLift", "canCatch"}
+            "propFit",
+            "packPower",
+            "launchLift",
+            "canCatch",
+        }
         n_v = len(payload["variables"])
         n_c = len(payload["constraints"])
         for vi, ci in payload["edges"]:
@@ -117,12 +120,10 @@ class TestConstraintNetworkPayload:
         cons = {c["name"]: i for i, c in enumerate(payload["constraints"])}
 
         def touched(name):
-            return {names[vi] for vi, ci in payload["edges"]
-                    if ci == cons[name]}
+            return {names[vi] for vi, ci in payload["edges"] if ci == cons[name]}
 
         assert touched("propFit") == {"props", "motors"}
-        assert touched("canCatch") == {"airframe", "motors", "props",
-                                       "battery"}
+        assert touched("canCatch") == {"airframe", "motors", "props", "battery"}
 
     def test_violation_tinting(self, study):
         space = study.all_architectures()
@@ -132,8 +133,7 @@ class TestConstraintNetworkPayload:
         # the brute-force census
         from collections import Counter
 
-        census = Counter(v for a in space if not a.verified
-                         for v in a.violations)
+        census = Counter(v for a in space if not a.verified for v in a.violations)
         for name, entry in by_name.items():
             assert entry["violations"] == census[name]
             assert entry["tinted"] is (census[name] > 0)
@@ -149,8 +149,7 @@ class TestWidgets:
         payload = json.loads(widget.payload_json)
         assert payload["components"] and payload["cells"]
         assert widget.width_px == 500
-        for token in ("mouseenter", "click", "pinned",
-                      "sysml2-n2-feedback-ring"):
+        for token in ("mouseenter", "click", "pinned", "sysml2-n2-feedback-ring"):
             assert token in widget._esm, token
 
     def test_constraint_network_widget(self, study):
@@ -175,8 +174,7 @@ class TestJsMath:
 
     def test_n2_math(self, node, tmp_path):
         module = tmp_path / "n2_math.mjs"
-        module.write_text(structure._N2_MATH_JS
-                          + "\nexport { isFeedback, related };\n")
+        module.write_text(structure._N2_MATH_JS + "\nexport { isFeedback, related };\n")
         script = tmp_path / "test.mjs"
         script.write_text(f"""
 import {{ isFeedback, related }} from {json.dumps(str(module))};
@@ -190,15 +188,13 @@ assert.deepEqual(related(cells, 2), [1]);  // shares row 2
 assert.deepEqual(related(cells, 3), []);
 console.log("node n2 math ok");
 """)
-        out = subprocess.run([node, str(script)], capture_output=True,
-                             text=True, timeout=30)
+        out = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
         assert out.returncode == 0, out.stderr
         assert "node n2 math ok" in out.stdout
 
     def test_network_math(self, node, tmp_path):
         module = tmp_path / "net_math.mjs"
-        module.write_text(structure._NET_MATH_JS
-                          + "\nexport { neighborhood };\n")
+        module.write_text(structure._NET_MATH_JS + "\nexport { neighborhood };\n")
         script = tmp_path / "test.mjs"
         script.write_text(f"""
 import {{ neighborhood }} from {json.dumps(str(module))};
@@ -211,7 +207,6 @@ assert.deepEqual(neighborhood(edges, 1, 1),
 assert.deepEqual(neighborhood(edges, 0, 3), {{ edges: [], nodes: [] }});
 console.log("node net math ok");
 """)
-        out = subprocess.run([node, str(script)], capture_output=True,
-                             text=True, timeout=30)
+        out = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
         assert out.returncode == 0, out.stderr
         assert "node net math ok" in out.stdout

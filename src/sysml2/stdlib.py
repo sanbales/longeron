@@ -117,7 +117,6 @@ def _store_prebuilt(model: M.Model) -> None:
     _prebuilt_data = data
     try:
         with _PREBUILT.open("w", encoding="utf-8") as handle:
-            json.dump({"fingerprint": _stdlib_fingerprint(), "model": data},
-                      handle, indent=1)
+            json.dump({"fingerprint": _stdlib_fingerprint(), "model": data}, handle, indent=1)
     except OSError:  # read-only installation: the workspace cache still helps
         pass

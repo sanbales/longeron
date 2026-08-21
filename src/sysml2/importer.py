@@ -21,8 +21,7 @@ from .errors import BuildError
 
 #: every dataclass in the model module, keyed by its ``@type`` name
 _ELEMENT_TYPES: dict[str, type] = {
-    name: obj for name, obj in vars(M).items()
-    if isinstance(obj, type) and is_dataclass(obj)
+    name: obj for name, obj in vars(M).items() if isinstance(obj, type) and is_dataclass(obj)
 }
 
 
@@ -37,8 +36,7 @@ def from_dict(data: dict[str, Any]) -> M.Element:
 
 def _construct(data: dict[str, Any]) -> Any:
     if not isinstance(data, dict) or "@type" not in data:
-        raise BuildError(f"not a serialized element (missing '@type'): "
-                         f"{str(data)[:80]!r}")
+        raise BuildError(f"not a serialized element (missing '@type'): {str(data)[:80]!r}")
     type_name = data["@type"]
     cls = _ELEMENT_TYPES.get(type_name)
     if cls is None:

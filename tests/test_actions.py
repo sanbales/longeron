@@ -8,18 +8,17 @@ from sysml2.errors import ExecutionError
 
 class TestBasics:
     def test_assignment_and_outputs(self, action_interp):
-        result = action_interp.run_action("Behaviors::ComputeFuel",
-                                          inputs={"distance": 100.0})
+        result = action_interp.run_action("Behaviors::ComputeFuel", inputs={"distance": 100.0})
         assert result.outputs == {"fuelUsed": pytest.approx(8.0)}
 
     def test_default_input(self, action_interp):
         result = action_interp.run_action(
-            "Behaviors::ComputeFuel", inputs={"distance": 50.0, "rate": 0.1})
+            "Behaviors::ComputeFuel", inputs={"distance": 50.0, "rate": 0.1}
+        )
         assert result.outputs["fuelUsed"] == pytest.approx(5.0)
 
     def test_if_branch(self, action_interp):
-        result = action_interp.run_action("Behaviors::ComputeFuel",
-                                          inputs={"distance": 10000.0})
+        result = action_interp.run_action("Behaviors::ComputeFuel", inputs={"distance": 10000.0})
         assert result.outputs["fuelUsed"] == 100.0  # capped by the if
 
     def test_missing_input(self, action_interp):
@@ -28,25 +27,20 @@ class TestBasics:
 
     def test_unknown_input(self, action_interp):
         with pytest.raises(ExecutionError, match="unknown input"):
-            action_interp.run_action("Behaviors::ComputeFuel",
-                                     inputs={"distance": 1.0, "bogus": 2})
+            action_interp.run_action("Behaviors::ComputeFuel", inputs={"distance": 1.0, "bogus": 2})
 
     def test_for_loop(self, action_interp):
-        result = action_interp.run_action("Behaviors::CountDown",
-                                          inputs={"start": 5})
+        result = action_interp.run_action("Behaviors::CountDown", inputs={"start": 5})
         assert result.outputs["total"] == 15
 
     def test_trace(self, action_interp):
-        result = action_interp.run_action("Behaviors::ComputeFuel",
-                                          inputs={"distance": 100.0})
+        result = action_interp.run_action("Behaviors::ComputeFuel", inputs={"distance": 100.0})
         assert any(t.startswith("assign fuelUsed") for t in result.trace)
 
 
 class TestEvents:
     def test_send_and_accept(self, action_interp):
-        result = action_interp.run_action("Behaviors::Radio",
-                                          inputs={"code": 21},
-                                          events=["Ping"])
+        result = action_interp.run_action("Behaviors::Radio", inputs={"code": 21}, events=["Ping"])
         assert [s.payload for s in result.sends] == [42]
 
     def test_accept_blocks_without_event(self, action_interp):
@@ -55,13 +49,13 @@ class TestEvents:
 
     def test_accept_wrong_event(self, action_interp):
         with pytest.raises(ExecutionError, match="expected one of"):
-            action_interp.run_action("Behaviors::Radio", inputs={"code": 1},
-                                     events=["Pong"])
+            action_interp.run_action("Behaviors::Radio", inputs={"code": 1}, events=["Pong"])
 
 
 @pytest.fixture(scope="module")
 def control_flow_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 action def Loops {
                     in n : Integer;
@@ -106,7 +100,8 @@ def control_flow_interp():
                     assign reached := true;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestControlFlow:
@@ -120,7 +115,8 @@ class TestControlFlow:
 
     def test_if_else_chain(self, control_flow_interp):
         run = lambda x: control_flow_interp.run_action(  # noqa: E731
-            "P::IfElseChain", inputs={"x": x}).outputs["label"]
+            "P::IfElseChain", inputs={"x": x}
+        ).outputs["label"]
         assert run(-5) == "negative"
         assert run(0) == "zero"
         assert run(9) == "positive"
@@ -136,10 +132,12 @@ class TestControlFlow:
 
 
 def test_infinite_loop_guard():
-    interp = sysml2.Interpreter(sysml2.loads("""
+    interp = sysml2.Interpreter(
+        sysml2.loads("""
         package P {
             action def Forever { loop { assign x := 1; } }
         }
-    """))
+    """)
+    )
     with pytest.raises(ExecutionError, match="iteration limit"):
         interp.run_action("P::Forever")

@@ -160,35 +160,36 @@ def action_interp():
 
 
 def test_flat_events_only_is_step_mode(flat_interp):
-    timeline = replay.record_timeline(flat_interp, "Machines::TrafficLight",
-                                      ["go", "caution", "stop"])
+    timeline = replay.record_timeline(
+        flat_interp, "Machines::TrafficLight", ["go", "caution", "stop"]
+    )
     assert timeline.step_mode is True
     assert timeline.t_start == timeline.t_end == 0.0
     assert timeline.n_steps == 4  # initial entry + three firings
     # step-index keyframes with left/step semantics
     assert timeline.tracks["Machines::TrafficLight::red"] == [
-        (0.0, True), (1.0, False), (3.0, True)]
-    assert timeline.tracks["Machines::TrafficLight::green"] == [
-        (1.0, True), (2.0, False)]
+        (0.0, True),
+        (1.0, False),
+        (3.0, True),
+    ]
+    assert timeline.tracks["Machines::TrafficLight::green"] == [(1.0, True), (2.0, False)]
     assert [(f.t, f.event) for f in timeline.fired] == [
-        (1.0, "go"), (2.0, "caution"), (3.0, "stop")]
+        (1.0, "go"),
+        (2.0, "caution"),
+        (3.0, "stop"),
+    ]
     assert timeline.final_state == "red"
 
 
 def test_hierarchical_time_triggers(timed_interp):
-    timeline = replay.record_timeline(timed_interp, "P::Toaster",
-                                      ["start", 10.0])
+    timeline = replay.record_timeline(timed_interp, "P::Toaster", ["start", 10.0])
     assert timeline.step_mode is False
     assert timeline.t_end == 10.0
     # activation intervals in sim time
-    assert timeline.tracks["P::Toaster::idle"] == [
-        (0.0, True), (0.0, False), (5.0, True)]
-    assert timeline.tracks["P::Toaster::heating"] == [(0.0, True),
-                                                      (5.0, False)]
-    assert timeline.tracks["P::Toaster::heating::warming"] == [(0.0, True),
-                                                               (2.0, False)]
-    assert timeline.tracks["P::Toaster::heating::hot"] == [(2.0, True),
-                                                           (5.0, False)]
+    assert timeline.tracks["P::Toaster::idle"] == [(0.0, True), (0.0, False), (5.0, True)]
+    assert timeline.tracks["P::Toaster::heating"] == [(0.0, True), (5.0, False)]
+    assert timeline.tracks["P::Toaster::heating::warming"] == [(0.0, True), (2.0, False)]
+    assert timeline.tracks["P::Toaster::heating::hot"] == [(2.0, True), (5.0, False)]
     # fired transitions carry sim times and qualified names
     assert [(f.t, f.source, f.target) for f in timeline.fired] == [
         (0.0, "P::Toaster::idle", "P::Toaster::heating"),
@@ -199,30 +200,28 @@ def test_hierarchical_time_triggers(timed_interp):
 
 
 def test_parallel_regions(parallel_interp):
-    timeline = replay.record_timeline(parallel_interp, "P::Radio",
-                                      ["mute", "power_off"])
+    timeline = replay.record_timeline(parallel_interp, "P::Radio", ["mute", "power_off"])
     # both regions were active from the start
     assert timeline.tracks["P::Radio::on::volume::normal"][0] == (0.0, True)
     assert timeline.tracks["P::Radio::on::band::fm"][0] == (0.0, True)
     # the outer transition exits every region
     exit_key = timeline.fired[-1].t
-    for qname in ("P::Radio::on", "P::Radio::on::volume::muted",
-                  "P::Radio::on::band::fm"):
+    for qname in ("P::Radio::on", "P::Radio::on::volume::muted", "P::Radio::on::band::fm"):
         assert timeline.tracks[qname][-1] == (exit_key, False)
     assert timeline.tracks["P::Radio::off"] == [(exit_key, True)]
     assert timeline.active_states == ["off"]
 
 
 def test_event_payload_tuples(flat_interp):
-    timeline = replay.record_timeline(flat_interp, "Machines::TrafficLight",
-                                      [("go", 42)])
+    timeline = replay.record_timeline(flat_interp, "Machines::TrafficLight", [("go", 42)])
     assert [f.event for f in timeline.fired] == ["go"]
 
 
 def test_max_steps_guard(flat_interp):
     with pytest.raises(ExecutionError, match="max_steps"):
-        replay.record_timeline(flat_interp, "Machines::TrafficLight",
-                               ["go", "caution", "stop"] * 10, max_steps=5)
+        replay.record_timeline(
+            flat_interp, "Machines::TrafficLight", ["go", "caution", "stop"] * 10, max_steps=5
+        )
 
 
 def test_not_a_state_machine(flat_interp):
@@ -231,8 +230,7 @@ def test_not_a_state_machine(flat_interp):
 
 
 def test_parents_map_hierarchical(timed_interp):
-    timeline = replay.record_timeline(timed_interp, "P::Toaster",
-                                      ["start", 10.0])
+    timeline = replay.record_timeline(timed_interp, "P::Toaster", ["start", 10.0])
     assert timeline.parents == {
         "P::Toaster::heating::warming": "P::Toaster::heating",
         "P::Toaster::heating::hot": "P::Toaster::heating",
@@ -248,8 +246,7 @@ def test_parents_map_typed_submachine():
     timeline = replay.record_timeline(interp, "P::Outer", ["go", "quit"])
     assert timeline.tracks["P::Outer::x"] == [(0.0, True), (2.0, False)]
     assert timeline.tracks["P::Inner::a"] == [(0.0, True), (1.0, False)]
-    assert timeline.parents == {"P::Inner::a": "P::Outer::x",
-                                "P::Inner::b": "P::Outer::x"}
+    assert timeline.parents == {"P::Inner::a": "P::Outer::x", "P::Inner::b": "P::Outer::x"}
     # the "::"-prefix fallback would misclassify x as a leaf here
     assert not "P::Inner::a".startswith("P::Outer::x::")
 
@@ -259,8 +256,7 @@ def test_parents_map_typed_submachine():
 
 def test_env_steps_follow_assignments():
     interp = sysml2.Interpreter(sysml2.loads(ENV_MODEL))
-    timeline = replay.record_timeline(interp, "P::Tally",
-                                      ["tick", "tock", "tick"])
+    timeline = replay.record_timeline(interp, "P::Tally", ["tick", "tock", "tick"])
     assert [values for _, values in timeline.env_steps] == [
         {"count": 0, "ratio": 0.0},
         {"count": 1, "ratio": 0.0},
@@ -285,12 +281,19 @@ def test_env_steps_scalars_only_and_rounded():
 
 
 def test_timeline_json_schema(timed_interp):
-    timeline = replay.record_timeline(timed_interp, "P::Toaster",
-                                      ["start", 10.0])
+    timeline = replay.record_timeline(timed_interp, "P::Toaster", ["start", 10.0])
     data = json.loads(timeline.to_json())
-    assert set(data) == {"t_start", "t_end", "step_mode", "n_steps",
-                         "final_state", "tracks", "fired", "parents",
-                         "env_steps"}
+    assert set(data) == {
+        "t_start",
+        "t_end",
+        "step_mode",
+        "n_steps",
+        "final_state",
+        "tracks",
+        "fired",
+        "parents",
+        "env_steps",
+    }
     assert data["step_mode"] is False
     assert data["t_end"] == 10.0
     assert data["n_steps"] == timeline.n_steps
@@ -310,8 +313,7 @@ def test_timeline_json_schema(timed_interp):
 
 
 def test_action_timeline_sequential_steps(action_interp):
-    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy",
-                                             inputs={"tested": True})
+    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy", inputs={"tested": True})
     assert timeline.step_mode is True
     assert timeline.n_steps == 4  # 3 executed steps + the all-done instant
     assert timeline.tracks == {
@@ -324,8 +326,7 @@ def test_action_timeline_sequential_steps(action_interp):
 
 
 def test_action_fired_routes_through_control_nodes(action_interp):
-    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy",
-                                             inputs={"tested": True})
+    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy", inputs={"tested": True})
     # build->inspect traverses the decide node: both drawn edges pulse
     assert [(f.t, f.source, f.target) for f in timeline.fired] == [
         (1.0, "Ops::Deploy::build", "Ops::Deploy::d1"),
@@ -335,10 +336,8 @@ def test_action_fired_routes_through_control_nodes(action_interp):
 
 
 def test_action_timeline_takes_else_branch(action_interp):
-    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy",
-                                             inputs={"tested": False})
-    assert sorted(timeline.tracks) == ["Ops::Deploy::abort",
-                                       "Ops::Deploy::build"]
+    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy", inputs={"tested": False})
+    assert sorted(timeline.tracks) == ["Ops::Deploy::abort", "Ops::Deploy::build"]
     assert timeline.fired[-1].target == "Ops::Deploy::abort"
     assert timeline.env["log"] == "build>ABORT"
 
@@ -346,10 +345,8 @@ def test_action_timeline_takes_else_branch(action_interp):
 def test_action_timeline_nested_steps(action_interp):
     timeline = replay.record_action_timeline(action_interp, "Ops::Nested")
     # the composite stage stays active while its inner steps run
-    assert timeline.tracks["Ops::Nested::stage1"] == [(0.0, True),
-                                                      (3.0, False)]
-    assert timeline.tracks["Ops::Nested::stage1::inner1"] == [(1.0, True),
-                                                              (2.0, False)]
+    assert timeline.tracks["Ops::Nested::stage1"] == [(0.0, True), (3.0, False)]
+    assert timeline.tracks["Ops::Nested::stage1::inner1"] == [(1.0, True), (2.0, False)]
     assert timeline.parents == {
         "Ops::Nested::stage1::inner1": "Ops::Nested::stage1",
         "Ops::Nested::stage1::inner2": "Ops::Nested::stage1",
@@ -358,10 +355,13 @@ def test_action_timeline_nested_steps(action_interp):
 
 
 def test_action_env_steps(action_interp):
-    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy",
-                                             inputs={"tested": True})
+    timeline = replay.record_action_timeline(action_interp, "Ops::Deploy", inputs={"tested": True})
     assert [values["log"] for _, values in timeline.env_steps] == [
-        "", "build>", "build>inspect>", "build>inspect>ship"]
+        "",
+        "build>",
+        "build>inspect>",
+        "build>inspect>ship",
+    ]
 
 
 def test_action_timeline_not_an_action(action_interp):
@@ -376,16 +376,19 @@ def test_action_on_step_hook_pairing(action_interp):
 
     from sysml2.interpreter import _ActionExecutor
 
-    executor = _ActionExecutor(action_interp,
-                               action_interp.resolve("Ops::Deploy"),
-                               {"tested": True}, deque())
+    executor = _ActionExecutor(
+        action_interp, action_interp.resolve("Ops::Deploy"), {"tested": True}, deque()
+    )
     calls = []
     executor.on_step = lambda i, el, phase: calls.append((i, el.name, phase))
     executor.run()
     assert calls == [
-        (0, "build", "enter"), (1, "build", "complete"),
-        (1, "inspect", "enter"), (2, "inspect", "complete"),
-        (2, "ship", "enter"), (3, "ship", "complete"),
+        (0, "build", "enter"),
+        (1, "build", "complete"),
+        (1, "inspect", "enter"),
+        (2, "inspect", "complete"),
+        (2, "ship", "enter"),
+        (3, "ship", "complete"),
     ]
 
 
@@ -400,8 +403,7 @@ def test_transition_fired_time_stamping(timed_interp):
 
 
 def test_on_step_hook_invocation_counts(flat_interp):
-    machine = StateMachine(flat_interp,
-                           flat_interp.resolve("Machines::TrafficLight"), {})
+    machine = StateMachine(flat_interp, flat_interp.resolve("Machines::TrafficLight"), {})
     calls = []
     machine.on_step = lambda now, fired: calls.append((now, fired))
     machine.start()
@@ -427,19 +429,16 @@ def test_state_svg_addressable(flat_interp):
     _needs_diagrams()
     from sysml2 import diagrams, render
 
-    svg = render.to_svg(diagrams.state_diagram(
-        flat_interp.resolve("Machines::TrafficLight")))
+    svg = render.to_svg(diagrams.state_diagram(flat_interp.resolve("Machines::TrafficLight")))
     assert 'data-qname="Machines::TrafficLight::red"' in svg
-    assert ('data-edge="Machines::TrafficLight::red-&gt;'
-            'Machines::TrafficLight::green"') in svg
+    assert ('data-edge="Machines::TrafficLight::red-&gt;Machines::TrafficLight::green"') in svg
     assert 'data-event="go"' in svg
 
 
 def test_replay_widget_smoke(timed_interp):
     pytest.importorskip("anywidget")
     _needs_diagrams()
-    widget = replay.replay_widget(timed_interp, "P::Toaster",
-                                  ["start", 10.0], width_px=640)
+    widget = replay.replay_widget(timed_interp, "P::Toaster", ["start", 10.0], width_px=640)
     assert widget.width_px == 640
     assert widget.time == 0.0
     assert widget.svg.startswith("<svg")
@@ -454,8 +453,7 @@ def test_action_svg_addressable(action_interp):
     _needs_diagrams()
     from sysml2 import diagrams, render
 
-    svg = render.to_svg(diagrams.action_diagram(
-        action_interp.resolve("Ops::Deploy")))
+    svg = render.to_svg(diagrams.action_diagram(action_interp.resolve("Ops::Deploy")))
     assert 'data-qname="Ops::Deploy::build"' in svg
     assert 'data-qname="Ops::Deploy::d1"' in svg  # control nodes too
     assert ('data-edge="Ops::Deploy::build-&gt;Ops::Deploy::d1"') in svg
@@ -464,8 +462,9 @@ def test_action_svg_addressable(action_interp):
 def test_replay_widget_action_autodetect(action_interp):
     pytest.importorskip("anywidget")
     _needs_diagrams()
-    widget = replay.replay_widget(action_interp, "Ops::Deploy",
-                                  inputs={"tested": True})  # kind inferred
+    widget = replay.replay_widget(
+        action_interp, "Ops::Deploy", inputs={"tested": True}
+    )  # kind inferred
     assert 'data-qname="Ops::Deploy::inspect"' in widget.svg
     data = json.loads(widget.timeline_json)
     assert data["step_mode"] is True and data["n_steps"] == 4
@@ -475,8 +474,7 @@ def test_replay_widget_action_autodetect(action_interp):
 def test_replay_widget_unknown_kind(flat_interp):
     pytest.importorskip("anywidget")
     with pytest.raises(ExecutionError, match="unknown replay kind"):
-        replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"],
-                             kind="nope")
+        replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"], kind="nope")
 
 
 def test_replay_widget_missing_extra(monkeypatch, flat_interp):

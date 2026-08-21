@@ -23,8 +23,7 @@ class TestCalcComponent:
 
         interp = sysml2.Interpreter(drone)
         prob = om.Problem(reports=False)
-        prob.model.add_subsystem("hover",
-                                 mdao.calc_component(interp, "Drone::HoverTime"))
+        prob.model.add_subsystem("hover", mdao.calc_component(interp, "Drone::HoverTime"))
         prob.setup()
         prob.set_val("hover.capacity", 5200.0)
         prob.run_model()
@@ -40,8 +39,7 @@ class TestCalcComponent:
 
 @pytest.fixture(scope="module")
 def build(drone):
-    build = mdao.build_problem(drone, "Drone::QuadCopter",
-                               requirements=("Drone::FlightEnvelope",))
+    build = mdao.build_problem(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
     build.problem.run_model()
     return build
 
@@ -54,14 +52,12 @@ class TestBuildProblem:
     def test_constraint_margins(self, build):
         p = build.problem
         assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(0.26)
-        assert p.get_val("canHover_margin")[0] == pytest.approx(
-            36.0 - 1.24 * 9.81)
+        assert p.get_val("canHover_margin")[0] == pytest.approx(36.0 - 1.24 * 9.81)
 
     def test_requirement_margin(self, build):
         # ThrustToWeight(36, 1.24) - 1.8, computed through the calc def
         expected = 36.0 / (1.24 * 9.81) - 1.8
-        assert build.problem.get_val("hoverMargin_margin")[0] == \
-            pytest.approx(expected)
+        assert build.problem.get_val("hoverMargin_margin")[0] == pytest.approx(expected)
         assert "FlightEnvelope::hoverMargin" in build.constraints
 
     def test_what_if_propagates(self, drone):
@@ -94,47 +90,47 @@ class TestExternalAnalysisBinding:
     def test_annotation_is_read(self, missions):
         calc = missions.find("UavMissions::CruisePower")
         assert mdao.external_binding(calc) == "uav_aero:CruisePowerPolar"
-        assert mdao.external_binding(
-            missions.find("UavMissions::HoverPower")) is None
+        assert mdao.external_binding(missions.find("UavMissions::HoverPower")) is None
 
     def test_default_fidelity_is_the_model_body(self, missions):
         build = mdao.build_problem(missions, "UavMissions::IsrPrime")
         build.problem.run_model()
         # first-order body: parasite + induced at 15 m/s
-        assert build.problem.get_val("loiterPowerW")[0] == \
-            pytest.approx(105.692, abs=0.01)
+        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(105.692, abs=0.01)
         assert build.externals == {}
 
     def test_external_fidelity_swaps_the_component(self, missions):
-        build = mdao.build_problem(missions, "UavMissions::IsrPrime",
-                                   fidelity={"CruisePower": "external"})
+        build = mdao.build_problem(
+            missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+        )
         build.problem.run_model()
         power = build.problem.get_val("loiterPowerW")[0]
-        assert build.externals == {
-            "loiterPowerW": "uav_aero:CruisePowerPolar"}
+        assert build.externals == {"loiterPowerW": "uav_aero:CruisePowerPolar"}
         assert power == pytest.approx(113.2, abs=0.5)  # Re + stall terms
         # the external output composes with interpreter-backed components
         station = build.problem.get_val("stationMinutes")[0]
-        assert station == pytest.approx(882126.0 / (power + 22.0) / 60.0,
-                                        rel=1e-6)
+        assert station == pytest.approx(882126.0 / (power + 22.0) / 60.0, rel=1e-6)
 
     def test_qualified_fidelity_key(self, missions):
         build = mdao.build_problem(
-            missions, "UavMissions::IsrPrime",
-            fidelity={"UavMissions::CruisePower": "external"})
+            missions, "UavMissions::IsrPrime", fidelity={"UavMissions::CruisePower": "external"}
+        )
         assert build.externals
 
     def test_fidelity_shifts_the_optimum(self, missions):
         """The lo-fi/hi-fi swap study the mechanism exists for."""
 
         optima = {}
-        for name, fidelity in (("model", None),
-                               ("external", {"CruisePower": "external"})):
-            build = mdao.build_problem(missions, "UavMissions::IsrPrime",
-                                       setup=False, fidelity=fidelity)
-            mdao.add_optimization(build, objective="stationMinutes",
-                                  design_vars={"loiterSpeed": (11.0, 24.0)},
-                                  maximize=True)
+        for name, fidelity in (("model", None), ("external", {"CruisePower": "external"})):
+            build = mdao.build_problem(
+                missions, "UavMissions::IsrPrime", setup=False, fidelity=fidelity
+            )
+            mdao.add_optimization(
+                build,
+                objective="stationMinutes",
+                design_vars={"loiterSpeed": (11.0, 24.0)},
+                maximize=True,
+            )
             build.problem.setup()
             build.problem.set_val("loiterSpeed", 16.0)
             assert build.problem.run_driver().success
@@ -143,16 +139,14 @@ class TestExternalAnalysisBinding:
         assert optima["external"] > 12.0  # the polar backs off the stall
 
     def test_unknown_fidelity_key_is_loud(self, missions):
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="never bound"):
-            mdao.build_problem(missions, "UavMissions::IsrPrime",
-                               fidelity={"CruisePowerr": "external"})
+        with pytest.raises(sysml2.analysis.AnalysisError, match="never bound"):
+            mdao.build_problem(
+                missions, "UavMissions::IsrPrime", fidelity={"CruisePowerr": "external"}
+            )
 
     def test_invalid_fidelity_value_is_loud(self, missions):
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="'model' or 'external'"):
-            mdao.build_problem(missions, "UavMissions::IsrPrime",
-                               fidelity={"CruisePower": "hifi"})
+        with pytest.raises(sysml2.analysis.AnalysisError, match="'model' or 'external'"):
+            mdao.build_problem(missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "hifi"})
 
     def test_contract_mismatch_is_precise(self, missions, monkeypatch):
         import types
@@ -172,17 +166,16 @@ class TestExternalAnalysisBinding:
         fake.WrongIo = WrongIo
         monkeypatch.setitem(__import__("sys").modules, "fake_aero", fake)
         calc = missions.find("UavMissions::CruisePower")
-        annotation = next(m for m in calc.members
-                          if type(m).__name__ == "MetadataUsage")
+        annotation = next(m for m in calc.members if type(m).__name__ == "MetadataUsage")
         value = annotation.members[0].value
-        monkeypatch.setattr(value.expr, "value", "fake_aero:WrongIo",
-                            raising=False)
+        monkeypatch.setattr(value.expr, "value", "fake_aero:WrongIo", raising=False)
         with pytest.raises(sysml2.analysis.AnalysisError) as err:
-            mdao.build_problem(missions, "UavMissions::IsrPrime",
-                               fidelity={"CruisePower": "external"})
+            mdao.build_problem(
+                missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+            )
         message = str(err.value)
         assert "massKg" in message  # names the declared input it lacks
-        assert "mass" in message    # and the undeclared one it has
+        assert "mass" in message  # and the undeclared one it has
 
     def test_bodiless_calc_binds_external_by_default(self, monkeypatch):
         import types
@@ -204,7 +197,7 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_tool")
         fake.doubler_factory = doubler_factory
         monkeypatch.setitem(__import__("sys").modules, "fake_tool", fake)
-        model = sysml2.loads('''
+        model = sysml2.loads("""
             package P {
                 metadata def ExternalAnalysis {
                     attribute component : String;
@@ -221,17 +214,15 @@ class TestExternalAnalysisBinding:
                     attribute more : Real = twice + 1.0;
                 }
             }
-        ''')
+        """)
         build = mdao.build_problem(model, "P::A")
         build.problem.run_model()
         assert build.problem.get_val("twice")[0] == pytest.approx(8.0)
         assert build.problem.get_val("more")[0] == pytest.approx(9.0)
         assert build.externals == {"twice": "fake_tool:doubler_factory"}
         # 'model' fidelity cannot work without a body -- and says so
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="no body"):
-            mdao.build_problem(model, "P::A",
-                               fidelity={"Double": "model"})
+        with pytest.raises(sysml2.analysis.AnalysisError, match="no body"):
+            mdao.build_problem(model, "P::A", fidelity={"Double": "model"})
 
     def test_nested_external_invocation_is_rejected(self, monkeypatch):
         import types
@@ -249,7 +240,7 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_nested")
         fake.Identity = Identity
         monkeypatch.setitem(__import__("sys").modules, "fake_nested", fake)
-        model = sysml2.loads('''
+        model = sysml2.loads("""
             package P {
                 metadata def ExternalAnalysis {
                     attribute component : String;
@@ -264,35 +255,31 @@ class TestExternalAnalysisBinding:
                     attribute bad : Real = 1.0 + Ident(x = base);
                 }
             }
-        ''')
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="larger expression"):
+        """)
+        with pytest.raises(sysml2.analysis.AnalysisError, match="larger expression"):
             mdao.build_problem(model, "P::A")
 
     def test_bad_component_specs_are_loud(self, missions):
         import openmdao.api as om
 
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match=r"module.*attr"):
+        with pytest.raises(sysml2.analysis.AnalysisError, match=r"module.*attr"):
             mdao._load_component(om, "no-colon")
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="cannot import"):
+        with pytest.raises(sysml2.analysis.AnalysisError, match="cannot import"):
             mdao._load_component(om, "definitely_not_a_module:X")
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="no attribute"):
+        with pytest.raises(sysml2.analysis.AnalysisError, match="no attribute"):
             mdao._load_component(om, "uav_aero:Nope")
-        with pytest.raises(sysml2.analysis.AnalysisError,
-                           match="ExplicitComponent"):
+        with pytest.raises(sysml2.analysis.AnalysisError, match="ExplicitComponent"):
             mdao._load_component(om, "uav_aero:RHO")
 
 
 class TestOptimization:
     def test_maximize_payload(self, drone):
-        build = mdao.build_problem(drone, "Drone::QuadCopter", setup=False,
-                                   requirements=("Drone::FlightEnvelope",))
-        mdao.add_optimization(build, objective="payloadMass",
-                              design_vars={"payloadMass": (0.0, 3.0)},
-                              maximize=True)
+        build = mdao.build_problem(
+            drone, "Drone::QuadCopter", setup=False, requirements=("Drone::FlightEnvelope",)
+        )
+        mdao.add_optimization(
+            build, objective="payloadMass", design_vars={"payloadMass": (0.0, 3.0)}, maximize=True
+        )
         p = build.problem
         p.setup()
         p.set_val("payloadMass", 0.1)

@@ -31,53 +31,56 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="sysml2",
         description="Parse, export, and execute SysML v2 models. "
-                    "Model inputs may be a .sysml file, a .json export, or "
-                    "a directory of .sysml files.")
+        "Model inputs may be a .sysml file, a .json export, or "
+        "a directory of .sysml files.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("file", help=".sysml file, .json export, or directory")
-    common.add_argument("--no-cache", action="store_true",
-                        help="bypass the model cache")
-    common.add_argument("--stdlib", action="store_true",
-                        help="add the vendored SysML standard library")
+    common.add_argument("--no-cache", action="store_true", help="bypass the model cache")
+    common.add_argument(
+        "--stdlib", action="store_true", help="add the vendored SysML standard library"
+    )
 
-    p = sub.add_parser("parse", help="syntax-check .sysml/.kerml files "
-                                     "(file or directory)")
+    p = sub.add_parser("parse", help="syntax-check .sysml/.kerml files (file or directory)")
     p.add_argument("file")
-    p.add_argument("--kerml", action="store_true",
-                   help="force KerML grammar")
-    p.add_argument("--tree", action="store_true",
-                   help="print the raw parse tree")
+    p.add_argument("--kerml", action="store_true", help="force KerML grammar")
+    p.add_argument("--tree", action="store_true", help="print the raw parse tree")
 
-    p = sub.add_parser("export", parents=[common],
-                       help="export a model to JSON, SysML, KerML, or the "
-                            "OMG API JSON (requires pyecore)")
-    p.add_argument("--format", choices=["json", "sysml", "kerml", "api"],
-                   default="json")
+    p = sub.add_parser(
+        "export",
+        parents=[common],
+        help="export a model to JSON, SysML, KerML, or the OMG API JSON (requires pyecore)",
+    )
+    p.add_argument("--format", choices=["json", "sysml", "kerml", "api"], default="json")
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
-    p = sub.add_parser("lint", parents=[common],
-                       help="validate a model: dangling references, "
-                            "duplicate names, cycles; names resolve "
-                            "against the vendored standard library "
-                            "unless --no-stdlib")
-    p.add_argument("--strict", action="store_true",
-                   help="treat warnings as errors")
-    p.add_argument("--strict-imports", action="store_true",
-                   help="warn when bare stdlib names are used without "
-                        "an import (stdlib-implicit-name)")
-    p.add_argument("--no-stdlib", action="store_true",
-                   help="do not resolve names against the standard library")
+    p = sub.add_parser(
+        "lint",
+        parents=[common],
+        help="validate a model: dangling references, "
+        "duplicate names, cycles; names resolve "
+        "against the vendored standard library "
+        "unless --no-stdlib",
+    )
+    p.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    p.add_argument(
+        "--strict-imports",
+        action="store_true",
+        help="warn when bare stdlib names are used without an import (stdlib-implicit-name)",
+    )
+    p.add_argument(
+        "--no-stdlib", action="store_true", help="do not resolve names against the standard library"
+    )
 
-    p = sub.add_parser("calc", parents=[common],
-                       help="invoke a calc def as a function")
+    p = sub.add_parser("calc", parents=[common], help="invoke a calc def as a function")
     p.add_argument("name", help="qualified name, e.g. Pkg::MyCalc")
     p.add_argument("args", nargs="*", help="name=value arguments")
 
-    p = sub.add_parser("check", parents=[common],
-                       help="instantiate a part def and check its "
-                            "constraints")
+    p = sub.add_parser(
+        "check", parents=[common], help="instantiate a part def and check its constraints"
+    )
     p.add_argument("name", help="qualified name of a part def")
     p.add_argument("args", nargs="*", help="name=value attribute bindings")
 
@@ -86,8 +89,7 @@ def main(argv=None) -> int:
     p.add_argument("args", nargs="*", help="name=value inputs")
     p.add_argument("--events", help="comma-separated event names")
 
-    p = sub.add_parser("simulate", parents=[common],
-                       help="simulate a state def")
+    p = sub.add_parser("simulate", parents=[common], help="simulate a state def")
     p.add_argument("name")
     p.add_argument("--events", help="comma-separated event names", default="")
 
@@ -104,12 +106,10 @@ def main(argv=None) -> int:
                 print(f"no {pattern[3:]} files under {target}")
                 return 1
             for path in files:
-                result = parse_file(path,
-                                    language="kerml" if ns.kerml else None)
+                result = parse_file(path, language="kerml" if ns.kerml else None)
                 print(f"OK: {path} parses as {result.language}")
             return 0
-        result = parse_file(ns.file,
-                            language="kerml" if ns.kerml else None)
+        result = parse_file(ns.file, language="kerml" if ns.kerml else None)
         if ns.tree:
             print(result.tree_text())
         else:
@@ -124,8 +124,9 @@ def main(argv=None) -> int:
     if ns.command == "lint":
         from .validation import validate
 
-        diagnostics = validate(model, stdlib=False if ns.no_stdlib else None,
-                               strict_imports=ns.strict_imports)
+        diagnostics = validate(
+            model, stdlib=False if ns.no_stdlib else None, strict_imports=ns.strict_imports
+        )
         for diagnostic in diagnostics:
             print(diagnostic)
         errors = sum(d.severity == "error" for d in diagnostics)
@@ -141,7 +142,10 @@ def main(argv=None) -> int:
             text = to_api_json(model)
         else:
             renderers: dict[str, Callable[[Any], str]] = {
-                "json": to_json, "sysml": to_sysml, "kerml": to_kerml}
+                "json": to_json,
+                "sysml": to_sysml,
+                "kerml": to_kerml,
+            }
             text = renderers[ns.format](model)
         if ns.output:
             Path(ns.output).write_text(text, encoding="utf-8")
@@ -162,18 +166,15 @@ def main(argv=None) -> int:
             status = {True: "PASS", False: "FAIL", None: "SKIP"}[check.passed]
             failures += check.passed is False
             message = f" -- {check.message}" if check.message else ""
-            print(f"[{status}] {check.kind} {check.name}: "
-                  f"{check.expression}{message}")
+            print(f"[{status}] {check.kind} {check.name}: {check.expression}{message}")
         return 1 if failures else 0
 
     if ns.command == "run":
         events = [e for e in (ns.events or "").split(",") if e]
-        run = interp.run_action(ns.name, inputs=_kv_pairs(ns.args),
-                                events=events)
+        run = interp.run_action(ns.name, inputs=_kv_pairs(ns.args), events=events)
         for line in run.trace:
             print(f"  {line}")
-        print("outputs:", json.dumps({k: _jsonable(v) for k, v in
-                                      run.outputs.items()}))
+        print("outputs:", json.dumps({k: _jsonable(v) for k, v in run.outputs.items()}))
         if run.sends:
             print("sends:", [repr(s.payload) for s in run.sends])
         return 0

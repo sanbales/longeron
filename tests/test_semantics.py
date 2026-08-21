@@ -9,7 +9,8 @@ from sysml2.errors import ExecutionError
 
 @pytest.fixture(scope="module")
 def succession_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 action def OutOfOrder {
                     out log : String;
@@ -71,11 +72,11 @@ def succession_interp():
                     first start then bump;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestSuccessionFlow:
-
     def test_successions_define_order(self, succession_interp):
         result = succession_interp.run_action("P::OutOfOrder")
         assert result.outputs["log"] == "abc"
@@ -88,7 +89,8 @@ class TestSuccessionFlow:
 
     def test_decision_guards(self, succession_interp):
         run = lambda x: succession_interp.run_action(  # noqa: E731
-            "P::Decision", inputs={"x": x}).outputs["label"]
+            "P::Decision", inputs={"x": x}
+        ).outputs["label"]
         assert run(500) == "big"
         assert run(5) == "small"
         assert run(-1) == "zero"
@@ -105,14 +107,14 @@ class TestSuccessionFlow:
 
     def test_declaration_order_without_successions(self, action_interp):
         # regression: bodies without successions keep declaration order
-        result = action_interp.run_action("Behaviors::CountDown",
-                                          inputs={"start": 4})
+        result = action_interp.run_action("Behaviors::CountDown", inputs={"start": 4})
         assert result.outputs["total"] == 10
 
 
 @pytest.fixture(scope="module")
 def action_time_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 action def Timed {
                     out elapsed : Real;
@@ -126,11 +128,11 @@ def action_time_interp():
                     accept when ready;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestActionTime:
-
     def test_after_and_at_advance_clock(self, action_time_interp):
         result = action_time_interp.run_action("P::Timed")
         assert result.time == 10.0  # 2.5 + 1.5 then wait-until 10
@@ -145,7 +147,8 @@ class TestActionTime:
 
 @pytest.fixture(scope="module")
 def hier_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 state def Machine {
                     attribute log : String := "";
@@ -173,42 +176,42 @@ def hier_interp():
                     transition first operating accept power_off then off;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestHierarchicalStates:
-
     def test_composite_entry_descends(self, hier_interp):
         result = hier_interp.simulate("P::Machine", events=["power_on"])
         assert result.final_state == "operating.idle"
         assert result.env["log"] == "[op(i"
 
     def test_inner_transition(self, hier_interp):
-        result = hier_interp.simulate("P::Machine",
-                                 events=["power_on", "work"])
+        result = hier_interp.simulate("P::Machine", events=["power_on", "work"])
         assert result.final_state == "operating.busy"
         assert result.env["log"] == "[op(ii)(b"
 
     def test_inner_handles_before_outer(self, hier_interp):
-        result = hier_interp.simulate("P::Machine",
-                                 events=["power_on", "work", "rest"])
+        result = hier_interp.simulate("P::Machine", events=["power_on", "work", "rest"])
         assert result.final_state == "operating.idle"
 
     def test_exit_cascades_innermost_first(self, hier_interp):
-        result = hier_interp.simulate(
-            "P::Machine", events=["power_on", "work", "power_off"])
+        result = hier_interp.simulate("P::Machine", events=["power_on", "work", "power_off"])
         assert result.final_state == "off"
         assert result.env["log"] == "[op(ii)(bb)op]"
 
     def test_trace_uses_dotted_paths(self, hier_interp):
         result = hier_interp.simulate("P::Machine", events=["power_on", "work"])
-        assert (result.trace[1].source, result.trace[1].target) == \
-            ("operating.idle", "operating.busy")
+        assert (result.trace[1].source, result.trace[1].target) == (
+            "operating.idle",
+            "operating.busy",
+        )
 
 
 @pytest.fixture(scope="module")
 def parallel_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 state def Radio {
                     entry; then on;
@@ -232,11 +235,11 @@ def parallel_interp():
                     state off;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestParallelStates:
-
     def test_all_regions_active(self, parallel_interp):
         result = parallel_interp.simulate("P::Radio")
         assert result.active_states == ["on.volume.normal", "on.band.fm"]
@@ -253,7 +256,8 @@ class TestParallelStates:
 
 @pytest.fixture(scope="module")
 def state_time_interp():
-    return sysml2.Interpreter(sysml2.loads("""
+    return sysml2.Interpreter(
+        sysml2.loads("""
             package P {
                 item def Tick;
                 state def Toaster {
@@ -280,14 +284,13 @@ def state_time_interp():
                     state tripped;
                 }
             }
-        """))
+        """)
+    )
 
 
 class TestStateTime:
-
     def test_after_fires_when_time_advances(self, state_time_interp):
-        result = state_time_interp.simulate("P::Toaster",
-                                 events=["press", 31.0])
+        result = state_time_interp.simulate("P::Toaster", events=["press", 31.0])
         assert result.final_state == "idle"
         assert result.env["pops"] == 1
         assert result.time == 31.0
@@ -298,8 +301,7 @@ class TestStateTime:
 
     def test_after_measures_from_state_entry(self, state_time_interp):
         # enter toasting at t=50; 30s later is t=80
-        result = state_time_interp.simulate("P::Toaster",
-                                 events=[50.0, "press", 29.0, 2.0])
+        result = state_time_interp.simulate("P::Toaster", events=[50.0, "press", 29.0, 2.0])
         assert result.final_state == "idle"
 
     def test_at_fires_at_absolute_time(self, state_time_interp):

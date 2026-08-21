@@ -31,45 +31,79 @@ _UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://sysml2-experiments")
 
 #: definition kind -> spec metaclass (fallback chain applied if abstract)
 _DEF_CLASSES: dict[str, str] = {
-    "part": "PartDefinition", "item": "ItemDefinition",
-    "attribute": "AttributeDefinition", "port": "PortDefinition",
-    "action": "ActionDefinition", "calc": "CalculationDefinition",
+    "part": "PartDefinition",
+    "item": "ItemDefinition",
+    "attribute": "AttributeDefinition",
+    "port": "PortDefinition",
+    "action": "ActionDefinition",
+    "calc": "CalculationDefinition",
     "constraint": "ConstraintDefinition",
-    "requirement": "RequirementDefinition", "concern": "ConcernDefinition",
-    "state": "StateDefinition", "occurrence": "OccurrenceDefinition",
-    "individual": "OccurrenceDefinition", "enum": "EnumerationDefinition",
-    "connection": "ConnectionDefinition", "flow": "FlowDefinition",
-    "allocation": "AllocationDefinition", "metadata": "MetadataDefinition",
-    "rendering": "RenderingDefinition", "case": "CaseDefinition",
+    "requirement": "RequirementDefinition",
+    "concern": "ConcernDefinition",
+    "state": "StateDefinition",
+    "occurrence": "OccurrenceDefinition",
+    "individual": "OccurrenceDefinition",
+    "enum": "EnumerationDefinition",
+    "connection": "ConnectionDefinition",
+    "flow": "FlowDefinition",
+    "allocation": "AllocationDefinition",
+    "metadata": "MetadataDefinition",
+    "rendering": "RenderingDefinition",
+    "case": "CaseDefinition",
     "analysis": "AnalysisCaseDefinition",
     "verification": "VerificationCaseDefinition",
-    "use_case": "UseCaseDefinition", "view": "ViewDefinition",
-    "viewpoint": "ViewpointDefinition", "interface": "InterfaceDefinition",
+    "use_case": "UseCaseDefinition",
+    "view": "ViewDefinition",
+    "viewpoint": "ViewpointDefinition",
+    "interface": "InterfaceDefinition",
     "extended": "PartDefinition",
 }
 
 #: usage kind -> spec metaclass
 _USAGE_CLASSES: dict[str, str] = {
-    "part": "PartUsage", "item": "ItemUsage", "attribute": "AttributeUsage",
-    "port": "PortUsage", "ref": "ReferenceUsage", "feature": "ReferenceUsage",
-    "enum": "EnumerationUsage", "enum_literal": "EnumerationUsage",
-    "occurrence": "OccurrenceUsage", "individual": "OccurrenceUsage",
-    "snapshot": "OccurrenceUsage", "timeslice": "OccurrenceUsage",
-    "event": "OccurrenceUsage", "event_occurrence": "EventOccurrenceUsage",
-    "action": "ActionUsage", "calc": "CalculationUsage",
-    "constraint": "ConstraintUsage", "requirement": "RequirementUsage",
-    "concern": "ConcernUsage", "state": "StateUsage", "case": "CaseUsage",
+    "part": "PartUsage",
+    "item": "ItemUsage",
+    "attribute": "AttributeUsage",
+    "port": "PortUsage",
+    "ref": "ReferenceUsage",
+    "feature": "ReferenceUsage",
+    "enum": "EnumerationUsage",
+    "enum_literal": "EnumerationUsage",
+    "occurrence": "OccurrenceUsage",
+    "individual": "OccurrenceUsage",
+    "snapshot": "OccurrenceUsage",
+    "timeslice": "OccurrenceUsage",
+    "event": "OccurrenceUsage",
+    "event_occurrence": "EventOccurrenceUsage",
+    "action": "ActionUsage",
+    "calc": "CalculationUsage",
+    "constraint": "ConstraintUsage",
+    "requirement": "RequirementUsage",
+    "concern": "ConcernUsage",
+    "state": "StateUsage",
+    "case": "CaseUsage",
     "analysis": "AnalysisCaseUsage",
-    "verification": "VerificationCaseUsage", "use_case": "UseCaseUsage",
-    "subject": "ReferenceUsage", "actor": "PartUsage",
-    "stakeholder": "PartUsage", "objective": "RequirementUsage",
-    "connection": "ConnectionUsage", "binding": "BindingConnectorAsUsage",
-    "interface": "InterfaceUsage", "allocation": "AllocationUsage",
-    "flow": "FlowUsage", "message": "FlowUsage", "view": "ViewUsage",
-    "viewpoint": "ViewpointUsage", "rendering": "RenderingUsage",
-    "render": "RenderingUsage", "satisfy": "SatisfyRequirementUsage",
-    "verify": "RequirementUsage", "frame": "ConcernUsage",
-    "include": "IncludeUseCaseUsage", "extended": "Usage",
+    "verification": "VerificationCaseUsage",
+    "use_case": "UseCaseUsage",
+    "subject": "ReferenceUsage",
+    "actor": "PartUsage",
+    "stakeholder": "PartUsage",
+    "objective": "RequirementUsage",
+    "connection": "ConnectionUsage",
+    "binding": "BindingConnectorAsUsage",
+    "interface": "InterfaceUsage",
+    "allocation": "AllocationUsage",
+    "flow": "FlowUsage",
+    "message": "FlowUsage",
+    "view": "ViewUsage",
+    "viewpoint": "ViewpointUsage",
+    "rendering": "RenderingUsage",
+    "render": "RenderingUsage",
+    "satisfy": "SatisfyRequirementUsage",
+    "verify": "RequirementUsage",
+    "frame": "ConcernUsage",
+    "include": "IncludeUseCaseUsage",
+    "extended": "Usage",
 }
 
 #: statement element class -> spec metaclass
@@ -86,8 +120,12 @@ _STATEMENT_CLASSES: dict[type, str] = {
     M.TransitionUsage: "TransitionUsage",
 }
 
-_CONTROL_CLASSES = {"merge": "MergeNode", "decision": "DecisionNode",
-                    "join": "JoinNode", "fork": "ForkNode"}
+_CONTROL_CLASSES = {
+    "merge": "MergeNode",
+    "decision": "DecisionNode",
+    "join": "JoinNode",
+    "fork": "ForkNode",
+}
 
 
 @dataclass
@@ -101,17 +139,18 @@ class SpecReport:
     unresolved_references: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:  # pragma: no cover - convenience
-        return (f"{self.elements} elements, {self.memberships} memberships, "
-                f"{self.relationships} relationships; "
-                f"{len(self.skipped_elements)} skipped, "
-                f"{len(self.unresolved_references)} unresolved refs")
+        return (
+            f"{self.elements} elements, {self.memberships} memberships, "
+            f"{self.relationships} relationships; "
+            f"{len(self.skipped_elements)} skipped, "
+            f"{len(self.unresolved_references)} unresolved refs"
+        )
 
 
 class SpecModel:
     """A model projected onto the OMG abstract syntax."""
 
-    def __init__(self, root: Any, report: SpecReport,
-                 instances: dict[int, Any] | None = None):
+    def __init__(self, root: Any, report: SpecReport, instances: dict[int, Any] | None = None):
         self.root = root
         self.report = report
         #: ``id(model element) -> EObject`` for projections built by
@@ -145,8 +184,9 @@ def spec_metamodel() -> Any:
     try:
         rset = _resource_set()
     except ImportError as exc:  # pragma: no cover
-        raise SysMLError("the spec metamodel requires pyecore: "
-                         "pip install 'longeron[ecore]'") from exc
+        raise SysMLError(
+            "the spec metamodel requires pyecore: pip install 'longeron[ecore]'"
+        ) from exc
     resource = rset.get_resource(str(_ECORE_PATH))
     package = resource.contents[0]
     rset.metamodel_registry[package.nsURI] = package
@@ -163,8 +203,7 @@ def spec_class(name: str) -> Any:
 
 
 def spec_class_names() -> list[str]:
-    return sorted(c.name for c in spec_metamodel().eClassifiers
-                  if c.eClass.name == "EClass")
+    return sorted(c.name for c in spec_metamodel().eClassifiers if c.eClass.name == "EClass")
 
 
 def to_spec(model: M.Model) -> SpecModel:
@@ -183,14 +222,12 @@ class _Projector:
 
     # -- helpers ---------------------------------------------------------------
 
-    def _instantiate(self, class_name: str, source: M.Element | None,
-                     path: str) -> Any:
+    def _instantiate(self, class_name: str, source: M.Element | None, path: str) -> Any:
         cls = self.package.getEClassifier(class_name)
         if cls is None or cls.abstract:
             cls = self.package.getEClassifier("PartUsage")
         instance = cls()
-        self._set(instance, "elementId",
-                  str(uuid.uuid5(_UUID_NAMESPACE, path)))
+        self._set(instance, "elementId", str(uuid.uuid5(_UUID_NAMESPACE, path)))
         if source is not None:
             if source.name:
                 self._set(instance, "declaredName", source.name)
@@ -206,10 +243,8 @@ class _Projector:
             return
         instance.eSet(feature, value)
 
-    def _own(self, parent: Any, child: Any, membership_class: str,
-             path: str) -> Any:
-        membership = self._instantiate(membership_class, None,
-                                       f"{path}#membership")
+    def _own(self, parent: Any, child: Any, membership_class: str, path: str) -> Any:
+        membership = self._instantiate(membership_class, None, f"{path}#membership")
         parent.ownedRelationship.append(membership)
         membership.ownedRelatedElement.append(child)
         self.report.memberships += 1
@@ -217,8 +252,7 @@ class _Projector:
 
     def _membership_class(self, child: M.Element) -> str:
         if isinstance(child, M.Usage):
-            if child.direction is not None and \
-                    self.package.getEClassifier("ParameterMembership"):
+            if child.direction is not None and self.package.getEClassifier("ParameterMembership"):
                 if child.direction == "return":
                     return "ReturnParameterMembership"
                 return "ParameterMembership"
@@ -246,8 +280,7 @@ class _Projector:
         self._project_relationships()
         return SpecModel(root, self.report, self.instances)
 
-    def _project_member(self, parent: Any, element: M.Element,
-                        path: str) -> None:
+    def _project_member(self, parent: Any, element: M.Element, path: str) -> None:
         instance = self._project_element(element, path)
         if instance is None:
             return
@@ -259,8 +292,8 @@ class _Projector:
     def _project_element(self, element: M.Element, path: str) -> Any:
         if isinstance(element, M.Package):
             instance = self._instantiate(
-                "LibraryPackage" if element.is_library else "Package",
-                element, path)
+                "LibraryPackage" if element.is_library else "Package", element, path
+            )
             self._set(instance, "isStandard", element.is_standard)
             return instance
         if isinstance(element, M.EnumerationDefinition):
@@ -278,14 +311,12 @@ class _Projector:
             self._set(instance, "body", element.text)
             return instance
         if isinstance(element, M.TextualRepresentation):
-            instance = self._instantiate("TextualRepresentation", element,
-                                         path)
+            instance = self._instantiate("TextualRepresentation", element, path)
             self._set(instance, "language", element.language)
             self._set(instance, "body", element.body)
             return instance
         if isinstance(element, M.Import):
-            class_name = ("NamespaceImport" if element.is_namespace
-                          else "MembershipImport")
+            class_name = "NamespaceImport" if element.is_namespace else "MembershipImport"
             instance = self._instantiate(class_name, element, path)
             self._set(instance, "isRecursive", element.is_recursive)
             self._set(instance, "isImportAll", element.is_import_all)
@@ -293,15 +324,13 @@ class _Projector:
         if isinstance(element, M.Dependency):
             return self._instantiate("Dependency", element, path)
         if isinstance(element, M.ControlNode):
-            return self._instantiate(_CONTROL_CLASSES[element.kind],
-                                     element, path)
+            return self._instantiate(_CONTROL_CLASSES[element.kind], element, path)
         if isinstance(element, M.StateAction) and element.action is not None:
             return self._project_element(element.action, path)
         for model_type, class_name in _STATEMENT_CLASSES.items():
             if isinstance(element, model_type):
                 return self._instantiate(class_name, element, path)
-        self.report.skipped_elements.append(
-            f"{type(element).__name__} ({element.label})")
+        self.report.skipped_elements.append(f"{type(element).__name__} ({element.label})")
         return None
 
     def _project_definition(self, defn: M.Definition, path: str) -> Any:
@@ -309,8 +338,7 @@ class _Projector:
         instance = self._instantiate(class_name, defn, path)
         self._set(instance, "isAbstract", defn.is_abstract)
         self._set(instance, "isVariation", defn.is_variation)
-        self._set(instance, "isIndividual",
-                  defn.is_individual or defn.kind == "individual")
+        self._set(instance, "isIndividual", defn.is_individual or defn.kind == "individual")
         self._set(instance, "isParallel", defn.is_parallel)
         return instance
 
@@ -341,30 +369,59 @@ class _Projector:
                 continue
             if isinstance(element, M.Definition):
                 for target in element.supers:
-                    self._relate(element, instance, target,
-                                 "Subclassification",
-                                 "subclassifier", "superclassifier")
+                    self._relate(
+                        element,
+                        instance,
+                        target,
+                        "Subclassification",
+                        "subclassifier",
+                        "superclassifier",
+                    )
             elif isinstance(element, M.Usage):
                 for target in element.types:
-                    self._relate(element, instance, target.lstrip("~"),
-                                 "FeatureTyping", "typedFeature", "type")
+                    self._relate(
+                        element,
+                        instance,
+                        target.lstrip("~"),
+                        "FeatureTyping",
+                        "typedFeature",
+                        "type",
+                    )
                 for target in element.subsets:
-                    self._relate(element, instance, target, "Subsetting",
-                                 "subsettingFeature", "subsettedFeature")
+                    self._relate(
+                        element,
+                        instance,
+                        target,
+                        "Subsetting",
+                        "subsettingFeature",
+                        "subsettedFeature",
+                    )
                 for target in element.redefines:
-                    self._relate(element, instance, target, "Redefinition",
-                                 "redefiningFeature", "redefinedFeature")
+                    self._relate(
+                        element,
+                        instance,
+                        target,
+                        "Redefinition",
+                        "redefiningFeature",
+                        "redefinedFeature",
+                    )
 
-    def _relate(self, element: M.Element, instance: Any, target_name: str,
-                relationship_class: str, source_role: str,
-                target_role: str) -> None:
+    def _relate(
+        self,
+        element: M.Element,
+        instance: Any,
+        target_name: str,
+        relationship_class: str,
+        source_role: str,
+        target_role: str,
+    ) -> None:
         target = self._resolve_instance(target_name, element)
         if target is None:
             self.report.unresolved_references.append(target_name)
             return
         relationship = self._instantiate(
-            relationship_class, None,
-            f"{instance.elementId}#{relationship_class}/{target_name}")
+            relationship_class, None, f"{instance.elementId}#{relationship_class}/{target_name}"
+        )
         self._set(relationship, source_role, instance)
         self._set(relationship, target_role, target)
         instance.ownedRelationship.append(relationship)

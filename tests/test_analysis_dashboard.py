@@ -59,8 +59,10 @@ class TestCompromiseScores:
         assert zero == pytest.approx(equal)
 
     def test_degenerate_feasible_set_pins_to_one(self):
-        cands = [{"metric": {"a": 7.0}, "feasible": {"a": True}},
-                 {"metric": {"a": 7.0}, "feasible": {"a": True}}]
+        cands = [
+            {"metric": {"a": 7.0}, "feasible": {"a": True}},
+            {"metric": {"a": 7.0}, "feasible": {"a": True}},
+        ]
         assert dashboard.compromise_scores(cands, {"a": 10}) == [1.0, 1.0]
 
     def test_needs_missions(self):
@@ -72,22 +74,21 @@ class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery"]
         assert len(data["candidates"]) == 4 * 3 * 3 * 3
-        assert [m["name"] for m in data["missions"]] == [
-            "ISR", "logistics", "intercept"]
+        assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_best_equipment_per_mission(self, data):
         """Per candidate the metric is the best FEASIBLE equipment fit;
         infeasible missions display 0 but keep a mix for the red card."""
 
-        best = next(c for c in data["candidates"]
-                    if c["label"] == "vtolWing/stdMotor/slimProp/packMax")
-        assert best["feasible"] == {"ISR": True, "logistics": True,
-                                    "intercept": True}
+        best = next(
+            c for c in data["candidates"] if c["label"] == "vtolWing/stdMotor/slimProp/packMax"
+        )
+        assert best["feasible"] == {"ISR": True, "logistics": True, "intercept": True}
         assert best["metric"]["ISR"] == pytest.approx(115.137, abs=0.01)
-        assert best["mission_mix"]["ISR"]["sensor"] in (
-            "stareEoIr", "hawkeyeGimbal")
-        dart = next(c for c in data["candidates"]
-                    if c["label"].startswith("dartInterceptor/sprintMotor"))
+        assert best["mission_mix"]["ISR"]["sensor"] in ("stareEoIr", "hawkeyeGimbal")
+        dart = next(
+            c for c in data["candidates"] if c["label"].startswith("dartInterceptor/sprintMotor")
+        )
         assert dart["feasible"]["logistics"] is False
         assert dart["metric"]["logistics"] == 0.0
         assert "cargo" in dart["mission_mix"]["logistics"]
@@ -112,8 +113,7 @@ class TestDashboardWiring:
         assert len(payload["lines"]) == len(data["candidates"])
         names = [a["name"] for a in payload["axes"]]
         assert names[:4] == data["shared"]
-        assert {"cost", "stationMinutes", "payloadRangeKgKm",
-                "maxTargetSpeed"} <= set(names)
+        assert {"cost", "stationMinutes", "payloadRangeKgKm", "maxTargetSpeed"} <= set(names)
         assert len(dash.picks) == 4
         assert dash.viewer.label.startswith("\u2605")
 
@@ -136,8 +136,9 @@ class TestDashboardWiring:
         assert top["selection"]["airframe"] == "vtolWing"
 
     def test_brush_downselects_live(self, dash, data):
-        boxes = [i for i, c in enumerate(data["candidates"])
-                 if c["selection"]["airframe"] == "boxQuad"]
+        boxes = [
+            i for i, c in enumerate(data["candidates"]) if c["selection"]["airframe"] == "boxQuad"
+        ]
         dash.parcoords.selected = json.dumps(boxes)
         assert set(dash.picks) <= set(boxes)
         assert len(dash.picks) == 4
@@ -148,8 +149,12 @@ class TestDashboardWiring:
 
     def test_cards_show_margins_green_red(self, dash, data):
         dash.parcoords.selected = json.dumps(
-            [i for i, c in enumerate(data["candidates"])
-             if c["label"].startswith("dartInterceptor/sprintMotor/slim")])
+            [
+                i
+                for i, c in enumerate(data["candidates"])
+                if c["label"].startswith("dartInterceptor/sprintMotor/slim")
+            ]
+        )
         log_card = dash.cards["logistics"].value
         assert "infeasible" in log_card
         assert "cargoFits" in log_card

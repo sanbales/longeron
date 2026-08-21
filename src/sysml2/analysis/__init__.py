@@ -27,5 +27,14 @@ third-party dependencies):
 
 from ._expr import AnalysisError
 
-__all__ = ["AnalysisError", "dashboard", "geometry", "mdao", "smt",
-           "structure", "trades", "viewer3d", "viz"]
+__all__ = [
+    "AnalysisError",
+    "dashboard",
+    "geometry",
+    "mdao",
+    "smt",
+    "structure",
+    "trades",
+    "viewer3d",
+    "viz",
+]

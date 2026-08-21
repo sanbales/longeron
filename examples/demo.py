@@ -44,10 +44,14 @@ def main() -> None:
 
     # ----- 4. Calculations ---------------------------------------------------
     banner("4. Execute calculations")
-    print("HoverTime(5200 mAh)          =",
-          round(interp.call("Drone::HoverTime", capacity=5200.0), 1), "min")
-    print("ThrustToWeight(36 N, 1.2 kg) =",
-          round(interp.call("Drone::ThrustToWeight", 36.0, 1.2), 2))
+    print(
+        "HoverTime(5200 mAh)          =",
+        round(interp.call("Drone::HoverTime", capacity=5200.0), 1),
+        "min",
+    )
+    print(
+        "ThrustToWeight(36 N, 1.2 kg) =", round(interp.call("Drone::ThrustToWeight", 36.0, 1.2), 2)
+    )
 
     # ----- 5. Requirements ----------------------------------------------------
     banner("5. Check a requirement against an instance")
@@ -64,8 +68,8 @@ def main() -> None:
     # ----- 7. State machine ------------------------------------------------------
     banner("7. Simulate the flight state machine")
     sim = interp.simulate(
-        "Drone::FlightStates",
-        events=["launch", "airborne", "low_battery", "touchdown"])
+        "Drone::FlightStates", events=["launch", "airborne", "low_battery", "touchdown"]
+    )
     for step in sim.trace:
         print("  ", step)
     print("final state:", sim.final_state)
@@ -79,8 +83,13 @@ def main() -> None:
     pkg = M.Package(name="Generated")
     sensor = M.Definition(kind="part", name="Sensor")
     sensor.add(
-        M.Usage(kind="attribute", name="rate", types=["Real"],
-                value=M.FeatureValue(sysml2.parse_expression("100.0 * 2"))))
+        M.Usage(
+            kind="attribute",
+            name="rate",
+            types=["Real"],
+            value=M.FeatureValue(sysml2.parse_expression("100.0 * 2")),
+        )
+    )
     pkg.add(sensor)
     new_model = M.Model()
     new_model.add(pkg)
@@ -98,9 +107,12 @@ def main() -> None:
     print("saved:", *(str(p) for p in sorted(out_dir.iterdir())), sep="\n  ")
 
     reloaded = sysml2.load(out_dir / "drone_with_results.json")
-    print("reloaded from JSON; snapshot mass =",
-          sysml2.Interpreter(reloaded)
-          .instantiate(reloaded.find("Drone::asFlown")).slots["totalMass"])
+    print(
+        "reloaded from JSON; snapshot mass =",
+        sysml2.Interpreter(reloaded)
+        .instantiate(reloaded.find("Drone::asFlown"))
+        .slots["totalMass"],
+    )
 
     # ----- 10. KerML projection --------------------------------------------------------
     banner("10. Project the model onto KerML (and re-parse it as KerML)")
