@@ -17,7 +17,7 @@
 // evaluate(): enumerate the Cartesian candidate space and let the
 // interpreter score every mix exactly (see notebook 07).
 package UavMissions {
-    doc /* Multi-mission UAV catalog: three airframe families, tiered
+    doc /* Multi-mission UAV catalog: four airframe families, tiered
            components, and three mission contexts with executable physics. */
 
     // ----- external-analysis annotation ------------------------------------
@@ -152,9 +152,11 @@ package UavMissions {
 
     // ----- catalog entries ----------------------------------------------------
 
-    // Airframes: a cheap rotor-only quad, a winged VTOL (quad lift: two
-    // large props on wingtip nacelles + two smaller props atop the twin
-    // vertical stabilizers), and a rail-launched streamlined interceptor
+    // Airframes: a cheap rotor-only quad, a streamlined teardrop-body
+    // quad (same rotor-borne physics, a fraction of the box frame's CdA,
+    // but a slim payload bay), a winged VTOL (quad lift: two large props
+    // on wingtip nacelles + two smaller props atop the twin vertical
+    // stabilizers), and a rail-launched streamlined interceptor
     // (hoverThrustFactor 0: no hover requirement, no hover budget).
     part def BoxQuad :> Airframe {
         attribute mass : Real = 0.85;   attribute cost : Real = 95.0;
@@ -170,6 +172,25 @@ package UavMissions {
         attribute payloadCapacity : Real = 6.0;
         attribute hoverOpsSec : Real = 90.0;
         attribute fuselageLength : Real = 0.0;
+    }
+    part def TeardropQuad :> Airframe {
+        // The "do wings matter?" probe: a wingless quad wrapped in a
+        // lathed teardrop shell.  CdA sits between the box quad (0.055)
+        // and the winged dart (0.009); the shell costs money and mass
+        // and squeezes the payload bay -- the missions decide the rest.
+        attribute mass : Real = 1.05;   attribute cost : Real = 200.0;
+        attribute dragArea : Real = 0.021;
+        attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
+        attribute loiterSpeed : Real = 0.0;
+        attribute cruiseSpeed : Real = 18.0;
+        attribute motorCount : Integer = 4;
+        attribute diskAreaFactor : Real = 4.0;
+        attribute hoverThrustFactor : Real = 1.5;
+        attribute payloadCapacity : Real = 1.0;
+        attribute hoverOpsSec : Real = 60.0;
+        attribute fuselageLength : Real = 0.62;
     }
     part def VtolWing :> Airframe {
         attribute mass : Real = 2.30;   attribute cost : Real = 480.0;
@@ -286,6 +307,7 @@ package UavMissions {
 
     variation part def AirframeChoice :> Airframe {
         variant part boxQuad : BoxQuad;
+        variant part teardropQuad : TeardropQuad;
         variant part vtolWing : VtolWing;
         variant part dartInterceptor : DartInterceptor;
     }

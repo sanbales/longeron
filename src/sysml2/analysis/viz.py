@@ -522,8 +522,9 @@ def _style_axes(ax: Any) -> None:
 
 
 def pareto_figure(architectures: Iterable[Architecture], *,
-                  x: str, y: str, x_sense: str = "min",
-                  y_sense: str = "max", panel_y: str | None = None,
+                  x: str, y: str,
+                  sense: tuple[str, str] = ("min", "min"),
+                  panel_y: str | None = None,
                   xlabel: str | None = None, ylabel: str | None = None,
                   panel_ylabel: str | None = None,
                   annotate: Mapping[str, Architecture] | None = None,
@@ -534,25 +535,38 @@ def pareto_figure(architectures: Iterable[Architecture], *,
     :meth:`~sysml2.analysis.trades.TradeStudy.all_architectures`).  The
     highlighted frontier is computed *here*, from the plotted axes
     themselves: the feasible mixes that are non-dominated under
-    ``x_sense`` on ``x`` and ``y_sense`` on ``y`` (each ``"min"`` or
-    ``"max"``).  A caller-supplied front is deliberately not accepted --
-    a front computed over more objectives than the two plotted axes is
-    only a projection, and a projection puts points on the drawn
-    "frontier" that are strictly worse on *both* plotted metrics (they
-    earn their Pareto rank through an unplotted objective).  Track such
-    extra objectives with ``panel_y`` -- a small-multiple panel over the
-    same x axis -- and call-outs via ``annotate`` instead.
+    ``sense`` -- an explicit ``(x_sense, y_sense)`` pair, each ``"min"``
+    or ``"max"``.  The default is the conservative ``("min", "min")``;
+    a chart whose y metric is better *large* (station time, payload
+    range, catchable target speed, ...) must say so explicitly with
+    ``sense=("min", "max")`` -- there is deliberately no silent
+    maximize default, because a front computed with the wrong sense
+    hugs the wrong corner and leaves genuinely better mixes drawn as
+    dominated dots outside the drawn staircase.
 
-    Dominated mixes are muted dots, infeasible ones pale crosses, the
-    frontier is the accent + a step line (when it has more than one
+    A caller-supplied front is likewise not accepted -- a front computed
+    over more objectives than the two plotted axes is only a projection,
+    and a projection puts points on the drawn "frontier" that are
+    strictly worse on *both* plotted metrics (they earn their Pareto
+    rank through an unplotted objective).  Track such extra objectives
+    with ``panel_y`` -- a small-multiple panel over the same x axis --
+    and call-outs via ``annotate`` instead.
+
+    Dominated mixes are muted dots, infeasible ones pale crosses --
+    infeasible mixes *can* land outside the frontier (their metrics are
+    what the mix would score if it could fly; the constraints it breaks
+    are exactly why the front does not reach them).  The frontier is
+    the accent + a step line oriented by ``sense`` so the staircase
+    always bounds the attainable side (when it has more than one
     point); give ``title`` as a finding ("The $118 cruiser dominates the
     cost-endurance trade"), not a caption.
     """
 
     plt = _plt()
+    x_sense, y_sense = sense
     if x_sense not in ("min", "max") or y_sense not in ("min", "max"):
-        raise AnalysisError("x_sense/y_sense must be 'min' or 'max' "
-                            f"(got {x_sense!r}, {y_sense!r})")
+        raise AnalysisError("sense must pair 'min'/'max' "
+                            f"(got {sense!r})")
     archs = list(architectures)
     feasible = [a for a in archs if a.verified]
     senses = ((x, x_sense), (y, y_sense))
@@ -579,7 +593,8 @@ def pareto_figure(architectures: Iterable[Architecture], *,
         styles: dict[str, dict[str, Any]] = {
             "infeasible": {"marker": "x", "c": FAINT, "s": 18,
                            "linewidths": 1.0,
-                           "label": "infeasible" if labeled else None},
+                           "label": "infeasible (excluded from front)"
+                           if labeled else None},
             "dominated": {"marker": "o", "c": "#c3c7cd", "s": 24,
                           "label": "feasible, dominated" if labeled
                           else None},
@@ -596,8 +611,12 @@ def pareto_figure(architectures: Iterable[Architecture], *,
     scatter(ax, y, labeled=True)
     steps = sorted(groups["front"], key=lambda a: a.metrics[x])
     if len(steps) > 1:
+        # the staircase must bound the attainable side: with x minimized
+        # the best-so-far y holds until the next (costlier) point is
+        # bought (steps-post); with x maximized the mirror image.
         ax.plot([a.metrics[x] for a in steps],
-                [a.metrics[y] for a in steps], drawstyle="steps-post",
+                [a.metrics[y] for a in steps],
+                drawstyle="steps-post" if x_sense == "min" else "steps-pre",
                 color=ACCENT, linewidth=1.4, alpha=0.85, zorder=3)
 
     x_mid = (min(a.metrics[x] for a in groups["front"] or steps or [])
