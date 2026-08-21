@@ -173,3 +173,13 @@ def test_refuses_unparseable_notebook(repo):
 
     assert result.returncode == 1
     assert "could not parse/strip" in result.stderr
+
+
+def test_symlinked_notebook_ignored(repo):
+    (repo / "real.ipynb").write_text("{}", encoding="utf-8")
+    (repo / "link.ipynb").symlink_to("real.ipynb")
+    git(repo, "add", "--", "link.ipynb")
+
+    result = run_hook(repo)
+
+    assert result.returncode == 0, result.stderr  # symlinks pass through

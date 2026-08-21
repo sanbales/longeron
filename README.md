@@ -1,5 +1,7 @@
 # Longeron
 
+[![docs](https://github.com/sanbales/longeron/actions/workflows/docs.yml/badge.svg)](https://sanbales.github.io/longeron/)
+
 *The spine of your system model* — a Python package that defines,
 exports, imports, and **executes** SysML v2 models (import name:
 `sysml2`). The parsers are generated with ANTLR 4 from combined grammars

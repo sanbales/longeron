@@ -1,4 +1,4 @@
-.PHONY: check test lint format typecheck parsers demo
+.PHONY: check test lint format typecheck parsers demo docs
 
 # Equivalent pixi tasks exist (pixi run check|test|parsers|...): same
 # commands in a locked env, with antlr+JDK provided by conda-forge.
@@ -17,12 +17,12 @@ coverage:
 	$(VENV)/pytest -q --cov=sysml2 --cov-report=term-missing:skip-covered
 
 lint:
-	$(VENV)/ruff format --check src tests examples scripts notebooks
-	$(VENV)/ruff check src tests examples scripts notebooks
+	$(VENV)/ruff format --check src tests examples scripts notebooks docs
+	$(VENV)/ruff check src tests examples scripts notebooks docs
 
 format:
-	$(VENV)/ruff format src tests examples scripts notebooks
-	$(VENV)/ruff check --fix src tests examples scripts notebooks
+	$(VENV)/ruff format src tests examples scripts notebooks docs
+	$(VENV)/ruff check --fix src tests examples scripts notebooks docs
 
 typecheck:
 	$(VENV)/mypy
@@ -35,6 +35,9 @@ stdlib:  ## rebuild the prebuilt standard-library pickle
 
 demo:
 	$(VENV)/python examples/demo.py
+
+docs:  ## build the documentation site (needs the [docs] extra; pixi: `pixi run docs`)
+	$(VENV)/sphinx-build -W -b html docs build/docs
 
 hooks:  ## enable the repo git hooks (auto-strips staged notebook outputs; blocks >5MB blobs)
 	git config core.hooksPath scripts/git-hooks
