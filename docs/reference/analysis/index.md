@@ -1,5 +1,7 @@
 # Analysis
 
+Guide for picking a bridge: [Choosing an analysis](../../guides/analysis.md).
+
 ```{eval-rst}
 .. automodule:: longeron.analysis
 ```

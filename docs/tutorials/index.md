@@ -2,26 +2,31 @@
 
 Eight executable notebooks live in
 [`notebooks/`](https://github.com/sanbales/longeron/tree/main/notebooks).
-The committed notebooks are output-free by repo convention (the test suite
-executes them; git hooks strip outputs) — **every output you see on these
-pages was produced by executing the notebooks during the documentation
-build**, so they are always current with the code.
+Together they walk every capability of the package, in order: each
+notebook builds on ideas from the ones before it, but each also states
+its own prerequisites, so you can start at the topic you need.
+
+**Every output on these pages is real.** The committed notebooks are
+output-free by repo convention (the test suite executes them, and git
+hooks strip outputs), and the documentation build re-executes them, so
+the outputs you see here always match the code.
 
 :::{note}
 **Interactive widgets require JupyterLab.** The diagram and analysis
-widgets (ipyelk diagrams in tutorial 6; the parallel-coordinates plot, N2
-map, 3D viewer, and dashboard in tutorial 7; the replay player in
-tutorial 4) are live browser applications and cannot run on a static
-site — those cells show a textual placeholder here. Run the notebooks in
-JupyterLab (`pixi run lab`) for the full experience. Static SVG/PNG
-exports ({mod}`longeron.render`) and matplotlib figures render normally
-below.
+widgets (ipyelk diagrams in tutorial 6; the parallel-coordinates plot,
+N2 map, 3D viewer, and dashboard in tutorial 7; the replay player in
+tutorial 6) are live browser applications and cannot run on a
+static site, so those cells show a textual placeholder here. Run the
+notebooks in JupyterLab (`pixi run lab`) for the full experience. Static
+SVG/PNG exports ({mod}`longeron.render`) and matplotlib figures render
+normally below.
 :::
 
 :::{note}
-Tutorial 7's final cell demonstrates CAD export behind the `cad` extra;
-cadquery is deliberately absent from the docs build (~1 GB OCC kernel),
-so that cell degrades — as designed — to a printed pointer at the extra.
+Tutorial 7's final cell demonstrates CAD export behind the `cad` extra.
+cadquery is deliberately absent from the docs build (its OCC kernel is
+~1 GB), so that cell degrades, as designed, to a printed pointer at the
+extra.
 :::
 
 | Tutorial | Covers |

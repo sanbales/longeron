@@ -2,9 +2,9 @@
 
 ## Install
 
-`longeron` requires Python 3.10+ and has a single hard dependency (the
-ANTLR runtime). The generated parsers are shipped with the package, so no
-Java toolchain is needed to install or use it:
+`longeron` requires Python 3.10+ and has one hard dependency, the ANTLR
+runtime. The generated parsers ship with the package, so installing and
+using it needs no Java toolchain:
 
 ```bash
 pip install longeron
@@ -17,16 +17,16 @@ import longeron
 ```
 
 :::{note}
-The project was renamed from `sysml2` in 0.3.0. `import sysml2` remains a
-supported compatibility alias — the package ships a shim that hands back
-longeron's own modules — and the `sysml2` console command and PyPI alias
-distribution are kept, so pre-rename code keeps working unchanged.
+The project was renamed from `sysml2` in 0.3.0. `import sysml2`, the
+`sysml2` console command, and the `sysml2` PyPI distribution all keep
+working as supported aliases. See
+[Migrating from sysml2](guides/compat.md).
 :::
 
 ### Optional extras
 
-Everything beyond parse/validate/execute/export sits behind extras, so the
-core install stays light:
+Everything beyond parse/validate/execute/export sits behind extras, so
+the core install stays light:
 
 | Extra | Enables | Pulls in |
 |---|---|---|
@@ -37,7 +37,7 @@ core install stays light:
 | `trades` | CP-SAT architecture trade studies ({mod}`longeron.analysis.trades`) | `ortools` |
 | `smt` | requirement-consistency checks on Z3 ({mod}`longeron.analysis.smt`) | `z3-solver` |
 | `viz` | trade-study figures + parallel-coordinates widget ({mod}`longeron.analysis.viz`) | `matplotlib`, `anywidget` |
-| `cad` | cadquery solid export, e.g. STEP ({mod}`longeron.analysis.geometry`) | `cadquery` (~1 GB OCC kernel) |
+| `cad` | cadquery solid export, for example STEP ({mod}`longeron.analysis.geometry`) | `cadquery` (~1 GB OCC kernel) |
 | `docs` | build this documentation site | `sphinx`, `myst-nb`, `furo`, ... |
 | `dev` | tests, lint, type-checking, notebook execution | `pytest`, `ruff`, `mypy`, solvers, ... |
 
@@ -45,13 +45,14 @@ core install stays light:
 pip install "longeron[mdao,trades,smt,viz]"   # the full analysis stack
 ```
 
-The LLM retrieval substrate ({mod}`longeron.rag`) deliberately needs **no
-extra** — chunking, neighborhoods, and keyword search are stdlib only, so
-the substrate works in any install.
+The LLM retrieval substrate ({mod}`longeron.rag`) deliberately needs
+**no extra**. Chunking, neighborhoods, and keyword search are stdlib
+only, so the substrate works in any install.
 
-Interactive diagrams ({mod}`longeron.diagrams`) additionally need the
-vendored ipyelk from a source checkout (`pip install -e vendor/ipyelk`);
-headless SVG/PNG rendering ({mod}`longeron.render`) needs `node` on `PATH`.
+Two features need more than an extra. Interactive diagrams
+({mod}`longeron.diagrams`) need the vendored ipyelk from a source
+checkout (`pip install -e vendor/ipyelk`). Headless SVG/PNG rendering
+({mod}`longeron.render`) needs `node` on `PATH`.
 
 ### From source
 
@@ -63,14 +64,17 @@ pip install -e ".[dev]" -e vendor/ipyelk
 make check        # ruff + mypy + full test suite
 ```
 
-Or with [pixi](https://pixi.sh) (locked toolchain, includes node, the
-ANTLR tool + JDK, and JupyterLab):
+Or with [pixi](https://pixi.sh), which adds a locked toolchain (node,
+the ANTLR tool, a JDK, JupyterLab) on top:
 
 ```bash
 pixi run check    # lint + mypy + tests
 pixi run lab      # JupyterLab in notebooks/
 pixi run docs     # build this documentation site
 ```
+
+The [development guide](guides/contributing.md) documents every task,
+the git hooks, and the notebook conventions.
 
 ## Quickstart: parse → validate → simulate
 
@@ -111,5 +115,7 @@ From here:
 
 - the [tutorials](tutorials/index.md) walk every capability in depth,
   with executed outputs;
+- the [guides](guides/index.md) cover one task per page, from the
+  [CLI](guides/cli.md) to [choosing an analysis](guides/analysis.md);
 - the [API reference](reference/index.md) documents each module;
 - the [architecture page](architecture.md) explains how the pieces fit.

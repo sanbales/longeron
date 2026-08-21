@@ -1,6 +1,7 @@
 # API reference
 
-The import name is `longeron` (`sysml2` remains a compatibility alias).
+The import name is `longeron` (`sysml2` remains a compatibility alias;
+see [Migrating from sysml2](../guides/compat.md)).
 The most common entry points are re-exported
 at the top level ({mod}`longeron` — `loads`, `load`, `validate`, `to_json`,
 `Interpreter`, ...); the pages below document each module where its
