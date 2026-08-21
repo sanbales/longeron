@@ -159,8 +159,8 @@ class TestFigures:
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
                  _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
         fig = viz.pareto_figure(
-            archs, x="cost", y="hover", panel_y="mass",
-            annotate={"cruiser": archs[0]})
+            archs, x="cost", y="hover", sense=("min", "max"),
+            panel_y="mass", annotate={"cruiser": archs[0]})
         assert len(fig.axes) == 2  # main + small multiple
         texts = [t.get_text() for t in fig.axes[0].texts]
         assert "cruiser" in texts
@@ -175,7 +175,8 @@ class TestFigures:
 
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
                  _arch("c", 180, 6, 1.1), _arch("d", 120, 5, 1.2, False)]
-        fig = viz.pareto_figure(archs, x="cost", y="hover", panel_y="mass")
+        fig = viz.pareto_figure(archs, x="cost", y="hover",
+                                sense=("min", "max"), panel_y="mass")
         assert self._front_points(fig) == [(100.0, 15.0)]  # a alone
         import matplotlib.pyplot as plt
 
@@ -184,7 +185,9 @@ class TestFigures:
     def test_pareto_figure_senses(self):
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9),
                  _arch("c", 180, 6, 1.1)]
-        fig = viz.pareto_figure(archs, x="cost", y="mass", y_sense="min")
+        # the default sense is the conservative (min, min): a maximize-y
+        # chart must say so explicitly -- there is no silent max default
+        fig = viz.pareto_figure(archs, x="cost", y="mass")
         # min cost / min mass: a (cheaper) and b (lighter); c dominated
         assert sorted(self._front_points(fig)) == [(100.0, 1.0),
                                                    (150.0, 0.9)]
@@ -192,7 +195,36 @@ class TestFigures:
 
         plt.close(fig)
         with pytest.raises(AnalysisError):
-            viz.pareto_figure(archs, x="cost", y="mass", y_sense="down")
+            viz.pareto_figure(archs, x="cost", y="mass",
+                              sense=("min", "down"))
+        with pytest.raises(AnalysisError):
+            viz.pareto_figure(archs, x="cost", y="mass",
+                              sense=("up", "min"))
+
+    @staticmethod
+    def _step_line(fig):
+        lines = [ln for ln in fig.axes[0].get_lines()
+                 if len(ln.get_xdata()) > 1]
+        assert len(lines) == 1
+        return lines[0]
+
+    def test_step_line_bounds_the_attainable_side(self):
+        """Staircase orientation follows the x sense: best-so-far y holds
+        while x worsens, so no front point ever hangs outside its own
+        step line."""
+
+        import matplotlib.pyplot as plt
+
+        archs = [_arch("a", 100, 10, 1.0), _arch("b", 150, 20, 0.9),
+                 _arch("c", 200, 30, 1.1)]
+        fig = viz.pareto_figure(archs, x="cost", y="hover",
+                                sense=("min", "max"))
+        assert self._step_line(fig).get_drawstyle() == "steps-post"
+        plt.close(fig)
+        fig = viz.pareto_figure(archs, x="hover", y="cost",
+                                sense=("max", "min"))
+        assert self._step_line(fig).get_drawstyle() == "steps-pre"
+        plt.close(fig)
 
     def test_pareto_figure_catalog_front_matches_brute_force(self, study):
         """Regression on the shipped catalog: the drawn cost-hover front
@@ -212,7 +244,7 @@ class TestFigures:
                           > a.metrics["hoverMinutes"])
                      for b in feasible)}
         fig = viz.pareto_figure(archs, x="totalCost", y="hoverMinutes",
-                                panel_y="totalMass")
+                                sense=("min", "max"), panel_y="totalMass")
         assert set(self._front_points(fig)) == brute == {(118.0, 15.0)}
         import matplotlib.pyplot as plt
 
@@ -220,7 +252,8 @@ class TestFigures:
 
     def test_pareto_figure_single_panel(self):
         archs = [_arch("a", 100, 15, 1.0), _arch("b", 150, 7, 0.9)]
-        fig = viz.pareto_figure(archs, x="cost", y="hover")
+        fig = viz.pareto_figure(archs, x="cost", y="hover",
+                                sense=("min", "max"))
         assert len(fig.axes) == 1
         import matplotlib.pyplot as plt
 
@@ -258,3 +291,92 @@ class TestFigures:
     def test_margin_sweep_figure_needs_margins(self):
         with pytest.raises(AnalysisError):
             viz.margin_sweep_figure(object(), "x", [0.0], {})
+
+
+MISSION_CHARTS = {
+    "isr": ("UavMissions::IsrUav", "stationMinutes"),
+    "logistics": ("UavMissions::LogisticsUav", "payloadRangeKgKm"),
+    "intercept": ("UavMissions::InterceptUav", "maxTargetSpeed"),
+}
+
+
+@pytest.fixture(scope="module")
+def mission_spaces():
+    from sysml2.analysis import trades
+
+    model = sysml2.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    out = {}
+    for name, (qname, metric) in MISSION_CHARTS.items():
+        study = trades.TradeStudy(model, qname)
+        out[name] = (study.all_architectures(), metric)
+    return out
+
+
+class TestMissionFrontFigures:
+    """Regression for the reported symptom: on every mission chart the
+    drawn frontier must be exactly the brute-force 2D non-dominated set
+    of the *feasible* mixes, and no feasible point may sit outside it
+    (strictly better on both plotted objectives than a front member)."""
+
+    @pytest.fixture(autouse=True)
+    def _agg(self):
+        matplotlib = pytest.importorskip("matplotlib")
+        matplotlib.use("Agg")
+
+    @staticmethod
+    def _points(fig, label):
+        return [tuple(p) for c in fig.axes[0].collections
+                if c.get_label() == label for p in c.get_offsets()]
+
+    @pytest.mark.parametrize("name", list(MISSION_CHARTS))
+    def test_front_matches_brute_force_and_bounds_the_cloud(
+            self, mission_spaces, name):
+        import matplotlib.pyplot as plt
+
+        archs, metric = mission_spaces[name]
+        fig = viz.pareto_figure(archs, x="missionCost", y=metric,
+                                sense=("min", "max"))
+        drawn = sorted(self._points(fig, "Pareto frontier"))
+
+        feasible = [(a.metrics["missionCost"], a.metrics[metric])
+                    for a in archs if a.verified]
+        brute = sorted({(c, m) for c, m in feasible
+                        if not any(bc <= c and bm >= m and (bc, bm) != (c, m)
+                                   for bc, bm in feasible)})
+        assert drawn == brute
+        assert len(drawn) >= 4  # a real staircase, not a lone point
+
+        # the exact geometric symptom: a non-front feasible point strictly
+        # cheaper AND better than a front point would plot outside the
+        # staircase -- there must be none
+        front = set(drawn)
+        for c, m in feasible:
+            if (c, m) in front:
+                continue
+            assert not any(c < fc and m > fm for fc, fm in front), (c, m)
+            # equivalently: it sits on the attainable side of the stair
+            stair = max((fm for fc, fm in front if fc <= c), default=None)
+            assert stair is not None and m <= stair + 1e-9
+
+        # the step line is drawn through the front, oriented for min-x
+        lines = [ln for ln in fig.axes[0].get_lines()
+                 if len(ln.get_xdata()) > 1]
+        assert len(lines) == 1
+        assert lines[0].get_drawstyle() == "steps-post"
+        assert sorted(zip(lines[0].get_xdata(),
+                          lines[0].get_ydata(), strict=True)) == brute
+        plt.close(fig)
+
+    def test_intercept_front_carries_wings_and_teardrop(
+            self, mission_spaces):
+        import matplotlib.pyplot as plt
+
+        archs, metric = mission_spaces["intercept"]
+        fig = viz.pareto_figure(archs, x="missionCost", y=metric,
+                                sense=("min", "max"))
+        drawn = set(self._points(fig, "Pareto frontier"))
+        on_front = {a.selection["airframe"] for a in archs if a.verified
+                    and (a.metrics["missionCost"],
+                         a.metrics[metric]) in drawn}
+        assert {"dartInterceptor", "teardropQuad"} <= on_front
+        plt.close(fig)

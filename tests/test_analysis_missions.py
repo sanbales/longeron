@@ -65,11 +65,13 @@ class TestModelShape:
         assert set(studies["isr"].points) == shared | {"sensor"}
         assert set(studies["logistics"].points) == shared | {"cargo"}
         assert set(studies["intercept"].points) == shared
+        assert set(studies["intercept"].points["airframe"].variants) == {
+            "boxQuad", "teardropQuad", "vtolWing", "dartInterceptor"}
 
     def test_candidate_space_sizes(self, spaces):
-        assert len(spaces["isr"]) == 3 * 3 * 3 * 3 * 3
-        assert len(spaces["logistics"]) == 3 * 3 * 3 * 3 * 3
-        assert len(spaces["intercept"]) == 3 * 3 * 3 * 3
+        assert len(spaces["isr"]) == 4 * 3 * 3 * 3 * 3
+        assert len(spaces["logistics"]) == 4 * 3 * 3 * 3 * 3
+        assert len(spaces["intercept"]) == 4 * 3 * 3 * 3
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -117,7 +119,18 @@ class TestFronts:
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs)
                   for name, archs in spaces.items()}
-        assert counts == {"isr": 19, "logistics": 20, "intercept": 44}
+        # teardropQuad adds ISR mixes (its bay takes the grade-2 sensor)
+        # and intercept mixes; its 1.0 kg bay excludes every parcel
+        assert counts == {"isr": 23, "logistics": 20, "intercept": 56}
+
+    def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
+        """The design-space answer to "are wings necessary?": both the
+        winged dart and the wingless teardrop earn front seats."""
+
+        front = front_2d(spaces["intercept"], "maxTargetSpeed")
+        airframes = {a.selection["airframe"] for a in front}
+        assert {"dartInterceptor", "teardropQuad"} <= airframes
+        assert len(front) >= 4
 
 
 class TestFamilyWinners:
@@ -168,6 +181,14 @@ class TestExplainableInfeasibility:
                  if a.selection["airframe"] == "dartInterceptor"]
         assert darts and all(not a.verified for a in darts)
         assert all("cargoFits" in a.violations for a in darts)
+
+    def test_teardrop_bay_too_slim_for_parcels(self, spaces):
+        # 1.0 kg capacity < the smallest bay + parcel (1.12 kg): the
+        # dash specialist is honestly excluded from the freight trade
+        tears = [a for a in spaces["logistics"]
+                 if a.selection["airframe"] == "teardropQuad"]
+        assert tears and all(not a.verified for a in tears)
+        assert all("cargoFits" in a.violations for a in tears)
 
     def test_interceptor_cannot_carry_the_isr_sensor(self, spaces):
         darts = [a for a in spaces["isr"]
@@ -241,3 +262,26 @@ class TestPhysicsSanity:
             "props": "lifterProp", "battery": "packLite"})
         assert not arch.verified
         assert "canCatch" in arch.violations
+
+    def test_wings_versus_teardrop_is_a_drag_story(self, studies, spaces):
+        """The model answers "are wings necessary?" from physics, not
+        from a hardcoded verdict: with identical components the teardrop
+        shell out-dashes the box quad purely on CdA (0.021 vs 0.055),
+        and each airframe's best feasible mix ranks dart > teardrop >
+        box quad -- the dart's 0.009 CdA beats even a 4-motor power
+        advantage, but only narrowly."""
+
+        def dash(airframe):
+            return studies["intercept"].evaluate({
+                "airframe": airframe, "motors": "stdMotor",
+                "props": "slimProp", "battery": "packMid",
+            }).metrics["dashSpeed"]
+
+        assert dash("teardropQuad") > 1.3 * dash("boxQuad")
+        best = {af: max(a.metrics["maxTargetSpeed"]
+                        for a in spaces["intercept"] if a.verified
+                        and a.selection["airframe"] == af)
+                for af in ("boxQuad", "teardropQuad", "dartInterceptor")}
+        assert best["teardropQuad"] > best["boxQuad"] + 5.0
+        gap = best["dartInterceptor"] - best["teardropQuad"]
+        assert 0.0 < gap < 5.0  # wings win the top end, narrowly

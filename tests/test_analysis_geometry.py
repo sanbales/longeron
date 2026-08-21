@@ -58,6 +58,49 @@ def _watertight(vertices, faces):
                for (a, b), count in edges.items())
 
 
+def _component_boxes(part):
+    """Axis-aligned bounds of each connected component of a merged mesh
+    (vertices merged positionally, components joined by shared faces)."""
+
+    vertices, faces = part["vertices"], part["faces"]
+    canonical: dict[tuple[float, float, float], int] = {}
+    index_of = []
+    for i in range(0, len(vertices), 3):
+        key = (round(vertices[i], 7), round(vertices[i + 1], 7),
+               round(vertices[i + 2], 7))
+        index_of.append(canonical.setdefault(key, len(canonical)))
+    parent = list(range(len(canonical)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(0, len(faces), 3):
+        a = find(index_of[faces[i]])
+        for k in (1, 2):
+            b = find(index_of[faces[i + k]])
+            parent[b] = a
+    boxes: dict[int, list[list[float]]] = {}
+    for v in range(len(index_of)):
+        root = find(index_of[v])
+        x, y, z = vertices[3 * v:3 * v + 3]
+        lo, hi = boxes.setdefault(root, [[x, y, z], [x, y, z]])
+        for axis, c in enumerate((x, y, z)):
+            lo[axis] = min(lo[axis], c)
+            hi[axis] = max(hi[axis], c)
+    return list(boxes.values())
+
+
+def _disjoint(box_a, box_b):
+    """True iff the two AABBs are strictly separated on some axis."""
+
+    (alo, ahi), (blo, bhi) = box_a, box_b
+    return any(ahi[axis] < blo[axis] or bhi[axis] < alo[axis]
+               for axis in range(3))
+
+
 class TestPrimitives:
     def test_box_volume_and_bounds(self):
         vertices, faces = geometry._box(2.0, 3.0, 4.0, cx=1.0, cy=1.0, cz=1.0)
@@ -147,12 +190,60 @@ class TestNewPrimitives:
             geometry._tube([(0.0, 0.5), (1.0, 0.0)])
 
 
-WINGED = {"wing_span": 2.6, "wing_chord": 0.24, "taper": 0.6,
+WINGED = {"wing_span": 2.6, "wing_area": 0.624, "taper": 0.6,
           "fuselage_length": 0.95, "prop_diameter": 0.24,
           "motor_mass": 0.092, "battery_mass": 1.95}
-DART = {"body_length": 1.25, "wing_span": 1.05, "wing_chord": 0.17,
+DART = {"body_length": 1.25, "wing_span": 1.05, "wing_area": 0.179,
         "taper": 0.5, "prop_diameter": 0.24, "motor_mass": 0.15,
         "battery_mass": 0.5}
+TEARDROP = {"fuselage_length": 0.62, "prop_diameter": 0.24,
+            "motor_mass": 0.092, "battery_mass": 0.98}
+
+
+def _thickest(profile):
+    """Max thickness fraction of a chord-normalized closed section."""
+
+    return max(y for _, y in profile) - min(y for _, y in profile)
+
+
+class TestNacaProfile:
+    def test_thickness_matches_the_code(self):
+        # last two digits / 100 = max thickness fraction of chord
+        for code, spec in (("2412", 0.12), ("0009", 0.09), ("0025", 0.25)):
+            profile = geometry.naca4_profile(code, 24)
+            assert len(profile) == 24
+            assert _thickest(profile) == pytest.approx(spec, rel=0.03)
+
+    def test_cambered_versus_symmetric(self):
+        cambered = geometry.naca4_profile("2412", 24)
+        assert sum(y for _, y in cambered) > 0.05  # mean camber is up
+        symmetric = geometry.naca4_profile("0009", 24)
+        points = {(round(x, 9), round(y, 9)) for x, y in symmetric}
+        assert all((x, -y) in points for x, y in points)  # mirror-true
+
+    def test_closed_and_chord_normalized(self):
+        profile = geometry.naca4_profile("2412", 24)
+        xs = [x for x, _ in profile]
+        assert max(xs) == pytest.approx(1.0, abs=1e-9)   # trailing edge
+        assert min(xs) == pytest.approx(0.0, abs=0.02)   # leading edge
+
+    def test_validates(self):
+        with pytest.raises(AnalysisError):
+            geometry.naca4_profile("24123")
+        with pytest.raises(AnalysisError):
+            geometry.naca4_profile("24x2")
+        with pytest.raises(AnalysisError):
+            geometry.naca4_profile("2412", points=4)
+
+
+def _chord_at(part, coord, station, tol=0.02):
+    """(x_le, x_te) of a lifting surface at one span station."""
+
+    vertices = part["vertices"]
+    xs = [vertices[i] for i in range(0, len(vertices), 3)
+          if abs(vertices[i + coord] - station) < tol]
+    assert xs, f"no section vertices near station {station}"
+    return max(xs), min(xs)
 
 
 class TestWingedVtolGeometry:
@@ -167,7 +258,7 @@ class TestWingedVtolGeometry:
     def test_to_scale_span(self):
         mesh = geometry.winged_vtol_geometry(**WINGED)
         lo, hi = mesh["bounds"]
-        # z extent: wing tips plus the wingtip-prop disks (radius 0.12)
+        # z extent: wing tips plus the wingtip lift disks (radius 0.12)
         assert hi[2] == pytest.approx(2.6 / 2 + 0.12, abs=1e-3)
         assert lo[2] == pytest.approx(-(2.6 / 2 + 0.12), abs=1e-3)
         # the 2.6 m wing dwarfs the quad frame
@@ -177,17 +268,78 @@ class TestWingedVtolGeometry:
         assert (hi[2] - lo[2]) > 2.5 * (quad["bounds"][1][2]
                                         - quad["bounds"][0][2])
 
-    def test_four_props_two_sizes(self):
+    def test_exactly_four_horizontal_lift_props(self):
+        """The VTOL requirement: four rotors, every disk's surface normal
+        straight up (+Y) -- no forward-tilted cruise prop in hover."""
+
         mesh = geometry.winged_vtol_geometry(**WINGED)
         props = next(p for p in mesh["parts"] if p["name"] == "props")
         assert props["opacity"] < 1.0  # spinning disks stay translucent
-        # wingtip disks face forward (span the YZ plane at |z| = half span)
-        zs = props["vertices"][2::3]
-        assert max(zs) == pytest.approx(1.3 + 0.12, abs=1e-3)
+        disks = _component_boxes(props)
+        assert len(disks) == 4
+        for lo, hi in disks:
+            assert hi[1] - lo[1] < 0.004          # wafer-thin in Y ...
+            assert hi[0] - lo[0] > 10 * (hi[1] - lo[1])  # ... wide in X
+            assert hi[2] - lo[2] > 10 * (hi[1] - lo[1])  # ... and in Z
+        # two large disks at the wingtips, two smaller atop the fins
+        spans = sorted(box[1][2] - box[0][2] for box in disks)
+        assert spans[0] == pytest.approx(spans[1], abs=1e-3)
+        assert spans[2] == pytest.approx(spans[3], abs=1e-3)
+        assert spans[0] == pytest.approx(
+            geometry._TAIL_PROP_RATIO * spans[2], rel=0.02)
+
+    @pytest.mark.parametrize("prop_diameter", [0.24, 0.33, 0.51])
+    def test_no_two_props_intersect(self, prop_diameter):
+        """The reported overlap bug, encoded: every pair of prop disks is
+        strictly AABB-separated, even for the largest catalog prop."""
+
+        mesh = geometry.winged_vtol_geometry(
+            **{**WINGED, "prop_diameter": prop_diameter})
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        disks = _component_boxes(props)
+        assert len(disks) == 4
+        for i in range(len(disks)):
+            for j in range(i + 1, len(disks)):
+                assert _disjoint(disks[i], disks[j]), (i, j)
+
+    def test_wing_is_an_unswept_airfoil_loft(self):
+        """Zero sweep (straight quarter-chord), chord = area/span, and a
+        real NACA-2412 section instead of a rectangular slab."""
+
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        mean = 0.624 / 2.6
+        root = 2.0 * mean / 1.6
+        root_le, root_te = _chord_at(wing, 2, 0.0)
+        tip_le, tip_te = _chord_at(wing, 2, 1.29, tol=0.02)
+        assert root_le - root_te == pytest.approx(root, rel=0.02)
+        assert tip_le - tip_te == pytest.approx(0.6 * root, rel=0.03)
+        # straight quarter-chord: identical at root and tip
+        root_qc = root_le - 0.25 * (root_le - root_te)
+        tip_qc = tip_le - 0.25 * (tip_le - tip_te)
+        assert root_qc == pytest.approx(tip_qc, abs=0.003)
+        # section thickness ~ NACA 2412 (12% of chord), not a slab
+        vertices = wing["vertices"]
+        ys = [vertices[i + 1] for i in range(0, len(vertices), 3)
+              if abs(vertices[i + 2]) < 0.02]
+        assert max(ys) - min(ys) == pytest.approx(0.12 * root, rel=0.06)
+        assert len({round(y, 4) for y in ys}) > 6  # curved, not boxy
+
+    def test_wing_aspect_ratio_from_the_model(self):
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        span = (max(wing["vertices"][2::3]) - min(wing["vertices"][2::3]))
+        chord = (max(wing["vertices"][0::3]) - min(wing["vertices"][0::3]))
+        assert span == pytest.approx(2.6, abs=1e-3)
+        # x extent = root chord; AR = span / mean chord stays sane
+        assert chord == pytest.approx(2.0 * 0.624 / 2.6 / 1.6, rel=0.02)
+        assert 6.0 < span / (0.624 / 2.6) < 14.0
 
     def test_validates_dimensions(self):
         with pytest.raises(AnalysisError):
             geometry.winged_vtol_geometry(**{**WINGED, "wing_span": 0.0})
+        with pytest.raises(AnalysisError):
+            geometry.winged_vtol_geometry(**{**WINGED, "wing_area": 0.0})
 
 
 class TestInterceptorGeometry:
@@ -208,6 +360,25 @@ class TestInterceptorGeometry:
         ys = frame["vertices"][1::3]
         assert max(ys) - min(ys) < 0.2 * length  # genuinely slender
 
+    def test_wing_is_an_unswept_thin_airfoil(self):
+        """The interceptor wing gets the same treatment: straight
+        quarter-chord, NACA-0009 section, chord from area/span."""
+
+        mesh = geometry.interceptor_geometry(**DART)
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        mean = 0.179 / 1.05
+        root = 2.0 * mean / 1.5
+        root_le, root_te = _chord_at(wing, 2, 0.0)
+        tip_le, tip_te = _chord_at(wing, 2, 0.515, tol=0.011)
+        assert root_le - root_te == pytest.approx(root, rel=0.02)
+        root_qc = root_le - 0.25 * (root_le - root_te)
+        tip_qc = tip_le - 0.25 * (tip_le - tip_te)
+        assert root_qc == pytest.approx(tip_qc, abs=0.003)
+        vertices = wing["vertices"]
+        ys = [vertices[i + 1] for i in range(0, len(vertices), 3)
+              if abs(vertices[i + 2]) < 0.02]
+        assert max(ys) - min(ys) == pytest.approx(0.09 * root, rel=0.06)
+
     def test_pusher_prop_at_the_stern(self):
         mesh = geometry.interceptor_geometry(**DART)
         props = next(p for p in mesh["parts"] if p["name"] == "props")
@@ -216,6 +387,66 @@ class TestInterceptorGeometry:
     def test_validates_dimensions(self):
         with pytest.raises(AnalysisError):
             geometry.interceptor_geometry(**{**DART, "body_length": 0.0})
+
+
+class TestTeardropQuadGeometry:
+    def test_parts_and_solidity(self):
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        assert [p["name"] for p in mesh["parts"]] == [
+            "frame", "motors", "props", "battery"]
+        for part in mesh["parts"]:
+            assert _volume(part["vertices"], part["faces"]) > 0
+
+    def test_teardrop_shell(self):
+        """A lathed body of revolution: blunt maximum section forward of
+        mid-body, fine tail aft -- and slender against its length."""
+
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        vertices = frame["vertices"]
+        shell = [(vertices[i], vertices[i + 1]) for i in
+                 range(0, len(vertices), 3)]
+        x_lo = min(x for x, _ in shell)
+        x_hi = max(x for x, _ in shell)
+        assert x_hi - x_lo >= 0.62 - 1e-3  # arms may reach past the hull
+        widest_x = max(shell, key=lambda p: p[1])[0]
+        assert widest_x > (x_lo + x_hi) / 2  # +X is the (blunt) nose
+        radius = max(y for _, y in shell)
+        assert radius < 0.15 * 0.62  # genuinely streamlined
+
+    def test_four_horizontal_props_no_overlap(self):
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        disks = _component_boxes(props)
+        assert len(disks) == 4
+        for lo, hi in disks:
+            assert hi[1] - lo[1] < 0.004  # horizontal: wafer-thin in Y
+            assert hi[0] - lo[0] == pytest.approx(0.24, abs=1e-3)
+        for i in range(4):
+            for j in range(i + 1, 4):
+                assert _disjoint(disks[i], disks[j]), (i, j)
+
+    def test_props_clear_the_hull_crown(self):
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        hull_crown = max(frame["vertices"][1::3])
+        rotor_plane = min(props["vertices"][1::3])
+        assert rotor_plane > hull_crown - 1e-9
+
+    def test_bounds_enclose_all_vertices(self):
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        (lo, hi) = mesh["bounds"]
+        for part in mesh["parts"]:
+            for axis in range(3):
+                coords = part["vertices"][axis::3]
+                assert min(coords) >= lo[axis] - 1e-9
+                assert max(coords) <= hi[axis] + 1e-9
+
+    def test_validates_dimensions(self):
+        with pytest.raises(AnalysisError):
+            geometry.teardrop_quad_geometry(
+                **{**TEARDROP, "fuselage_length": 0.0})
 
 
 @pytest.fixture(scope="module")
@@ -236,6 +467,10 @@ class TestMissionBridge:
         quad = geometry.mission_geometry(mission_study, mix("boxQuad"))
         assert [p["name"] for p in quad["parts"]] == [
             "frame", "motors", "props", "battery", "esc"]
+        teardrop = geometry.mission_geometry(mission_study,
+                                             mix("teardropQuad"))
+        assert [p["name"] for p in teardrop["parts"]] == [
+            "frame", "motors", "props", "battery"]
         winged = geometry.mission_geometry(mission_study, mix("vtolWing"))
         assert any(p["name"] == "wing" for p in winged["parts"])
         dart = geometry.mission_geometry(mission_study,
@@ -249,6 +484,7 @@ class TestMissionBridge:
             "props": "lifterProp", "battery": "packLite"})
         params = geometry.mission_params(mission_study, arch)
         assert params["wing_span"] == 2.6
+        assert params["wing_area"] == 0.624
         assert params["prop_diameter"] == 0.51
         assert params["motor_mass"] == 0.058
         assert params["battery_mass"] == 0.5

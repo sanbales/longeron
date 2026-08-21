@@ -1,14 +1,18 @@
 """Parametric 3D geometry for architecture mixes (spike).
 
 Builds to-scale UAVs from a mix's catalog attribute values with plain
-triangle meshes (stdlib ``math`` only).  Three airframe families are
+triangle meshes (stdlib ``math`` only).  Four airframe families are
 supported: the plain quad-copter (:func:`drone_geometry` -- frame sized
-from prop diameter + tip clearance), the winged VTOL
-(:func:`winged_vtol_geometry` -- wing from span/chord/taper, wingtip
-nacelles carrying the two large forward props, twin booms to vertical
-stabilizers topped by the two smaller lift props), and the streamlined
-interceptor (:func:`interceptor_geometry` -- slender lathed fuselage,
-small cruciform tail, pusher prop).  Motor cylinders come from motor mass
+from prop diameter + tip clearance), the streamlined teardrop-body quad
+(:func:`teardrop_quad_geometry` -- a lathed low-drag shell with four
+top-mounted lift rotors), the winged VTOL (:func:`winged_vtol_geometry`
+-- an unswept NACA-2412 wing lofted from span/area/taper, exactly four
+horizontal lift rotors: two on wingtip nacelles, two atop the twin
+vertical stabilizers), and the streamlined interceptor
+(:func:`interceptor_geometry` -- slender lathed fuselage, thin unswept
+NACA-0009 wing, cruciform tail, pusher prop).  Every lifting surface is
+lofted from a real NACA 4-digit section (:func:`naca4_profile`), not a
+rectangular slab.  Motor cylinders come from motor mass
 (solid-cylinder density heuristic), prop disks from diameter, and the
 battery box from battery mass (LiPo density + brick proportions).  One
 call turns a configuration into the mesh dict
@@ -19,8 +23,8 @@ call turns a configuration into the mesh dict
                 "vertices": [x, y, z, ...], "faces": [i, j, k, ...]}, ...],
      "bounds": [[xmin, ymin, zmin], [xmax, ymax, zmax]]}
 
-House pattern: geometry is baked in Python once per configuration (about
-a millisecond at most -- no CAD kernel in the loop); the front-end never
+House pattern: geometry is baked in Python once per configuration (a
+millisecond or so -- no CAD kernel in the loop); the front-end never
 recomputes it.  Y is up, +X is forward, one unit is one metre, and every
 dimension is a real measurement or a documented heuristic, so two mixes
 render truly to scale side by side (:func:`lineup` merges several
@@ -35,7 +39,7 @@ deliberately does not need the ~1 GB OCC kernel.
 
 from __future__ import annotations
 
-from math import atan2, ceil, cos, floor, pi, sin
+from math import atan, atan2, ceil, cos, floor, pi, sin, sqrt
 from typing import Any
 
 from ._expr import AnalysisError
@@ -43,7 +47,8 @@ from .trades import Architecture, TradeStudy
 
 __all__ = ["architecture_geometry", "architecture_params", "drone_geometry",
            "interceptor_geometry", "lineup", "mission_geometry",
-           "mission_params", "to_cadquery", "winged_vtol_geometry"]
+           "mission_params", "naca4_profile", "teardrop_quad_geometry",
+           "to_cadquery", "winged_vtol_geometry"]
 
 Mesh = tuple[list[float], list[int]]  # flat vertices, flat triangle indices
 
@@ -346,30 +351,182 @@ def drone_geometry(*, prop_diameter_in: float, motor_mass: float,
 #: tail lift props of the winged VTOL relative to the main (catalog) props
 #: -- also baked into the catalog's diskAreaFactor (2 + 2 * 0.8^2 ~ 3.3)
 _TAIL_PROP_RATIO = 0.8
-_WING_THICKNESS = 0.12       # thickness / chord
 _FIN_HEIGHT_RATIO = 0.24     # vertical stabilizer height / boom length
 
+#: NACA 4-digit sections per surface role (max thickness fraction = the
+#: last two digits / 100; validated by the geometry tests)
+WING_SECTION = "2412"        # cambered, 12% thick: the VTOL cruise wing
+TAIL_SECTION = "0009"        # symmetric, 9%: stabilizers + fast surfaces
 
-def winged_vtol_geometry(*, wing_span: float, wing_chord: float,
+
+def naca4_profile(code: str = WING_SECTION,
+                  points: int = 24) -> list[tuple[float, float]]:
+    """A closed NACA 4-digit section as chord-normalized ``(x, y)`` pairs.
+
+    Cosine-spaced stations, closed trailing edge (the -0.1036 thickness
+    coefficient), ordered TE -> upper surface -> LE -> lower surface ->
+    TE, i.e. counter-clockwise in the chord plane.  ``points`` is the
+    total vertex count of the closed polygon (~24 is plenty for a mesh
+    loft).
+    """
+
+    if len(code) != 4 or not code.isdigit():
+        raise AnalysisError(f"not a NACA 4-digit code: {code!r}")
+    if points < 8:
+        raise AnalysisError("a NACA section needs at least 8 points")
+    m, p, t = int(code[0]) / 100, int(code[1]) / 10, int(code[2:]) / 100
+    half = points // 2
+
+    upper: list[tuple[float, float]] = []
+    lower: list[tuple[float, float]] = []
+    for k in range(half + 1):
+        x = 0.5 * (1.0 - cos(pi * k / half))  # cosine spacing, 0 = LE
+        yt = 5.0 * t * (0.2969 * sqrt(x) - 0.1260 * x - 0.3516 * x * x
+                        + 0.2843 * x**3 - 0.1036 * x**4)
+        if m == 0.0 or p == 0.0:
+            yc, theta = 0.0, 0.0
+        elif x < p:
+            yc = m / p**2 * (2 * p * x - x * x)
+            theta = atan(2 * m / p**2 * (p - x))
+        else:
+            yc = m / (1 - p)**2 * ((1 - 2 * p) + 2 * p * x - x * x)
+            theta = atan(2 * m / (1 - p)**2 * (p - x))
+        upper.append((x - yt * sin(theta), yc + yt * cos(theta)))
+        lower.append((x + yt * sin(theta), yc - yt * cos(theta)))
+    return list(reversed(upper)) + lower[1:-1]
+
+
+def _skin(rings: list[list[Vec]]) -> Mesh:
+    """A closed skin over ordered cross-section rings (equal counts).
+
+    Quad strips join neighbouring rings; triangle fans (about the ring
+    centroid, rim vertices duplicated) cap the ends.  Ring vertices must
+    run counter-clockwise as seen from the *next* ring so the winding
+    faces outward.
+    """
+
+    if len(rings) < 2 or len({len(r) for r in rings}) != 1:
+        raise AnalysisError("a skin needs >= 2 rings of equal vertex count")
+    n = len(rings[0])
+    vertices: list[float] = []
+    faces: list[int] = []
+    for ring in rings:
+        for x, y, z in ring:
+            vertices += [x, y, z]
+    for i in range(len(rings) - 1):
+        r0, r1 = i * n, (i + 1) * n
+        for j in range(n):
+            k = (j + 1) % n
+            faces += [r0 + j, r0 + k, r1 + k, r0 + j, r1 + k, r1 + j]
+    for ring, flip in ((rings[-1], False), (rings[0], True)):
+        cx = sum(p[0] for p in ring) / n
+        cy = sum(p[1] for p in ring) / n
+        cz = sum(p[2] for p in ring) / n
+        center = len(vertices) // 3
+        vertices += [cx, cy, cz]
+        rim = len(vertices) // 3
+        for x, y, z in ring:
+            vertices += [x, y, z]
+        for j in range(n):
+            k = (j + 1) % n
+            faces += ([center, rim + k, rim + j] if flip
+                      else [center, rim + j, rim + k])
+    return vertices, faces
+
+
+def _mirror_z(mesh: Mesh) -> Mesh:
+    """The mesh reflected through the XY plane, winding kept outward."""
+
+    vertices, faces = mesh
+    out = list(vertices)
+    for i in range(2, len(out), 3):
+        out[i] = -out[i]
+    flipped: list[int] = []
+    for i in range(0, len(faces), 3):
+        flipped += [faces[i], faces[i + 2], faces[i + 1]]
+    return out, flipped
+
+
+def _lift_surface(*, origin: Vec, direction: Vec, length: float,
+                  root_chord: float, tip_chord: float,
+                  section: str = WING_SECTION,
+                  points: int = 24) -> Mesh:
+    """One lofted lifting-surface panel with a real airfoil section.
+
+    The NACA ``section`` is swept from ``origin`` (the *root
+    quarter-chord point*) along the unit ``direction`` for ``length``,
+    the chord tapering ``root_chord`` -> ``tip_chord`` about a constant
+    quarter-chord -- i.e. the quarter-chord line is exactly parallel to
+    ``direction``: zero sweep by construction.  Chords run along -X
+    (leading edge forward); the section's thickness/camber axis is
+    ``direction x X-hat``, so a horizontal panel swept toward +Z lifts
+    upward.
+    """
+
+    dx, dy, dz = direction
+    norm = sqrt(dx * dx + dy * dy + dz * dz)
+    if norm <= 0 or min(length, root_chord, tip_chord) <= 0:
+        raise AnalysisError("lift surface needs positive dimensions")
+    dx, dy, dz = dx / norm, dy / norm, dz / norm
+    # thickness axis n = direction x X-hat (unit, perpendicular to both)
+    nx, ny, nz = (dy * 0.0 - dz * 0.0, dz * 1.0 - dx * 0.0,
+                  dx * 0.0 - dy * 1.0)
+    profile = list(reversed(naca4_profile(section, points)))
+
+    def ring(s: float) -> list[Vec]:
+        chord = root_chord + (tip_chord - root_chord) * s
+        ox = origin[0] + dx * length * s
+        oy = origin[1] + dy * length * s
+        oz = origin[2] + dz * length * s
+        out: list[Vec] = []
+        for xa, ya in profile:
+            along = (0.25 - xa) * chord   # x = quarter-chord + offset
+            out.append((ox + along + nx * ya * chord,
+                        oy + ny * ya * chord,
+                        oz + nz * ya * chord))
+        return out
+
+    return _skin([ring(0.0), ring(1.0)])
+
+
+def _lift_rotor(x: float, y: float, z: float, *, prop_radius: float,
+                motor_mass: float, segments: int) -> tuple[Mesh, Mesh]:
+    """(motor, prop) for one HORIZONTAL lift rotor whose mount top is at
+    ``y``: the motor can sits on the mount, the prop disk spins above it
+    with its surface normal straight up (+Y) -- the VTOL requirement."""
+
+    motor_d, motor_h = motor_size(motor_mass)
+    motor = _cylinder(motor_d / 2, motor_h, x, y + motor_h / 2, z, segments)
+    prop = _cylinder(prop_radius, 0.0025, x, y + motor_h + 0.004, z,
+                     max(segments, 32))
+    return motor, prop
+
+
+def winged_vtol_geometry(*, wing_span: float, wing_area: float,
                          taper: float, fuselage_length: float,
                          prop_diameter: float, motor_mass: float,
                          battery_mass: float,
                          segments: int = 24) -> dict[str, Any]:
-    """A to-scale winged VTOL: wingtip cruise props + tail lift props.
+    """A to-scale winged VTOL quadplane in its hover configuration.
 
-    The wing is lofted from span/chord/taper; the two large catalog props
-    ride forward-facing nacelles on the wingtips (where they turn against
-    the tip vortices -- the modeled induced-drag bonus), and two smaller
-    lift props (``_TAIL_PROP_RATIO`` of the catalog diameter) sit atop the
-    twin vertical stabilizers.  Fuselage width follows the battery brick;
-    everything else is proportioned from the wing.
+    Exactly four lift rotors, every disk horizontal (surface normal
+    straight up): the two large catalog props on wingtip nacelles (they
+    tilt forward for cruise, where they turn against the tip vortices --
+    the modeled induced-drag bonus -- but are drawn lifting), and two
+    smaller props (``_TAIL_PROP_RATIO`` of the catalog diameter) atop
+    the twin vertical stabilizers.  The wing is an unswept NACA-2412
+    loft: chord comes from ``wing_area / wing_span`` (so span and area
+    stay consistent), tapering mildly about a straight quarter-chord.
+    Fuselage width follows the battery brick.
     """
 
-    if min(wing_span, wing_chord, fuselage_length, prop_diameter) <= 0:
+    if min(wing_span, wing_area, fuselage_length, prop_diameter,
+           taper) <= 0:
         raise AnalysisError("winged VTOL dimensions must be positive")
-    root = 2.0 * wing_chord / (1.0 + taper)
+    mean_chord = wing_area / wing_span
+    root = 2.0 * mean_chord / (1.0 + taper)
     tip = root * taper
-    thick = _WING_THICKNESS * root
+    half = wing_span / 2
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
 
@@ -389,58 +546,58 @@ def winged_vtol_geometry(*, wing_span: float, wing_chord: float,
               (x_nose - nose - cabin - boat, 0.05 * body_h, 0.0),
               (0.0, 0.0, 0.18 * body_w), (0.0, 0.18 * body_h, 0.0)))
 
-    wing_y = body_h / 2 + thick / 2  # shoulder wing
-    half = wing_span / 2
-    wing = _merge(*(
-        _loft((0.0, wing_y, 0.0), (root / 2, 0.0, 0.0),
-              (0.0, side * thick / 2, 0.0),
-              (0.0, wing_y, side * half), (tip / 2, 0.0, 0.0),
-              (0.0, side * thick / 2, 0.0))
-        for side in (1.0, -1.0)))
+    wing_y = body_h / 2 + 0.01  # shoulder wing
+    right = _lift_surface(origin=(0.0, wing_y, 0.0), direction=(0.0, 0.0, 1.0),
+                          length=half, root_chord=root, tip_chord=tip,
+                          section=WING_SECTION)
+    wing = _merge(right, _mirror_z(right))
 
     # twin booms from the wing back to the vertical stabilizers
-    boom_len = 0.55 * fuselage_length + 0.25 * wing_chord
+    boom_len = 0.55 * fuselage_length + 0.25 * mean_chord
     boom_z = 0.30 * half
     fin_h = _FIN_HEIGHT_RATIO * boom_len
-    fin_root = 0.45 * wing_chord + 0.05
-    x_fin = -boom_len  # fin quarter-chord
+    fin_root = 0.45 * mean_chord + 0.05
+    fin_tip = 0.6 * fin_root
+    x_fin = -boom_len  # fin quarter-chord (straight, like the wing's)
+    fin_top = wing_y + fin_h
     booms = [_box(boom_len + root / 2, 0.024, 0.024,
                   cx=-(boom_len - root / 2) / 2, cy=wing_y, cz=side * boom_z)
              for side in (1.0, -1.0)]
-    fins = [_loft((x_fin, wing_y, side * boom_z),
-                  (fin_root / 2, 0.0, 0.0), (0.0, 0.0, -0.010),
-                  (x_fin - 0.15 * fin_root, wing_y + fin_h, side * boom_z),
-                  (0.55 * fin_root / 2, 0.0, 0.0), (0.0, 0.0, -0.007))
+    fins = [_lift_surface(origin=(x_fin, wing_y, side * boom_z),
+                          direction=(0.0, 1.0, 0.0), length=fin_h,
+                          root_chord=fin_root, tip_chord=fin_tip,
+                          section=TAIL_SECTION)
             for side in (1.0, -1.0)]
-    hstab = _box(0.55 * fin_root, 0.012, 2 * boom_z,
-                 cx=x_fin - 0.15 * fin_root, cy=wing_y + fin_h)
+    hstab = _lift_surface(origin=(x_fin, fin_top, -boom_z),
+                          direction=(0.0, 0.0, 1.0), length=2 * boom_z,
+                          root_chord=0.55 * fin_root,
+                          tip_chord=0.55 * fin_root, section=TAIL_SECTION)
     tail = _merge(*fins, hstab)
 
-    # wingtip nacelles: forward-facing cruise props (the tip-vortex bonus)
+    # exactly four lift rotors, all disks horizontal (normals +Y):
+    # two on wingtip nacelles, two atop the vertical stabilizers
     nac_r = 0.75 * motor_d
-    nac_len = 3.0 * motor_h
+    nac_len = 4.0 * motor_h
     nacelles, props, motors = [], [], []
     for side in (1.0, -1.0):
         z = side * half
-        body = _tube([(0.45 * nac_len, 0.35 * nac_r),
-                      (0.15 * nac_len, nac_r),
-                      (-0.55 * nac_len, nac_r),
-                      (-0.65 * nac_len, 0.5 * nac_r)], segments)
-        nacelles.append((_translate(body[0], 0.0, wing_y, z), body[1]))
-        disk = _tube([(0.45 * nac_len + 0.006, prop_diameter / 2),
-                      (0.45 * nac_len + 0.0085, prop_diameter / 2)],
-                     max(segments, 32))
-        props.append((_translate(disk[0], 0.0, wing_y, z), disk[1]))
-    # tail lift props atop the vertical stabilizers
-    tail_prop_r = _TAIL_PROP_RATIO * prop_diameter / 2
+        pod = _tube([(0.55 * nac_len, 0.30 * nac_r),
+                     (0.25 * nac_len, nac_r),
+                     (-0.35 * nac_len, nac_r),
+                     (-0.45 * nac_len, 0.45 * nac_r)], segments)
+        nacelles.append((_translate(pod[0], 0.0, wing_y, z), pod[1]))
+        motor, prop = _lift_rotor(0.0, wing_y + nac_r,
+                                  z, prop_radius=prop_diameter / 2,
+                                  motor_mass=motor_mass, segments=segments)
+        motors.append(motor)
+        props.append(prop)
     for side in (1.0, -1.0):
-        z = side * boom_z
-        y = wing_y + fin_h + 0.012
-        motors.append(_cylinder(motor_d / 2, motor_h,
-                                x_fin - 0.15 * fin_root, y + motor_h / 2, z,
-                                segments))
-        props.append(_cylinder(tail_prop_r, 0.0025, x_fin - 0.15 * fin_root,
-                               y + motor_h + 0.004, z, max(segments, 32)))
+        motor, prop = _lift_rotor(x_fin, fin_top, side * boom_z,
+                                  prop_radius=_TAIL_PROP_RATIO
+                                  * prop_diameter / 2,
+                                  motor_mass=motor_mass, segments=segments)
+        motors.append(motor)
+        props.append(prop)
 
     battery = _box(bat_l, bat_h, bat_w,
                    cx=x_nose - nose - cabin / 2,
@@ -457,20 +614,22 @@ def winged_vtol_geometry(*, wing_span: float, wing_chord: float,
 
 
 def interceptor_geometry(*, body_length: float, wing_span: float,
-                         wing_chord: float, taper: float,
+                         wing_area: float, taper: float,
                          prop_diameter: float, motor_mass: float,
                          battery_mass: float,
                          segments: int = 24) -> dict[str, Any]:
     """A to-scale streamlined interceptor: slender body, pusher prop.
 
     The fuselage is a lathed low-drag body just wide enough for the
-    battery brick, with small swept mid-body wings, a cruciform tail,
-    and the single catalog prop pushing at the stern.  The battery bay is
-    drawn as an indigo sleeve around the fuselage at its true length and
-    position (the brick rides inside the body).
+    battery brick; the wing is a thin unswept NACA-0009 loft (chord =
+    ``wing_area / wing_span``, straight quarter-chord) at mid-body, the
+    cruciform tail fins carry the same section, and the single catalog
+    prop pushes at the stern.  The battery bay is drawn as an indigo
+    sleeve around the fuselage at its true length and position (the
+    brick rides inside the body).
     """
 
-    if min(body_length, wing_span, wing_chord, prop_diameter) <= 0:
+    if min(body_length, wing_span, wing_area, prop_diameter, taper) <= 0:
         raise AnalysisError("interceptor dimensions must be positive")
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, _bat_h = battery_size(battery_mass)
@@ -483,27 +642,22 @@ def interceptor_geometry(*, body_length: float, wing_span: float,
                       (-half, 0.55 * body_r)],              # boat tail
                      segments)
 
-    root = 2.0 * wing_chord / (1.0 + taper)
+    mean_chord = wing_area / wing_span
+    root = 2.0 * mean_chord / (1.0 + taper)
     tip = root * taper
-    thick = max(0.008, _WING_THICKNESS * root * 0.7)  # thin, fast section
-    wing = _merge(*(
-        _loft((0.0, 0.0, 0.0), (root / 2, 0.0, 0.0),
-              (0.0, side * thick / 2, 0.0),
-              (-0.12 * root, 0.0, side * wing_span / 2),  # swept tips
-              (tip / 2, 0.0, 0.0), (0.0, side * thick / 2, 0.0))
-        for side in (1.0, -1.0)))
+    right = _lift_surface(origin=(0.0, 0.0, 0.0), direction=(0.0, 0.0, 1.0),
+                          length=wing_span / 2, root_chord=root,
+                          tip_chord=tip, section=TAIL_SECTION)
+    wing = _merge(right, _mirror_z(right))
 
     fin_span = 0.34 * wing_span
-    fin_root = 0.62 * wing_chord
+    fin_root = 0.62 * mean_chord
     x_tail = -half + 0.30 * fin_root + 0.02
-    fins = []
-    for uy, uz in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)):
-        fins.append(_loft(
-            (x_tail, 0.0, 0.0), (fin_root / 2, 0.0, 0.0),
-            (0.0, uz * 0.005, -uy * 0.005),
-            (x_tail - 0.18 * fin_root, uy * fin_span / 2, uz * fin_span / 2),
-            (0.55 * fin_root / 2, 0.0, 0.0),
-            (0.0, uz * 0.0035, -uy * 0.0035)))
+    fins = [_lift_surface(origin=(x_tail, 0.0, 0.0), direction=(0.0, uy, uz),
+                          length=fin_span / 2, root_chord=fin_root,
+                          tip_chord=0.55 * fin_root, section=TAIL_SECTION)
+            for uy, uz in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0),
+                           (0.0, -1.0))]
     tail = _merge(*fins)
 
     motor = _tube([(-half - 0.002, 0.5 * body_r),
@@ -522,6 +676,69 @@ def interceptor_geometry(*, body_length: float, wing_span: float,
         ("tail", tail, 1.0),
         ("motors", motor, 1.0),
         ("props", prop, 0.55),
+        ("battery", battery, 1.0),
+    ])
+
+
+def teardrop_quad_geometry(*, fuselage_length: float, prop_diameter: float,
+                           motor_mass: float, battery_mass: float,
+                           segments: int = 24) -> dict[str, Any]:
+    """A to-scale streamlined teardrop-body quad (wingless interceptor).
+
+    The shell is a body of revolution lathed from the NACA-0025
+    half-thickness curve (a genuine teardrop: blunt nose forward, fine
+    tail aft), just wide enough for the battery brick.  Four arms reach
+    from the shell's widest station to the lift motors; all four prop
+    disks are horizontal (surface normals +Y) and ride just above the
+    hull's crown so nothing slices through them.  The battery is drawn
+    as an indigo sleeve at its true position inside the shell.
+    """
+
+    if min(fuselage_length, prop_diameter) <= 0:
+        raise AnalysisError("teardrop quad dimensions must be positive")
+    prop_d = prop_diameter
+    spacing = prop_d + _PROP_CLEARANCE
+    motor_d, motor_h = motor_size(motor_mass)
+    bat_l, bat_w, _bat_h = battery_size(battery_mass)
+    body_r = max(0.045, bat_w / 2 + 0.014)
+    half = fuselage_length / 2
+
+    # teardrop of revolution: the NACA-0025 upper surface as the radius
+    # profile (tiny positive end radii keep the lathe well-formed)
+    curve = [(x, y) for x, y in naca4_profile("0025", 28) if y > -1e-9]
+    peak = max(y for _, y in curve)
+    rings = sorted(((half - x * fuselage_length,
+                     body_r * max(y, 0.02 * peak) / peak)
+                    for x, y in curve), key=lambda r: r[0])
+    shell = _tube(rings, segments)
+    x_widest = half - 0.30 * fuselage_length  # NACA max thickness station
+
+    arm_y = max(0.4 * body_r, body_r + 0.008 - motor_h)
+    arms, motors, props = [], [], []
+    arm_reach = (spacing / 2) * 2**0.5
+    arm_length = arm_reach + motor_d / 2
+    for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
+        angle = atan2(mz, mx)
+        arm = _box(arm_length, _ARM_THICKNESS, _ARM_WIDTH, cx=arm_length / 2)
+        arms.append((_translate(_rotate_y(arm[0], -angle),
+                                x_widest, arm_y, 0.0), arm[1]))
+        motor, prop = _lift_rotor(x_widest + mx * spacing / 2,
+                                  arm_y + _ARM_THICKNESS / 2,
+                                  mz * spacing / 2,
+                                  prop_radius=prop_d / 2,
+                                  motor_mass=motor_mass, segments=segments)
+        motors.append(motor)
+        props.append(prop)
+
+    x_bay = half - 0.32 * fuselage_length
+    bay_r = body_r * 0.96 + 0.003
+    battery = _tube([(x_bay + bat_l / 2, bay_r),
+                     (x_bay - bat_l / 2, bay_r)], segments)
+
+    return _pack([
+        ("frame", _merge(shell, *arms), 1.0),
+        ("motors", _merge(*motors), 1.0),
+        ("props", _merge(*props), 0.55),
         ("battery", battery, 1.0),
     ])
 
@@ -583,7 +800,7 @@ def mission_params(study: TradeStudy,
     """Geometry inputs from a ``UavMissions``-style mix.
 
     Expects variation points ``airframe`` (attributes ``wingSpan``,
-    ``wingChord``, ``taper``, ``fuselageLength``, ``motorCount``),
+    ``wingArea``, ``taper``, ``fuselageLength``, ``motorCount``),
     ``motors`` (``mass``), ``props`` (``diameter``), and ``battery``
     (``mass``) -- the convention of ``examples/uav_missions.sysml``.
     """
@@ -598,7 +815,7 @@ def mission_params(study: TradeStudy,
                 f"variation point, variant, or attribute: {err})") from err
 
     return {"wing_span": attr("airframe", "wingSpan"),
-            "wing_chord": attr("airframe", "wingChord"),
+            "wing_area": attr("airframe", "wingArea"),
             "taper": attr("airframe", "taper"),
             "fuselage_length": attr("airframe", "fuselageLength"),
             "motor_count": attr("airframe", "motorCount"),
@@ -611,15 +828,22 @@ def mission_geometry(study: TradeStudy, architecture: Architecture,
                      **overrides: Any) -> dict[str, Any]:
     """Family-dispatched geometry for a ``UavMissions`` mix.
 
-    The selected airframe's attributes pick the builder: no wing ->
-    :func:`drone_geometry` (the plain quad), a single motor station ->
-    :func:`interceptor_geometry`, otherwise
+    The selected airframe's attributes pick the builder: no wing and no
+    fuselage -> :func:`drone_geometry` (the plain quad); no wing but a
+    real fuselage -> :func:`teardrop_quad_geometry`; a single motor
+    station -> :func:`interceptor_geometry`; otherwise
     :func:`winged_vtol_geometry`.
     """
 
     p = {**mission_params(study, architecture), **overrides}
     motor_count = p.pop("motor_count")
-    if p["wing_span"] <= 0:  # rotor-borne only: the quad frame
+    if p["wing_span"] <= 0:  # rotor-borne only
+        if p["fuselage_length"] > 0:  # the streamlined teardrop shell
+            return teardrop_quad_geometry(
+                fuselage_length=p["fuselage_length"],
+                prop_diameter=p["prop_diameter"],
+                motor_mass=p["motor_mass"],
+                battery_mass=p["battery_mass"])
         return drone_geometry(prop_diameter_in=p["prop_diameter"] / IN,
                               motor_mass=p["motor_mass"],
                               battery_mass=p["battery_mass"],
