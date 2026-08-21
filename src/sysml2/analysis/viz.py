@@ -8,8 +8,9 @@ Two kinds of output over the mix tables produced by
   candidate space; the frontier is computed *from the plotted axes* so a
   many-objective front can never masquerade as a two-objective one) and
   :func:`margin_sweep_figure` (requirement margins across a
-  design-variable sweep of an OpenMDAO problem, with the feasible band
-  shaded and the binding requirement named);
+  design-variable sweep of an OpenMDAO problem, the sweep axis split
+  into feasible bands -- accent-shaded -- and INFEASIBLE bands, warm and
+  hatched, each labeled with the constraint that binds there);
 * an interactive parallel-coordinates anywidget -- :func:`parcoords` --
   following the house widget pattern (:mod:`sysml2.replay`): Python bakes
   the whole payload (axis specs, tick labels, normalized line positions)
@@ -704,6 +705,55 @@ def pareto_figure(
     return fig
 
 
+def _sweep_bands(
+    values: Sequence[float], curves: Mapping[str, Sequence[float]]
+) -> list[dict[str, Any]]:
+    """Feasible/infeasible bands of a margin sweep (pure, unit-tested).
+
+    Splits the sweep axis wherever the tightest margin crosses zero
+    (linearly interpolated) into contiguous bands ``{x0, x1, feasible,
+    binding}``.  ``binding`` names the constraint that binds in an
+    infeasible band -- the one whose margin dips lowest there -- and is
+    ``None`` for feasible bands.  A band's feasibility is the sign
+    structure of the sampled margins: ``min >= 0`` over every curve.
+    """
+
+    if not curves:
+        raise AnalysisError("margin bands need at least one margin curve")
+    mins = [min(column) for column in zip(*curves.values(), strict=True)]
+
+    def binding(i0: int, i1: int) -> str:
+        return min(curves, key=lambda label: min(curves[label][i0 : i1 + 1]))
+
+    bands: list[dict[str, Any]] = []
+    start_x, start_i = float(values[0]), 0
+    for i in range(1, len(values)):
+        if (mins[i] >= 0) == (mins[i - 1] >= 0):
+            continue
+        frac = mins[i - 1] / (mins[i - 1] - mins[i])
+        cross = float(values[i - 1]) + frac * float(values[i] - values[i - 1])
+        ok = mins[i - 1] >= 0
+        bands.append(
+            {
+                "x0": start_x,
+                "x1": cross,
+                "feasible": ok,
+                "binding": None if ok else binding(start_i, i - 1),
+            }
+        )
+        start_x, start_i = cross, i
+    ok = mins[-1] >= 0
+    bands.append(
+        {
+            "x0": start_x,
+            "x1": float(values[-1]),
+            "feasible": ok,
+            "binding": None if ok else binding(start_i, len(values) - 1),
+        }
+    )
+    return bands
+
+
 def margin_sweep_figure(
     problem: Any,
     var: str,
@@ -715,14 +765,18 @@ def margin_sweep_figure(
 ) -> Any:
     """Requirement margins across a design-variable sweep.
 
-    One chart answering "how far can ``var`` go, and which requirement
+    One chart answering "where can ``var`` go, and which requirement
     stops it": re-runs ``problem`` (an OpenMDAO ``Problem``, duck-typed:
     ``set_val``/``run_model``/``get_val``) for each entry of ``values``,
     plotting every margin output (>= 0 iff the constraint holds, per
-    :mod:`sysml2.analysis.mdao`) with direct end labels.  The first zero
-    crossing of the tightest margin is marked and *named* -- that is the
-    binding requirement -- the feasible band up to it is shaded in the
-    accent, and the infeasible region beyond it in gray.  Restores the
+    :mod:`sysml2.analysis.mdao`) with direct end labels.  The sweep axis
+    is split at every zero crossing of the tightest margin
+    (:func:`_sweep_bands`): feasible bands are shaded in the accent and
+    labeled, INFEASIBLE bands are tinted warm and hatched, and each one
+    is labeled with the constraint that binds there (the margin that
+    dips lowest in that band) -- so a sweep that leaves and re-enters
+    feasibility shows every no-go region and its reason.  Each loss of
+    feasibility is also marked and named at its crossing.  Restores the
     original value afterwards.  Give ``title`` as the finding the chart
     shows ("Payloads above 0.46 kg cannot fly").
     """
@@ -763,49 +817,47 @@ def margin_sweep_figure(
         )
     ax.axhline(0.0, color=MUTE, linewidth=0.9, linestyle=(0, (4, 3)))
 
-    mins = [min(column) for column in zip(*curves.values(), strict=True)]
-    crossing = None
-    binding = None
-    for i in range(1, len(values)):
-        if mins[i - 1] >= 0 > mins[i]:
-            frac = mins[i - 1] / (mins[i - 1] - mins[i])
-            crossing = values[i - 1] + frac * (values[i] - values[i - 1])
-            binding = min(named, key=lambda label: curves[label][i])
-            break
-    if crossing is not None and binding is not None:
-        ax.axvspan(values[0], crossing, color=ACCENT, alpha=0.06, linewidth=0)
-        ax.axvspan(crossing, values[-1], color=FAINT, alpha=0.35, linewidth=0)
-        ax.axvline(crossing, color=WARM, linewidth=1.0)
-        ax.annotate(
-            f"{binding.split('::')[-1].removesuffix('_margin')} binds at {crossing:.2f}",
-            (crossing, ax.get_ylim()[1]),
-            xytext=(5, -4),
-            textcoords="offset points",
-            va="top",
-            fontsize=8,
-            color=WARM,
-        )
-        halo = [_pe().withStroke(linewidth=2.5, foreground="white")]
-        ax.text(
-            (values[0] + crossing) / 2,
-            0.04,
-            "feasible",
-            transform=ax.get_xaxis_transform(),
-            ha="center",
-            fontsize=8,
-            color=ACCENT,
-            path_effects=halo,
-        )
-        ax.text(
-            (crossing + values[-1]) / 2,
-            0.04,
-            "infeasible",
-            transform=ax.get_xaxis_transform(),
-            ha="center",
-            fontsize=8,
-            color=MUTE,
-            path_effects=halo,
-        )
+    def shorten(label: str) -> str:
+        return label.split("::")[-1].removesuffix("_margin")
+
+    halo = [_pe().withStroke(linewidth=2.5, foreground="white")]
+    bands = _sweep_bands(values, curves)
+    crossings = 0
+    for index, band in enumerate(bands):
+        x0, x1 = band["x0"], band["x1"]
+        if band["feasible"]:
+            ax.axvspan(x0, x1, facecolor=ACCENT, alpha=0.06, linewidth=0)
+            caption, color = "feasible", ACCENT
+        else:
+            ax.axvspan(x0, x1, facecolor=WARM, alpha=0.07, linewidth=0)
+            ax.axvspan(
+                x0, x1, facecolor="none", edgecolor=WARM, alpha=0.30, hatch="//", linewidth=0
+            )
+            caption, color = f"infeasible: {shorten(band['binding'])}", WARM
+        if index > 0:  # an interior zero crossing of the tightest margin
+            ax.axvline(x0, color=WARM, linewidth=1.0)
+            if not band["feasible"]:  # feasibility lost here: name the culprit
+                ax.annotate(
+                    f"{shorten(band['binding'])} binds at {x0:.2f}",
+                    (x0, ax.get_ylim()[1]),
+                    xytext=(5, -4 - 11 * crossings),
+                    textcoords="offset points",
+                    va="top",
+                    fontsize=8,
+                    color=WARM,
+                )
+                crossings += 1
+        if x1 - x0 > 0.04 * span:  # skip labels in slivers
+            ax.text(
+                (x0 + x1) / 2,
+                0.04,
+                caption,
+                transform=ax.get_xaxis_transform(),
+                ha="center",
+                fontsize=8,
+                color=color,
+                path_effects=halo,
+            )
 
     ax.set_xlim(values[0], values[-1] + 0.22 * span)
     ax.set_xlabel(xlabel or var)

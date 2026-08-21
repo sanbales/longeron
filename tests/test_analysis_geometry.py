@@ -569,6 +569,7 @@ class TestMissionBridge:
                     "motors": "stdMotor",
                     "props": "slimProp",
                     "battery": "packMid",
+                    "material": "aluminum",
                 }
             )
 
@@ -582,6 +583,33 @@ class TestMissionBridge:
         span_z = dart["bounds"][1][2] - dart["bounds"][0][2]
         assert span_z == pytest.approx(1.05, abs=1e-3)
 
+    def test_sized_arms_show_in_the_mesh(self, mission_study):
+        """The structural sizing reaches the geometry: a mix whose
+        metrics carry armOuterDiameter draws its arms at that diameter,
+        so the harder-loaded aluminum build is visibly thicker in Y than
+        the same mix in carbon (stiffness sizes the aluminum wall)."""
+
+        def arm_thickness(material):
+            arch = mission_study.evaluate(
+                {
+                    "airframe": "boxQuad",
+                    "motors": "sprintMotor",
+                    "props": "lifterProp",  # long arms: stiffness governs
+                    "battery": "packMid",
+                    "material": material,
+                }
+            )
+            assert arch.metrics["armOuterDiameter"] > 0
+            mesh = geometry.mission_geometry(mission_study, arch)
+            frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+            ys = frame["vertices"][1::3]
+            return max(ys), arch.metrics["armOuterDiameter"]
+
+        (top_al, d_al), (top_cf, d_cf) = arm_thickness("aluminum"), arm_thickness("carbonFiber")
+        assert d_al > d_cf  # aluminum needs more wall for the same load
+        assert top_al > top_cf  # ... and the mesh genuinely shows it
+        assert top_al == pytest.approx(d_al / 2, abs=1e-4)
+
     def test_params_read_the_selected_variants(self, mission_study):
         arch = mission_study.evaluate(
             {
@@ -589,6 +617,7 @@ class TestMissionBridge:
                 "motors": "ecoMotor",
                 "props": "lifterProp",
                 "battery": "packLite",
+                "material": "carbonFiber",
             }
         )
         params = geometry.mission_params(mission_study, arch)
@@ -600,7 +629,13 @@ class TestMissionBridge:
 
     def test_missing_point_is_loud(self, mission_study):
         arch = mission_study.evaluate(
-            {"airframe": "boxQuad", "motors": "stdMotor", "props": "slimProp", "battery": "packMid"}
+            {
+                "airframe": "boxQuad",
+                "motors": "stdMotor",
+                "props": "slimProp",
+                "battery": "packMid",
+                "material": "aluminum",
+            }
         )
         arch.selection.pop("battery")
         with pytest.raises(AnalysisError):

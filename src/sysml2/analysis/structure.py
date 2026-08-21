@@ -5,15 +5,22 @@ numbers, both following the house widget pattern (Python bakes one JSON
 payload; the inline vanilla-JS front-end only paints):
 
 * :func:`n2_view` -- the classic N2 matrix of an OpenMDAO problem built
-  by :func:`sysml2.analysis.mdao.build_problem`: components on the
-  diagonal in execution order, a dot wherever one component's output
-  feeds another's input.  The orientation puts each connection in the
-  SOURCE's column and the TARGET's row, so feed-forward couplings fall
-  below the diagonal and FEEDBACK couplings land above it (drawn warm
-  and ringed).  Hovering a cell highlights its row and column and lists
-  the coupled variables; clicking pins the tooltip.  (For the
-  full-strength deep dive OpenMDAO ships ``om.n2(problem)`` -- a
-  standalone HTML app; this widget is the lightweight in-notebook map.)
+  by :func:`sysml2.analysis.mdao.build_problem`, in the NASA/OpenMDAO
+  orientation: components on the diagonal in execution order, a dot
+  wherever one component's output feeds another's input.  Each
+  connection sits in the SOURCE's row and the TARGET's column, so the
+  flow reads clockwise -- out along the source's row, then down the
+  column to the receiver -- FEED-FORWARD couplings fill the UPPER
+  triangle and FEEDBACK couplings (a source that runs *after* its
+  receiver) land in the LOWER triangle, drawn warm and ringed.  Hovering
+  a cell highlights its row and column and lists the coupled variables;
+  clicking pins the tooltip.  (:func:`openmdao_n2` embeds OpenMDAO's own
+  full-strength diagram for the deep dive; this widget is the
+  lightweight dependency-free in-notebook map.)
+* :func:`openmdao_n2` -- the official interactive N2 application
+  (``openmdao.api.n2``) generated headlessly and returned inline as a
+  sandboxed ``srcdoc`` iframe, so the full tool (solver hierarchy,
+  collapsing, search) opens right in the notebook.
 * :func:`constraint_network` -- a bipartite view of a
   :class:`~sysml2.analysis.trades.TradeStudy`: variation points (the
   decision variables) in one column, ``assert constraint`` bodies in the
@@ -44,7 +51,13 @@ from .trades import Architecture, TradeStudy
 if TYPE_CHECKING:
     import anywidget
 
-__all__ = ["constraint_network", "constraint_network_payload", "n2_payload", "n2_view"]
+__all__ = [
+    "constraint_network",
+    "constraint_network_payload",
+    "n2_payload",
+    "n2_view",
+    "openmdao_n2",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +71,14 @@ def n2_payload(problem: Any) -> dict[str, Any]:
     ``problem`` is an ``om.Problem`` or a
     :class:`~sysml2.analysis.mdao.ProblemBuild` (its ``.problem`` is
     used).  Components arrive in execution order; every global
-    connection becomes a cell ``{row, col, feedback, vars}`` with
-    ``row`` = the receiving component, ``col`` = the source, so feedback
-    (a source that runs *after* its receiver) sits above the diagonal.
-    The synthetic ``_auto_ivc`` outputs (unconnected-input defaults) are
-    skipped -- they are bookkeeping, not couplings.
+    connection becomes a cell ``{row, col, feedback, vars}`` in the
+    NASA/OpenMDAO orientation -- ``row`` = the SOURCE component, ``col``
+    = the TARGET -- so feed-forward couplings (source runs first) fill
+    the upper triangle and the flow reads clockwise: out along the
+    source's row, down the target's column.  Feedback (a source that
+    runs *after* its receiver) sits below the diagonal.  The synthetic
+    ``_auto_ivc`` outputs (unconnected-input defaults) are skipped --
+    they are bookkeeping, not couplings.
     """
 
     prob = getattr(problem, "problem", problem)
@@ -88,7 +104,7 @@ def n2_payload(problem: Any) -> dict[str, Any]:
         tgt_comp, tgt_var = tgt.rsplit(".", 1)
         if src_comp not in index or tgt_comp not in index:
             continue  # _auto_ivc or an out-of-scope system
-        key = (index[tgt_comp], index[src_comp])
+        key = (index[src_comp], index[tgt_comp])
         cells.setdefault(key, []).append(f"{src_var} \u2192 {tgt_var}")
 
     def short(path: str) -> str:
@@ -98,7 +114,7 @@ def n2_payload(problem: Any) -> dict[str, Any]:
     return {
         "components": [{"name": short(p), "path": p} for p in paths],
         "cells": [
-            {"row": row, "col": col, "feedback": col > row, "vars": names}
+            {"row": row, "col": col, "feedback": col < row, "vars": names}
             for (row, col), names in sorted(cells.items())
         ],
     }
@@ -107,9 +123,11 @@ def n2_payload(problem: Any) -> dict[str, Any]:
 # Pure N2 interaction math, DOM-free so node can exercise it (the tests
 # write these functions plus an export line to a temp .mjs).
 _N2_MATH_JS = r"""
-// A connection in the source's COLUMN and the target's ROW: sources that
-// execute after their receiver (col > row) are feedback.
-const isFeedback = (row, col) => col > row;
+// NASA/OpenMDAO orientation: a connection sits in the source's ROW and
+// the target's COLUMN (flow reads clockwise: out along the row, down
+// the column).  Sources that execute after their receiver (col < row)
+// are feedback -- the lower triangle.
+const isFeedback = (row, col) => col < row;
 // Cells sharing a row or column with cells[i] (its coupling neighborhood).
 function related(cells, i) {
   const { row, col } = cells[i];
@@ -208,8 +226,8 @@ function render({ model, el }) {
     const hit = make("rect", { x: at(cell.col), y: at(cell.row), width: s,
                                height: s, fill: "transparent" }, g);
     const html = () =>
-      "<b>" + P.components[cell.col].name + " \u2192 " +
-      P.components[cell.row].name + "</b>" +
+      "<b>" + P.components[cell.row].name + " \u2192 " +
+      P.components[cell.col].name + "</b>" +
       (cell.feedback ? " <i>(feedback)</i>" : "") + "<br>" +
       cell.vars.join("<br>");
     hit.addEventListener("mouseenter", (e) => {
@@ -504,14 +522,75 @@ def _payload_widget(kind: str, esm: str, css: str, doc: str) -> type[anywidget.A
 def n2_view(problem: Any, *, width_px: int = 640) -> anywidget.AnyWidget:
     """An interactive N2 matrix of a built OpenMDAO problem.
 
-    Diagonal = components in execution order; dots = data couplings
-    (source column, target row); feedback couplings sit above the
-    diagonal, warm and dash-ringed.  Hover highlights a cell's row and
-    column and lists the coupled variables; click pins the tooltip.
+    NASA/OpenMDAO orientation: diagonal = components in execution
+    order; dots = data couplings in the source's row and the target's
+    column, so the flow reads clockwise (out along the row, down the
+    column) and feed-forward fills the upper triangle; feedback
+    couplings sit below the diagonal, warm and dash-ringed.  Hover
+    highlights a cell's row and column and lists the coupled variables;
+    click pins the tooltip.
     """
 
     cls = _payload_widget("N2Widget", _N2_ESM, _N2_CSS, "N2 matrix over a baked problem payload.")
     return cls(payload_json=json.dumps(n2_payload(problem)), width_px=width_px)
+
+
+class _InlineHTML:
+    """A minimal display object (``_repr_html_``) for a baked HTML string.
+
+    Serves the same role as ``IPython.display.HTML`` without importing
+    IPython (and without its please-use-IFrame warning for srcdoc
+    iframes); ``.data`` carries the raw markup, matching the HTML API.
+    """
+
+    def __init__(self, data: str):
+        self.data = data
+
+    def _repr_html_(self) -> str:
+        return self.data
+
+
+def openmdao_n2(problem: Any, *, height: int = 620) -> _InlineHTML:
+    """OpenMDAO's own interactive N2 diagram, embedded inline.
+
+    Generates the official standalone HTML application
+    (``openmdao.api.n2`` with ``show_browser=False, embeddable=True``)
+    into a temporary file and returns it as an inline ``<iframe
+    srcdoc=...>`` display object -- self-contained (no server, no files
+    left behind) and sandbox-friendly, which renders reliably in
+    JupyterLab.  Use it as the full-strength deep dive (solver
+    hierarchy, collapsing, search) next to the lightweight
+    :func:`n2_view` map.
+    """
+
+    import tempfile
+    from pathlib import Path
+
+    prob = getattr(problem, "problem", problem)
+    try:
+        import openmdao.api as om
+    except ImportError as err:  # pragma: no cover - exercised without extra
+        raise ImportError(
+            "sysml2.analysis.structure.openmdao_n2 needs OpenMDAO; install "
+            "the extra with 'pip install \"longeron[mdao]\"'"
+        ) from err
+
+    with tempfile.TemporaryDirectory() as tmp:
+        outfile = Path(tmp) / "n2.html"
+        om.n2(
+            prob,
+            outfile=str(outfile),
+            show_browser=False,
+            embeddable=True,
+            display_in_notebook=False,
+        )
+        page = outfile.read_text(encoding="utf-8")
+    escaped = page.replace("&", "&amp;").replace('"', "&quot;")
+    return _InlineHTML(
+        f'<iframe srcdoc="{escaped}" width="100%" height="{height}" '
+        'style="border:1px solid #d4d4d4; border-radius:6px; background:#fff" '
+        'sandbox="allow-scripts"></iframe>'
+    )
 
 
 def constraint_network(

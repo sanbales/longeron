@@ -10,15 +10,19 @@
 //   InterceptUav -- one-way dash to catch a crossing target (max target speed)
 //
 // All physics lives in `calc def`s the interpreter evaluates directly --
-// momentum-theory hover, parasite+induced-drag cruise, drag-limited dash --
-// so the model itself carries the analysis.  These formulas (sqrt/pow,
+// momentum-theory hover, a wetted-area parasite-drag buildup feeding
+// parasite+induced-drag cruise, drag-limited dash, and load-based
+// structural sizing (rotor arms and wing spars as bending-sized tubes in
+// a selectable material) -- so the model itself carries the analysis.  These formulas (sqrt/pow,
 // conditionals, calc invocations) are beyond the CP-SAT mapper's linear
 // arithmetic; the intended workflow is TradeStudy.all_architectures() /
 // evaluate(): enumerate the Cartesian candidate space and let the
 // interpreter score every mix exactly (see notebook 07).
 package UavMissions {
     doc /* Multi-mission UAV catalog: four airframe families, tiered
-           components, and three mission contexts with executable physics. */
+           components, a structural-material trade, and three mission
+           contexts with executable physics (drag buildup + tube sizing
+           included). */
 
     // ----- external-analysis annotation ------------------------------------
     // Declares that a calc def's in/out parameters are the I/O contract of
@@ -92,12 +96,124 @@ package UavMissions {
         return : Real = pow(2.0 * powerW / (1.225 * dragArea), 1.0 / 3.0);
     }
 
+    // ----- parasite-drag buildup -------------------------------------------
+    // Each airframe's CdA is a wetted-area buildup, not a quoted number:
+    // CdA = sum over surfaces of Cf x S_wet x form factor (flat-plate
+    // skin friction at a fixed representative Cf), plus a bluff-body term
+    // for open frames and exposed rotor gear.  The teardrop shell earns
+    // its slender-body advantage from these terms; bigger wings really do
+    // pay for their extra skin.
+
+    calc def SkinFrictionDrag {
+        doc /* One streamlined surface's parasite drag area: flat-plate
+               skin-friction coefficient x wetted area x form factor.
+               Cf = 0.0055 is a fixed representative value for small-UAV
+               Reynolds numbers (~3e5..1e6, mostly turbulent). */
+        in wettedArea : Real;       // m^2
+        in formFactor : Real;       // >= 1, pressure-drag multiplier
+        in frictionCoeff : Real = 0.0055;
+        return : Real = frictionCoeff * wettedArea * formFactor;
+    }
+
+    calc def BodyWettedArea {
+        doc /* Lathed-body wetted area: ~0.75 x the enclosing cylinder
+               (teardrop/ogive bodies of revolution). */
+        in length : Real;
+        in diameter : Real;
+        return : Real = 0.75 * 3.141592653589793 * diameter * length;
+    }
+
+    calc def BodyFormFactor {
+        doc /* Slender-body form factor by fineness ratio l/d: ~1.24 at
+               l/d 5 falling toward ~1.13 at l/d 11 (Hoerner-style). */
+        in length : Real;
+        in diameter : Real;
+        return : Real = 1.05 + 0.9 * diameter / length;
+    }
+
+    calc def WingWettedArea {
+        doc /* Both faces plus section curvature: 2.05 x exposed
+               planform (a cruciform counts both pairs). */
+        in planformArea : Real;
+        return : Real = 2.05 * planformArea;
+    }
+
+    calc def WingFormFactor {
+        doc /* Hoerner wing form factor by thickness ratio:
+               1 + 2.7 t/c + 100 (t/c)^4 -- ~1.25 at 9%, ~1.34 at 12%. */
+        in thicknessRatio : Real;
+        return : Real = 1.0 + 2.7 * thicknessRatio
+            + 100.0 * pow(thicknessRatio, 4.0);
+    }
+
+    calc def BluffFrameDrag {
+        doc /* Open-frame / exposed-gear drag area: frontal area x a
+               bluff-body Cd (~1.1 for plates, arms, and motor cans). */
+        in frontalArea : Real;      // m^2
+        in dragCoeff : Real = 1.1;
+        return : Real = frontalArea * dragCoeff;
+    }
+
+    // ----- structural sizing -------------------------------------------------
+    // Quad arms and wing spars are round tubes sized by the loads they
+    // carry -- bending stress with a safety factor AND a tip-deflection
+    // stiffness floor -- in the selected structural material, so material
+    // density, stiffness, strength, and $/kg all reach the mission
+    // metrics through the mass and cost build-ups.
+
+    calc def TubeWallForStress {
+        doc /* Thin-walled round tube in bending: sigma = M r / I with
+               I = pi r^3 t  =>  wall t = M x SF / (pi r^2 sigma_y). */
+        in momentNm : Real;
+        in radius : Real;
+        in yieldPa : Real;
+        in safetyFactor : Real = 2.0;
+        return : Real = momentNm * safetyFactor
+            / (3.141592653589793 * radius * radius * yieldPa);
+    }
+
+    calc def TubeWallForStiffness {
+        doc /* Cantilever tip deflection delta = F L^3 / (3 E I) with
+               I = pi r^3 t, capped at deflectionRatio x L  =>
+               t = F L^2 / (3 E pi r^3 x deflectionRatio). */
+        in tipLoadN : Real;
+        in length : Real;
+        in radius : Real;
+        in modulusPa : Real;
+        in deflectionRatio : Real = 0.02;
+        return : Real = tipLoadN * length * length
+            / (3.0 * modulusPa * 3.141592653589793
+               * pow(radius, 3.0) * deflectionRatio);
+    }
+
+    calc def TubeMass {
+        doc /* Thin-walled tube mass: A = 2 pi r t, m = A L rho. */
+        in radius : Real;
+        in wall : Real;
+        in length : Real;
+        in density : Real;
+        return : Real = 2.0 * 3.141592653589793 * radius * wall
+            * length * density;
+    }
+
+    calc def SparRootMoment {
+        doc /* Root bending moment of one wing panel under an
+               elliptic-ish lift distribution at load factor n: half the
+               lift acts at the elliptic centroid 4/(3 pi) of the
+               half-span  =>  M = n W b / (3 pi) ~ 0.106 n W b. */
+        in grossKg : Real;
+        in span : Real;
+        in loadFactor : Real = 2.5;
+        return : Real = loadFactor * grossKg * 9.81 * span
+            / (3.0 * 3.141592653589793);
+    }
+
     // ----- component families -----------------------------------------------
 
     part def Airframe {
-        attribute mass : Real;              // kg, structure + wiring
+        attribute mass : Real;              // kg, shell/frame less arms+spar
         attribute cost : Real;              // USD
-        attribute dragArea : Real;          // parasite CdA, m^2
+        attribute dragArea : Real;          // parasite CdA, m^2 (buildup)
         attribute wingSpan : Real;          // m; 0 = rotor-borne only
         attribute wingChord : Real;         // m, mean
         attribute taper : Real;             // tip/root chord ratio
@@ -112,6 +228,19 @@ package UavMissions {
         attribute payloadCapacity : Real;   // kg
         attribute hoverOpsSec : Real;       // hover budget per sortie, s
         attribute fuselageLength : Real;    // m (geometry)
+        attribute armCount : Integer;       // cantilever rotor arms to size
+        attribute sparRadius : Real;        // m, wing-spar tube radius
+        attribute designGrossKg : Real;     // spar design gross mass (0 = no wing)
+    }
+
+    part def StructuralMaterial {
+        doc /* A tube-stock structural material: the arm/spar sizing
+               calcs read strength and stiffness, the build-ups read
+               density and finished-tube cost. */
+        attribute density : Real;           // kg/m^3
+        attribute modulusPa : Real;         // Pa, Young's modulus
+        attribute yieldPa : Real;           // Pa, usable bending strength
+        attribute costPerKg : Real;         // USD/kg, finished tube
     }
 
     part def Motor {
@@ -160,10 +289,17 @@ package UavMissions {
     // along the chords/body axis: it hovers nose-up on its props and
     // pitches over to cruise wing-borne), and a rail-launched
     // streamlined interceptor (hoverThrustFactor 0: no hover
-    // requirement, no hover budget).
+    // requirement, no hover budget).  Every dragArea is a wetted-area /
+    // bluff-body BUILDUP from the family's own geometry (the calc defs
+    // above); `mass` excludes the rotor arms and wing spar, which the
+    // assembly sizes from loads in the selected material.
     part def BoxQuad :> Airframe {
-        attribute mass : Real = 0.85;   attribute cost : Real = 95.0;
-        attribute dragArea : Real = 0.055;
+        // open 450-class frame: no skin to speak of -- the whole CdA is
+        // bluff (tilted plates, battery brick, motor cans in the wind)
+        attribute frameFrontalArea : Real = 0.050;  // m^2, forward flight
+        attribute dragArea : Real =
+            BluffFrameDrag(frontalArea = frameFrontalArea);
+        attribute mass : Real = 0.78;   attribute cost : Real = 95.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
@@ -175,14 +311,28 @@ package UavMissions {
         attribute payloadCapacity : Real = 6.0;
         attribute hoverOpsSec : Real = 90.0;
         attribute fuselageLength : Real = 0.0;
+        attribute armCount : Integer = 4;
+        attribute sparRadius : Real = 0.008;   // unused: no wing
+        attribute designGrossKg : Real = 0.0;  // no spar to size
     }
     part def TeardropQuad :> Airframe {
         // The "do wings matter?" probe: a wingless quad wrapped in a
-        // lathed teardrop shell.  CdA sits between the box quad (0.055)
-        // and the winged dart (0.009); the shell costs money and mass
-        // and squeezes the payload bay -- the missions decide the rest.
-        attribute mass : Real = 1.05;   attribute cost : Real = 200.0;
-        attribute dragArea : Real = 0.021;
+        // lathed teardrop shell.  Its CdA advantage over the box quad is
+        // EARNED by the buildup -- the skinned body is skin friction on
+        // a slender lathe, only the arms and motors stay bluff -- and
+        // the shell costs money and mass and squeezes the payload bay;
+        // the missions decide the rest.
+        attribute fuselageLength : Real = 0.62;
+        attribute fuselageDiameter : Real = 0.13;
+        attribute rotorGearArea : Real = 0.010;  // arms + motor cans, m^2
+        attribute dragArea : Real =
+            BluffFrameDrag(frontalArea = rotorGearArea)
+            + 1.15 * SkinFrictionDrag(   // 1.15: interference/excrescence
+                wettedArea = BodyWettedArea(length = fuselageLength,
+                                            diameter = fuselageDiameter),
+                formFactor = BodyFormFactor(length = fuselageLength,
+                                            diameter = fuselageDiameter));
+        attribute mass : Real = 0.98;   attribute cost : Real = 200.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
@@ -193,13 +343,34 @@ package UavMissions {
         attribute hoverThrustFactor : Real = 1.5;
         attribute payloadCapacity : Real = 1.0;
         attribute hoverOpsSec : Real = 60.0;
-        attribute fuselageLength : Real = 0.62;
+        attribute armCount : Integer = 4;
+        attribute sparRadius : Real = 0.008;   // unused: no wing
+        attribute designGrossKg : Real = 0.0;  // no spar to size
     }
     part def VtolWing :> Airframe {
-        attribute mass : Real = 2.30;   attribute cost : Real = 480.0;
-        attribute dragArea : Real = 0.028;
+        // fuselage + BOTH cruciform wing pairs + four wingtip pods: the
+        // big wing that buys the loiter also pays for its skin here
+        attribute fuselageLength : Real = 0.95;
+        attribute fuselageDiameter : Real = 0.12;
         attribute wingSpan : Real = 2.6;  attribute wingChord : Real = 0.24;
         attribute taper : Real = 0.6;     attribute wingArea : Real = 0.624;
+        attribute secondaryWingArea : Real = 0.387;  // 0.62-span pair, same chord
+        attribute dragArea : Real = 1.15 * (  // interference/excrescence
+            SkinFrictionDrag(
+                wettedArea = BodyWettedArea(length = fuselageLength,
+                                            diameter = fuselageDiameter),
+                formFactor = BodyFormFactor(length = fuselageLength,
+                                            diameter = fuselageDiameter))
+            + SkinFrictionDrag(          // main pair, NACA 2412
+                wettedArea = WingWettedArea(planformArea = wingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.12))
+            + SkinFrictionDrag(          // secondary pair, NACA 0009
+                wettedArea = WingWettedArea(planformArea = secondaryWingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.09))
+            + 4.0 * SkinFrictionDrag(    // wingtip motor pods
+                wettedArea = BodyWettedArea(length = 0.12, diameter = 0.045),
+                formFactor = BodyFormFactor(length = 0.12, diameter = 0.045)));
+        attribute mass : Real = 1.90;   attribute cost : Real = 480.0;
         attribute oswald : Real = 0.82;   attribute tipPropBonus : Real = 1.28;
         attribute loiterSpeed : Real = 15.0;
         attribute cruiseSpeed : Real = 21.0;
@@ -208,13 +379,30 @@ package UavMissions {
         attribute hoverThrustFactor : Real = 1.45;
         attribute payloadCapacity : Real = 5.5;
         attribute hoverOpsSec : Real = 120.0;
-        attribute fuselageLength : Real = 0.95;
+        attribute armCount : Integer = 0;      // rotors ride the wingtips
+        attribute sparRadius : Real = 0.012;   // fits the 12% root section
+        attribute designGrossKg : Real = 6.0;  // packMax + heavy payload
     }
     part def DartInterceptor :> Airframe {
-        attribute mass : Real = 1.15;   attribute cost : Real = 300.0;
-        attribute dragArea : Real = 0.009;
+        // slender lathed body + thin wing + cruciform fins, all skin
+        attribute fuselageLength : Real = 1.25;
+        attribute fuselageDiameter : Real = 0.11;
         attribute wingSpan : Real = 1.05; attribute wingChord : Real = 0.17;
         attribute taper : Real = 0.5;     attribute wingArea : Real = 0.179;
+        attribute tailArea : Real = 0.045;  // cruciform fin planform
+        attribute dragArea : Real = 1.15 * (  // interference/excrescence
+            SkinFrictionDrag(
+                wettedArea = BodyWettedArea(length = fuselageLength,
+                                            diameter = fuselageDiameter),
+                formFactor = BodyFormFactor(length = fuselageLength,
+                                            diameter = fuselageDiameter))
+            + SkinFrictionDrag(          // thin NACA 0009 wing
+                wettedArea = WingWettedArea(planformArea = wingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.09))
+            + SkinFrictionDrag(          // cruciform tail fins
+                wettedArea = WingWettedArea(planformArea = tailArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.09)));
+        attribute mass : Real = 1.08;   attribute cost : Real = 300.0;
         attribute oswald : Real = 0.72;   attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 24.0;
         attribute cruiseSpeed : Real = 30.0;
@@ -223,7 +411,9 @@ package UavMissions {
         attribute hoverThrustFactor : Real = 0.0;  // rail-launched
         attribute payloadCapacity : Real = 0.9;
         attribute hoverOpsSec : Real = 0.0;
-        attribute fuselageLength : Real = 1.25;
+        attribute armCount : Integer = 0;      // no rotor arms
+        attribute sparRadius : Real = 0.008;   // thin 9% section
+        attribute designGrossKg : Real = 2.2;  // launch mass + margin
     }
 
     part def EcoMotor :> Motor {
@@ -306,6 +496,22 @@ package UavMissions {
         attribute payloadKg : Real = 4.0;
     }
 
+    // Structural tube stock: aluminum is cheap and heavy, carbon buys
+    // grams (and stiffness) at real money -- the arm/spar sizing turns
+    // these four numbers into mission mass and cost.
+    part def Aluminum6061 :> StructuralMaterial {
+        attribute density : Real = 2700.0;
+        attribute modulusPa : Real = 6.9e10;    // 69 GPa
+        attribute yieldPa : Real = 2.4e8;       // 240 MPa
+        attribute costPerKg : Real = 15.0;      // finished tube
+    }
+    part def CarbonFiberTube :> StructuralMaterial {
+        attribute density : Real = 1600.0;
+        attribute modulusPa : Real = 1.1e11;    // ~110 GPa tube layup
+        attribute yieldPa : Real = 6.0e8;       // ~600 MPa bending
+        attribute costPerKg : Real = 90.0;      // finished tube
+    }
+
     // ----- variation points ---------------------------------------------------
 
     variation part def AirframeChoice :> Airframe {
@@ -339,29 +545,74 @@ package UavMissions {
         variant part parcelBayM : ParcelBayM;
         variant part parcelBayL : ParcelBayL;
     }
+    variation part def MaterialChoice :> StructuralMaterial {
+        variant part aluminum : Aluminum6061;
+        variant part carbonFiber : CarbonFiberTube;
+    }
 
     // ----- the shared assembly under trade --------------------------------------
 
     part def MissionUAV {
-        doc /* Airframe + propulsion + battery, common to every mission.
-               Motor/prop stations are homogeneous ([4] selects one type
-               for all); airframe.motorCount says how many stations the
-               family populates (4, 4, 1), and the mass/cost/thrust
-               build-ups scale by it. */
+        doc /* Airframe + propulsion + battery + structural material,
+               common to every mission.  Motor/prop stations are
+               homogeneous ([4] selects one type for all); airframe.
+               motorCount says how many stations the family populates
+               (4, 4, 1), and the mass/cost/thrust build-ups scale by
+               it.  Rotor arms and the wing spar are round tubes sized
+               HERE from loads (per-rotor thrust bending the arm, the
+               elliptic root moment bending the spar) in the selected
+               material, so the material choice is a real mass-vs-cost
+               trade axis. */
 
         attribute avionicsMass : Real = 0.18;   // kg: FC, GPS, radios
         attribute avionicsCost : Real = 140.0;
+        attribute armTubeRadius : Real = 0.008; // m, rotor-arm tube
+        attribute minWallM : Real = 0.0005;     // manufacturing gauge floor
 
         part airframe : AirframeChoice;
         part motors : MotorChoice[4];
         part props : PropChoice[4];
         part battery : BatteryChoice;
+        part material : MaterialChoice;
+
+        // structural sizing: arm length follows the prop disk + tip
+        // clearance (the geometry module's spacing rule), tip load is
+        // one rotor's max thrust; the spar carries the design gross
+        // weight at n = 2.5 on an elliptic-ish distribution
+        attribute armLength : Real =
+            0.70710678 * (props.diameter + 0.02);
+        attribute armWall : Real = max(minWallM, max(
+            TubeWallForStress(momentNm = motors.maxThrust * armLength,
+                              radius = armTubeRadius,
+                              yieldPa = material.yieldPa),
+            TubeWallForStiffness(tipLoadN = motors.maxThrust,
+                                 length = armLength,
+                                 radius = armTubeRadius,
+                                 modulusPa = material.modulusPa)));
+        attribute armOuterDiameter : Real =
+            2.0 * (armTubeRadius + armWall);
+        attribute armStructMass : Real = airframe.armCount
+            * TubeMass(radius = armTubeRadius, wall = armWall,
+                       length = armLength, density = material.density);
+        attribute sparWall : Real = max(minWallM,
+            TubeWallForStress(
+                momentNm = SparRootMoment(grossKg = airframe.designGrossKg,
+                                          span = airframe.wingSpan),
+                radius = airframe.sparRadius,
+                yieldPa = material.yieldPa));
+        attribute sparStructMass : Real =
+            TubeMass(radius = airframe.sparRadius, wall = sparWall,
+                     length = airframe.wingSpan,
+                     density = material.density);
+        attribute structureMass : Real = armStructMass + sparStructMass;
+        attribute structureCost : Real =
+            structureMass * material.costPerKg;
 
         attribute baseMass : Real = airframe.mass + avionicsMass
-            + battery.mass
+            + battery.mass + structureMass
             + airframe.motorCount * (motors.mass + props.mass);
         attribute baseCost : Real = airframe.cost + avionicsCost
-            + battery.cost
+            + battery.cost + structureCost
             + airframe.motorCount * (motors.cost + props.cost);
         attribute diskArea : Real = airframe.diskAreaFactor
             * 3.141592653589793 * props.diameter * props.diameter / 4.0;
@@ -513,17 +764,19 @@ package UavMissions {
         doc /* The ISR trade winner frozen as a concrete sizing context:
                component masses and efficiencies are baked in, the loiter
                speed stays continuous.  Attribute values mirror the
-               vtolWing + stdMotor + slimProp + packMax + stareEoIr mix. */
+               vtolWing + stdMotor + slimProp + packMax + stareEoIr +
+               carbonFiber mix (the CF spar buys ~0.24 kg over aluminum;
+               dragArea is the wetted-area buildup's value). */
 
         attribute loiterSpeed : Real = 15.0;    // m/s -- the design variable
-        attribute massKg : Real = 5.796;        // missionMass of the winner
-        attribute dragArea : Real = 0.028;
+        attribute massKg : Real = 5.5528;       // missionMass of the winner
+        attribute dragArea : Real = 0.019574;   // CdA buildup, m^2
         attribute span : Real = 2.6;
         attribute wingArea : Real = 0.624;
         attribute spanEff : Real = 1.0496;      // 0.82 Oswald x 1.28 tip props
         attribute propEff : Real = 0.697;       // slim prop x std motor
         attribute sensorPowerW : Real = 22.0;
-        attribute usableEnergyJ : Real = 882126.0; // packMax x 80% - hover ops
+        attribute usableEnergyJ : Real = 891757.0; // packMax x 80% - hover ops
 
         attribute loiterPowerW : Real = CruisePower(
             massKg = massKg, speed = loiterSpeed, dragArea = dragArea,

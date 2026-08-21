@@ -344,14 +344,19 @@ def drone_geometry(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
+    arm_thickness: float = _ARM_THICKNESS,
+    arm_width: float = _ARM_WIDTH,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale quad-copter mesh dict from catalog attribute values.
 
     The frame is *derived*: adjacent motors sit one prop diameter plus
     ``_PROP_CLEARANCE`` apart, so a 10-inch cruiser genuinely dwarfs a
-    5-inch racer.  Parts of one kind merge into a single mesh (one draw
-    call each in the viewer).
+    5-inch racer.  ``arm_thickness``/``arm_width`` default to the demo
+    heuristics; callers with load-sized arm tubes (see
+    :func:`mission_geometry`) pass the sized outer diameter so heavier-
+    loaded designs genuinely look beefier.  Parts of one kind merge into
+    a single mesh (one draw call each in the viewer).
     """
 
     prop_d = prop_diameter_in * IN
@@ -362,14 +367,14 @@ def drone_geometry(
 
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
     arm_reach = (spacing / 2) * 2**0.5  # centre -> motor axis, in XZ
-    motor_y = _ARM_THICKNESS / 2 + motor_h / 2
-    prop_y = _ARM_THICKNESS / 2 + motor_h + 0.002 + 0.00125
+    motor_y = arm_thickness / 2 + motor_h / 2
+    prop_y = arm_thickness / 2 + motor_h + 0.002 + 0.00125
 
     arms, motors, props = [], [], []
     arm_length = arm_reach + motor_d / 2
     for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
         angle = atan2(mz, mx)
-        arm = _box(arm_length, _ARM_THICKNESS, _ARM_WIDTH, cx=arm_length / 2)
+        arm = _box(arm_length, arm_thickness, arm_width, cx=arm_length / 2)
         arms.append((_rotate_y(arm[0], -angle), arm[1]))
         x, z = mx * spacing / 2, mz * spacing / 2
         motors.append(_cylinder(motor_d / 2, motor_h, x, motor_y, z, segments))
@@ -780,6 +785,8 @@ def teardrop_quad_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    arm_thickness: float = _ARM_THICKNESS,
+    arm_width: float = _ARM_WIDTH,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale streamlined teardrop-body quad (wingless dash bird).
@@ -823,11 +830,11 @@ def teardrop_quad_geometry(
     arm_length = arm_reach + motor_d / 2
     for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
         angle = atan2(mz, mx)
-        arm = _box(arm_length, _ARM_THICKNESS, _ARM_WIDTH, cx=arm_length / 2)
+        arm = _box(arm_length, arm_thickness, arm_width, cx=arm_length / 2)
         arms.append((_translate(_rotate_y(arm[0], -angle), 0.0, y_widest, 0.0), arm[1]))
         motor, prop = _lift_rotor(
             mx * spacing / 2,
-            y_widest + _ARM_THICKNESS / 2,
+            y_widest + arm_thickness / 2,
             mz * spacing / 2,
             prop_radius=prop_d / 2,
             motor_mass=motor_mass,
@@ -947,11 +954,18 @@ def mission_geometry(
     real fuselage -> :func:`teardrop_quad_geometry` (the upended
     bullet); a single motor station -> :func:`interceptor_geometry`;
     otherwise :func:`winged_vtol_geometry` (the cruciform tail-sitter,
-    rendered in hover attitude).
+    rendered in hover attitude).  When the mix's metrics carry the
+    load-sized ``armOuterDiameter`` (the assembly's structural sizing),
+    the quad families draw their arms at that diameter -- a sprint-motor
+    aluminum build genuinely looks beefier than a carbon eco build.
     """
 
     p = {**mission_params(study, architecture), **overrides}
     motor_count = p.pop("motor_count")
+    sized_arm = float(architecture.metrics.get("armOuterDiameter", 0.0) or 0.0)
+    arm_kw: dict[str, Any] = (
+        {"arm_thickness": sized_arm, "arm_width": sized_arm} if sized_arm > 0 else {}
+    )
     if p["wing_span"] <= 0:  # rotor-borne only
         if p["fuselage_length"] > 0:  # the streamlined teardrop shell
             return teardrop_quad_geometry(
@@ -959,12 +973,14 @@ def mission_geometry(
                 prop_diameter=p["prop_diameter"],
                 motor_mass=p["motor_mass"],
                 battery_mass=p["battery_mass"],
+                **arm_kw,
             )
         return drone_geometry(
             prop_diameter_in=p["prop_diameter"] / IN,
             motor_mass=p["motor_mass"],
             battery_mass=p["battery_mass"],
             esc_mass=0.014,
+            **arm_kw,
         )  # 30.5 mm stack heuristic
     if motor_count <= 1:
         return interceptor_geometry(body_length=p.pop("fuselage_length"), **p)
