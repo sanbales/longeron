@@ -17,9 +17,15 @@ third-party dependencies):
   parametric to-scale meshes for architecture mixes (stdlib only) and a
   small three.js anywidget that renders them (``viz`` extra; CAD-solid
   export needs ``pip install "longeron[cad]"``).
+* :mod:`sysml2.analysis.dashboard` -- the linked mission-compromise
+  dashboard composing the widgets above with ipywidgets (``viz`` extra).
+* :mod:`sysml2.analysis.structure` -- interactive views of the analysis
+  problems' *shape*: an N2 matrix over a built OpenMDAO problem and a
+  bipartite constraint-participation network over a trade study
+  (``viz`` extra for the widgets).
 """
 
 from ._expr import AnalysisError
 
-__all__ = ["AnalysisError", "geometry", "mdao", "smt", "trades",
-           "viewer3d", "viz"]
+__all__ = ["AnalysisError", "dashboard", "geometry", "mdao", "smt",
+           "structure", "trades", "viewer3d", "viz"]

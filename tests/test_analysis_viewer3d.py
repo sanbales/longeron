@@ -41,6 +41,22 @@ class TestMeshViewer:
         assert "dblclick" in widget._esm
         assert "change:mesh_json" in widget._esm
 
+    def test_esm_ux_contracts(self):
+        """The UX rework, encoded: the canvas fills the host width and
+        re-fits on resize; right-drag pan works under JupyterLab (the
+        canvas swallows contextmenu) with shift-drag as the fallback;
+        a subtle overlay hint names every binding."""
+
+        pytest.importorskip("anywidget")
+        widget = viewer3d.mesh_viewer(MESH)
+        for token in ("ResizeObserver", "contextmenu", "preventDefault",
+                      "stopPropagation", "shiftKey", "button === 2",
+                      "setPointerCapture", "sysml2-viewer3d-hint"):
+            assert token in widget._esm, token
+        for word in ("orbit", "pan", "zoom", "fit"):
+            assert word in widget._esm, word
+        assert "width: 100%" in widget._css
+
     def test_swap_in_place(self):
         pytest.importorskip("anywidget")
         widget = viewer3d.mesh_viewer(MESH)

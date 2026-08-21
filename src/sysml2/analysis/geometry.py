@@ -4,11 +4,13 @@ Builds to-scale UAVs from a mix's catalog attribute values with plain
 triangle meshes (stdlib ``math`` only).  Four airframe families are
 supported: the plain quad-copter (:func:`drone_geometry` -- frame sized
 from prop diameter + tip clearance), the streamlined teardrop-body quad
-(:func:`teardrop_quad_geometry` -- a lathed low-drag shell with four
-top-mounted lift rotors), the winged VTOL (:func:`winged_vtol_geometry`
--- an unswept NACA-2412 wing lofted from span/area/taper, exactly four
-horizontal lift rotors: two on wingtip nacelles, two atop the twin
-vertical stabilizers), and the streamlined interceptor
+(:func:`teardrop_quad_geometry` -- a lathed low-drag bullet stood on end,
+its long axis normal to the planar rotor quad around it), the cruciform
+tail-sitter VTOL (:func:`winged_vtol_geometry` -- a minimal lathed
+fuselage, two unswept airfoil wing pairs in a ``+`` cruciform, and one
+tractor rotor on each of the four wingtips with every thrust axis
+parallel to the chords/body axis; baked nose-up in its hover attitude),
+and the streamlined interceptor
 (:func:`interceptor_geometry` -- slender lathed fuselage, thin unswept
 NACA-0009 wing, cruciform tail, pusher prop).  Every lifting surface is
 lofted from a real NACA 4-digit section (:func:`naca4_profile`), not a
@@ -151,6 +153,18 @@ def _rotate_y(vertices: list[float], angle: float) -> list[float]:
     for i in range(0, len(out), 3):
         x, z = out[i], out[i + 2]
         out[i], out[i + 2] = c * x + s * z, -s * x + c * z
+    return out
+
+
+def _rotate_z(vertices: list[float], angle: float) -> list[float]:
+    """Rotate flat XYZ vertices about the +Z axis through the origin
+    (angle ``pi / 2`` stands a nose-along-+X craft on its tail: +X -> +Y)."""
+
+    c, s = cos(angle), sin(angle)
+    out = list(vertices)
+    for i in range(0, len(out), 3):
+        x, y = out[i], out[i + 1]
+        out[i], out[i + 1] = c * x - s * y, s * x + c * y
     return out
 
 
@@ -348,10 +362,12 @@ def drone_geometry(*, prop_diameter_in: float, motor_mass: float,
     return _pack(parts)
 
 
-#: tail lift props of the winged VTOL relative to the main (catalog) props
-#: -- also baked into the catalog's diskAreaFactor (2 + 2 * 0.8^2 ~ 3.3)
-_TAIL_PROP_RATIO = 0.8
-_FIN_HEIGHT_RATIO = 0.24     # vertical stabilizer height / boom length
+#: cruciform tail-sitter proportions (documented heuristics): the
+#: secondary (short) wing pair's span relative to the main pair, and the
+#: props on its tips relative to the main-tip (catalog) props -- the prop
+#: ratio is baked into the catalog's diskAreaFactor (2 + 2 * 0.8^2 ~ 3.3)
+_SECONDARY_SPAN_RATIO = 0.62
+_SECONDARY_PROP_RATIO = 0.8
 
 #: NACA 4-digit sections per surface role (max thickness fraction = the
 #: last two digits / 100; validated by the geometry tests)
@@ -507,17 +523,24 @@ def winged_vtol_geometry(*, wing_span: float, wing_area: float,
                          prop_diameter: float, motor_mass: float,
                          battery_mass: float,
                          segments: int = 24) -> dict[str, Any]:
-    """A to-scale winged VTOL quadplane in its hover configuration.
+    """A to-scale cruciform tail-sitter VTOL, baked in its hover attitude.
 
-    Exactly four lift rotors, every disk horizontal (surface normal
-    straight up): the two large catalog props on wingtip nacelles (they
-    tilt forward for cruise, where they turn against the tip vortices --
-    the modeled induced-drag bonus -- but are drawn lifting), and two
-    smaller props (``_TAIL_PROP_RATIO`` of the catalog diameter) atop
-    the twin vertical stabilizers.  The wing is an unswept NACA-2412
-    loft: chord comes from ``wing_area / wing_span`` (so span and area
-    stay consistent), tapering mildly about a straight quarter-chord.
-    Fuselage width follows the battery brick.
+    The craft is assembled nose-along-+X (the cruise frame) and then
+    stood on its tail (+X -> +Y), so the scene reads as hover: a minimal
+    slender lathed fuselage; two unswept airfoil-lofted wing pairs in a
+    ``+`` cruciform -- the main NACA-2412 pair spans ``wing_span`` with
+    chord = ``wing_area / wing_span`` tapering about a straight
+    quarter-chord, the secondary NACA-0009 pair is
+    ``_SECONDARY_SPAN_RATIO`` of that span at the same chords -- and one
+    tractor rotor on each of the four wingtips, every thrust axis
+    PARALLEL to the wing chords and the body axis.  In hover the vehicle
+    hangs nose-up on its four (now horizontal) disks; for cruise the
+    whole craft pitches over and flies wing-borne.  No booms and no
+    separate tail: the cruciform panels are the tail.  The main-pair
+    tips carry the catalog props, the secondary tips
+    ``_SECONDARY_PROP_RATIO``-scaled ones (that ratio is baked into the
+    catalog's diskAreaFactor).  Fuselage radius follows the battery
+    brick, drawn as an indigo sleeve at its true station.
     """
 
     if min(wing_span, wing_area, fuselage_length, prop_diameter,
@@ -526,90 +549,69 @@ def winged_vtol_geometry(*, wing_span: float, wing_area: float,
     mean_chord = wing_area / wing_span
     root = 2.0 * mean_chord / (1.0 + taper)
     tip = root * taper
-    half = wing_span / 2
+    long_half = wing_span / 2
+    short_half = _SECONDARY_SPAN_RATIO * long_half
     motor_d, motor_h = motor_size(motor_mass)
-    bat_l, bat_w, bat_h = battery_size(battery_mass)
+    bat_l, bat_w, _bat_h = battery_size(battery_mass)
 
-    body_w = max(0.10, bat_w + 0.03)
-    body_h = max(0.11, bat_h + 0.06)
-    nose, cabin, boat = (0.22 * fuselage_length, 0.38 * fuselage_length,
-                         0.40 * fuselage_length)
-    x_nose = 0.30 * fuselage_length + nose  # wing sits above the CG
-    fuselage = _merge(
-        _loft((x_nose - nose, 0.0, 0.0), (0.0, body_h / 2, 0.0),
-              (0.0, 0.0, body_w / 2),
-              (x_nose, -0.1 * body_h, 0.0), (0.0, 0.3 * body_h, 0.0),
-              (0.0, 0.0, 0.3 * body_w)),
-        _box(cabin, body_h, body_w, cx=x_nose - nose - cabin / 2),
-        _loft((x_nose - nose - cabin, 0.0, 0.0), (0.0, 0.0, body_w / 2),
-              (0.0, body_h / 2, 0.0),
-              (x_nose - nose - cabin - boat, 0.05 * body_h, 0.0),
-              (0.0, 0.0, 0.18 * body_w), (0.0, 0.18 * body_h, 0.0)))
+    # not much of a body: just wide enough for the battery brick
+    body_r = max(0.040, bat_w / 2 + 0.010)
+    half = fuselage_length / 2
+    fuselage = _tube([(half, 0.15 * body_r),
+                      (half - 0.30 * fuselage_length, body_r),
+                      (-half + 0.30 * fuselage_length, body_r),
+                      (-half, 0.40 * body_r)], segments)
 
-    wing_y = body_h / 2 + 0.01  # shoulder wing
-    right = _lift_surface(origin=(0.0, wing_y, 0.0), direction=(0.0, 0.0, 1.0),
-                          length=half, root_chord=root, tip_chord=tip,
-                          section=WING_SECTION)
-    wing = _merge(right, _mirror_z(right))
+    x_qc = -0.05 * fuselage_length  # shared quarter-chord, near mid-body
+    main = _lift_surface(origin=(x_qc, 0.0, 0.0),
+                         direction=(0.0, 0.0, 1.0), length=long_half,
+                         root_chord=root, tip_chord=tip,
+                         section=WING_SECTION)
+    wing = _merge(main, _mirror_z(main))
+    tail = _merge(*(_lift_surface(origin=(x_qc, 0.0, 0.0),
+                                  direction=(0.0, side, 0.0),
+                                  length=short_half, root_chord=root,
+                                  tip_chord=tip, section=TAIL_SECTION)
+                    for side in (1.0, -1.0)))
 
-    # twin booms from the wing back to the vertical stabilizers
-    boom_len = 0.55 * fuselage_length + 0.25 * mean_chord
-    boom_z = 0.30 * half
-    fin_h = _FIN_HEIGHT_RATIO * boom_len
-    fin_root = 0.45 * mean_chord + 0.05
-    fin_tip = 0.6 * fin_root
-    x_fin = -boom_len  # fin quarter-chord (straight, like the wing's)
-    fin_top = wing_y + fin_h
-    booms = [_box(boom_len + root / 2, 0.024, 0.024,
-                  cx=-(boom_len - root / 2) / 2, cy=wing_y, cz=side * boom_z)
-             for side in (1.0, -1.0)]
-    fins = [_lift_surface(origin=(x_fin, wing_y, side * boom_z),
-                          direction=(0.0, 1.0, 0.0), length=fin_h,
-                          root_chord=fin_root, tip_chord=fin_tip,
-                          section=TAIL_SECTION)
-            for side in (1.0, -1.0)]
-    hstab = _lift_surface(origin=(x_fin, fin_top, -boom_z),
-                          direction=(0.0, 0.0, 1.0), length=2 * boom_z,
-                          root_chord=0.55 * fin_root,
-                          tip_chord=0.55 * fin_root, section=TAIL_SECTION)
-    tail = _merge(*fins, hstab)
+    # one tractor rotor per wingtip: pod + motor can + disk, all four
+    # thrust axes along +X (the body axis) -- horizontal disks in hover
+    nac_r = 0.72 * motor_d
+    pod_len = max(4.0 * motor_h, 0.9 * tip)
+    x_pod_nose = x_qc + 0.25 * tip + 0.35 * pod_len
+    x_disk = x_pod_nose + motor_h + 0.004
+    tips = [(0.0, long_half, prop_diameter / 2),
+            (0.0, -long_half, prop_diameter / 2),
+            (short_half, 0.0, _SECONDARY_PROP_RATIO * prop_diameter / 2),
+            (-short_half, 0.0, _SECONDARY_PROP_RATIO * prop_diameter / 2)]
+    pods, motors, props = [], [], []
+    for ty, tz, prop_r in tips:
+        pod = _tube([(x_pod_nose, 0.35 * nac_r),
+                     (x_pod_nose - 0.30 * pod_len, nac_r),
+                     (x_pod_nose - 0.85 * pod_len, nac_r),
+                     (x_pod_nose - pod_len, 0.40 * nac_r)], segments)
+        pods.append((_translate(pod[0], 0.0, ty, tz), pod[1]))
+        motor = _tube([(x_pod_nose + motor_h, 0.42 * motor_d),
+                       (x_pod_nose, 0.50 * motor_d)], segments)
+        motors.append((_translate(motor[0], 0.0, ty, tz), motor[1]))
+        prop = _tube([(x_disk, prop_r), (x_disk + 0.0025, prop_r)],
+                     max(segments, 32))
+        props.append((_translate(prop[0], 0.0, ty, tz), prop[1]))
 
-    # exactly four lift rotors, all disks horizontal (normals +Y):
-    # two on wingtip nacelles, two atop the vertical stabilizers
-    nac_r = 0.75 * motor_d
-    nac_len = 4.0 * motor_h
-    nacelles, props, motors = [], [], []
-    for side in (1.0, -1.0):
-        z = side * half
-        pod = _tube([(0.55 * nac_len, 0.30 * nac_r),
-                     (0.25 * nac_len, nac_r),
-                     (-0.35 * nac_len, nac_r),
-                     (-0.45 * nac_len, 0.45 * nac_r)], segments)
-        nacelles.append((_translate(pod[0], 0.0, wing_y, z), pod[1]))
-        motor, prop = _lift_rotor(0.0, wing_y + nac_r,
-                                  z, prop_radius=prop_diameter / 2,
-                                  motor_mass=motor_mass, segments=segments)
-        motors.append(motor)
-        props.append(prop)
-    for side in (1.0, -1.0):
-        motor, prop = _lift_rotor(x_fin, fin_top, side * boom_z,
-                                  prop_radius=_TAIL_PROP_RATIO
-                                  * prop_diameter / 2,
-                                  motor_mass=motor_mass, segments=segments)
-        motors.append(motor)
-        props.append(prop)
+    x_bay = 0.10 * fuselage_length  # battery just ahead of the wing
+    battery = _tube([(x_bay + bat_l / 2, body_r + 0.002),
+                     (x_bay - bat_l / 2, body_r + 0.002)], segments)
 
-    battery = _box(bat_l, bat_h, bat_w,
-                   cx=x_nose - nose - cabin / 2,
-                   cy=-(body_h / 2 + bat_h / 2 - 0.01))
+    def stand(mesh: Mesh) -> Mesh:  # hover attitude: nose up
+        return _rotate_z(mesh[0], pi / 2), mesh[1]
 
     return _pack([
-        ("frame", _merge(fuselage, *booms), 1.0),
-        ("wing", wing, 1.0),
-        ("tail", tail, 1.0),
-        ("motors", _merge(*nacelles, *motors), 1.0),
-        ("props", _merge(*props), 0.55),
-        ("battery", battery, 1.0),
+        ("frame", stand(fuselage), 1.0),
+        ("wing", stand(wing), 1.0),
+        ("tail", stand(tail), 1.0),
+        ("motors", stand(_merge(*pods, *motors)), 1.0),
+        ("props", stand(_merge(*props)), 0.55),
+        ("battery", stand(battery), 1.0),
     ])
 
 
@@ -683,37 +685,41 @@ def interceptor_geometry(*, body_length: float, wing_span: float,
 def teardrop_quad_geometry(*, fuselage_length: float, prop_diameter: float,
                            motor_mass: float, battery_mass: float,
                            segments: int = 24) -> dict[str, Any]:
-    """A to-scale streamlined teardrop-body quad (wingless interceptor).
+    """A to-scale streamlined teardrop-body quad (wingless dash bird).
 
     The shell is a body of revolution lathed from the NACA-0025
-    half-thickness curve (a genuine teardrop: blunt nose forward, fine
-    tail aft), just wide enough for the battery brick.  Four arms reach
-    from the shell's widest station to the lift motors; all four prop
-    disks are horizontal (surface normals +Y) and ride just above the
-    hull's crown so nothing slices through them.  The battery is drawn
-    as an indigo sleeve at its true position inside the shell.
+    half-thickness curve and stood on end: its long axis is NORMAL to
+    the rotor plane -- the bullet pierces the disk plane blunt-nose-up,
+    fine tail down -- so in a dash (the whole quad pitched over) the
+    body flies point-first with minimal frontal area.  Four arms radiate
+    horizontally from the widest station to the lift motors, keeping the
+    four prop disks a planar quad around the body (surface normals +Y,
+    parallel to the body axis) with genuine radial clearance to the
+    hull.  The battery is drawn as an indigo sleeve at its true position
+    inside the shell.
     """
 
     if min(fuselage_length, prop_diameter) <= 0:
         raise AnalysisError("teardrop quad dimensions must be positive")
     prop_d = prop_diameter
     spacing = prop_d + _PROP_CLEARANCE
-    motor_d, motor_h = motor_size(motor_mass)
+    motor_d, _motor_h = motor_size(motor_mass)
     bat_l, bat_w, _bat_h = battery_size(battery_mass)
     body_r = max(0.045, bat_w / 2 + 0.014)
     half = fuselage_length / 2
 
     # teardrop of revolution: the NACA-0025 upper surface as the radius
-    # profile (tiny positive end radii keep the lathe well-formed)
+    # profile (tiny positive end radii keep the lathe well-formed);
+    # lathed about +X, then stood on end (+X -> +Y: blunt nose up)
     curve = [(x, y) for x, y in naca4_profile("0025", 28) if y > -1e-9]
     peak = max(y for _, y in curve)
     rings = sorted(((half - x * fuselage_length,
                      body_r * max(y, 0.02 * peak) / peak)
                     for x, y in curve), key=lambda r: r[0])
     shell = _tube(rings, segments)
-    x_widest = half - 0.30 * fuselage_length  # NACA max thickness station
+    shell = (_rotate_z(shell[0], pi / 2), shell[1])
+    y_widest = half - 0.30 * fuselage_length  # NACA max thickness station
 
-    arm_y = max(0.4 * body_r, body_r + 0.008 - motor_h)
     arms, motors, props = [], [], []
     arm_reach = (spacing / 2) * 2**0.5
     arm_length = arm_reach + motor_d / 2
@@ -721,19 +727,20 @@ def teardrop_quad_geometry(*, fuselage_length: float, prop_diameter: float,
         angle = atan2(mz, mx)
         arm = _box(arm_length, _ARM_THICKNESS, _ARM_WIDTH, cx=arm_length / 2)
         arms.append((_translate(_rotate_y(arm[0], -angle),
-                                x_widest, arm_y, 0.0), arm[1]))
-        motor, prop = _lift_rotor(x_widest + mx * spacing / 2,
-                                  arm_y + _ARM_THICKNESS / 2,
+                                0.0, y_widest, 0.0), arm[1]))
+        motor, prop = _lift_rotor(mx * spacing / 2,
+                                  y_widest + _ARM_THICKNESS / 2,
                                   mz * spacing / 2,
                                   prop_radius=prop_d / 2,
                                   motor_mass=motor_mass, segments=segments)
         motors.append(motor)
         props.append(prop)
 
-    x_bay = half - 0.32 * fuselage_length
+    y_bay = half - 0.32 * fuselage_length
     bay_r = body_r * 0.96 + 0.003
-    battery = _tube([(x_bay + bat_l / 2, bay_r),
-                     (x_bay - bat_l / 2, bay_r)], segments)
+    bay = _tube([(y_bay + bat_l / 2, bay_r),
+                 (y_bay - bat_l / 2, bay_r)], segments)
+    battery = (_rotate_z(bay[0], pi / 2), bay[1])
 
     return _pack([
         ("frame", _merge(shell, *arms), 1.0),
@@ -830,9 +837,10 @@ def mission_geometry(study: TradeStudy, architecture: Architecture,
 
     The selected airframe's attributes pick the builder: no wing and no
     fuselage -> :func:`drone_geometry` (the plain quad); no wing but a
-    real fuselage -> :func:`teardrop_quad_geometry`; a single motor
-    station -> :func:`interceptor_geometry`; otherwise
-    :func:`winged_vtol_geometry`.
+    real fuselage -> :func:`teardrop_quad_geometry` (the upended
+    bullet); a single motor station -> :func:`interceptor_geometry`;
+    otherwise :func:`winged_vtol_geometry` (the cruciform tail-sitter,
+    rendered in hover attitude).
     """
 
     p = {**mission_params(study, architecture), **overrides}

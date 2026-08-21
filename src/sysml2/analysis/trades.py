@@ -490,8 +490,8 @@ class TradeStudy:
 
     # -- exact reporting ---------------------------------------------------------
 
-    def _architecture(self, selection: dict[str, str]) -> Architecture:
-        """Re-evaluate a selection exactly with the interpreter."""
+    def _bindings(self, selection: dict[str, str]) -> dict[str, Any]:
+        """Interpreter bindings (variant instances + derived values)."""
 
         bindings: dict[str, Any] = {}
         for pname, vname in selection.items():
@@ -506,11 +506,17 @@ class TradeStudy:
             source = (self._namespace(self.interp.resolver.resolve(
                 usage.types[0], typ)) if usage.types else usage)
             bindings[pname] = self.interp.instantiate(source)
-        metrics: dict[str, float] = {}
         for name, expr in self.derived_order:
-            value = self.interp.evaluate(expr, self.assembly, **bindings)
-            metrics[name] = float(value)
-            bindings[name] = value
+            bindings[name] = self.interp.evaluate(expr, self.assembly,
+                                                  **bindings)
+        return bindings
+
+    def _architecture(self, selection: dict[str, str]) -> Architecture:
+        """Re-evaluate a selection exactly with the interpreter."""
+
+        bindings = self._bindings(selection)
+        metrics = {name: float(bindings[name])
+                   for name, _ in self.derived_order}
         violations: list[str] = []
         for con in named_members(self.interp, self.assembly, ("constraint",)):
             body = constraint_expr(self.interp, con)
@@ -545,6 +551,43 @@ class TradeStudy:
         hold.  No solver runs -- this needs only the interpreter.
         """
 
+        self._check_selection(selection)
+        return self._architecture({p: selection[p] for p in self.points})
+
+    def margins(self, selection: dict[str, str]) -> dict[str, dict[str, Any]]:
+        """Numeric constraint margins for one mix (>= 0 iff it holds).
+
+        Per constraint name: ``{"margin", "ok", "text"}``.  ``margin``
+        follows the standard orientation (``lhs <= rhs`` -> ``rhs -
+        lhs``, ``lhs >= rhs`` -> ``lhs - rhs``; strict comparisons use
+        their closure) and is ``None`` when the body is not a plain
+        comparison -- ``ok`` still reports the interpreter's verdict.
+        ``text`` is the constraint body's source text, so a view can
+        show the requirement threshold next to the achieved margin.
+        """
+
+        self._check_selection(selection)
+        bindings = self._bindings({p: selection[p] for p in self.points})
+        out: dict[str, dict[str, Any]] = {}
+        for con in named_members(self.interp, self.assembly, ("constraint",)):
+            body = constraint_expr(self.interp, con)
+            if body is None:
+                continue
+            ok = bool(self.interp.evaluate(body, self.assembly, **bindings))
+            margin: float | None = None
+            if isinstance(body, A.Binary) and body.op in ("<", "<=", ">",
+                                                          ">="):
+                lhs = float(self.interp.evaluate(body.left, self.assembly,
+                                                 **bindings))
+                rhs = float(self.interp.evaluate(body.right, self.assembly,
+                                                 **bindings))
+                margin = (rhs - lhs) if body.op in ("<", "<=") \
+                    else (lhs - rhs)
+            out[con.name or con.label] = {"margin": margin, "ok": ok,
+                                          "text": body.to_text()}
+        return out
+
+    def _check_selection(self, selection: dict[str, str]) -> None:
         for pname, point in self.points.items():
             if pname not in selection:
                 raise AnalysisError(f"selection is missing point {pname!r}")
@@ -555,7 +598,6 @@ class TradeStudy:
         extra = set(selection) - set(self.points)
         if extra:
             raise AnalysisError(f"unknown variation point(s) {sorted(extra)}")
-        return self._architecture({p: selection[p] for p in self.points})
 
     def all_architectures(self) -> list[Architecture]:
         """Every candidate mix (the full Cartesian product), exact metrics.

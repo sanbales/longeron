@@ -8,11 +8,16 @@ geometries on load and per-interaction work is a camera move plus one
 render.  Rendering is on-demand (no free-running animation loop), so an
 idle viewer costs nothing.
 
-Interaction: drag to orbit, scroll to zoom, double-click to re-fit.
-An optional second mesh (``mesh_b_json``) renders side by side at true
-scale for A/B comparison, with captions from ``label``/``label_b``.
-Updating ``mesh_json`` from Python (e.g. observing another widget's
-traitlet) re-bakes the scene in place.
+Interaction: drag to orbit, shift-drag or right-drag to pan (the canvas
+swallows the context-menu event so JupyterLab's menu stays out of the
+way), scroll to zoom, double-click to re-fit; a subtle overlay hint
+names the bindings.  The canvas fills the available cell width (a
+ResizeObserver re-sizes the renderer and re-fits the camera on host
+resizes); ``width_px``/``height_px`` set the aspect ratio and the
+fallback width.  An optional second mesh (``mesh_b_json``) renders side
+by side at true scale for A/B comparison, with captions from
+``label``/``label_b``.  Updating ``mesh_json`` from Python (e.g.
+observing another widget's traitlet) re-bakes the scene in place.
 
 Offline tradeoff: the front-end imports three.js (~630 kB) from the
 jsDelivr CDN at view time -- the one exception to the otherwise
@@ -57,26 +62,27 @@ async function render({ model, el }) {
     return;
   }
 
-  const width = model.get("width_px");
-  const height = model.get("height_px");
+  const aspect = Math.max(
+    0.4, model.get("width_px") / Math.max(1, model.get("height_px")));
   const stage = document.createElement("div");
   stage.className = "sysml2-viewer3d-stage";
-  stage.style.width = width + "px";
-  stage.style.height = height + "px";
   const captions = document.createElement("div");
   captions.className = "sysml2-viewer3d-captions";
-  captions.style.maxWidth = width + "px";
   el.append(stage, captions);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(width, height);
   stage.appendChild(renderer.domElement);
+  const hint = document.createElement("div");
+  hint.className = "sysml2-viewer3d-hint";
+  hint.textContent = "drag orbit \u00b7 shift-drag or right-drag pan " +
+    "\u00b7 wheel zoom \u00b7 double-click fit";
+  stage.appendChild(hint);
   renderer.domElement.setAttribute("role", "img");
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#f4f4f2");
-  const camera = new THREE.PerspectiveCamera(38, width / height, 0.001, 50);
+  const camera = new THREE.PerspectiveCamera(38, aspect, 0.001, 50);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f98, 0.95));
   const key = new THREE.DirectionalLight(0xffffff, 1.4);
   key.position.set(2, 3, 1.5);
@@ -91,6 +97,7 @@ async function render({ model, el }) {
   // --- camera: spherical orbit about a fit target, render on demand
   let target = new THREE.Vector3();
   let radius = 1, theta = 0.9, phi = 1.05;
+  let height = model.get("height_px");
   let pending = false;
   function requestRender() {
     if (pending) return;
@@ -115,6 +122,24 @@ async function render({ model, el }) {
     radius = (span / 2) / Math.tan((camera.fov / 2) * Math.PI / 180) * 1.35;
     applyCamera();
   }
+
+  // --- sizing: fill the host width at a fixed aspect; re-fit on resize
+  function layout(refit) {
+    const w = Math.max(240, el.clientWidth || model.get("width_px"));
+    height = Math.round(w / aspect);
+    stage.style.height = height + "px";
+    renderer.setSize(w, height);
+    camera.aspect = w / height;
+    camera.updateProjectionMatrix();
+    if (refit) fit(); else requestRender();
+  }
+  let lastWidth = 0;
+  const observer = new ResizeObserver(() => {
+    const w = el.clientWidth;
+    if (w && Math.abs(w - lastWidth) > 1) { lastWidth = w; layout(true); }
+  });
+  observer.observe(el);
+  layout(false);
 
   // --- geometry: one BufferGeometry + material per baked part
   function buildGroup(meshJson) {
@@ -188,28 +213,53 @@ async function render({ model, el }) {
       captions.children.length > 1 ? "space-around" : "center";
   }
 
-  // --- interaction: drag orbits, wheel zooms, double-click re-fits
-  let dragging = null;
-  renderer.domElement.addEventListener("pointerdown", (event) => {
-    dragging = { x: event.clientX, y: event.clientY };
-    renderer.domElement.setPointerCapture(event.pointerId);
+  // --- interaction: drag orbits, shift/right-drag pans, wheel zooms,
+  // double-click re-fits; the canvas owns the context-menu event so
+  // JupyterLab's menu cannot hijack the right-drag pan
+  const canvas = renderer.domElement;
+  canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
   });
-  renderer.domElement.addEventListener("pointermove", (event) => {
+  let dragging = null;  // { mode: "orbit" | "pan", x, y }
+  canvas.addEventListener("pointerdown", (event) => {
+    const pan = event.button === 2 || event.shiftKey;
+    dragging = { mode: pan ? "pan" : "orbit",
+                 x: event.clientX, y: event.clientY };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
     if (!dragging) return;
-    theta += (event.clientX - dragging.x) * 0.008;
-    phi = Math.min(Math.PI - 0.15,
-                   Math.max(0.1, phi + (event.clientY - dragging.y) * 0.008));
-    dragging = { x: event.clientX, y: event.clientY };
+    const dx = event.clientX - dragging.x;
+    const dy = event.clientY - dragging.y;
+    dragging.x = event.clientX;
+    dragging.y = event.clientY;
+    if (dragging.mode === "pan") {
+      // world units per screen pixel at the target distance
+      const scale = 2 * radius
+        * Math.tan((camera.fov / 2) * Math.PI / 180) / height;
+      camera.updateMatrixWorld();
+      const right = new THREE.Vector3()
+        .setFromMatrixColumn(camera.matrixWorld, 0);
+      const up = new THREE.Vector3()
+        .setFromMatrixColumn(camera.matrixWorld, 1);
+      target.addScaledVector(right, -dx * scale);
+      target.addScaledVector(up, dy * scale);
+    } else {
+      theta += dx * 0.008;
+      phi = Math.min(Math.PI - 0.15,
+                     Math.max(0.1, phi + dy * 0.008));
+    }
     applyCamera();
   });
-  renderer.domElement.addEventListener("pointerup", () => (dragging = null));
-  renderer.domElement.addEventListener("wheel", (event) => {
+  canvas.addEventListener("pointerup", () => (dragging = null));
+  canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     radius = Math.min(20, Math.max(0.02,
                                    radius * Math.exp(event.deltaY * 0.001)));
     applyCamera();
   }, { passive: false });
-  renderer.domElement.addEventListener("dblclick", fit);
+  canvas.addEventListener("dblclick", fit);
 
   model.on("change:mesh_json", rebuild);
   model.on("change:mesh_b_json", rebuild);
@@ -217,7 +267,7 @@ async function render({ model, el }) {
   model.on("change:label_b", relabel);
   relabel();
   rebuild();
-  return () => renderer.dispose();
+  return () => { observer.disconnect(); renderer.dispose(); };
 }
 export default { render };
 """.replace("%THREE_URL%", THREE_URL)
@@ -226,10 +276,16 @@ _CSS = """
 .sysml2-viewer3d { font-family: Helvetica, Arial, sans-serif; }
 .sysml2-viewer3d-stage {
   border: 1px solid #e2e2e2; border-radius: 8px; overflow: hidden;
-  background: #f4f4f2; position: relative;
+  background: #f4f4f2; position: relative; width: 100%;
 }
 .sysml2-viewer3d-stage canvas { display: block; cursor: grab; }
 .sysml2-viewer3d-stage canvas:active { cursor: grabbing; }
+.sysml2-viewer3d-hint {
+  position: absolute; right: 8px; bottom: 6px; font-size: 10px;
+  color: #8a8f98; background: rgba(244, 244, 242, 0.78);
+  padding: 2px 8px; border-radius: 9px; pointer-events: none;
+  user-select: none;
+}
 .sysml2-viewer3d-captions {
   display: flex; justify-content: space-around; margin-top: 6px;
   font-size: 12px; color: #555555; font-variant-numeric: tabular-nums;
@@ -266,6 +322,7 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         mesh_b_json = traitlets.Unicode("").tag(sync=True)  # "" = single
         label = traitlets.Unicode("").tag(sync=True)
         label_b = traitlets.Unicode("").tag(sync=True)
+        #: aspect ratio + fallback width; the canvas fills the host width
         width_px = traitlets.Int(760).tag(sync=True)
         height_px = traitlets.Int(430).tag(sync=True)
 
@@ -280,9 +337,13 @@ def mesh_viewer(mesh: dict[str, Any], mesh_b: dict[str, Any] | None = None,
     """View one baked mesh dict, or two side by side at true scale.
 
     ``mesh``/``mesh_b`` come from :mod:`sysml2.analysis.geometry` (or any
-    producer of the same schema).  Assign a new JSON string to the
-    returned widget's ``mesh_json`` to swap the scene in place -- e.g.
-    from an ``observe`` handler on another widget.
+    producer of the same schema).  The canvas fills the notebook cell's
+    width; ``width_px``/``height_px`` set its aspect ratio (and the
+    fallback width when the host width cannot be measured).  Drag to
+    orbit, shift-drag or right-drag to pan, scroll to zoom, double-click
+    to re-fit.  Assign a new JSON string to the returned widget's
+    ``mesh_json`` to swap the scene in place -- e.g. from an ``observe``
+    handler on another widget.
     """
 
     cls = _viewer_class()

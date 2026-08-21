@@ -236,11 +236,15 @@ class TestNacaProfile:
             geometry.naca4_profile("2412", points=4)
 
 
-def _chord_at(part, coord, station, tol=0.02):
-    """(x_le, x_te) of a lifting surface at one span station."""
+def _chord_at(part, coord, station, tol=0.02, axis=0):
+    """(le, te) chordwise extent of a lifting surface at one span station.
+
+    ``coord`` picks the span axis to filter on, ``axis`` the chord axis to
+    measure (0 = x for cruise-frame builders, 1 = y for the tail-sitter
+    baked in hover attitude)."""
 
     vertices = part["vertices"]
-    xs = [vertices[i] for i in range(0, len(vertices), 3)
+    xs = [vertices[i + axis] for i in range(0, len(vertices), 3)
           if abs(vertices[i + coord] - station) < tol]
     assert xs, f"no section vertices near station {station}"
     return max(xs), min(xs)
@@ -269,8 +273,8 @@ class TestWingedVtolGeometry:
                                         - quad["bounds"][0][2])
 
     def test_exactly_four_horizontal_lift_props(self):
-        """The VTOL requirement: four rotors, every disk's surface normal
-        straight up (+Y) -- no forward-tilted cruise prop in hover."""
+        """The hover story: four wingtip rotors, every disk's surface
+        normal straight up (+Y) in the baked hover attitude."""
 
         mesh = geometry.winged_vtol_geometry(**WINGED)
         props = next(p for p in mesh["parts"] if p["name"] == "props")
@@ -281,12 +285,64 @@ class TestWingedVtolGeometry:
             assert hi[1] - lo[1] < 0.004          # wafer-thin in Y ...
             assert hi[0] - lo[0] > 10 * (hi[1] - lo[1])  # ... wide in X
             assert hi[2] - lo[2] > 10 * (hi[1] - lo[1])  # ... and in Z
-        # two large disks at the wingtips, two smaller atop the fins
+        # catalog props on the main-pair tips, smaller ones on the
+        # secondary pair (the ratio baked into diskAreaFactor)
         spans = sorted(box[1][2] - box[0][2] for box in disks)
         assert spans[0] == pytest.approx(spans[1], abs=1e-3)
         assert spans[2] == pytest.approx(spans[3], abs=1e-3)
         assert spans[0] == pytest.approx(
-            geometry._TAIL_PROP_RATIO * spans[2], rel=0.02)
+            geometry._SECONDARY_PROP_RATIO * spans[2], rel=0.02)
+
+    def test_thrust_axes_parallel_to_the_body_axis(self):
+        """The tail-sitter requirement, encoded: the fuselage's long axis
+        points up (hover attitude) and every prop disk's surface normal
+        is the SAME axis -- thrust parallel to the chords/body axis, not
+        perpendicular to the wing surface."""
+
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        boxes = _component_boxes(frame)
+        assert len(boxes) == 1  # one slender fuselage: no booms
+        lo, hi = boxes[0]
+        extents = [hi[i] - lo[i] for i in range(3)]
+        body_axis = extents.index(max(extents))
+        assert body_axis == 1  # nose up
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        for dlo, dhi in _component_boxes(props):
+            d = [dhi[i] - dlo[i] for i in range(3)]
+            assert d.index(min(d)) == body_axis  # normal == body axis
+
+    def test_minimal_slender_fuselage_no_boom_tail(self):
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        boxes = _component_boxes(frame)
+        assert len(boxes) == 1  # the double-boom tail is gone
+        lo, hi = boxes[0]
+        length = hi[1] - lo[1]  # body axis is vertical in hover
+        assert length == pytest.approx(0.95, abs=1e-3)
+        assert max(hi[0] - lo[0], hi[2] - lo[2]) < length / 6  # slender
+
+    def test_cruciform_span_ratio(self):
+        """A '+' cruciform: the main pair (z) is strictly longer than the
+        secondary pair (x), at the documented ratio, and each pair is a
+        thin airfoil in the other pair's span direction."""
+
+        mesh = geometry.winged_vtol_geometry(**WINGED)
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        tail = next(p for p in mesh["parts"] if p["name"] == "tail")
+        wing_span = max(wing["vertices"][2::3]) - min(wing["vertices"][2::3])
+        tail_span = max(tail["vertices"][0::3]) - min(tail["vertices"][0::3])
+        assert wing_span == pytest.approx(2.6, abs=1e-3)
+        assert tail_span == pytest.approx(
+            geometry._SECONDARY_SPAN_RATIO * 2.6, rel=0.01)
+        assert wing_span > tail_span
+        # thin across their thickness axes: airfoils, not slabs
+        wing_thick = (max(wing["vertices"][0::3])
+                      - min(wing["vertices"][0::3]))
+        tail_thick = (max(tail["vertices"][2::3])
+                      - min(tail["vertices"][2::3]))
+        assert wing_thick < 0.1 * wing_span
+        assert tail_thick < 0.1 * tail_span
 
     @pytest.mark.parametrize("prop_diameter", [0.24, 0.33, 0.51])
     def test_no_two_props_intersect(self, prop_diameter):
@@ -304,14 +360,15 @@ class TestWingedVtolGeometry:
 
     def test_wing_is_an_unswept_airfoil_loft(self):
         """Zero sweep (straight quarter-chord), chord = area/span, and a
-        real NACA-2412 section instead of a rectangular slab."""
+        real NACA-2412 section instead of a rectangular slab.  In the
+        hover attitude the chords run along +Y (the body axis)."""
 
         mesh = geometry.winged_vtol_geometry(**WINGED)
         wing = next(p for p in mesh["parts"] if p["name"] == "wing")
         mean = 0.624 / 2.6
         root = 2.0 * mean / 1.6
-        root_le, root_te = _chord_at(wing, 2, 0.0)
-        tip_le, tip_te = _chord_at(wing, 2, 1.29, tol=0.02)
+        root_le, root_te = _chord_at(wing, 2, 0.0, axis=1)
+        tip_le, tip_te = _chord_at(wing, 2, 1.29, tol=0.02, axis=1)
         assert root_le - root_te == pytest.approx(root, rel=0.02)
         assert tip_le - tip_te == pytest.approx(0.6 * root, rel=0.03)
         # straight quarter-chord: identical at root and tip
@@ -320,18 +377,18 @@ class TestWingedVtolGeometry:
         assert root_qc == pytest.approx(tip_qc, abs=0.003)
         # section thickness ~ NACA 2412 (12% of chord), not a slab
         vertices = wing["vertices"]
-        ys = [vertices[i + 1] for i in range(0, len(vertices), 3)
+        xs = [vertices[i] for i in range(0, len(vertices), 3)
               if abs(vertices[i + 2]) < 0.02]
-        assert max(ys) - min(ys) == pytest.approx(0.12 * root, rel=0.06)
-        assert len({round(y, 4) for y in ys}) > 6  # curved, not boxy
+        assert max(xs) - min(xs) == pytest.approx(0.12 * root, rel=0.06)
+        assert len({round(x, 4) for x in xs}) > 6  # curved, not boxy
 
     def test_wing_aspect_ratio_from_the_model(self):
         mesh = geometry.winged_vtol_geometry(**WINGED)
         wing = next(p for p in mesh["parts"] if p["name"] == "wing")
         span = (max(wing["vertices"][2::3]) - min(wing["vertices"][2::3]))
-        chord = (max(wing["vertices"][0::3]) - min(wing["vertices"][0::3]))
+        chord = (max(wing["vertices"][1::3]) - min(wing["vertices"][1::3]))
         assert span == pytest.approx(2.6, abs=1e-3)
-        # x extent = root chord; AR = span / mean chord stays sane
+        # chordwise (y) extent = root chord; AR = span / mean chord
         assert chord == pytest.approx(2.0 * 0.624 / 2.6 / 1.6, rel=0.02)
         assert 6.0 < span / (0.624 / 2.6) < 14.0
 
@@ -397,22 +454,47 @@ class TestTeardropQuadGeometry:
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
 
-    def test_teardrop_shell(self):
-        """A lathed body of revolution: blunt maximum section forward of
-        mid-body, fine tail aft -- and slender against its length."""
+    def test_teardrop_shell_stands_on_end(self):
+        """A lathed body of revolution stood on end: vertical long axis,
+        blunt maximum section in the upper half (nose up), and slender
+        against its length."""
 
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
         frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        shell_box = max(_component_boxes(frame),
+                        key=lambda box: box[1][1] - box[0][1])
+        y_lo, y_hi = shell_box[0][1], shell_box[1][1]
+        assert y_hi - y_lo == pytest.approx(0.62, abs=1e-3)
         vertices = frame["vertices"]
-        shell = [(vertices[i], vertices[i + 1]) for i in
-                 range(0, len(vertices), 3)]
-        x_lo = min(x for x, _ in shell)
-        x_hi = max(x for x, _ in shell)
-        assert x_hi - x_lo >= 0.62 - 1e-3  # arms may reach past the hull
-        widest_x = max(shell, key=lambda p: p[1])[0]
-        assert widest_x > (x_lo + x_hi) / 2  # +X is the (blunt) nose
-        radius = max(y for _, y in shell)
+        widest = max((vertices[i:i + 3] for i in range(0, len(vertices), 3)),
+                     key=lambda v: (v[0] ** 2 + v[2] ** 2))
+        assert widest[1] > (y_lo + y_hi) / 2  # blunt nose is UP
+        radius = max((vertices[i] ** 2 + vertices[i + 2] ** 2) ** 0.5
+                     for i in range(0, len(vertices), 3)
+                     if abs(vertices[i]) < 0.06 and abs(vertices[i + 2]) < 0.06)
         assert radius < 0.15 * 0.62  # genuinely streamlined
+
+    def test_body_long_axis_normal_to_the_rotor_discs(self):
+        """The reported orientation bug, encoded: the bullet's long axis
+        is PERPENDICULAR to the rotor discs (dot(body axis, disc normal)
+        ~ 1) and the shell pierces the rotor plane."""
+
+        mesh = geometry.teardrop_quad_geometry(**TEARDROP)
+        frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        shell_box = max(_component_boxes(frame),
+                        key=lambda box: box[1][1] - box[0][1])
+        extents = [shell_box[1][i] - shell_box[0][i] for i in range(3)]
+        body_axis = extents.index(max(extents))
+        assert body_axis == 1  # the bullet stands on end
+        props = next(p for p in mesh["parts"] if p["name"] == "props")
+        disks = _component_boxes(props)
+        for dlo, dhi in disks:
+            d = [dhi[i] - dlo[i] for i in range(3)]
+            assert d.index(min(d)) == body_axis  # normal || body axis
+        # the body pierces the rotor plane: disks sit strictly between
+        # the shell's nose and tail
+        rotor_plane = min(lo[1] for lo, _ in disks)
+        assert shell_box[0][1] < rotor_plane < shell_box[1][1]
 
     def test_four_horizontal_props_no_overlap(self):
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
@@ -426,13 +508,22 @@ class TestTeardropQuadGeometry:
             for j in range(i + 1, 4):
                 assert _disjoint(disks[i], disks[j]), (i, j)
 
-    def test_props_clear_the_hull_crown(self):
+    def test_props_clear_the_hull_radially(self):
+        """The discs surround the vertical hull as a planar quad: each
+        disc's inner edge keeps clear of the hull's maximum radius."""
+
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
         frame = next(p for p in mesh["parts"] if p["name"] == "frame")
+        shell_box = max(_component_boxes(frame),
+                        key=lambda box: box[1][1] - box[0][1])
+        hull_r = max(shell_box[1][0], -shell_box[0][0],
+                     shell_box[1][2], -shell_box[0][2])
         props = next(p for p in mesh["parts"] if p["name"] == "props")
-        hull_crown = max(frame["vertices"][1::3])
-        rotor_plane = min(props["vertices"][1::3])
-        assert rotor_plane > hull_crown - 1e-9
+        for lo, hi in _component_boxes(props):
+            cx = (lo[0] + hi[0]) / 2
+            cz = (lo[2] + hi[2]) / 2
+            disc_r = (hi[0] - lo[0]) / 2
+            assert (cx ** 2 + cz ** 2) ** 0.5 - disc_r > hull_r
 
     def test_bounds_enclose_all_vertices(self):
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
