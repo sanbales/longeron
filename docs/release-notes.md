@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.6.0 (unreleased)
+## 0.6.0
 
 - Validation diagnostics carry `file:line:column` (positions stamped by
   the builder; models rebuilt from JSON -- including warm cache hits --
@@ -9,7 +9,9 @@
   back in); `longeron parse <dir>` reports every file instead of
   aborting at the first failure
 - Structure diagrams pack disconnected members toward a ~1.6 aspect
-  ratio instead of one tall column
+  ratio instead of one tall column; packing grids escape the global
+  layer spacing entirely (drone structure: 2.2:1 tall -> 1.14:1,
+  -22% canvas area)
 - `attribute x : Real :>> x` no longer reports a false
   `specialization-cycle` error (redefinition edges left the cycle walk)
 - API server: working-tree model + record projection memoized behind a
