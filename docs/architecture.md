@@ -89,4 +89,5 @@ Deeper design rationale for major subsystems:
 :maxdepth: 1
 
 design/m0-interpretations
+design/ocl-stance
 ```

@@ -9,6 +9,13 @@ strict modes.
 Validation never mutates the model. The standard library, when
 consulted, is only visible to the resolver.
 
+Scope: these checks are a curated set aimed at real modeling mistakes
+-- they are not an implementation of the OCL well-formedness
+constraints embedded in the OMG spec metamodel, and conformance claims
+keep those axes separate (the corpus badge measures *parsing*
+conformance). Rationale in the design doc:
+[The OCL stance](../design/ocl-stance.md).
+
 ## Reading a diagnostic
 
 Each diagnostic prints as `severity[code] element: message`:
