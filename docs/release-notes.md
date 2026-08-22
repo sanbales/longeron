@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.5.0 (unreleased)
+## 0.5.0
 
 - Tutorial 09: M0 interpretations (populations, gaps, sequences, the
   trades bridge) + `longeron.m0` reference page
