@@ -1,5 +1,15 @@
 # Release notes
 
+## 0.7.1
+
+- The five 0.7.0 known issues are fixed: bare `individual`/`snapshot`/
+  `timeslice` usages reprint without doubling the keyword, variant
+  references keep their specializations, state entry/do/exit inline
+  action bodies survive reprint, KerML case result expressions emit as
+  valid owned expression features, and `satisfy <Def> by x` projects
+  to ecore/API records without crashing (FeatureTyping, not a
+  Subsetting to a Classifier)
+
 ## 0.7.0
 
 - **Lossless JSON omission**: `to_dict` dropped every falsy field
@@ -35,7 +45,8 @@
   `evaluate`/`instantiate`/`check_requirement` (a feature named
   `bindings` must use the mapping form); `Instance.set` raises
   `EvaluationError` (was `KeyError`/`AttributeError`)
-- Known issues (found by the new tests, documented as skips): four
+- Known issues (found by the new tests, documented as skips; **fixed
+  in 0.7.1**): four
   exporter reprint defects (doubled `individual` keyword on bare
   usages, variant-reference types dropped, inline state-action bodies
   dropped, bare case result expressions in KerML behavior bodies) and
