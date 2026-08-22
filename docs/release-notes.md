@@ -1,6 +1,13 @@
 # Release notes
 
-## 0.3.0 (unreleased)
+## 0.4.0 (unreleased)
+
+- OMG API JSON: derived `source`/`target` on relationship records (pilot-API
+  navigability -- in flight)
+- Planned: Systems Modeling API client + server (`longeron serve`), M0
+  interpretation extensions
+
+## 0.3.0
 
 Highlights on `main` since the 0.2.0 release:
 
