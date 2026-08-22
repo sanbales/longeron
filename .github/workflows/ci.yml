@@ -23,12 +23,16 @@ jobs:
       - run: pixi run test-vendor
 
   test-matrix:
-    # the full test suite on every supported Python, from the same lockfile
-    runs-on: ubuntu-latest
+    # the full test suite on every supported Python, from the same lockfile,
+    # plus a Windows leg (newest Python only) for cross-platform coverage
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         environment: [py310, py311, py312, py313]
+        include:
+          - { os: windows-latest, environment: py313 }
     steps:
       - uses: actions/checkout@v4
 
