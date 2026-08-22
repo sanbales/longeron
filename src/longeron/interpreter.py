@@ -914,9 +914,14 @@ class Interpreter:
             if element.kind in ("calc", "constraint"):
                 return TypeValue(element)
             if element.value is not None:
+                owner_env = Env(self, element.owner or self.model, [{}], instance=env.instance)
+                if env.instance is not None:
+                    # the value may depend on the instance in scope, so a
+                    # model-keyed cache entry would leak one instance's
+                    # value into another instance's evaluation
+                    return self.eval(element.value.expr, owner_env)
                 key = id(element)
                 if key not in self._const_cache:
-                    owner_env = Env(self, element.owner or self.model, [{}], instance=env.instance)
                     self._const_cache[key] = self.eval(element.value.expr, owner_env)
                 return self._const_cache[key]
             return TypeValue(element)

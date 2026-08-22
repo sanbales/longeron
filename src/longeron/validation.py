@@ -52,6 +52,10 @@ def validate(
     library-visibility hop -- the KerML global-namespace convenience for
     standard library packages.  Qualified names (``ScalarValues::Real``)
     and explicitly imported names stay silent.
+
+    Elements inside ``library`` packages are never the subject of
+    diagnostics: a merged-in standard library (e.g. via the CLI's
+    ``--stdlib``) is resolution context, not the model under validation.
     """
 
     library: M.Model | None = None
@@ -85,26 +89,32 @@ class _Checker:
     # -- driver ---------------------------------------------------------------
 
     def check_all(self) -> None:
-        for element in self.model.iter_tree():
-            if isinstance(element, M.Namespace):
-                self.check_duplicate_names(element)
-            if isinstance(element, (M.Definition, M.Usage)):
-                self.check_references(element)
-                self.check_specialization_cycle(element)
-                self.check_expressions(element)
-            if isinstance(element, M.Import):
-                self.check_target(element, element.target, "import")
-            if isinstance(element, M.Alias):
-                self.check_target(element, element.target, "alias")
-            if isinstance(element, M.Dependency):
-                for ref in element.clients + element.suppliers:
-                    self.check_target(element, ref, "dependency")
-            if isinstance(element, (M.Definition, M.Usage)) and element.kind == "state":
-                self.check_state_machine(element)
-            if isinstance(element, M.Usage) and element.kind == "calc":
-                self.check_calc_result(element)
-            if isinstance(element, M.Definition) and element.kind == "calc":
-                self.check_calc_result(element)
+        self._check_tree(self.model)
+
+    def _check_tree(self, element: M.Element) -> None:
+        if isinstance(element, M.Package) and (element.is_library or element.is_standard):
+            return  # library packages are resolution context, not subjects
+        if isinstance(element, M.Namespace):
+            self.check_duplicate_names(element)
+        if isinstance(element, (M.Definition, M.Usage)):
+            self.check_references(element)
+            self.check_specialization_cycle(element)
+            self.check_expressions(element)
+        if isinstance(element, M.Import):
+            self.check_target(element, element.target, "import")
+        if isinstance(element, M.Alias):
+            self.check_target(element, element.target, "alias")
+        if isinstance(element, M.Dependency):
+            for ref in element.clients + element.suppliers:
+                self.check_target(element, ref, "dependency")
+        if isinstance(element, (M.Definition, M.Usage)) and element.kind == "state":
+            self.check_state_machine(element)
+        if isinstance(element, M.Usage) and element.kind == "calc":
+            self.check_calc_result(element)
+        if isinstance(element, M.Definition) and element.kind == "calc":
+            self.check_calc_result(element)
+        for child in element.children():
+            self._check_tree(child)
 
     # -- checks ------------------------------------------------------------------
 

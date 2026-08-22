@@ -1,11 +1,12 @@
 """In-memory model of SysML v2 elements.
 
-This is a pragmatic subset of the SysML v2 metamodel: enough structure to
-faithfully capture the constructs commonly used in textual SysML v2 models
-(packages, definitions, usages, expressions, actions, states, requirements)
-while staying small.  Anything the builder does not understand is preserved
-verbatim as an :class:`Unsupported` element so that exports do not silently
-drop content.
+This is a pragmatic projection of the SysML v2 metamodel: typed dataclasses
+with enough structure to faithfully capture every construct of the textual
+notation (packages, definitions, usages, expressions, actions, states,
+requirements, views, metadata) while staying small.  The builder maps each
+construct to a typed element with no lossy fallback; :class:`Unsupported`
+remains only as a defensive dead-end that the test suite asserts is never
+produced.
 
 All elements can also be constructed programmatically::
 

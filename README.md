@@ -45,7 +45,7 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-make check        # ruff + mypy + 668 tests
+make check        # ruff + mypy + the full pytest suite
 ```
 
 Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
@@ -219,8 +219,9 @@ never pickles) in `~/.cache/longeron` (override with `$LONGERON_CACHE_DIR`;
 the pre-rename `$SYSML2_CACHE_DIR` is still honored),
 keyed by source content plus a fingerprint of the generated parser and
 builder code — edits, grammar regeneration, and package upgrades invalidate
-cleanly. Caching is on by default for directories, off for single files
-(`cache=` overrides; `longeron.clear_cache()` wipes it). Warm directory loads
+cleanly. Caching is on by default -- for single files as well as
+directories, so repeat CLI invocations are fast
+(`cache=False` opts out; `longeron.clear_cache()` wipes it). Warm loads
 are ~1000x faster than cold parses with the ANTLR Python runtime.
 
 ## Command line
@@ -267,7 +268,7 @@ vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
     cli.py                 the `longeron` console command
 src/sysml2/                compatibility shim: `import sysml2` is longeron
 examples/                  drone.sysml + kernel.kerml + demo.py
-tests/                     310 pytest tests (84% coverage)
+tests/                     pytest suite (see the coverage badge above)
 .github/workflows/ci.yml   pixi-based: check + test matrix (3.10-3.13)
                            + grammar-regen drift check (antlr/JDK from lock)
 Makefile                   make check = ruff + mypy + pytest (venv/pip route)

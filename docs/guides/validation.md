@@ -7,7 +7,10 @@ documents every diagnostic code, how name resolution works, and the two
 strict modes.
 
 Validation never mutates the model. The standard library, when
-consulted, is only visible to the resolver.
+consulted, is only visible to the resolver. `library` packages inside
+the model itself (including a merged-in standard library) are treated
+the same way: they are resolution context, never the subject of
+diagnostics.
 
 Scope: these checks are a curated set aimed at real modeling mistakes
 -- they are not an implementation of the OCL well-formedness

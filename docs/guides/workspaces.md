@@ -90,16 +90,18 @@ and {func}`~longeron.workspace.clear_cache` deletes every entry.
 
 ### When caching is on
 
-Caching defaults to on for directories, where it pays off, and off for
-single files:
+Caching defaults to on -- for single files as well as directories. The
+dominant cold-load cost (ANTLR ATN warmup) is paid per process either
+way, so a warm cache hit turns a multi-second CLI invocation into
+milliseconds:
 
 ```python
 longeron.load("models/")  # cached
-longeron.load("one.sysml")  # not cached
-longeron.load("one.sysml", cache=True)  # cached anyway
+longeron.load("one.sysml")  # cached too
+longeron.load("one.sysml", cache=False)  # parse from source
 ```
 
-Pass `cache=` to override either default. On the command line,
+Pass `cache=False` to opt out. On the command line,
 `--no-cache` bypasses the cache for any model-consuming subcommand
 (see the [CLI reference](cli.md#model-inputs-and-shared-options)).
 

@@ -20,8 +20,9 @@ pickles, so entries are inspectable text and never execute code on load.
 An entry's key is the SHA-256 of the source text plus a fingerprint of the
 generated parser, builder, model, and AST code -- editing a source file,
 regenerating the grammar, or upgrading the package all invalidate cleanly.
-Caching defaults to on for directories (where it pays off) and off for
-single files; pass ``cache=`` to override.
+Caching defaults to on -- for single files as well as directories, since
+the dominant cold-load cost (ANTLR ATN warmup) is paid per process either
+way; pass ``cache=False`` to opt out.
 """
 
 from __future__ import annotations
@@ -126,7 +127,7 @@ def _cache_store(path: Path, model: M.Model) -> None:
 # ---------------------------------------------------------------------------
 
 
-def load_file(path, *, cache: bool = False) -> M.Model:
+def load_file(path, *, cache: bool = True) -> M.Model:
     """Parse and build a single ``.sysml`` file (optionally cached)."""
 
     source = Path(path)
@@ -191,11 +192,12 @@ def load(path, *, cache: bool | None = None) -> M.Model:
     """Load a model from a ``.sysml`` file, a ``.json`` export, or a
     directory of ``.sysml`` files.
 
-    ``cache=None`` (the default) enables the model cache for directories
-    and disables it for single files.
+    ``cache=None`` (the default) enables the model cache; pass
+    ``cache=False`` to parse from source unconditionally.
     """
 
     source = Path(path)
+    enabled = True if cache is None else cache
     if source.is_dir():
-        return load_dir(source, cache=True if cache is None else cache)
-    return _load_single(source, cache=bool(cache))
+        return load_dir(source, cache=enabled)
+    return _load_single(source, cache=enabled)

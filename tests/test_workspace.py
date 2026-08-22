@@ -148,12 +148,23 @@ class TestCache:
         assert data["@type"] == "Model"  # to_json schema, not a pickle
 
     def test_load_defaults(self, workspace_dir, isolated_cache):
-        # single file: no cache by default
+        # single file: cached by default
         longeron.load(workspace_dir / "app.sysml")
-        assert not list(isolated_cache.glob("*.json"))
-        # directory: cached by default
+        assert len(list(isolated_cache.glob("*.json"))) == 1
+        # directory: cached by default too
         longeron.load(workspace_dir)
-        assert list(isolated_cache.glob("*.json"))
+        assert len(list(isolated_cache.glob("*.json"))) > 1
+
+    def test_load_cache_opt_out(self, workspace_dir, isolated_cache):
+        longeron.load(workspace_dir / "app.sysml", cache=False)
+        longeron.load_file(workspace_dir / "app.sysml", cache=False)
+        assert not list(isolated_cache.glob("*.json"))
+
+    def test_single_file_warm_load_hits_cache(self, workspace_dir, isolated_cache):
+        first = longeron.load(workspace_dir / "app.sysml")
+        second = longeron.load(workspace_dir / "app.sysml")  # cache hit
+        assert longeron.to_dict(second) == longeron.to_dict(first)
+        assert len(list(isolated_cache.glob("*.json"))) == 1
 
     def test_clear_cache(self, workspace_dir, isolated_cache):
         longeron.load_dir(workspace_dir)
