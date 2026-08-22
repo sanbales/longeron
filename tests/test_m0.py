@@ -79,6 +79,25 @@ class TestNominalPopulation:
         with pytest.raises(EvaluationError, match="unknown strategy"):
             m0.interpret(drone, "Drone::QuadCopter", strategy="exhaustive")
 
+    def test_nominal_range_multiplicity_takes_lower_bound(self, fleet):
+        # the documented deterministic contract: ranges populate their
+        # *lower* bound (upper would make [0..*] compositions explode)
+        it = m0.interpret(fleet, "Fleet::Quad")  # default strategy: nominal
+        assert len(it.root.slots["rotors"]) == 2  # [2..6] -> 2, not 6
+        assert it.root.slots["spares"] == []  # [0..*] -> 0
+
+    def test_nominal_unbounded_range_takes_lower_bound(self):
+        model = longeron.loads(
+            """
+            package Boat {
+                part def Sailor;
+                part def Ship { part crew : Sailor[3..*]; }
+            }
+            """
+        )
+        it = m0.interpret(model, "Boat::Ship")
+        assert len(it.root.slots["crew"]) == 3
+
 
 class TestSequences:
     def test_part_feature_sequences(self, drone):
@@ -284,3 +303,27 @@ class TestToDict:
         import json
 
         json.dumps(data)  # JSON-able all the way down
+
+
+class TestInterpretArguments:
+    def test_individual_repr_is_id_and_type(self, fleet):
+        it = m0.interpret(fleet, "Fleet::Quad")
+        assert repr(it.root.slots["rotors"][0]) == "<Fleet::Quad#0.rotors#0: Fleet::Rotor>"
+
+    def test_model_without_element_rejected(self, fleet):
+        with pytest.raises(EvaluationError, match="needs an element to interpret"):
+            m0.interpret(fleet)
+
+    def test_element_plus_name_rejected(self, fleet):
+        with pytest.raises(EvaluationError, match=r"pass either \(model, element\)"):
+            m0.interpret(fleet.find("Fleet::Quad"), "Fleet::Quad")
+
+    def test_non_element_rejected(self, fleet):
+        with pytest.raises(EvaluationError, match="cannot interpret 42"):
+            m0.interpret(fleet, 42)
+
+    def test_detached_element_rejected(self):
+        from longeron import model as M
+
+        with pytest.raises(EvaluationError, match="Loose is not owned by a Model"):
+            m0.interpret(M.Definition(kind="part", name="Loose"))

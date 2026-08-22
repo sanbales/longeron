@@ -141,10 +141,68 @@ class TestResources:
             r["@id"] for r in client.list_elements(pid)
         ]
 
+    def test_no_next_link_on_the_exact_final_page(self, client):
+        # the last page must not advertise a next page, even when page[size]
+        # exactly divides the element count (a spurious link costs every
+        # conforming client one extra round trip for an empty page)
+        pid = project_id(client)
+        http = client._http
+        everything = http.get(f"projects/{pid}/commits/working/elements").json()
+        n = len(everything)
+        assert n > 1
+        whole = http.get(f"projects/{pid}/commits/working/elements", params={"page[size]": n})
+        assert whole.json() == everything
+        assert "link" not in whole.headers  # one exact page: no next
+        # walk single-element pages: every page but the last links onward
+        resp = http.get(f"projects/{pid}/commits/working/elements", params={"page[size]": 1})
+        for i in range(n):
+            assert [r["@id"] for r in resp.json()] == [everything[i]["@id"]]
+            if i < n - 1:
+                assert "link" in resp.headers
+                next_url = resp.headers["link"].split("<", 1)[1].split(">", 1)[0]
+                resp = http.get(next_url)
+            else:
+                assert "link" not in resp.headers  # final page ends the walk
+
     def test_roots_endpoint_returns_the_root_namespace(self, client):
         pid = project_id(client)
         roots = client._http.get(f"projects/{pid}/commits/working/roots").json()
         assert [r["@type"] for r in roots] == ["Namespace"]
+
+    def test_get_single_commit_record(self, client):
+        pid = project_id(client)
+        commits = client.list_commits(pid)
+        got = client._http.get(f"projects/{pid}/commits/{commits[0]['@id']}")
+        assert got.status_code == 200
+        assert got.json() == commits[0]
+        assert client._http.get(f"projects/{pid}/commits/deadbeef").status_code == 404
+
+    def test_commit_not_touching_the_project_404s(self, client, repo):
+        # a real git commit that touches no .sysml file resolves as a ref
+        # but is not a commit *of this project*
+        (repo / "README.md").write_text("docs only\n", encoding="utf-8")
+        git(repo, "add", "README.md")
+        git(repo, "commit", "-q", "-m", "docs: readme")
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            env=_GIT_ENV,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        pid = project_id(client)
+        resp = client._http.get(f"projects/{pid}/commits/{sha}")
+        assert resp.status_code == 404
+        assert "does not touch" in resp.json()["detail"]
+
+    def test_unknown_page_cursor_404s(self, client):
+        pid = project_id(client)
+        resp = client._http.get(
+            f"projects/{pid}/commits/working/elements",
+            params={"page[size]": 2, "page[after]": "not-an-id"},
+        )
+        assert resp.status_code == 404
 
 
 class TestWorkingTreeMemo:
@@ -272,6 +330,54 @@ class TestPushCommit:
                 [{"identity": {"@id": str(uuid.uuid4())}, "payload": None}],
             )
 
+    def test_relationship_delete_removes_the_specialization(self, client):
+        pid = project_id(client)
+        rel = next(r for r in client.list_elements(pid) if r["@type"] == "Subclassification")
+        client.push_commit(pid, [{"identity": {"@id": rel["@id"]}, "payload": None}])
+        truck = client.fetch_model(pid).find("Garage::Truck")
+        assert truck is not None  # the element survives...
+        assert truck.supers == []  # ...only the specialization is gone
+
+    def test_relationship_retarget_repoints_the_typing(self, client):
+        pid = project_id(client)
+        records = client.list_elements(pid)
+        fleet_id = next(r["@id"] for r in records if r.get("declaredName") == "fleetCar")
+        typing = next(
+            r
+            for r in records
+            if r["@type"] == "FeatureTyping" and r["typedFeature"]["@id"] == fleet_id
+        )
+        garage = next(r for r in records if r.get("declaredName") == "Garage")
+        bus_id, mem_id = str(uuid.uuid4()), str(uuid.uuid4())
+        client.push_commit(
+            pid,
+            [
+                {
+                    "identity": {"@id": bus_id},
+                    "payload": {"@type": "PartDefinition", "declaredName": "Bus"},
+                },
+                {
+                    "identity": {"@id": mem_id},
+                    "payload": {
+                        "@type": "OwningMembership",
+                        "owningRelatedElement": {"@id": garage["@id"]},
+                        "ownedRelatedElement": [{"@id": bus_id}],
+                    },
+                },
+                {
+                    "identity": {"@id": typing["@id"]},
+                    "payload": {
+                        "@type": "FeatureTyping",
+                        "typedFeature": typing["typedFeature"],
+                        "type": {"@id": bus_id},
+                    },
+                },
+            ],
+            description="retarget fleetCar to Bus",
+        )
+        fleet = client.fetch_model(pid).find("Garage::fleetCar")
+        assert fleet.types == ["Garage::Bus"]  # retargeted in the same commit as the add
+
 
 class TestExtensions:
     def test_validate_finds_seeded_typo(self, client, repo):
@@ -350,3 +456,151 @@ class TestExtensions:
         pytest.importorskip("ipyelk")
         with pytest.raises(SysMLError, match="404"):
             client.render_svg("Garage::Nope")
+
+
+class TestCommitBodyForms:
+    """_normalize_changes: flat record form, dict body, and rejects."""
+
+    def test_flat_record_form_updates_in_place(self, client, repo):
+        pid = project_id(client)
+        car = next(r for r in client.list_elements(pid) if r.get("declaredName") == "Car")
+        resp = client._http.post(f"projects/{pid}/commits", json=[{**car, "declaredName": "Sedan"}])
+        assert resp.status_code == 201
+        assert resp.json()["written"] == ["vehicle.sysml"]
+        assert "part def Sedan" in (repo / "vehicle.sysml").read_text(encoding="utf-8")
+
+    def test_dict_body_description_is_recorded(self, client):
+        pid = project_id(client)
+        garage = next(r for r in client.list_elements(pid) if r.get("declaredName") == "Garage")
+        bus_id = str(uuid.uuid4())
+        resp = client._http.post(
+            f"projects/{pid}/commits",
+            json={
+                "description": "add a bus",
+                "change": [
+                    {
+                        "identity": {"@id": bus_id},
+                        "payload": {"@type": "PartDefinition", "declaredName": "Bus"},
+                    },
+                    {
+                        "identity": {"@id": str(uuid.uuid4())},
+                        "payload": {
+                            "@type": "OwningMembership",
+                            "owningRelatedElement": {"@id": garage["@id"]},
+                            "ownedRelatedElement": [{"@id": bus_id}],
+                        },
+                    },
+                ],
+            },
+        )
+        assert resp.status_code == 201
+        assert resp.json()["description"] == "add a bus"
+
+    def test_malformed_bodies_400(self, client):
+        pid = project_id(client)
+        cases = {
+            "must be a change list": {"change": "nope"},
+            "malformed change entry": [42],
+            "change entry has no identity": [{"payload": {}}],
+        }
+        for fragment, body in cases.items():
+            resp = client._http.post(f"projects/{pid}/commits", json=body)
+            assert resp.status_code == 400
+            assert fragment in resp.json()["detail"]
+
+    def test_deleting_the_root_namespace_400s(self, client):
+        pid = project_id(client)
+        root = client._http.get(f"projects/{pid}/commits/working/roots").json()[0]
+        resp = client._http.post(
+            f"projects/{pid}/commits",
+            json=[{"identity": {"@id": root["@id"]}, "payload": None}],
+        )
+        assert resp.status_code == 400
+        assert "not an element or typing/specialization record" in resp.json()["detail"]
+
+
+class TestExtensionBodyValidation:
+    def test_unknown_element_id_404s(self, client):
+        pid = project_id(client)
+        resp = client._http.get(f"projects/{pid}/commits/working/elements/nope")
+        assert resp.status_code == 404
+
+    def test_non_object_extension_body_400s(self, client):
+        resp = client._http.post(
+            "x/instantiate/Garage::Car",
+            content=b"[1, 2]",
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "body must be a JSON object" in resp.json()["detail"]
+
+    def test_invalid_json_extension_body_400s(self, client):
+        resp = client._http.post(
+            "x/instantiate/Garage::Car",
+            content=b"{bad",
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "invalid JSON body" in resp.json()["detail"]
+
+    def test_instantiate_rejects_non_object_bindings(self, client):
+        resp = client._http.post("x/instantiate/Garage::Car", json={"bindings": [1]})
+        assert resp.status_code == 400
+        assert "'bindings' must be an object" in resp.json()["detail"]
+
+    def test_interpret_rejects_non_string_strategy(self, client):
+        resp = client._http.post("x/interpret/Garage::Car", json={"strategy": 42})
+        assert resp.status_code == 400
+        assert "'strategy' must be a string" in resp.json()["detail"]
+
+
+class TestClientPlumbing:
+    def test_context_manager_closes_the_transport(self, repo):
+        closed = {}
+        http = TestClient(create_app(repo))
+        original_close = http.close
+
+        def tracking_close():
+            closed["yes"] = True
+            original_close()
+
+        http.close = tracking_close
+        with Client(http=http) as ctx_client:
+            assert ctx_client.list_projects()
+        assert closed == {"yes": True}
+
+    def test_project_id_accepts_a_record(self, client):
+        record = client.list_projects()[0]
+        assert client._project_id(record) == record["@id"]
+
+    def test_paged_rejects_non_collections(self, client):
+        pid = project_id(client)
+        with pytest.raises(SysMLError, match="expected a collection"):
+            client._paged(f"projects/{pid}/commits/working", {})
+
+    def test_error_detail_falls_back_to_text_for_non_json(self, client):
+        class FakeRequest:
+            method = "GET"
+            url = "http://testserver/boom"
+
+        class FakeResponse:
+            status_code = 500
+            request = FakeRequest()
+
+            def json(self):
+                raise ValueError("not json")
+
+            text = "<html>internal error</html>"
+
+        with pytest.raises(SysMLError, match="internal error"):
+            Client._checked(FakeResponse())
+
+    def test_push_commit_accepts_flat_records(self, client):
+        pid = project_id(client)
+        car = next(r for r in client.list_elements(pid) if r.get("declaredName") == "Car")
+        client.push_commit(pid, [{**car, "declaredName": "Coupe"}])
+        assert client.fetch_model(pid).find("Garage::Coupe") is not None
+
+    def test_change_entry_without_identity_is_rejected(self):
+        with pytest.raises(SysMLError, match="change entry has no identity"):
+            Client._as_change({"payload": {}})

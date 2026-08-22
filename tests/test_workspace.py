@@ -176,6 +176,28 @@ class TestCache:
     def test_fingerprint_stable(self):
         assert workspace._fingerprint() == workspace._fingerprint()
 
+    def test_fingerprint_depends_on_module_bytes(self, monkeypatch, tmp_path):
+        # the cache key must change when the code that shapes built models
+        # changes, or stale cached models survive upgrades
+        from longeron import builder
+
+        monkeypatch.setattr(workspace, "_FINGERPRINT", None)
+        baseline = workspace._fingerprint()
+        fake = tmp_path / "builder.py"
+        fake.write_bytes(b"# a mutated builder\n")
+        monkeypatch.setattr(builder, "__file__", str(fake))
+        monkeypatch.setattr(workspace, "_FINGERPRINT", None)
+        assert workspace._fingerprint() != baseline
+
+    def test_fingerprint_depends_on_version(self, monkeypatch):
+        import longeron as pkg
+
+        monkeypatch.setattr(workspace, "_FINGERPRINT", None)
+        baseline = workspace._fingerprint()
+        monkeypatch.setattr(pkg, "__version__", "0.0.0-test")
+        monkeypatch.setattr(workspace, "_FINGERPRINT", None)
+        assert workspace._fingerprint() != baseline
+
 
 class TestCacheDirEnv:
     """The override chain: LONGERON_CACHE_DIR, then SYSML2_CACHE_DIR (the
@@ -231,3 +253,14 @@ class TestCLI:
 
         assert main(["export", str(workspace_dir), "--no-cache"]) == 0
         assert not list(isolated_cache.glob("*.json"))
+
+
+class TestCacheHousekeeping:
+    def test_clear_cache_removes_legacy_pickles(self, isolated_cache):
+        (isolated_cache / "old.pkl").write_bytes(b"legacy")
+        assert longeron.clear_cache() == 1
+        assert not list(isolated_cache.glob("*.pkl"))
+
+    def test_clear_cache_without_a_cache_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("LONGERON_CACHE_DIR", str(tmp_path / "never-created"))
+        assert longeron.clear_cache() == 0

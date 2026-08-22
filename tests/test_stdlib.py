@@ -5,6 +5,8 @@ the bundled prebuilt pickle answers in milliseconds. The session fixture
 loads once.
 """
 
+import json
+
 import pytest
 
 import longeron
@@ -157,3 +159,50 @@ def test_cli_stdlib_flag(tmp_path, capsys):
     """)
     assert main(["calc", str(path), "App::Twice", "x=4", "--stdlib"]) == 0
     assert "8" in capsys.readouterr().out
+
+
+class TestPrebuiltLifecycle:
+    """standard_library_model: prebuilt JSON write, reuse, and staleness
+    (against a miniature stand-in library, not the real vendored one)."""
+
+    @pytest.fixture()
+    def mini_stdlib(self, tmp_path, monkeypatch):
+        libdir = tmp_path / "lib"
+        libdir.mkdir()
+        (libdir / "Mini.sysml").write_text("package MiniLib { part def Thing; }")
+        prebuilt = tmp_path / "prebuilt.json"
+        monkeypatch.setattr(stdlib, "_STDLIB_DIR", libdir)
+        monkeypatch.setattr(stdlib, "_PREBUILT", prebuilt)
+        monkeypatch.setattr(stdlib, "_prebuilt_data", None)
+        monkeypatch.setattr(stdlib, "_fingerprint_cache", None)
+        return prebuilt
+
+    def test_cold_build_writes_the_prebuilt(self, mini_stdlib):
+        model = stdlib.standard_library_model(cache=False)
+        assert model.find("MiniLib::Thing") is not None
+        payload = json.loads(mini_stdlib.read_text(encoding="utf-8"))
+        assert payload["fingerprint"] == stdlib._stdlib_fingerprint()
+        assert isinstance(payload["model"], dict)
+
+    def test_warm_load_serves_from_the_prebuilt(self, mini_stdlib, monkeypatch):
+        stdlib.standard_library_model(cache=False)  # writes the prebuilt
+        monkeypatch.setattr(stdlib, "_prebuilt_data", None)  # force re-read
+        again = stdlib.standard_library_model(cache=False)
+        assert again.find("MiniLib::Thing") is not None
+
+    def test_stale_fingerprint_forces_a_rebuild(self, mini_stdlib, monkeypatch):
+        stdlib.standard_library_model(cache=False)
+        payload = json.loads(mini_stdlib.read_text(encoding="utf-8"))
+        payload["fingerprint"] = "0" * 16
+        mini_stdlib.write_text(json.dumps(payload), encoding="utf-8")
+        monkeypatch.setattr(stdlib, "_prebuilt_data", None)
+        rebuilt = stdlib.standard_library_model(cache=False)
+        assert rebuilt.find("MiniLib::Thing") is not None
+        refreshed = json.loads(mini_stdlib.read_text(encoding="utf-8"))
+        assert refreshed["fingerprint"] == stdlib._stdlib_fingerprint()
+
+
+def test_standard_library_dir_points_at_the_vendored_sources():
+    lib_dir = stdlib.standard_library_dir()
+    assert lib_dir.name == "_stdlib"
+    assert any(lib_dir.rglob("*.sysml"))

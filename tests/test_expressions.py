@@ -33,14 +33,35 @@ def interp():
         ("-3 + 1", -2),
         ("1 < 2", True),
         ("2 <= 1", False),
+        # boundary vectors: equal operands discriminate <= from < and >= from >
+        ("1 <= 1", True),
+        ("1 >= 1", True),
+        ("1 < 1", False),
+        ("1 > 1", False),
+        ("2 >= 1", True),
         ("1 == 1.0", True),
         ("1 != 2", True),
         ("true and false", False),
+        ("false and true", False),
+        ("false and false", False),
+        ("true and true", True),
         ("true or false", True),
+        ("false or false", False),
+        ("false or true", True),
         ("false implies false", True),
         ("true implies false", False),
+        ("true implies true", True),
         ("true xor true", False),
+        ("true xor false", True),
+        ("false xor true", True),
+        ("false xor false", False),
         ("not false", True),
+        ("null === null", True),
+        ("null !== null", False),
+        ("1 !== 2", True),
+        ("false | true", True),  # eager or: no short-circuit
+        ("true & false", False),  # eager and
+        ("2 as String", "2"),
         ("null ?? 5", 5),
         ("3 ?? 5", 3),
         ("if 1 < 2 ? 10 else 20", 10),
@@ -95,6 +116,20 @@ def test_bindings(interp):
     assert interp.evaluate("x * y + 1", x=3, y=4) == 13
 
 
+def test_and_short_circuits_on_falsy_left(interp):
+    # the right operand divides by zero: it must never be evaluated when the
+    # left is false ('and' is conditional; the eager form is '&')
+    assert interp.evaluate("false and (1 / 0 == 1)") is False
+
+
+def test_or_short_circuits_on_truthy_left(interp):
+    assert interp.evaluate("true or (1 / 0 == 1)") is True
+
+
+def test_implies_short_circuits_on_false_antecedent(interp):
+    assert interp.evaluate("false implies (1 / 0 == 1)") is True
+
+
 def test_namespace_constant(interp):
     assert interp.evaluate("gravity * 2", context="Lib") == pytest.approx(19.62)
     assert interp.evaluate("Lib::gravity") == pytest.approx(9.81)
@@ -127,3 +162,21 @@ def test_index_out_of_range(interp):
 def test_evaluate_ast_directly(interp):
     expr = longeron.parse_expression("2 + 2")
     assert interp.evaluate(expr) == 4
+
+
+class TestExprSerializationEdges:
+    def test_false_literal_to_text(self):
+        assert longeron.parse_expression("false").to_text() == "false"
+
+    def test_body_with_local_attribute_to_text(self):
+        text = "(1, 2)->collect { in x; attribute y = x + 1; y }"
+        assert longeron.parse_expression(text).to_text() == text
+
+    def test_expr_from_dict_rejects_garbage(self):
+        from longeron.ast import expr_from_dict
+
+        assert expr_from_dict(None) is None
+        with pytest.raises(ValueError, match="not a serialized expression"):
+            expr_from_dict({"nope": 1})
+        with pytest.raises(ValueError, match="unknown expression node type"):
+            expr_from_dict({"@expr": "Bogus"})

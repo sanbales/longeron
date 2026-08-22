@@ -438,3 +438,88 @@ class TestModelFromApiRecords:
     def test_json_variant(self):
         text = api.to_api_json(longeron.loads(self.MODEL))
         assert api.model_from_api_json(text).find("Garage::Color") is not None
+
+
+RICH_MODEL = """
+package Rich {
+    part def Plug; part a; part b;
+    connection def Link;
+    connection c1 : Link connect a to b;
+    binding bnd bind a = b;
+    rep raw language "text" /* body text */
+    part def <SN> Named;
+    calc def Twice { in x : Real; return : Real = 2.0 * x; }
+    action def Go {
+        merge m1;
+        decide d1;
+    }
+    variation part def Choice :> Plug {
+        variant part v1 : Plug;
+    }
+}
+"""
+
+
+class TestModelFromApiRecordsRichClasses:
+    """The reverse structural import rebuilds special usage classes,
+    directions, variants, control nodes, and textual representations."""
+
+    @pytest.fixture(scope="class")
+    def rebuilt(self):
+        import longeron.model as M  # noqa: F401
+
+        records = api.to_api_records(longeron.loads(RICH_MODEL))
+        return api.model_from_api_records(records)
+
+    def test_special_usage_classes(self, rebuilt):
+        import longeron.model as M
+
+        assert isinstance(rebuilt.find("Rich::c1"), M.ConnectionUsage)
+        assert isinstance(rebuilt.find("Rich::bnd"), M.BindingConnector)
+
+    def test_textual_representation_and_short_name(self, rebuilt):
+        import longeron.model as M
+
+        rep = next(e for e in rebuilt.iter_tree() if isinstance(e, M.TextualRepresentation))
+        assert rep.language == "text" and rep.body == "/* body text */"
+        assert rebuilt.find("Rich::Named").short_name == "SN"
+
+    def test_control_nodes_and_directions(self, rebuilt):
+        import longeron.model as M
+
+        controls = [e for e in rebuilt.iter_tree() if isinstance(e, M.ControlNode)]
+        assert sorted(c.kind for c in controls) == ["decision", "merge"]
+        twice = rebuilt.find("Rich::Twice")
+        dirs = [(u.name, u.direction) for u in twice.members if isinstance(u, M.Usage)]
+        assert dirs == [("x", "in"), (None, "return")]
+
+    def test_variant_membership(self, rebuilt):
+        import longeron.model as M
+
+        choice = rebuilt.find("Rich::Choice")
+        assert choice.is_variation
+        variants = [u for u in choice.members if isinstance(u, M.Usage)]
+        assert [(u.name, u.is_variant) for u in variants] == [("v1", True)]
+
+    def test_json_text_path_matches(self, rebuilt):
+        via_json = api.model_from_api_json(api.to_api_json(longeron.loads(RICH_MODEL)))
+        assert via_json.find("Rich::c1") is not None
+        assert via_json.find("Rich::Choice") is not None
+
+
+@pytest.mark.skip(
+    reason="ecore projection bug: 'satisfy R1 by sys;' where R1 is a "
+    "requirement *definition* crashes to_spec/to_api_records -- the "
+    "projector emits a Subsetting whose subsettedFeature must be a Feature, "
+    "but R1 projects as RequirementDefinition (pyecore BadValueError)"
+)
+def test_satisfy_of_requirement_definition_projects():
+    model = longeron.loads(
+        """
+        package P {
+            requirement def R1 { require constraint { true } }
+            part sys { satisfy R1 by sys; }
+        }
+        """
+    )
+    api.to_api_records(model)  # raises BadValueError today

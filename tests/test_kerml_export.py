@@ -79,3 +79,34 @@ def test_kerml_via_save(tmp_path):
     longeron.save(model, path)
     assert "struct X;" in path.read_text()
     longeron.parse_kerml_text(path.read_text())
+
+
+def test_kerml_feature_details_and_invariants():
+    model = longeron.loads("""
+        package K {
+            part def Thing;
+            part items : Thing[2..4] ordered nonunique;
+            attribute speed : Real := 0.0;
+            attribute limit : Real default = 9.0;
+            part def Box {
+                attribute t : Real = 1.0;
+                assert not constraint tooHot { t > 100.0 }
+                constraint c3 :> otherC;
+            }
+            alias T for Thing;
+        }
+    """)
+    text = longeron.to_kerml(model)
+    assert "feature items : Thing [2..4] ordered nonunique;" in text
+    assert "feature speed : Real := 0.0;" in text
+    assert "feature limit : Real default = 9.0;" in text
+    assert "inv false tooHot { t > 100.0 }" in text  # negated -> inv false
+    assert "inv c3 { otherC }" in text  # expression-less: subsets reference
+    assert "alias T for Thing;" in text
+    longeron.parse_kerml_text(text)
+
+
+def test_kerml_projection_of_a_single_element():
+    model = longeron.loads("package Single { part def Solo; }")
+    text = longeron.to_kerml(model.find("Single"))
+    assert text == "package Single {\n    struct Solo;\n}\n"

@@ -212,3 +212,122 @@ class TestExactEvaluation:
         assert len(feasible) == 8  # matches enumerate()
         enumerated = {tuple(sorted(a.selection.items())) for a in study.enumerate()}
         assert {tuple(sorted(a.selection.items())) for a in feasible} == enumerated
+
+
+MINI_CATALOG = """
+package MiniCatalog {
+    part def Widget { attribute factor : Real; attribute cost : Real; }
+    part def SmallW :> Widget { attribute factor : Real = 2.0; attribute cost : Real = 1.0; }
+    part def BigW :> Widget { attribute factor : Real = 5.0; attribute cost : Real = 4.0; }
+    part def Gadget { attribute factor : Real; attribute cost : Real; }
+    part def SlowG :> Gadget { attribute factor : Real = 1.0; attribute cost : Real = 2.0; }
+    part def FastG :> Gadget { attribute factor : Real = 3.0; attribute cost : Real = 6.0; }
+    variation part def WidgetChoice :> Widget {
+        variant part smallW : SmallW;
+        variant part bigW : BigW;
+    }
+    variation part def GadgetChoice :> Gadget {
+        variant part slowG : SlowG;
+        variant part fastG : FastG;
+    }
+    part def Rig {
+        part widget : WidgetChoice;
+        part gadget : GadgetChoice;
+        attribute power : Real = widget.factor * gadget.factor;
+        attribute cost : Real = widget.cost + gadget.cost;
+        constraint feasible { (power >= 6.0 and cost <= 10.0) or cost <= 3.5 }
+    }
+}
+"""
+
+
+class TestVariableProductsAndNestedLogic:
+    """var*var multiplication and nested and/or reification in CP-SAT.
+
+    Hand enumeration of the 4 combos:
+      smallW+slowG: power  2, cost  3 -> feasible via 'cost <= 3.5'
+      smallW+fastG: power  6, cost  7 -> feasible via the and-arm
+      bigW+slowG:   power  5, cost  6 -> INFEASIBLE (both arms fail)
+      bigW+fastG:   power 15, cost 10 -> feasible via the and-arm
+    Swapping and<->or in either position changes the feasible count.
+    """
+
+    @pytest.fixture(scope="class")
+    def rig(self):
+        return trades.TradeStudy(longeron.loads(MINI_CATALOG), "MiniCatalog::Rig")
+
+    def test_feasible_set(self, rig):
+        archs = rig.enumerate()
+        assert all(a.verified for a in archs)
+        combos = {(a.selection["widget"], a.selection["gadget"]) for a in archs}
+        assert combos == {("smallW", "slowG"), ("smallW", "fastG"), ("bigW", "fastG")}
+
+    def test_variable_product_metric_is_exact(self, rig):
+        archs = {(a.selection["widget"], a.selection["gadget"]): a for a in rig.enumerate()}
+        assert archs[("bigW", "fastG")].metrics["power"] == pytest.approx(15.0)
+        assert archs[("smallW", "slowG")].metrics["power"] == pytest.approx(2.0)
+
+    def test_optimize_over_the_product(self, rig):
+        best = rig.maximize("power")
+        assert best is not None
+        assert best.selection == {"widget": "bigW", "gadget": "fastG"}
+        cheapest = rig.minimize("cost")
+        assert cheapest.selection == {"widget": "smallW", "gadget": "slowG"}
+
+
+MINI_CATALOG_2 = """
+package Mini2 {
+    part def Widget { attribute factor : Real; attribute cost : Real; }
+    part def SmallW :> Widget { attribute factor : Real = 2.0; attribute cost : Real = 1.0; }
+    part def BigW :> Widget { attribute factor : Real = 5.0; attribute cost : Real = 4.0; }
+    variation part def WidgetChoice :> Widget {
+        variant part smallW : SmallW;
+        variant part bigW : BigW;
+    }
+    part def Rig2 {
+        part widget : WidgetChoice;
+        attribute margin : Real = 10.0 [kg] - widget.cost;
+        attribute neg : Real = -widget.factor;
+        constraint posMargin { not (margin < 6.5) }
+        constraint always { 1.0 < 2.0 }
+    }
+    part def Rig3 {
+        part widget : WidgetChoice;
+        constraint impossible { 1.0 > 2.0 }
+    }
+    part def Rig4 {
+        part widget : WidgetChoice;
+        attribute broken : Real = widget.factor / 0.0;
+        constraint c { broken >= 0.0 }
+    }
+}
+"""
+
+
+class TestEncodingEdges:
+    @pytest.fixture(scope="class")
+    def mini2(self):
+        return longeron.loads(MINI_CATALOG_2)
+
+    def test_negated_comparison_subtraction_and_units(self, mini2):
+        # not(margin < 6.5): smallW margin 9.0 passes, bigW margin 6.0 fails;
+        # flipping the not-encoding would invert the feasible set
+        rig = trades.TradeStudy(mini2, "Mini2::Rig2")
+        archs = rig.enumerate()
+        assert [a.selection for a in archs] == [{"widget": "smallW"}]
+        assert archs[0].metrics["margin"] == pytest.approx(9.0)
+        assert archs[0].metrics["neg"] == pytest.approx(-2.0)  # unary minus
+        assert str(archs[0]) == "[widget=smallW] margin=9, neg=-2"
+
+    def test_statically_false_constraint_empties_the_space(self, mini2):
+        rig = trades.TradeStudy(mini2, "Mini2::Rig3")
+        assert rig.enumerate() == []
+
+    def test_division_by_constant_zero_is_rejected(self, mini2):
+        rig = trades.TradeStudy(mini2, "Mini2::Rig4")
+        with pytest.raises(longeron.analysis.AnalysisError, match="division by constant zero"):
+            rig.enumerate()
+
+    def test_non_part_assembly_rejected(self, mini2):
+        with pytest.raises(longeron.analysis.AnalysisError, match="is not a part definition"):
+            trades.TradeStudy(mini2, "Mini2")

@@ -267,3 +267,16 @@ class TestApplyCommit:
     def test_empty_change_list_is_rejected(self, repo):
         with pytest.raises(SysMLError, match="no change records"):
             self._store(repo).apply_commit({"change": []})
+
+
+class TestStoreEdges:
+    def test_nonexistent_path_is_rejected(self, tmp_path):
+        with pytest.raises(SysMLError, match="does not exist"):
+            GitProjectStore(tmp_path / "missing.sysml")
+
+    def test_single_file_store_serves_historic_commits(self, repo):
+        store = GitProjectStore(repo / "vehicle.sysml")
+        first = store.commits()[0]
+        records = store.records_at(first["@id"])
+        assert any(r.get("declaredName") == "Car" for r in records)
+        assert not any(r.get("declaredName") == "Truck" for r in records)  # V1 only

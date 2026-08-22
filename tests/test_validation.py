@@ -538,3 +538,53 @@ def test_diagnostics_sorted_errors_first():
 def test_drone_example_is_clean():
     model = longeron.load("examples/drone.sysml")
     assert [d for d in longeron.validate(model) if d.severity == "error"] == []
+
+
+class TestReferencePositions:
+    """check_target walks every reference-bearing position: dependencies,
+    references/crosses, binding ends, satisfy-by, and loop expressions."""
+
+    def test_dangling_references_in_every_position(self):
+        result = longeron.validate(
+            longeron.loads(
+                """
+                package P {
+                    part def Thing;
+                    part a; part b;
+                    dependency D from NoClient to NoSupplier;
+                    ref watcher ::> NoRefTarget;
+                    ref crosser => NoCrossTarget;
+                    binding bind NoLeft = NoRight;
+                    requirement def R1 { require constraint { true } }
+                    part sys {
+                        satisfy R1 by NoSubject;
+                    }
+                    calc def Quiet { in x : Real; }
+                    calc quietRef : Quiet;
+                    action def Loopy {
+                        while NoCondition {
+                            assign x := 1.0;
+                        }
+                        loop {
+                            assign x := 2.0;
+                        } until NoUntil;
+                    }
+                }
+                """
+            )
+        )
+        found = {(d.code, d.message) for d in result}
+        assert found == {
+            ("unresolved-reference", "dependency 'NoClient' does not resolve"),
+            ("unresolved-reference", "dependency 'NoSupplier' does not resolve"),
+            ("unresolved-reference", "references 'NoRefTarget' does not resolve"),
+            ("unresolved-reference", "crosses 'NoCrossTarget' does not resolve"),
+            ("unresolved-reference", "binds 'NoLeft' does not resolve"),
+            ("unresolved-reference", "binds 'NoRight' does not resolve"),
+            ("unresolved-reference", "satisfied by 'NoSubject' does not resolve"),
+            ("unresolved-name", "expression name 'NoCondition' does not resolve"),
+            ("unresolved-name", "expression name 'NoUntil' does not resolve"),
+            ("calc-without-result", "calculation has no result expression"),
+        }
+        # the typed calc usage delegates its result: only the def is flagged
+        assert [d.element for d in result if d.code == "calc-without-result"] == ["P::Quiet"]
