@@ -855,15 +855,9 @@ def test_ecore_projection_of_annotations():
 
 
 # -- documented src bugs found while building this corpus ----------------------
-# (tests-only pass: these document behavior, the fixes belong in src/)
+# (fixed in 0.7.1: these formerly-skipped tests now pin the corrected behavior)
 
 
-@pytest.mark.skip(
-    reason="export bug: bare individual/snapshot/timeslice usages emit a doubled "
-    "keyword ('individual individual car1 ...'), so the reprint does not parse; "
-    "emit_Definition handles kind=='individual' but _usage_head + kind keyword "
-    "double up for usages (export.py _usage_head vs emit_Usage fallback)"
-)
 def test_bare_individual_usage_round_trip():
     source = """
     package Bare {
@@ -883,12 +877,6 @@ def test_bare_individual_usage_round_trip():
     assert d1 == d2
 
 
-@pytest.mark.skip(
-    reason="export bug: a variant reference with a feature specialization "
-    "('variant steel : SteelWheel;') is emitted as 'variant steel;' -- the "
-    "types are silently dropped from the textual projection (export.py "
-    "emit_Usage variant-reference branch ignores el.types)"
-)
 def test_variant_reference_with_specialization_round_trip():
     source = """
     package V {
@@ -907,11 +895,6 @@ def test_variant_reference_with_specialization_round_trip():
     assert model2.find("V::choices").members[0].types == ["SteelWheel"]
 
 
-@pytest.mark.skip(
-    reason="export bug: inline action bodies on state actions ('entry action "
-    "step { in n : Real; }') are dropped -- emit_StateAction renders the "
-    "action via stmt_fragment, which cannot carry a body"
-)
 def test_state_entry_inline_action_body_round_trip():
     source = """
     package S {
@@ -931,15 +914,12 @@ def test_state_entry_inline_action_body_round_trip():
     assert d1 == d2
 
 
-@pytest.mark.skip(
-    reason="export bug: to_kerml emits a case's result expression bare inside "
-    "'behavior { ... }', which the KerML grammar rejects -- breaking the "
-    "'to_kerml output must parse' invariant for case defs with results"
-)
 def test_kerml_projection_of_case_result_expression_parses():
     model = longeron.loads(CASES_SOURCE)
     text = longeron.to_kerml(model)
-    longeron.parse_kerml_text(text)  # raises ParseError today
+    longeron.parse_kerml_text(text)
+    # the case's result expression survives as an owned expression feature
+    assert "expr { thing == thing }" in text
 
 
 class TestExtendedDefinitions:

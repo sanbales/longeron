@@ -507,12 +507,6 @@ class TestModelFromApiRecordsRichClasses:
         assert via_json.find("Rich::Choice") is not None
 
 
-@pytest.mark.skip(
-    reason="ecore projection bug: 'satisfy R1 by sys;' where R1 is a "
-    "requirement *definition* crashes to_spec/to_api_records -- the "
-    "projector emits a Subsetting whose subsettedFeature must be a Feature, "
-    "but R1 projects as RequirementDefinition (pyecore BadValueError)"
-)
 def test_satisfy_of_requirement_definition_projects():
     model = longeron.loads(
         """
@@ -522,4 +516,20 @@ def test_satisfy_of_requirement_definition_projects():
         }
         """
     )
-    api.to_api_records(model)  # raises BadValueError today
+    records = api.to_api_records(model)  # used to raise pyecore BadValueError
+    by_type: dict[str, list] = {}
+    for record in records:
+        by_type.setdefault(record["@type"], []).append(record)
+    req_def = next(r for r in by_type["RequirementDefinition"] if r["declaredName"] == "R1")
+    (satisfy,) = by_type["SatisfyRequirementUsage"]
+    # the definition-targeted satisfy projects as a FeatureTyping (the
+    # satisfied requirement usage is *typed by* R1), not a Subsetting
+    typings = [
+        r
+        for r in by_type["FeatureTyping"]
+        if r["typedFeature"] == {"@id": satisfy["@id"]} and r["type"] == {"@id": req_def["@id"]}
+    ]
+    assert len(typings) == 1
+    assert not any(
+        r["subsettedFeature"] == {"@id": req_def["@id"]} for r in by_type.get("Subsetting", [])
+    )

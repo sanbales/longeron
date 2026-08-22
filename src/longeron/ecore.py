@@ -389,14 +389,7 @@ class _Projector:
                         "type",
                     )
                 for target in element.subsets:
-                    self._relate(
-                        element,
-                        instance,
-                        target,
-                        "Subsetting",
-                        "subsettingFeature",
-                        "subsettedFeature",
-                    )
+                    self._project_subsetting(element, instance, target)
                 for target in element.redefines:
                     self._relate(
                         element,
@@ -406,6 +399,34 @@ class _Projector:
                         "redefiningFeature",
                         "redefinedFeature",
                     )
+
+    def _project_subsetting(self, element: M.Element, instance: Any, target_name: str) -> None:
+        """Project a stored ``subsets`` reference onto the spec relationship.
+
+        The textual reference forms store their target in ``subsets`` even
+        when it names a *definition* (``satisfy R1 by x;`` with ``R1`` a
+        requirement definition).  A Subsetting requires a Feature on both
+        ends, so a definition-targeted reference projects as the typing of
+        the usage instead (spec: the satisfied requirement is the usage
+        *typed by* that definition).
+        """
+
+        target = self._resolve_instance(target_name, element)
+        if target is not None and not self._conforms(target, "Feature"):
+            self._relate(element, instance, target_name, "FeatureTyping", "typedFeature", "type")
+            return
+        self._relate(
+            element,
+            instance,
+            target_name,
+            "Subsetting",
+            "subsettingFeature",
+            "subsettedFeature",
+        )
+
+    def _conforms(self, instance: Any, class_name: str) -> bool:
+        cls = self.package.getEClassifier(class_name)
+        return instance.eClass is cls or cls in instance.eClass.eAllSuperTypes()
 
     def _relate(
         self,

@@ -79,6 +79,9 @@ class _KerMLPrinter:
     def __init__(self, indent: str):
         self.indent = indent
         self.lines: list[str] = []
+        #: True while emitting members of a 'function'/'predicate' body,
+        #: where 'return' members and bare result expressions are legal
+        self._function_body = False
 
     def line(self, level: int, text: str) -> None:
         for piece in text.split("\n"):
@@ -100,15 +103,32 @@ class _KerMLPrinter:
     def prefix(self, el: M.Element) -> str:
         return f"{el.visibility} " if el.visibility else ""
 
-    def body(self, members: list[M.Element], level: int, head: str, result=None) -> None:
+    def body(
+        self,
+        members: list[M.Element],
+        level: int,
+        head: str,
+        result=None,
+        result_as_expr: bool = False,
+        function_body: bool = False,
+    ) -> None:
         if not members and result is None:
             self.line(level, head.rstrip() + ";")
             return
         self.line(level, f"{head.rstrip()} {{")
-        for member in members:
-            self.emit(member, level + 1)
+        enclosing = self._function_body
+        self._function_body = function_body
+        try:
+            for member in members:
+                self.emit(member, level + 1)
+        finally:
+            self._function_body = enclosing
         if result is not None:
-            self.line(level + 1, expr_to_text(result))
+            text = expr_to_text(result)
+            # A bare result expression is only legal in a *function* body
+            # ('function'/'predicate'/'expr'); type bodies ('behavior',
+            # 'step') carry it as an owned expression feature instead.
+            self.line(level + 1, f"expr {{ {text} }}" if result_as_expr else text)
         self.line(level, "}")
 
     # -- dispatch ----------------------------------------------------------------
@@ -176,18 +196,14 @@ class _KerMLPrinter:
         head += f"{keyword} {self.names(el)}".rstrip()
         if el.supers:
             head += " specializes " + ", ".join(fmt_qname(s) for s in el.supers)
-        if el.kind in (
-            "calc",
-            "constraint",
-            "requirement",
-            "concern",
-            "viewpoint",
-            "case",
-            "analysis",
-            "verification",
-            "use_case",
-        ):
-            self.body(el.members, level, head, result=el.result)
+        if el.kind in ("calc", "constraint", "requirement", "concern", "viewpoint"):
+            # keyword is 'function'/'predicate': a function body may end with
+            # a bare result expression
+            self.body(el.members, level, head, result=el.result, function_body=True)
+        elif el.kind in ("case", "analysis", "verification", "use_case"):
+            # keyword is 'behavior': a type body cannot end with a bare
+            # result expression, so wrap it as an expression feature
+            self.body(el.members, level, head, result=el.result, result_as_expr=True)
         else:
             self.body(el.members, level, head)
 
@@ -200,7 +216,9 @@ class _KerMLPrinter:
             decl = self._feature_declaration(el)
             if decl:
                 head += f" {decl}"
-            self.body(el.members, level, head, result=el.result if el.kind == "calc" else None)
+            # steps have a *type* body, so any result expression must be
+            # wrapped as an expression feature to stay parseable
+            self.body(el.members, level, head, result=el.result, result_as_expr=True)
             return
         if el.kind not in _FEATURE_KINDS:
             self.omitted(level, f"{el.kind} usage" + (f" '{el.name}'" if el.name else ""))
@@ -220,10 +238,11 @@ class _KerMLPrinter:
             head += f" {decl}"
         self.body(el.members, level, head)
 
-    @staticmethod
-    def _direction(el: M.Usage) -> str:
+    def _direction(self, el: M.Usage) -> str:
         if el.direction == "return":
-            return "return "
+            # 'return' members are function-body syntax; type bodies
+            # ('behavior', 'step', ...) carry results as output parameters
+            return "return " if self._function_body else "out "
         return f"{el.direction} " if el.direction else ""
 
     def _feature_declaration(self, el: M.Usage) -> str:

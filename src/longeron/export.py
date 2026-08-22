@@ -499,9 +499,12 @@ class _Printer:
             head += "constant "
         if el.is_end:
             head += "end "
-        if el.is_individual:
+        # 'individual' / portion-kind keywords double as usage kinds for the
+        # bare forms ('individual car1;', 'snapshot carNow;'); those kinds are
+        # emitted as the keyword itself in emit_Usage, so skip the prefix here.
+        if el.is_individual and el.kind not in ("individual", "snapshot", "timeslice"):
             head += "individual "
-        if el.portion_kind:
+        if el.portion_kind and el.portion_kind != el.kind:
             head += f"{el.portion_kind} "
         head += self.metadata(el)
         return head
@@ -546,14 +549,29 @@ class _Printer:
             self.body(el, level, f"{head}event {ref}")
             return
         elif el.kind == "ref" and el.is_variant and el.subsets and not el.name:
-            # variant reference: 'variant <ref>;'
-            self.body(el, level, f"{head}{fmt_qname(el.subsets[0])}")
+            # variant reference: 'variant <ref>;' with optional feature
+            # specializations ('variant steel : SteelWheel;')
+            probe = M.Usage(
+                kind=el.kind,
+                types=el.types,
+                subsets=el.subsets[1:],
+                redefines=el.redefines,
+                references=el.references,
+                crosses=el.crosses,
+            )
+            rest = self.usage_declaration(probe)
+            text = f"{head}{fmt_qname(el.subsets[0])}"
+            if rest:
+                text += f" {rest}"
+            self.body(el, level, text)
             return
         elif el.kind in _REF_OR_INLINE_KINDS:
             self._emit_ref_or_inline(el, head, level)
             return
         else:
             keyword = _KIND_KEYWORDS.get(el.kind, el.kind)
+            if el.is_individual and el.kind in ("snapshot", "timeslice"):
+                keyword = f"individual {keyword}"
             if el.kind == "ref" and el.is_ref:
                 keyword = "ref"
             elif el.is_ref:
@@ -787,7 +805,13 @@ class _Printer:
         if el.action is None:
             self.line(level, f"{el.kind};")
             return
-        self.line(level, f"{el.kind} {self.stmt_fragment(el.action)};")
+        head = f"{el.kind} {self.stmt_fragment(el.action)}"
+        inline = el.action.action if isinstance(el.action, M.PerformAction) else None
+        if inline is not None and inline.members:
+            # inline action with a body: 'entry action step { in n : Real; }'
+            self.body(inline, level, head)
+            return
+        self.line(level, head + ";")
 
     def emit_TransitionUsage(self, el: M.TransitionUsage, level: int) -> None:
         if el.source == M.ENTRY_SOURCE:
