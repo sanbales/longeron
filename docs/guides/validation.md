@@ -21,15 +21,23 @@ conformance). Rationale in the design doc:
 
 ## Reading a diagnostic
 
-Each diagnostic prints as `severity[code] element: message`:
+Each diagnostic prints as `file:line:column: severity[code] element: message`:
 
 ```text
-error[duplicate-name] Demo::Wheel: name 'Wheel' is already used by another member of Demo
-warning[unresolved-reference] Demo::Vehicle::mass: typed by 'Reall' does not resolve
+demo.sysml:3:5: error[duplicate-name] Demo::Wheel: name 'Wheel' is already used by another member of Demo
+demo.sysml:5:9: warning[unresolved-reference] Demo::Vehicle::mass: typed by 'Reall' does not resolve
 ```
 
-`element` is the qualified name of the subject element. `validate()`
-returns diagnostics sorted errors-first, then by element and code.
+`element` is the qualified name of the subject element. The position
+prefix is the subject's declaration site, stamped by the builder while
+parsing: the `location` field of {class}`~longeron.validation.Diagnostic`
+is a {class}`~longeron.errors.SourceLocation` (line and column are
+1-based) or `None`. Elements built programmatically or rebuilt from
+JSON -- including [model cache](workspaces.md#the-model-cache) hits --
+carry no position, and their diagnostics print without the prefix
+(`longeron lint --no-cache` re-parses to get positions back).
+`validate()` returns diagnostics sorted errors-first, then by element
+and code.
 
 Severities draw one line: structural problems that make the model
 self-contradictory are errors, and references that merely fail to
@@ -41,7 +49,7 @@ missing target may live in a file you did not load.
 | Code | Severity | Fires when |
 |---|---|---|
 | `duplicate-name` | error | Two members of one namespace share a name or short name. |
-| `specialization-cycle` | error | An element's specialization hierarchy, including implied specializations, reaches the element itself. |
+| `specialization-cycle` | error | An element's specialization hierarchy (`specializes` / `typed by` / `subsets`, including implied specializations) reaches the element itself. Redefinitions (`:>>`) are not specialization edges: redefining a same-named inherited feature is not a cycle. |
 | `unknown-state` | error | A transition names a source or target that is not a state of its machine. |
 | `unresolved-reference` | warning | A declared reference does not resolve: `typed by`, `specializes`, `subsets`, `redefines`, `references`, `crosses`, connection/binding ends, `satisfied by`, an import, an alias, or a dependency end. |
 | `unresolved-name` | warning | The leading name of an expression does not resolve. Locals, loop variables, accept payloads, builtin functions, and inherited members are recognized first. |

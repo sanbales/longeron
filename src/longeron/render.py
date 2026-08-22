@@ -483,8 +483,10 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         )
 
     def draw_edge(edge: dict, node_x: float, node_y: float) -> None:
-        ox, oy = edge_origin(edge, (node_x, node_y))
         css = edge.get("properties", {}).get("cssClasses", "")
+        if "sysml-packing" in css:
+            return  # layout-only: chains disconnected members into rows
+        ox, oy = edge_origin(edge, (node_x, node_y))
         style = _style_for(css, _EDGE_STYLES, {"stroke": "#666666"})
         dashes = style.get("stroke-dasharray")
         if "sysml-edge-guarded" in css:

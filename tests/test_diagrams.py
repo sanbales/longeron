@@ -94,7 +94,34 @@ class TestStructure:
 
     def test_relationships_can_be_disabled(self, drone_model):
         widget = diagrams.structure_diagram(drone_model, show_relationships=False)
-        assert widget.source.value.edges == []
+        edges = widget.source.value.edges
+        # only layout-only packing edges remain -- no relationship edges
+        assert all("sysml-packing" in e.properties.cssClasses for e in edges)
+        assert not any("sysml-edge" in e.properties.cssClasses for e in edges)
+
+    def test_disconnected_members_get_packing_edges(self, drone_model):
+        # V1: members that touch no edge are chained into rows; the chains
+        # are layout-only (unlabeled, css 'sysml-packing', hidden by style)
+        widget = diagrams.structure_diagram(drone_model)
+        packing = [
+            e for e in widget.source.value.edges if "sysml-packing" in e.properties.cssClasses
+        ]
+        assert packing
+        assert all(not e.labels for e in packing)
+        assert " .sysml-packing > path" in diagrams.SYSML_STYLE
+
+    def test_connected_members_are_never_chained(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        root = widget.source.value
+        connected = set()
+        for e in root.edges:
+            if "sysml-packing" not in e.properties.cssClasses:
+                connected.add(id(e.source))
+                connected.add(id(e.target))
+        for e in root.edges:
+            if "sysml-packing" in e.properties.cssClasses:
+                assert id(e.source) not in connected
+                assert id(e.target) not in connected
 
 
 class TestStates:

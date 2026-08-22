@@ -19,10 +19,17 @@ that corpus parses, and every file builds into the object model, with no
 lossy fallback. Before grammar patches 6–10, the score was 283 parsed and
 280 built.
 
-The corpus itself is not vendored. Instead, each patch carries regression
-tests derived from the corpus constructs that exposed it
-(`tests/test_parsing.py`, `tests/test_builder.py`), so conformance is
-re-checked on every test run.
+The corpus itself is not vendored. Two things keep the number honest:
+
+- `scripts/check_corpus.py` reproduces the sweep. It downloads the pinned
+  release commit (the same revision the vendored standard library comes
+  from), then parses and builds every `.sysml` file in it, printing
+  `309/309 files parse and build`. Run it after grammar or builder
+  changes; it is not part of the regular test suite.
+- Each grammar patch carries regression tests derived from the corpus
+  constructs that exposed it (`tests/test_parsing.py`,
+  `tests/test_builder.py`). Those derived snippets -- not the full corpus
+  -- are what every test run re-checks.
 
 In two places the release BNF and the corpus contradict each other
 (patches 8 and 10 below). There the grammar follows the corpus, and the

@@ -195,6 +195,12 @@ class Element:
     metadata: list[str] = field(default_factory=list)  # '#keyword' prefixes
     owner: Element | None = field(default=None, repr=False, compare=False)
 
+    #: build-time :class:`~longeron.errors.SourceLocation` (or ``None``).
+    #: Set as a plain instance attribute by the builder -- deliberately
+    #: not a dataclass field, so serialization and text round-trips stay
+    #: position-free.  Read by lint diagnostics.
+    source_location = None
+
     @property
     def label(self) -> str:
         return self.name or self.short_name or f"<anonymous {type(self).__name__}>"

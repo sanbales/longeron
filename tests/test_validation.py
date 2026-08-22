@@ -326,6 +326,69 @@ class TestStructuralErrors:
         found = diags("package P { calc def C { in x : Real; } }", "calc-without-result")
         assert len(found) == 1
 
+    def test_redefinition_is_not_a_cycle(self):
+        # ':>> x' resolves to the same-named inherited feature; the name
+        # shadowing must not be reported as a specialization cycle (L4)
+        assert (
+            diags("""
+            package P {
+                part def A { attribute x : Real; }
+                part def B :> A { attribute x : Real :>> x; }
+            }
+        """)
+            == []
+        )
+
+    def test_self_redefinition_is_not_a_cycle(self):
+        assert diags("package P { part def C { attribute mass : Real :>> mass; } }") == []
+
+
+class TestDiagnosticLocations:
+    """Diagnostics carry the subject element's file:line:column (U3)."""
+
+    def test_location_points_at_the_declaration(self):
+        source = (
+            "package Demo {\n"
+            "    part def Wheel;\n"
+            "    part def Vehicle {\n"
+            "        attribute mass : Reall;\n"
+            "    }\n"
+            "}\n"
+        )
+        model = longeron.loads(source, source_name="demo.sysml")
+        found = [d for d in longeron.validate(model) if d.code == "unresolved-reference"]
+        assert len(found) == 1
+        location = found[0].location
+        assert location is not None
+        assert (location.source_name, location.line, location.column) == ("demo.sysml", 4, 9)
+        assert str(found[0]).startswith("demo.sysml:4:9: warning[unresolved-reference]")
+
+    def test_duplicate_name_reports_the_second_declaration(self):
+        source = "package P {\n    part def X;\n    part def X;\n}\n"
+        model = longeron.loads(source, source_name="dup.sysml")
+        found = [d for d in longeron.validate(model) if d.code == "duplicate-name"]
+        assert [(d.location.source_name, d.location.line) for d in found] == [("dup.sysml", 3)]
+
+    def test_programmatic_elements_have_no_location(self):
+        from longeron import model as M
+
+        model = M.Model()
+        pkg = M.Package(name="P")
+        pkg.add(M.Usage(kind="part", name="v", types=["Ghost"]))
+        model.add(pkg)
+        found = longeron.validate(model)
+        assert len(found) == 1
+        assert found[0].location is None
+        assert str(found[0]).startswith("warning[unresolved-reference]")
+
+    def test_locations_survive_in_directory_models(self, tmp_path):
+        (tmp_path / "a.sysml").write_text("package A {\n    part x : Ghost;\n}\n")
+        (tmp_path / "b.sysml").write_text("package B {\n\n    part y : Spook;\n}\n")
+        model = longeron.load_dir(tmp_path, cache=False)
+        found = longeron.validate(model)
+        places = sorted((d.location.source_name.rsplit("/", 1)[-1], d.location.line) for d in found)
+        assert places == [("a.sysml", 2), ("b.sysml", 3)]
+
 
 class TestStrictImports:
     """validate(strict_imports=True): flag bare stdlib names that resolve

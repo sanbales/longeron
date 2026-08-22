@@ -33,6 +33,9 @@ The same subcommands share two options:
 | `--no-cache` | Bypass the [model cache](workspaces.md#the-model-cache) and parse from source. |
 | `--stdlib` | Add the vendored [standard library](../reference/stdlib.md) to the loaded model, so library types resolve during execution. |
 
+Every subcommand also accepts `--traceback` (see
+[Errors and exit codes](#errors-and-exit-codes)).
+
 `--stdlib` mutates the loaded model. `lint` does not need it: the
 validator consults the standard library through its resolver by default
 (see [Validation](validation.md#names-resolve-against-the-standard-library)),
@@ -46,12 +49,26 @@ value is parsed as JSON when possible, and kept as a string otherwise.
 For example, `capacity=5200` binds the number `5200`, `tested=true` binds
 `True`, and `label=alpha` binds the string `"alpha"`.
 
-## Exit codes
+## Errors and exit codes
+
+Expected failures -- a missing or unreadable file, a syntax error, an
+unknown qualified name, a malformed `.json` input, a missing optional
+extra -- print a single `error: ...` line to stderr and exit `1`, without
+a Python traceback:
+
+```console
+$ longeron calc examples/drone.sysml Drone::Nope
+error: Drone has no member 'Nope'
+```
+
+Pass `--traceback` (any subcommand) to re-raise the underlying exception
+with its full traceback. Genuinely unexpected errors -- bugs -- always
+show their traceback.
 
 | Code | Meaning |
 |---|---|
 | `0` | Success. For `check`: no constraint failed. For `lint`: no error (and, with `--strict`, no warning). |
-| `1` | `lint` found errors (or warnings under `--strict`), `check` found a failed constraint, or `parse` found no matching files in a directory. Uncaught load or execution errors (syntax errors, unknown qualified names) also exit `1`, with a Python traceback. |
+| `1` | `lint` found errors (or warnings under `--strict`), `check` found a failed constraint, `parse` found no matching files in a directory or any file failed to parse, or an expected failure was reported (`error: ...` on stderr). |
 | `2` | Command-line usage error (reported by argparse). |
 
 ## `longeron parse`
@@ -70,6 +87,9 @@ OK: examples/drone.sysml parses as sysml
 | `--tree` | Print the raw ANTLR parse tree for a single file. |
 
 The grammar is chosen from the file suffix unless `--kerml` forces it.
+In directory mode every file is reported -- failures print as `FAIL:`
+lines with their syntax errors and do not stop the sweep; the exit code
+is `1` when any file failed.
 KerML support is parse-and-validate only. The builder, and therefore
 every other subcommand, consumes SysML sources (see
 [Grammar conformance](grammar.md)).
@@ -81,10 +101,15 @@ summary line:
 
 ```console
 $ longeron lint demo.sysml
-error[duplicate-name] Demo::Wheel: name 'Wheel' is already used by another member of Demo
-warning[unresolved-reference] Demo::Vehicle::mass: typed by 'Reall' does not resolve
+demo.sysml:3:5: error[duplicate-name] Demo::Wheel: name 'Wheel' is already used by another member of Demo
+demo.sysml:5:9: warning[unresolved-reference] Demo::Vehicle::mass: typed by 'Reall' does not resolve
 1 error(s), 1 warning(s)
 ```
+
+The `file:line:column` prefix comes from parsing; models rebuilt from a
+`.json` export or from a warm [model cache](workspaces.md#the-model-cache)
+entry carry no source positions, so their diagnostics print without the
+prefix. Pass `--no-cache` to re-parse and get positions back.
 
 | Option | Effect |
 |---|---|

@@ -26,7 +26,7 @@ for SysML v2 and KerML, taken from
 |---|---|
 | **Define** | Parse SysML v2 textual notation into a fully-typed Python object model, import a model from its JSON export, or build models programmatically from dataclasses. Multi-file workspaces merge under one root; a content-addressed cache makes warm loads ~1000x faster. |
 | **Export** | Serialize any model to JSON, back to parseable SysML v2 text, project it onto KerML, or emit OMG Systems-Modeling-API JSON records. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
-| **Validate** | `longeron.validate()` / `longeron lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems. Names resolve against the vendored standard library (a bare `Real` passes with no import; a typo like `Reall` warns), and plain definitions carry their *implied* specializations (`part def` → `Parts::Part`, `action def` → `Actions::Action`, which is how `start`/`done` resolve); opt out with `stdlib=False` / `--no-stdlib`. |
+| **Validate** | `longeron.validate()` / `longeron lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems; diagnostics carry `file:line:column`. Names resolve against the vendored standard library (a bare `Real` passes with no import; a typo like `Reall` warns), and plain definitions carry their *implied* specializations (`part def` → `Parts::Part`, `action def` → `Actions::Action`, which is how `start`/`done` resolve); opt out with `stdlib=False` / `--no-stdlib`. |
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
 | **Visualize** | `longeron.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. |
 | **Query & retrieve** | Project any model onto RDF (`longeron.rdf`, rdflib) and ask SPARQL questions over structure, specializations, typed attribute values, variation points, and requirements. A dependency-free RAG substrate (`longeron.rag`) chunks the model into stable, re-parseable SysML fragments keyed by qualified name, walks semantic neighborhoods, and does keyword search — retrieval for LLM agents that cite names and resolve them through the interpreter for ground truth. |
@@ -245,6 +245,7 @@ Every model-consuming command accepts `.sysml`, `.json`, or a directory;
 ```
 grammars/                  SysML.g4 + KerML.g4 (upstream + local patches)
 scripts/generate_parsers.py  regenerate src/longeron/_gen from the grammars
+scripts/check_corpus.py    reproduce the corpus badge: sweep SysML-v2-Release
 src/longeron/
     _gen/                  generated ANTLR lexers/parsers (committed)
     parser.py              text -> parse tree, error collection

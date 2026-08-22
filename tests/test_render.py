@@ -41,6 +41,23 @@ class TestSvg:
         svg = render.to_svg(drone_model.find("Drone::FlightStates"))
         assert "flying" in svg
 
+    def test_disconnected_definitions_pack_wide(self):
+        """Regression (V1): edge-free definitions pack into rows, not one
+        tall column, and the packing edges themselves are not drawn."""
+
+        import re
+
+        model = longeron.loads(
+            "package P { part def A; part def B; part def C; part def D; part def E; part def F; }"
+        )
+        svg = render.to_svg(model)
+        match = re.search(r'width="(\d+)" height="(\d+)"', svg)
+        assert match is not None
+        width, height = int(match.group(1)), int(match.group(2))
+        assert width > height
+        body = svg.split("</defs>")[1]
+        assert "<path" not in body  # no edges drawn for packing chains
+
     def test_layout_produces_coordinates(self, drone_model):
         widget = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
         graph = render.layout(render._to_elk_json(widget.source.value))

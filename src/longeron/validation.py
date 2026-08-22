@@ -20,7 +20,7 @@ from typing import Literal
 from . import ast as A
 from . import model as M
 from . import stdlib as stdlib_module
-from .errors import ResolutionError
+from .errors import ResolutionError, SourceLocation
 from .interpreter import BUILTINS, Resolver
 
 Severity = Literal["error", "warning"]
@@ -32,9 +32,11 @@ class Diagnostic:
     code: str
     message: str
     element: str  # qualified name (or best-effort label) of the subject
+    location: SourceLocation | None = None  # file:line:column, when parsed
 
     def __str__(self) -> str:
-        return f"{self.severity}[{self.code}] {self.element}: {self.message}"
+        prefix = f"{self.location}: " if self.location is not None else ""
+        return f"{prefix}{self.severity}[{self.code}] {self.element}: {self.message}"
 
 
 def validate(
@@ -84,7 +86,8 @@ class _Checker:
 
     def report(self, severity: Severity, code: str, element: M.Element, message: str) -> None:
         where = element.qualified_name or element.label
-        self.diagnostics.append(Diagnostic(severity, code, message, where))
+        location = getattr(element, "source_location", None)
+        self.diagnostics.append(Diagnostic(severity, code, message, where, location))
 
     # -- driver ---------------------------------------------------------------
 
@@ -204,7 +207,7 @@ class _Checker:
             if id(node) in seen:
                 continue
             seen.add(id(node))
-            for general in self.resolver._generals(node, implied=True):
+            for general in self._cycle_generals(node):
                 if general is element:
                     self.report(
                         "error",
@@ -214,6 +217,37 @@ class _Checker:
                     )
                     return
                 stack.append(general)
+
+    def _cycle_generals(self, node: M.Element) -> list[M.Namespace]:
+        """Specialization edges for the cycle check: ``supers`` / ``types`` /
+        ``subsets`` plus implied bases -- but *not* redefinition edges.
+
+        A redefinition (``attribute x :>> x``) legitimately reuses the
+        redefined feature's name, so resolving it lands on the redefining
+        element itself; folding redefinition edges into the walk (as the
+        resolver's ``_generals`` does) turns that shadowing into a false
+        "cyclic" error.
+        """
+
+        names: list[str] = []
+        if isinstance(node, M.Definition):
+            names = list(node.supers)
+        elif isinstance(node, M.Usage):
+            names = list(node.types) + list(node.subsets)
+        out: list[M.Namespace] = []
+        for name in names:
+            if name.startswith("~"):
+                name = name[1:]
+            try:
+                general = self.resolver.resolve(name, node.owner or self.model)
+            except ResolutionError:
+                continue
+            if isinstance(general, M.Namespace):
+                out.append(general)
+        for general in self.resolver.implied_generals(node):
+            if general not in out:
+                out.append(general)
+        return out
 
     # -- expressions ------------------------------------------------------------------
 

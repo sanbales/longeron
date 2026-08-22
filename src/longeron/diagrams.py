@@ -18,6 +18,7 @@ elements: use :func:`on_select` to react to clicks.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -79,6 +80,11 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
     " .sysml-edge-connect > .elkarrow": {"stroke": "#555555"},
     " .sysml-edge-transition > .elkarrow": {"stroke": "#b58900"},
     " .sysml-edge-succession > .elkarrow": {"stroke": "#6c56a8"},
+    # layout-only packing edges (structure_diagram chains disconnected
+    # members into rows; ELK skips component packing under
+    # INCLUDE_CHILDREN): invisible in the browser, skipped headless
+    " .sysml-packing > path": {"stroke": "none"},
+    " .sysml-packing > .elkarrow": {"display": "none"},
     # pin BOTH strokes in every state (the theme bumps the edge group's
     # stroke-width to 3 on selection / 2 on hover, which the path inherits
     # -- fat line, thin head): selection is a color change, not a weight
@@ -299,7 +305,12 @@ def structure_diagram(
     root = builder.build()
     if show_relationships:
         builder.add_relationship_edges(root)
+    builder.pack_components(root)
     return _finish(root)
+
+
+#: target width:height for packing disconnected members (see pack_components)
+_PACK_ASPECT = 1.6
 
 
 class _StructureBuilder:
@@ -436,6 +447,52 @@ class _StructureBuilder:
             label = element.label if element.name else None
             for source, target in itertools.pairwise(resolved):
                 root.edges.append(_edge(source, target, "sysml-edge-connect", text=label))
+
+    # -- component packing ----------------------------------------------------
+
+    def pack_components(self, root: Node) -> None:
+        """Chain disconnected members into rows so containers pack wide.
+
+        ELK's connected-component packing does not run under the
+        ``INCLUDE_CHILDREN`` hierarchy handling the structure view needs
+        for cross-container edges, so members that touch no edge each
+        claim their own layer: a package of unrelated definitions renders
+        as one tall column.  Invisible ``sysml-packing`` edges chain the
+        edge-free members of every container into rows sized toward
+        :data:`_PACK_ASPECT`, giving the layered algorithm a grid instead.
+        """
+
+        touched: set[int] = set()
+        for edge in root.edges:
+            touched.add(id(edge.source))
+            touched.add(id(edge.target))
+
+        def is_loose(node: Node) -> bool:
+            if id(node) in touched:
+                return False
+            return all(is_loose(child) for child in node.children)
+
+        chains: list[tuple[Node, Node]] = []
+
+        def pack(container: Node) -> None:
+            loose = [child for child in container.children if is_loose(child)]
+            if len(loose) > 1:
+                per_row = max(2, math.ceil(math.sqrt(len(loose) * _PACK_ASPECT)))
+                for i in range(1, len(loose)):
+                    if i % per_row:  # i % per_row == 0 starts the next row
+                        chains.append((loose[i - 1], loose[i]))
+            for child in container.children:
+                pack(child)
+
+        pack(root)
+        for source, target in chains:
+            root.edges.append(
+                Edge(
+                    source=source,
+                    target=target,
+                    properties=EdgeProperties(cssClasses="sysml-packing"),
+                )
+            )
 
     def _resolve_node(self, name: str, context: M.Element) -> Node | None:
         try:

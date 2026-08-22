@@ -21,6 +21,24 @@ class SyntaxIssue:
         return f"{self.line}:{self.column}: {self.message}"
 
 
+@dataclass(frozen=True)
+class SourceLocation:
+    """Where a model element was declared: source (file path or label),
+    1-based line, 1-based column.
+
+    Stamped on elements by the builder (as a plain ``source_location``
+    attribute) and carried by lint diagnostics.  Models rebuilt from JSON
+    -- including model-cache hits -- carry no source locations.
+    """
+
+    source_name: str
+    line: int
+    column: int
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return f"{self.source_name}:{self.line}:{self.column}"
+
+
 class ParseError(SysMLError):
     """Raised when source text does not conform to the grammar."""
 

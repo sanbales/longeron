@@ -13,14 +13,16 @@ the dispatch fails to claim.
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, Literal, TypeVar, cast
 
 from . import ast as A
 from . import model as M
-from .errors import BuildError
+from .errors import BuildError, SourceLocation
 from .parser import ParseResult, parse_sysml_text
 
 _BodyStyle = Literal["definition", "action", "calculation", "state", "requirement", "case"]
+
+_ElementT = TypeVar("_ElementT", bound="M.Element")
 
 _CASE_USAGES: tuple[tuple[str, M.UsageKind], ...] = (
     ("caseUsage", "case"),
@@ -121,6 +123,22 @@ class _Builder:
         stream = ctx.start.getInputStream()
         return str(stream.getText(ctx.start.start, ctx.stop.stop))
 
+    def locate(self, element: _ElementT, ctx) -> _ElementT:
+        """Stamp the element's declaration position (for lint diagnostics).
+
+        A plain attribute, not a dataclass field: source positions stay out
+        of JSON exports and text round-trips.  The innermost dispatcher wins
+        (it saw the most specific context), so an already-stamped element is
+        left alone.
+        """
+
+        if getattr(element, "source_location", None) is None:
+            token = ctx.start
+            element.source_location = SourceLocation(  # type: ignore[assignment]
+                self.result.source_name, token.line, token.column + 1
+            )
+        return element
+
     def unsupported(self, ctx, rule: str = "") -> M.Unsupported:
         return M.Unsupported(text=self.src(ctx), rule=rule or type(ctx).__name__)
 
@@ -204,6 +222,7 @@ class _Builder:
         prefix = ctx.memberPrefix()
         imp.visibility = self.visibility(prefix)
         imp.is_import_all = ctx.isImportAll is not None
+        self.locate(imp, ctx)
         decl = ctx.importDeclaration()
         if decl.membershipImport() is not None:
             mi = decl.membershipImport()
@@ -238,7 +257,7 @@ class _Builder:
         alias.short_name = self.name_of(ctx.memberShortName) if ctx.memberShortName else None
         alias.name = self.name_of(ctx.memberName) if ctx.memberName else None
         alias.target = self.qname(ctx.memberElement)
-        return alias
+        return self.locate(alias, ctx)
 
     def annotating_element(self, ctx) -> M.Element:
         if ctx.comment() is not None:
@@ -354,6 +373,9 @@ class _Builder:
     )
 
     def definition_element(self, ctx) -> M.Element:
+        return self.locate(self._definition_element(ctx), ctx)
+
+    def _definition_element(self, ctx) -> M.Element:
         for accessor, spec in self._DEFINITION_DISPATCH:
             sub = getattr(ctx, accessor)()
             if sub is None:
@@ -626,7 +648,7 @@ class _Builder:
         element = self._try_non_occurrence_usage(ctx)
         if element is None:
             raise BuildError(f"unhandled usage element: {self.src(ctx)!r}")
-        return element
+        return self.locate(element, ctx)
 
     def _try_non_occurrence_usage(self, ctx) -> M.Element | None:
         sub = self._get(ctx, "defaultReferenceUsage")
@@ -675,7 +697,7 @@ class _Builder:
         element = self._try_structure_usage(ctx)
         if element is None:
             raise BuildError(f"unhandled structure usage: {self.src(ctx)!r}")
-        return element
+        return self.locate(element, ctx)
 
     def _try_structure_usage(self, ctx) -> M.Element | None:
         for accessor, kind in self._SIMPLE_OCCURRENCE_USAGES.items():
@@ -731,6 +753,9 @@ class _Builder:
         return None
 
     def behavior_usage_element(self, ctx) -> M.Element:
+        return self.locate(self._behavior_usage_element(ctx), ctx)
+
+    def _behavior_usage_element(self, ctx) -> M.Element:
         if ctx.actionUsage() is not None:
             c = ctx.actionUsage()
             usage = self._behavioral_usage(
@@ -1011,6 +1036,9 @@ class _Builder:
         return usage
 
     def variant_usage_element(self, ctx) -> M.Element:
+        return self.locate(self._variant_usage_element(ctx), ctx)
+
+    def _variant_usage_element(self, ctx) -> M.Element:
         if ctx.variantReference() is not None:
             c = ctx.variantReference()
             usage = M.Usage(kind="ref", is_variant=True)

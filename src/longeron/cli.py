@@ -9,6 +9,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .errors import ParseError, SysMLError
+
+#: failure classes a CLI user can cause (and fix): missing or unreadable
+#: files, syntax/build/resolution/evaluation errors, malformed .json inputs,
+#: and missing optional extras.  Anything else is a bug and keeps its
+#: traceback.
+_EXPECTED_ERRORS = (SysMLError, OSError, ImportError, json.JSONDecodeError)
+
 
 def _parse_value(text: str):
     try:
@@ -27,6 +35,12 @@ def _kv_pairs(pairs):
     return out
 
 
+def _error_text(exc: BaseException) -> str:
+    if isinstance(exc, OSError) and exc.filename is not None:
+        return f"{exc.filename}: {exc.strerror or exc}"
+    return str(exc)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="longeron",
@@ -36,14 +50,21 @@ def main(argv=None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    common = argparse.ArgumentParser(add_help=False)
+    flags = argparse.ArgumentParser(add_help=False)
+    flags.add_argument(
+        "--traceback", action="store_true", help="show the full Python traceback on errors"
+    )
+
+    common = argparse.ArgumentParser(add_help=False, parents=[flags])
     common.add_argument("file", help=".sysml file, .json export, or directory")
     common.add_argument("--no-cache", action="store_true", help="bypass the model cache")
     common.add_argument(
         "--stdlib", action="store_true", help="add the vendored SysML standard library"
     )
 
-    p = sub.add_parser("parse", help="syntax-check .sysml/.kerml files (file or directory)")
+    p = sub.add_parser(
+        "parse", parents=[flags], help="syntax-check .sysml/.kerml files (file or directory)"
+    )
     p.add_argument("file")
     p.add_argument("--kerml", action="store_true", help="force KerML grammar")
     p.add_argument("--tree", action="store_true", help="print the raw parse tree")
@@ -101,6 +122,7 @@ def main(argv=None) -> int:
 
     p = sub.add_parser(
         "serve",
+        parents=[flags],
         help="serve a workspace over the OMG Systems Modeling API "
         "(git-backed; requires longeron[server])",
     )
@@ -114,6 +136,16 @@ def main(argv=None) -> int:
 
     ns = parser.parse_args(argv)
 
+    try:
+        return _run(ns)
+    except _EXPECTED_ERRORS as exc:
+        if ns.traceback:
+            raise
+        print(f"error: {_error_text(exc)}", file=sys.stderr)
+        return 1
+
+
+def _run(ns: argparse.Namespace) -> int:
     from . import Interpreter, load, parse_file, to_json, to_kerml, to_sysml
 
     if ns.command == "parse":
@@ -124,10 +156,18 @@ def main(argv=None) -> int:
             if not files:
                 print(f"no {pattern[3:]} files under {target}")
                 return 1
+            failed = 0
             for path in files:
-                result = parse_file(path, language="kerml" if ns.kerml else None)
+                try:
+                    result = parse_file(path, language="kerml" if ns.kerml else None)
+                except ParseError as exc:
+                    failed += 1
+                    print(f"FAIL: {exc}")
+                    continue
                 print(f"OK: {path} parses as {result.language}")
-            return 0
+            if failed:
+                print(f"{failed} of {len(files)} file(s) failed to parse")
+            return 1 if failed else 0
         result = parse_file(ns.file, language="kerml" if ns.kerml else None)
         if ns.tree:
             print(result.tree_text())

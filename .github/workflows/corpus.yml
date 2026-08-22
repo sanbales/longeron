@@ -1,0 +1,23 @@
+name: Corpus
+
+# Reproduce the "SysML v2 corpus 309/309" badge: download the pinned
+# SysML-v2-Release commit and parse + build every .sysml file in it.
+# Manual (and not part of CI): the sweep needs a ~110 MB download and
+# several minutes of parsing, and the corpus pin only moves when
+# scripts/check_corpus.py is updated.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.67.0
+          cache: true
+
+      - run: pixi run python scripts/check_corpus.py

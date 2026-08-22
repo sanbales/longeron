@@ -1,5 +1,30 @@
 # Release notes
 
+## 0.6.0 (unreleased)
+
+- Validation diagnostics carry `file:line:column` (positions stamped by
+  the builder; models rebuilt from JSON -- including warm cache hits --
+  omit the prefix; `--no-cache` restores it)
+- CLI failures print one-line actionable errors (`--traceback` opts
+  back in); `longeron parse <dir>` reports every file instead of
+  aborting at the first failure
+- Structure diagrams pack disconnected members toward a ~1.6 aspect
+  ratio instead of one tall column
+- `attribute x : Real :>> x` no longer reports a false
+  `specialization-cycle` error (redefinition edges left the cycle walk)
+- API server: working-tree model + record projection memoized behind a
+  stat-only fingerprint -- paginated listings parse once; per-ref memos
+  bounded
+- `Env.assign` validates dotted paths before mutating the frame
+- `longeron.*` no longer leaks `typing.Literal`, `dataclasses.field`
+  et al.: `model.__all__` is explicit, guarded by `tests/test_public_api.py`
+- One instantiation engine: `m0._Populator` shares the interpreter's
+  `_PopulationEngine` core (identity, variant filtering, gap recording,
+  and random defaults stay M0-specific)
+- `scripts/check_corpus.py` reproduces the 309/309 corpus sweep from a
+  pinned upstream commit; grammar-guide wording aligned with what the
+  test suite actually re-checks
+
 ## 0.5.1
 
 - Single-file loads use the content-addressed model cache by default
