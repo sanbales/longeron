@@ -418,7 +418,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         x, y = ox + node.get("x", 0), oy + node.get("y", 0)
         width, height = node.get("width", 0), node.get("height", 0)
         css = node.get("properties", {}).get("cssClasses", "")
-        if node is not graph:  # the invisible root gets no box
+        if node is not graph and "sysml-packgroup" not in css:
+            # (pack groups are layout-only: geometry, never chrome)
             style = _style_for(
                 css, _NODE_STYLES, {"fill": "#ffffff", "stroke": "#999999", "rx": "2"}
             )

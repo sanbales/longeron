@@ -85,6 +85,9 @@ SYSML_STYLE: dict[str, dict[str, str]] = {
     # INCLUDE_CHILDREN): invisible in the browser, skipped headless
     " .sysml-packing > path": {"stroke": "none"},
     " .sysml-packing > .elkarrow": {"display": "none"},
+    # the invisible compound node that pack_components wraps loose members
+    # in: no box in the browser (headless skips its rect entirely)
+    " .sysml-packgroup > rect": {"fill": "none", "stroke": "none"},
     # pin BOTH strokes in every state (the theme bumps the edge group's
     # stroke-width to 3 on selection / 2 on hover, which the path inherits
     # -- fat line, thin head): selection is a color change, not a weight
@@ -312,6 +315,29 @@ def structure_diagram(
 #: target width:height for packing disconnected members (see pack_components)
 _PACK_ASPECT = 1.6
 
+#: tightened spacing for containers that are pure packing grids: no real
+#: edges means no edge labels to leave room for (see pack_components)
+_PACK_GRID_LAYOUT = {
+    # a pure grid has no cross-hierarchy edges by construction, so it can
+    # safely leave the global INCLUDE_CHILDREN layout: an isolated
+    # sub-layout uses THESE spacings instead of the global layer grid
+    # (under INCLUDE_CHILDREN, per-container spacing is ignored)
+    "elk.hierarchyHandling": "SEPARATE_CHILDREN",
+    "elk.layered.spacing.nodeNodeBetweenLayers": "16",
+    "elk.spacing.nodeNode": "16",
+    "elk.spacing.edgeNode": "4",
+    "elk.layered.spacing.edgeNodeBetweenLayers": "4",
+}
+
+#: the invisible compound node wrapping loose members inside a container
+#: that also has connected members: the grid spacing above, no padding,
+#: no minimum size -- the group contributes geometry, never chrome
+_PACK_GROUP_LAYOUT = {
+    **_PACK_GRID_LAYOUT,
+    "elk.padding": "[top=0,left=0,bottom=0,right=0]",
+    "elk.nodeSize.minimum": "(0, 0)",
+}
+
 
 class _StructureBuilder:
     def __init__(self, element: M.Model | M.Namespace, show_attributes: bool):
@@ -472,21 +498,44 @@ class _StructureBuilder:
                 return False
             return all(is_loose(child) for child in node.children)
 
-        chains: list[tuple[Node, Node]] = []
+        chains: list[tuple[Node, Node, Node]] = []  # (owner, source, target)
+
+        def chain_rows(owner: Node, loose: list[Node]) -> None:
+            per_row = max(2, math.ceil(math.sqrt(len(loose) * _PACK_ASPECT)))
+            for i in range(1, len(loose)):
+                if i % per_row:  # i % per_row == 0 starts the next row
+                    chains.append((owner, loose[i - 1], loose[i]))
 
         def pack(container: Node) -> None:
-            loose = [child for child in container.children if is_loose(child)]
+            members = list(container.children)
+            loose = [child for child in members if is_loose(child)]
             if len(loose) > 1:
-                per_row = max(2, math.ceil(math.sqrt(len(loose) * _PACK_ASPECT)))
-                for i in range(1, len(loose)):
-                    if i % per_row:  # i % per_row == 0 starts the next row
-                        chains.append((loose[i - 1], loose[i]))
-            for child in container.children:
+                if len(loose) == len(members):
+                    # a pure packing grid: every gap in this container is
+                    # an invisible chain hop or a row gap, so the global
+                    # edge-label-sized layer spacing is pure whitespace
+                    container.layoutOptions.update(_PACK_GRID_LAYOUT)
+                    chain_rows(container, loose)
+                else:
+                    # mixed container: wrap the loose members in an
+                    # invisible group so they pack as one tight block
+                    # instead of spreading across the real edges' layers
+                    group = Node(
+                        layoutOptions=dict(_PACK_GROUP_LAYOUT),
+                        properties=NodeProperties(cssClasses="sysml-packgroup"),
+                    )
+                    group.children = loose
+                    connected = [
+                        child for child in members if id(child) not in {id(n) for n in loose}
+                    ]
+                    container.children = [*connected, group]
+                    chain_rows(group, loose)
+            for child in members:
                 pack(child)
 
         pack(root)
-        for source, target in chains:
-            root.edges.append(
+        for owner, source, target in chains:
+            owner.edges.append(
                 Edge(
                     source=source,
                     target=target,

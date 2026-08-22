@@ -102,9 +102,16 @@ class TestStructure:
     def test_disconnected_members_get_packing_edges(self, drone_model):
         # V1: members that touch no edge are chained into rows; the chains
         # are layout-only (unlabeled, css 'sysml-packing', hidden by style)
+        # and attached to the container whose sub-layout packs them
         widget = diagrams.structure_diagram(drone_model)
+
+        def all_edges(node):
+            yield from node.edges
+            for child in node.children:
+                yield from all_edges(child)
+
         packing = [
-            e for e in widget.source.value.edges if "sysml-packing" in e.properties.cssClasses
+            e for e in all_edges(widget.source.value) if "sysml-packing" in e.properties.cssClasses
         ]
         assert packing
         assert all(not e.labels for e in packing)
