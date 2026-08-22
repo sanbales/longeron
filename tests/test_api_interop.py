@@ -41,16 +41,28 @@ _GIT_ENV = {
 V1 = """package Garage {
     part def Car {
         attribute wheels;
+        part rims : Parts::Wheel [4];
+        part spares : Parts::Wheel [0..2];
     }
+}
+
+package Parts {
+    part def Wheel;
 }
 """
 
 V2 = """package Garage {
     part def Car {
         attribute wheels;
+        part rims : Parts::Wheel [4];
+        part spares : Parts::Wheel [0..2];
     }
     part def Truck :> Car;
     part fleetCar : Car;
+}
+
+package Parts {
+    part def Wheel;
 }
 
 package Controls {
@@ -235,6 +247,41 @@ class TestExtensions:
     def test_instantiate_unknown_qname_404(self, client):
         with pytest.raises(SysMLError, match="404"):
             client.instantiate("Garage::Nope")
+
+    def test_interpret_nominal_population(self, client):
+        result = client.interpret("Garage::Car")
+        assert result["source"] == "Garage::Car"
+        assert result["strategy"] == "nominal"
+        assert result["seed"] is None
+        assert result["gaps"] == []
+        assert result["root"]["@id"] == "Garage::Car#0"
+        assert result["root"]["@type"] == "Garage::Car"
+        assert [r["@type"] for r in result["root"]["rims"]] == ["Parts::Wheel"] * 4
+        assert result["root"]["spares"] == []  # nominal takes the lower bound
+
+    def test_interpret_random_seed_is_deterministic_over_http(self, client):
+        first = client.interpret("Garage::Car", strategy="random", seed=7)
+        second = client.interpret("Garage::Car", strategy="random", seed=7)
+        assert first == second
+        assert first["strategy"] == "random"
+        assert first["seed"] == 7
+        assert 0 <= len(first["root"]["spares"]) <= 2
+
+    def test_interpret_unknown_qname_404(self, client):
+        with pytest.raises(SysMLError, match="404"):
+            client.interpret("Garage::Nope")
+
+    def test_interpret_bad_strategy_400(self, client):
+        with pytest.raises(SysMLError, match=r"400.+strategy"):
+            client.interpret("Garage::Car", strategy="bogus")
+
+    def test_interpret_bad_body_types_400(self, client):
+        with pytest.raises(SysMLError, match=r"400.+'bindings' must be an object"):
+            client.interpret("Garage::Car", bindings=["nope"])
+        with pytest.raises(SysMLError, match=r"400.+'selection' must be an object"):
+            client.interpret("Garage::Car", selection="nope")
+        with pytest.raises(SysMLError, match=r"400.+'seed' must be an integer"):
+            client.interpret("Garage::Car", strategy="random", seed="nope")
 
     def test_simulate_returns_trace(self, client):
         result = client.simulate("Controls::Power", events=["turnOn", "turnOff", "turnOn"])

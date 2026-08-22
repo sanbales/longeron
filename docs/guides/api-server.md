@@ -92,10 +92,14 @@ wrappers over the validator, interpreter, and renderer, namespaced under
 | `POST /x/validate` | `longeron.validate()` | `{"commit", "strict_imports"}` |
 | `POST /x/instantiate/{qname}` | `Interpreter.instantiate()` + constraint checks | `{"commit", "bindings"}` |
 | `POST /x/simulate/{qname}` | `Interpreter.simulate()` | `{"commit", "events", "inputs"}` |
+| `POST /x/interpret/{qname}` | `longeron.m0.interpret()` | `{"commit", "strategy", "seed", "bindings", "selection"}` |
 | `GET /x/render/{qname}.svg?commit=` | `longeron.render.to_svg()` | — |
 
-`Client` mirrors them as `validate()`, `instantiate()`, `simulate()`, and
-`render_svg()`. Rendering additionally needs the diagram stack (ipyelk +
+`Client` mirrors them as `validate()`, `instantiate()`, `simulate()`,
+`interpret()`, and `render_svg()`. Interpretation responses are the JSON
+shape of `Interpretation.to_dict()` (an M0 population with stable
+`qname#index` identities); equal seeds reproduce equal populations across
+requests. Rendering additionally needs the diagram stack (ipyelk +
 node); a server without it answers `501`.
 
 ## Security

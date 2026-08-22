@@ -259,6 +259,35 @@ class Client:
             ),
         )
 
+    def interpret(
+        self,
+        qname: str,
+        strategy: str = "nominal",
+        seed: int | None = None,
+        commit: str | None = None,
+        bindings: dict[str, Any] | None = None,
+        selection: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """``POST /x/interpret/{qname}`` (longeron servers only): an M0
+        interpretation of the population under ``qname`` -- the JSON shape
+        of :meth:`longeron.m0.Interpretation.to_dict`."""
+
+        return cast(
+            "dict[str, Any]",
+            self._checked(
+                self._http.post(
+                    f"x/interpret/{qname}",
+                    json={
+                        "commit": commit,
+                        "strategy": strategy,
+                        "seed": seed,
+                        "bindings": bindings,
+                        "selection": selection,
+                    },
+                )
+            ),
+        )
+
     def render_svg(self, qname: str, commit: str | None = None) -> bytes:
         """``GET /x/render/{qname}.svg`` (longeron servers only)."""
 

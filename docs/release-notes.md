@@ -4,6 +4,10 @@
 
 - Tutorial 09: M0 interpretations (populations, gaps, sequences, the
   trades bridge) + `longeron.m0` reference page
+- `POST /x/interpret/{qname}` extension endpoint wraps `longeron.m0.
+  interpret()` (strategy/seed/bindings/selection in the body, the
+  `Interpretation.to_dict()` JSON out), mirrored by `Client.interpret()`
+  -- seeded random populations reproduce exactly over HTTP.
 
 ## 0.4.0
 
