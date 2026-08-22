@@ -24,7 +24,7 @@ Quick start::
     print(interp.call("Demo::Double", 21)) # 42
 """
 
-from . import ast, model
+from . import ast, m0, model
 from .builder import build_model, loads, parse_expression
 from .errors import (
     BuildError,
@@ -116,6 +116,7 @@ __all__ = [
     "ExecutionError",
     # modules
     "ast",
+    "m0",
     "model",
     *model.__all__,
 ]
