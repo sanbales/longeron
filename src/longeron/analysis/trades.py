@@ -46,7 +46,7 @@ from typing import Any, ClassVar
 
 from .. import ast as A
 from .. import model as M
-from ..errors import EvaluationError
+from ..errors import EvaluationError, MissingExtraError
 from ..interpreter import Interpreter
 from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
@@ -59,10 +59,7 @@ def _cp() -> Any:
     try:
         from ortools.sat.python import cp_model
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.trades needs OR-Tools CP-SAT; install the extra "
-            "with 'pip install \"longeron[trades]\"'"
-        ) from err
+        raise MissingExtraError("longeron.analysis.trades", "OR-Tools CP-SAT", "trades") from err
     return cp_model
 
 

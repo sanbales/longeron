@@ -104,6 +104,63 @@ class TestSvg:
         widest = max(label["width"] for label in quad["labels"])
         assert quad["width"] >= widest  # totalMass expression stays inside
 
+    def test_compartment_rows_left_align(self, drone_model):
+        """Regression (V2): attribute compartments left-align per UML/SysML
+        convention; titles and stereotypes stay centered."""
+
+        widget = diagrams.structure_diagram(drone_model)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+
+        def find(node, identifier):
+            if node.get("id") == identifier:
+                return node
+            for child in node.get("children", []):
+                found = find(child, identifier)
+                if found is not None:
+                    return found
+            return None
+
+        def rows(node):
+            return [
+                label
+                for label in node["labels"]
+                if "sysml-attribute" in label["properties"]["cssClasses"]
+            ]
+
+        # leaves: attribute rows pin to the 8px margin, titles stay centered
+        hover = find(graph, "Drone::HoverTime")
+        assert {label["x"] for label in rows(hover)} == {8.0}
+        title = next(lab for lab in hover["labels"] if lab["text"] == "HoverTime")
+        assert title["x"] > 8.0
+
+        # containers: attribute rows get full-width boxes, so their
+        # (ELK-centered) left edges coincide
+        quad = find(graph, "Drone::QuadCopter")
+        quad_rows = rows(quad)
+        assert len(quad_rows) >= 3
+        assert len({label["x"] for label in quad_rows}) == 1
+        assert len({label["width"] for label in quad_rows}) == 1
+
+        # ... and the SVG writer start-anchors exactly those rows
+        svg = render._svg_from_layout(graph)
+        texts = svg.split("<text ")[1:]
+        starts = [t for t in texts if 'text-anchor="start"' in t.split(">")[0]]
+        assert starts
+        assert any("payloadMass" in t for t in starts)
+        assert not any(">QuadCopter<" in t for t in starts)  # titles stay centered
+
+    def test_svg_carries_a_title(self, drone_model):
+        """Regression (V4): exported SVGs name their subject."""
+
+        svg = render.to_svg(drone_model.find("Drone::FlightStates"))
+        assert "<title>Drone::FlightStates</title>" in svg
+        # pre-built widgets recover the name from the node qualified names
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
+        assert "<title>Drone::FlightStates</title>" in svg
+        # whole models are named by their source
+        svg = render.to_svg(drone_model)
+        assert "<title>" in svg
+
     def test_edges_attach_to_boxes(self):
         """Regression: elkjs re-containers edges (its `container` field) and
         emits their coordinates relative to that node; honoring it makes

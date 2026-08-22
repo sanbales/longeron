@@ -38,6 +38,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from ..errors import MissingExtraError
+
 if TYPE_CHECKING:
     import anywidget
 
@@ -340,9 +342,7 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         import anywidget as _anywidget
         import traitlets
     except ImportError as err:
-        raise ImportError(
-            "the 3D viewer needs anywidget; install the extra with 'pip install \"longeron[viz]\"'"
-        ) from err
+        raise MissingExtraError("the 3D viewer", "anywidget", "viz") from err
 
     class MeshViewer(_anywidget.AnyWidget):
         """three.js rendering of baked mesh dicts (A, optionally A|B)."""

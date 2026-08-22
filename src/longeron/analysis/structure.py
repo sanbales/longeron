@@ -48,6 +48,7 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from ..errors import MissingExtraError
 from ._expr import AnalysisError, constraint_expr, free_refs, named_members
 from .trades import Architecture, TradeStudy
 
@@ -92,9 +93,8 @@ def n2_payload(problem: Any) -> dict[str, Any]:
     try:
         from openmdao.core.component import Component
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.structure.n2_payload needs OpenMDAO; install "
-            "the extra with 'pip install \"longeron[mdao]\"'"
+        raise MissingExtraError(
+            "longeron.analysis.structure.n2_payload", "OpenMDAO", "mdao"
         ) from err
     prob.final_setup()
     model = prob.model
@@ -537,10 +537,7 @@ def _payload_widget(kind: str, esm: str, css: str, doc: str) -> type[anywidget.A
         import anywidget as _anywidget
         import traitlets
     except ImportError as err:
-        raise ImportError(
-            "the structure diagrams need anywidget; install the extra "
-            "with 'pip install \"longeron[viz]\"'"
-        ) from err
+        raise MissingExtraError("the structure diagrams", "anywidget", "viz") from err
 
     cls = type(
         kind,
@@ -610,9 +607,8 @@ def openmdao_n2(problem: Any, *, height: int = 620) -> _InlineHTML:
     try:
         import openmdao.api as om
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.structure.openmdao_n2 needs OpenMDAO; install "
-            "the extra with 'pip install \"longeron[mdao]\"'"
+        raise MissingExtraError(
+            "longeron.analysis.structure.openmdao_n2", "OpenMDAO", "mdao"
         ) from err
 
     with tempfile.TemporaryDirectory() as tmp:

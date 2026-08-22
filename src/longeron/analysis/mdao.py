@@ -48,7 +48,7 @@ from typing import Any
 
 from .. import ast as A
 from .. import model as M
-from ..errors import EvaluationError
+from ..errors import EvaluationError, MissingExtraError
 from ..interpreter import Instance, Interpreter
 from ._expr import (
     AnalysisError,
@@ -77,10 +77,7 @@ def _om() -> Any:
     try:
         import openmdao.api as om
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.mdao needs OpenMDAO; install the extra with "
-            "'pip install \"longeron[mdao]\"'"
-        ) from err
+        raise MissingExtraError("longeron.analysis.mdao", "OpenMDAO", "mdao") from err
     return om
 
 

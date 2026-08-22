@@ -45,6 +45,7 @@ projects SysML models onto the kernel language.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+pip install -e vendor/ipyelk   # vendored diagram engine (make check runs its tests)
 make check        # ruff + mypy + the full pytest suite
 ```
 
@@ -54,7 +55,10 @@ projection (rdflib; the `longeron.rag` retrieval substrate needs no extra),
 and `pip install -e ".[server]"` / `".[client]"` the Systems Modeling API
 server (`longeron serve`) and REST client;
 `pre-commit install` wires ruff+mypy
-into every commit.
+into every commit. Using a feature whose extra is missing fails with a
+single exception type, `longeron.errors.MissingExtraError` (both a
+`SysMLError` and an `ImportError`), whose message names the exact
+`pip install "longeron[...]"` command.
 
 > **Renamed from `sysml2`:** the import package is `longeron` as of 0.3.0.
 > The old names still work with no changes — the package ships a built-in
@@ -361,6 +365,11 @@ from longeron import render
 render.to_svg(diagrams.state_diagram(machine), "machine.svg")
 render.to_png(model, "model.png")   # builds a view automatically
 ```
+
+Exported SVGs carry the subject's qualified name as their `<title>`
+(browser hover text / accessible name), and compartment rows follow the
+UML/SysML convention: attributes, parameters, and constraints left-align
+while names and stereotypes stay centered.
 
 State-machine simulations replay over that same diagram: `longeron.replay`
 records a simulation (the `Interpreter.simulate` event protocol -- names

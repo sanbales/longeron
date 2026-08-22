@@ -90,6 +90,13 @@ The grammar is chosen from the file suffix unless `--kerml` forces it.
 In directory mode every file is reported -- failures print as `FAIL:`
 lines with their syntax errors and do not stop the sweep; the exit code
 is `1` when any file failed.
+
+Syntax errors are reported compactly: ANTLR's expected-token dumps are
+rewritten (`unexpected ';' (expected an expression)` instead of a 20-token
+set listing), and each error echoes the offending source line with a `^`
+caret under the column. The verbatim ANTLR message stays available on
+`SyntaxIssue.raw_message` for grammar work.
+
 KerML support is parse-and-validate only. The builder, and therefore
 every other subcommand, consumes SysML sources (see
 [Grammar conformance](grammar.md)).

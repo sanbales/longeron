@@ -30,7 +30,7 @@ from typing import Any, cast
 
 from . import model as M
 from .api import model_from_api_records
-from .errors import SysMLError
+from .errors import MissingExtraError, SysMLError
 
 
 class Client:
@@ -55,9 +55,7 @@ class Client:
             try:
                 import httpx
             except ImportError as err:  # pragma: no cover - exercised without extra
-                raise SysMLError(
-                    "the API client needs httpx: pip install 'longeron[client]'"
-                ) from err
+                raise MissingExtraError("the API client", "httpx", "client") from err
             http = httpx.Client(base_url=base_url, timeout=timeout, follow_redirects=True)
         self._http = http
         self.page_size = page_size
@@ -192,7 +190,7 @@ class Client:
             try:
                 from .api import to_api_records
             except Exception as err:  # pragma: no cover - import is cheap
-                raise SysMLError("pushing a Model needs longeron[ecore]") from err
+                raise MissingExtraError("pushing a Model", "pyecore", "ecore") from err
             try:
                 records = to_api_records(changes)
             except SysMLError:
@@ -221,11 +219,24 @@ class Client:
 
     # -- longeron extension endpoints (/x/) -------------------------------------------
 
-    def validate(self, commit: str | None = None) -> dict[str, Any]:
-        """``POST /x/validate`` (longeron servers only)."""
+    def validate(
+        self, commit: str | None = None, *, strict_imports: bool = False
+    ) -> dict[str, Any]:
+        """``POST /x/validate`` (longeron servers only).
+
+        ``strict_imports`` is forwarded to the server, mirroring
+        :func:`longeron.validation.validate`: additionally warn for bare
+        standard-library names that resolve only through the implicit
+        library-visibility hop.
+        """
 
         return cast(
-            "dict[str, Any]", self._checked(self._http.post("x/validate", json={"commit": commit}))
+            "dict[str, Any]",
+            self._checked(
+                self._http.post(
+                    "x/validate", json={"commit": commit, "strict_imports": strict_imports}
+                )
+            ),
         )
 
     def instantiate(self, qname: str, commit: str | None = None, **bindings: Any) -> dict[str, Any]:

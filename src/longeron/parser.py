@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from antlr4 import CommonTokenStream, InputStream, Token
@@ -13,13 +14,63 @@ from ._gen.sysml.SysMLLexer import SysMLLexer
 from ._gen.sysml.SysMLParser import SysMLParser
 from .errors import ParseError, SyntaxIssue
 
+# ANTLR's "mismatched input X expecting {...}" / "extraneous input X
+# expecting {...}" messages dump the full expected-token set -- 40+ token
+# soup for expression positions.  _humanize() rewrites them compactly; the
+# verbatim text stays on SyntaxIssue.raw_message.
+_EXPECTING = re.compile(
+    r"^(?:mismatched|extraneous) input (?P<found>.+?) expecting (?P<expected>\{.*\}|\S+)$"
+)
+
+#: lexer token kinds that mark a set as "an expression can start here"
+_EXPRESSION_KINDS = {"DECIMAL_VALUE", "STRING_VALUE"}
+
+
+def _describe_expected(expected: str) -> str:
+    if not expected.startswith("{"):
+        return f"expected {expected}"
+    items = [item.strip() for item in expected.strip("{}").split(", ") if item.strip()]
+    if len(items) <= 4:
+        return "expected " + " or ".join(items)
+    kinds = {item for item in items if not item.startswith("'")}
+    if _EXPRESSION_KINDS <= kinds:
+        return "expected an expression"
+    head = ", ".join(items[:3])
+    return f"expected {head} \u2026 ({len(items) - 3} more)"
+
+
+def _humanize(message: str) -> str:
+    """Compact ANTLR error verbiage into a one-line human message."""
+
+    match = _EXPECTING.match(message)
+    if match is None:
+        return message
+    found = match.group("found")
+    if found in ("'<EOF>'", "<EOF>"):
+        found = "end of input"
+    return f"unexpected {found} ({_describe_expected(match.group('expected'))})"
+
 
 class _CollectingErrorListener(ErrorListener):
-    def __init__(self) -> None:
+    def __init__(self, text: str = "") -> None:
         self.issues: list[SyntaxIssue] = []
+        self._lines = text.splitlines()
+
+    def _source_line(self, line: int) -> str | None:
+        if 0 < line <= len(self._lines):
+            return self._lines[line - 1]
+        return None
 
     def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
-        self.issues.append(SyntaxIssue(line, column, msg))
+        self.issues.append(
+            SyntaxIssue(
+                line,
+                column,
+                _humanize(msg),
+                raw_message=msg,
+                source_line=self._source_line(line),
+            )
+        )
 
 
 class ParseResult:
@@ -47,7 +98,7 @@ def _run_parser(
     rule: str = "rootNamespace",
     require_eof: bool = True,
 ) -> ParseResult:
-    listener = _CollectingErrorListener()
+    listener = _CollectingErrorListener(text)
     lexer = lexer_cls(InputStream(text))
     lexer.removeErrorListeners()
     lexer.addErrorListener(listener)
@@ -64,6 +115,7 @@ def _run_parser(
                     current.line,
                     current.column,
                     f"unexpected trailing input starting at {current.text!r}",
+                    source_line=listener._source_line(current.line),
                 )
             )
     if listener.issues:

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import model as M
-from .errors import SysMLError
+from .errors import MissingExtraError, SysMLError
 from .interpreter import Resolver
 
 _ECORE_PATH = Path(__file__).parent / "_spec" / "SysML.ecore"
@@ -187,9 +187,7 @@ def spec_metamodel() -> Any:
     try:
         rset = _resource_set()
     except ImportError as exc:  # pragma: no cover
-        raise SysMLError(
-            "the spec metamodel requires pyecore: pip install 'longeron[ecore]'"
-        ) from exc
+        raise MissingExtraError("the spec metamodel", "pyecore", "ecore") from exc
     resource = rset.get_resource(str(_ECORE_PATH))
     package = resource.contents[0]
     rset.metamodel_registry[package.nsURI] = package

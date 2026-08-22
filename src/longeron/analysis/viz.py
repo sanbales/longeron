@@ -32,6 +32,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
+from ..errors import MissingExtraError
 from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy, pareto
 
@@ -55,10 +56,7 @@ def _plt() -> Any:
     try:
         import matplotlib.pyplot as plt
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.viz figures need matplotlib; install the extra "
-            "with 'pip install \"longeron[viz]\"'"
-        ) from err
+        raise MissingExtraError("longeron.analysis.viz figures", "matplotlib", "viz") from err
     return plt
 
 
@@ -484,10 +482,7 @@ def _parcoords_class() -> type[anywidget.AnyWidget]:
         import anywidget as _anywidget
         import traitlets
     except ImportError as err:
-        raise ImportError(
-            "the parallel-coordinates widget needs anywidget; install the "
-            "extra with 'pip install \"longeron[viz]\"'"
-        ) from err
+        raise MissingExtraError("the parallel-coordinates widget", "anywidget", "viz") from err
 
     class ParCoordsWidget(_anywidget.AnyWidget):
         """Brushable parallel coordinates over a baked mix table."""

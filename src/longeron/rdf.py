@@ -63,7 +63,7 @@ from . import model as M
 from .ast import Literal as LiteralExpr
 from .ast import expr_to_text
 from .ecore import _DEF_CLASSES, _USAGE_CLASSES
-from .errors import SysMLError
+from .errors import MissingExtraError, SysMLError
 from .interpreter import Interpreter, Resolver
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -99,9 +99,7 @@ def _require_rdflib() -> Any:
     try:
         import rdflib
     except ImportError as exc:  # pragma: no cover - exercised without extra
-        raise SysMLError(
-            'RDF projection needs rdflib -- install the extra: pip install "longeron[rdf]"'
-        ) from exc
+        raise MissingExtraError("the RDF projection", "rdflib", "rdf") from exc
     return rdflib
 
 

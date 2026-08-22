@@ -60,7 +60,7 @@ from typing import Any
 from . import model as M
 from .builder import build_model
 from .ecore import _UUID_NAMESPACE
-from .errors import ResolutionError, SysMLError
+from .errors import MissingExtraError, ResolutionError, SysMLError
 from .parser import parse_sysml_text
 from .workspace import _cache_load, _cache_path, _cache_store, load, load_file, merge_models
 
@@ -624,7 +624,7 @@ def create_app(path: str | Path = ".") -> Any:
     try:
         from fastapi import FastAPI, HTTPException, Query, Request, Response
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise SysMLError("the API server needs fastapi: pip install 'longeron[server]'") from err
+        raise MissingExtraError("the API server", "fastapi", "server") from err
 
     from . import __version__
 
@@ -889,6 +889,6 @@ def serve(path: str | Path = ".", *, host: str = "127.0.0.1", port: int = 9000) 
     try:
         import uvicorn
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise SysMLError("the API server needs uvicorn: pip install 'longeron[server]'") from err
+        raise MissingExtraError("the API server", "uvicorn", "server") from err
 
     uvicorn.run(create_app(path), host=host, port=port)

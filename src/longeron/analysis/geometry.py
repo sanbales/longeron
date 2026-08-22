@@ -44,6 +44,7 @@ from __future__ import annotations
 from math import atan, atan2, ceil, cos, floor, pi, sin, sqrt
 from typing import Any
 
+from ..errors import MissingExtraError
 from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy
 
@@ -1095,9 +1096,8 @@ def to_cadquery(
     try:
         import cadquery as cq
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.geometry.to_cadquery needs cadquery; install "
-            "the extra with 'pip install \"longeron[cad]\"'"
+        raise MissingExtraError(
+            "longeron.analysis.geometry.to_cadquery", "cadquery", "cad"
         ) from err
 
     def color(name: str) -> Any:

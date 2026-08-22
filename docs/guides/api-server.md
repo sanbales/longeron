@@ -99,7 +99,8 @@ wrappers over the validator, interpreter, and renderer, namespaced under
 | `GET /x/render/{qname}.svg?commit=` | `longeron.render.to_svg()` | — |
 
 `Client` mirrors them as `validate()`, `instantiate()`, `simulate()`,
-`interpret()`, and `render_svg()`. Interpretation responses are the JSON
+`interpret()`, and `render_svg()` — `validate(strict_imports=True)`
+forwards the body flag. Interpretation responses are the JSON
 shape of `Interpretation.to_dict()` (an M0 population with stable
 `qname#index` identities); equal seeds reproduce equal populations across
 requests. Rendering additionally needs the diagram stack (ipyelk +

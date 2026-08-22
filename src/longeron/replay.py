@@ -29,7 +29,7 @@ from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from . import model as M
-from .errors import ExecutionError
+from .errors import ExecutionError, MissingExtraError
 from .interpreter import (
     Interpreter,
     SentEvent,
@@ -38,6 +38,7 @@ from .interpreter import (
     _ActionExecutor,
     _succession_plan,
 )
+from .render import _FIRED_STROKE, _NODE_STYLES, _arrow_id
 
 if TYPE_CHECKING:
     import anywidget
@@ -633,10 +634,14 @@ function render({ model, el }) {
 export default { render };
 """
 
-# Highlight colors track diagrams.SYSML_STYLE: active states use the usage
-# green family, fired transitions pulse orange.  Plain class selectors
-# override the SVG's baked presentation attributes (no inline styles).
-_CSS = """
+# Highlight colors track the shared palette in longeron.render (V3): active
+# states use the usage green family, fired transitions pulse the replay
+# orange (render._FIRED_STROKE) -- the fired rule below is derived from it,
+# so the marker reference cannot silently desync from render._arrow_defs.
+# Plain class selectors override the SVG's baked presentation attributes
+# (no inline styles).
+_CSS = (
+    """
 .longeron-replay { font-family: Helvetica, Arial, sans-serif; }
 .longeron-replay-stage {
   border: 1px solid #e2e2e2; border-radius: 8px; overflow: hidden;
@@ -676,16 +681,19 @@ _CSS = """
 .longeron-replay .longeron-active {
   fill: #d9efc2; stroke: #3f7a1f; stroke-width: 2px;
 }
-.longeron-replay .longeron-active-branch {
-  fill: #eef7e2; stroke: #6a9a48; stroke-width: 1.6px;
-}
+"""
+    + f"""
+.longeron-replay .longeron-active-branch {{
+  fill: #eef7e2; stroke: {_NODE_STYLES["sysml-usage"]["stroke"]}; stroke-width: 1.6px;
+}}
 /* fired transitions: recolor stroke AND the arrowhead (marker swap; the
    markers use userSpaceOnUse so the wider stroke does not scale them) */
-.longeron-replay .longeron-fired path {
-  stroke: #e05a00; stroke-width: 2.4px;
-  marker-end: url(#arrow-e05a00);
-}
+.longeron-replay .longeron-fired path {{
+  stroke: {_FIRED_STROKE}; stroke-width: 2.4px;
+  marker-end: url(#{_arrow_id(_FIRED_STROKE)});
+}}
 """
+)
 
 _WIDGET_CLS: type[anywidget.AnyWidget] | None = None
 
@@ -700,10 +708,7 @@ def _widget_class() -> type[anywidget.AnyWidget]:
         import anywidget as _anywidget
         import traitlets
     except ImportError as err:
-        raise ImportError(
-            "the replay widget needs anywidget; install the extra with "
-            "'pip install \"longeron[replay]\"'"
-        ) from err
+        raise MissingExtraError("the replay widget", "anywidget", "replay") from err
 
     class ReplayWidget(_anywidget.AnyWidget):
         """Animated replay of a recorded Timeline over the state SVG."""

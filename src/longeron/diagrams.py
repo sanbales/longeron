@@ -37,13 +37,23 @@ try:
     from ipyelk.elements.elements import ElementMetadata
     from ipyelk.elements.symbol import SymbolSpec
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
-    raise ImportError(
-        "longeron.diagrams needs ipyelk; install the vendored copy with "
-        "'pip install -e vendor/ipyelk' (pixi environments include it)"
+    from .errors import MissingExtraError
+
+    raise MissingExtraError(
+        "longeron.diagrams",
+        "ipyelk (the vendored copy)",
+        command="pip install -e vendor/ipyelk",
     ) from _err
 
 from . import model as M
 from .interpreter import Interpreter, _succession_plan
+from .render import (
+    _EDGE_STYLES,
+    _GUARDED_DASHARRAY,
+    _LABEL_STYLES,
+    _NODE_STYLES,
+    _measure,
+)
 
 __all__ = [
     "SYSML_STYLE",
@@ -56,72 +66,81 @@ __all__ = [
 
 _KIND_STEREOTYPES = {"use_case": "use case", "enum_literal": "", "feature": ""}
 
-SYSML_STYLE: dict[str, dict[str, str]] = {
-    " rect": {"transition": "all 0.2s"},
-    " .sysml-package > rect": {"fill": "#fbfbfb", "stroke": "#b0b0b0"},
-    " .sysml-definition > rect": {"fill": "#eef4fb", "stroke": "#4878a8", "rx": "4"},
-    " .sysml-usage > rect": {"fill": "#f4faee", "stroke": "#6a9a48", "rx": "4"},
-    " .sysml-state > rect": {"fill": "#fdf6e3", "stroke": "#b58900", "rx": "12"},
-    " .sysml-step > rect": {"fill": "#f2eefb", "stroke": "#6c56a8", "rx": "6"},
-    " .sysml-marker > rect": {"fill": "#333333", "stroke": "#333333", "rx": "8"},
-    " .sysml-stereotype > text": {"fill": "#888888", "font-size": "9px"},
-    " .sysml-attribute > text": {"font-size": "10px", "fill": "#444444"},
-    " .sysml-edge-specializes > path": {"stroke": "#4878a8", "stroke-dasharray": "none"},
-    " .sysml-edge-typed > path": {"stroke": "#6a9a48", "stroke-dasharray": "4 2"},
-    " .sysml-edge-connect > path": {"stroke": "#555555"},
-    " .sysml-edge-transition > path": {"stroke": "#b58900"},
-    " .sysml-edge-succession > path": {"stroke": "#6c56a8"},
-    " .sysml-edge-guarded > path": {"stroke-dasharray": "6 2"},
-    # arrowheads (the <use class="elkarrow"> child) must be recolored
-    # separately: they inherit the theme gray from the edge <g>, not the
-    # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics)
-    " .sysml-edge-specializes > .elkarrow": {"stroke": "#4878a8"},
-    " .sysml-edge-typed > .elkarrow": {"stroke": "#6a9a48"},
-    " .sysml-edge-connect > .elkarrow": {"stroke": "#555555"},
-    " .sysml-edge-transition > .elkarrow": {"stroke": "#b58900"},
-    " .sysml-edge-succession > .elkarrow": {"stroke": "#6c56a8"},
-    # layout-only packing edges (structure_diagram chains disconnected
-    # members into rows; ELK skips component packing under
-    # INCLUDE_CHILDREN): invisible in the browser, skipped headless
-    " .sysml-packing > path": {"stroke": "none"},
-    " .sysml-packing > .elkarrow": {"display": "none"},
-    # the invisible compound node that pack_components wraps loose members
-    # in: no box in the browser (headless skips its rect entirely)
-    " .sysml-packgroup > rect": {"fill": "none", "stroke": "none"},
-    # pin BOTH strokes in every state (the theme bumps the edge group's
-    # stroke-width to 3 on selection / 2 on hover, which the path inherits
-    # -- fat line, thin head): selection is a color change, not a weight
-    # change
-    " .sysml-edge > path": {"stroke-width": "var(--jp-elk-stroke-width)"},
-    " .sysml-edge > .elkarrow": {"stroke-width": "1"},
-    # selection: the WHOLE edge takes the selection color, heads stay thin;
-    # fill is never touched -- unfilled heads stay unfilled, filled stay
-    # filled (user rule)
-    " .elkedge.sysml-edge.selected > path": {"stroke": "var(--jp-elk-color-selected)"},
-    " .elkedge.sysml-edge.selected > .elkarrow": {
-        "stroke": "var(--jp-elk-color-selected)",
-        "stroke-width": "1",
-    },
-    " .elkedge.sysml-edge.selected.mouseover > .elkarrow": {"stroke-width": "1"},
-    # halo so edge labels stay readable over crossings (browser-only path)
-    " .sysml-edge text": {
-        "paint-order": "stroke",
-        "stroke": "#ffffff",
-        "stroke-width": "3px",
-        "stroke-linejoin": "round",
-    },
-    " text": {"font-family": "sans-serif", "font-size": "11px"},
-    # the theme (and fast-foundation constructed stylesheets, which sit
-    # late in the cascade) style .elklabel with the UI font, but label
-    # BOXES are sized for 11px sans-serif (pre-sized edge labels + the
-    # headless heuristic): if the glyph font is wider than the layout
-    # font, text overflows its centered box. !important, scoped to this
-    # widget, wins against any theme regardless of load order.
-    " text.elklabel": {
-        "font-family": "Helvetica, Arial, sans-serif !important",
-        "font-size": "11px !important",
-    },
-}
+
+def _sysml_style() -> dict[str, dict[str, str]]:
+    """Build the browser stylesheet from the shared palette.
+
+    The colors live in :mod:`longeron.render` (``_NODE_STYLES`` /
+    ``_EDGE_STYLES`` / ``_LABEL_STYLES``) -- the single source of truth
+    also driving the headless SVG renderer and the replay CSS -- so the
+    pipelines cannot drift apart (V3).
+    """
+
+    style: dict[str, dict[str, str]] = {" rect": {"transition": "all 0.2s"}}
+    for css, node_style in _NODE_STYLES.items():
+        style[f" .{css} > rect"] = dict(node_style)
+    for css, label_style in _LABEL_STYLES.items():
+        style[f" .{css} > text"] = {
+            "fill": label_style["fill"],
+            "font-size": f"{label_style['font-size']}px",
+        }
+    for css, edge_style in _EDGE_STYLES.items():
+        style[f" .{css} > path"] = dict(edge_style)
+        # arrowheads (the <use class="elkarrow"> child) must be recolored
+        # separately: they inherit the theme gray from the edge <g>, not the
+        # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics)
+        style[f" .{css} > .elkarrow"] = {"stroke": edge_style["stroke"]}
+    # AFTER the per-kind rules: same specificity, so source order decides
+    style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
+    style.update(
+        {
+            # layout-only packing edges (structure_diagram chains disconnected
+            # members into rows; ELK skips component packing under
+            # INCLUDE_CHILDREN): invisible in the browser, skipped headless
+            " .sysml-packing > path": {"stroke": "none"},
+            " .sysml-packing > .elkarrow": {"display": "none"},
+            # the invisible compound node that pack_components wraps loose members
+            # in: no box in the browser (headless skips its rect entirely)
+            " .sysml-packgroup > rect": {"fill": "none", "stroke": "none"},
+            # pin BOTH strokes in every state (the theme bumps the edge group's
+            # stroke-width to 3 on selection / 2 on hover, which the path inherits
+            # -- fat line, thin head): selection is a color change, not a weight
+            # change
+            " .sysml-edge > path": {"stroke-width": "var(--jp-elk-stroke-width)"},
+            " .sysml-edge > .elkarrow": {"stroke-width": "1"},
+            # selection: the WHOLE edge takes the selection color, heads stay thin;
+            # fill is never touched -- unfilled heads stay unfilled, filled stay
+            # filled (user rule)
+            " .elkedge.sysml-edge.selected > path": {"stroke": "var(--jp-elk-color-selected)"},
+            " .elkedge.sysml-edge.selected > .elkarrow": {
+                "stroke": "var(--jp-elk-color-selected)",
+                "stroke-width": "1",
+            },
+            " .elkedge.sysml-edge.selected.mouseover > .elkarrow": {"stroke-width": "1"},
+            # halo so edge labels stay readable over crossings (browser-only path)
+            " .sysml-edge text": {
+                "paint-order": "stroke",
+                "stroke": "#ffffff",
+                "stroke-width": "3px",
+                "stroke-linejoin": "round",
+            },
+            " text": {"font-family": "sans-serif", "font-size": "11px"},
+            # the theme (and fast-foundation constructed stylesheets, which sit
+            # late in the cascade) style .elklabel with the UI font, but label
+            # BOXES are sized for 11px sans-serif (pre-sized edge labels + the
+            # headless heuristic): if the glyph font is wider than the layout
+            # font, text overflows its centered box. !important, scoped to this
+            # widget, wins against any theme regardless of load order.
+            " text.elklabel": {
+                "font-family": "Helvetica, Arial, sans-serif !important",
+                "font-size": "11px !important",
+            },
+        }
+    )
+    return style
+
+
+SYSML_STYLE: dict[str, dict[str, str]] = _sysml_style()
 
 _ROOT_LAYOUT = {
     "elk.algorithm": "layered",
@@ -262,8 +281,6 @@ def _edge(
         # "centers" a zero-width box and the text overflows right of the
         # midpoint. Pre-sized labels skip the browser sizer entirely and
         # match the headless renderer's geometry (same heuristic).
-        from .render import _measure
-
         shape = label.properties.get_shape()
         shape.width, shape.height = _measure(text)
         edge.labels = [label]
@@ -309,7 +326,35 @@ def structure_diagram(
     if show_relationships:
         builder.add_relationship_edges(root)
     builder.pack_components(root)
+    _size_compartment_rows(root)
     return _finish(root)
+
+
+def _size_compartment_rows(node: Node) -> None:
+    """Pre-size attribute rows to the node's widest label (V2).
+
+    The browser draws label text start-anchored at its box's left edge and
+    ELK centers each box: full-width attribute boxes therefore share one
+    left edge (the compartment's left rule, per UML/SysML convention),
+    while snug title/stereotype boxes stay visually centered.  Pre-sized
+    labels skip the browser text sizer, exactly like pre-sized edge labels
+    (same heuristic, so the geometry matches the headless renderer).
+    """
+
+    labels = node.labels or []
+
+    def _is_row(label: Label) -> bool:
+        return "sysml-attribute" in (label.properties.cssClasses or "")
+
+    if any(_is_row(label) for label in labels):
+        sizes = [_measure(label.text or "", label.properties.cssClasses or "") for label in labels]
+        max_width = max(width for width, _ in sizes)
+        for label, (_, height) in zip(labels, sizes, strict=True):
+            if _is_row(label):
+                shape = label.properties.get_shape()
+                shape.width, shape.height = max_width, height
+    for child in node.children:
+        _size_compartment_rows(child)
 
 
 #: target width:height for packing disconnected members (see pack_components)

@@ -39,7 +39,13 @@ new ELK().layout(graph).then(
     (err) => { console.error(String(err)); process.exit(1); });
 """
 
-#: cssClasses fragment -> SVG attributes (mirrors diagrams.SYSML_STYLE)
+# ---------------------------------------------------------------------------
+# palette -- the single source of truth for diagram colors (V3)
+# ---------------------------------------------------------------------------
+# The browser stylesheet (diagrams.SYSML_STYLE) and the replay widget's CSS
+# (replay._CSS) are DERIVED from these tables; change colors here only.
+
+#: cssClasses fragment -> SVG attributes
 _NODE_STYLES: dict[str, dict[str, str]] = {
     "sysml-package": {"fill": "#fbfbfb", "stroke": "#b0b0b0", "rx": "0"},
     "sysml-definition": {"fill": "#eef4fb", "stroke": "#4878a8", "rx": "4"},
@@ -50,12 +56,15 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
 }
 
 _EDGE_STYLES: dict[str, dict[str, str]] = {
-    "sysml-edge-specializes": {"stroke": "#4878a8"},
+    "sysml-edge-specializes": {"stroke": "#4878a8", "stroke-dasharray": "none"},
     "sysml-edge-typed": {"stroke": "#6a9a48", "stroke-dasharray": "4 2"},
     "sysml-edge-connect": {"stroke": "#555555"},
     "sysml-edge-transition": {"stroke": "#b58900"},
     "sysml-edge-succession": {"stroke": "#6c56a8"},
 }
+
+#: guarded transitions/successions (edges also carrying sysml-edge-guarded)
+_GUARDED_DASHARRAY = "6 2"
 
 #: replay highlight (longeron.replay swaps fired edges to this marker)
 _FIRED_STROKE = "#e05a00"
@@ -257,6 +266,7 @@ def _to_elk_json(root: Any) -> dict:
             measured.append((text, label_css, *_measure(text, label_css)))
         max_width = max((m[2] for m in measured), default=0.0)
         for index, (text, label_css, width, height) in enumerate(measured):
+            is_attribute = "sysml-attribute" in label_css
             entry: dict[str, Any] = {
                 "id": f"{identifier}.l{index}",
                 "text": text,
@@ -269,12 +279,18 @@ def _to_elk_json(root: Any) -> dict:
                 entry["y"] = (node.height or 14) + 2 + index * height
             elif has_children:
                 # containers: leave x/y to ELK, which centers the title
-                # against the FINAL box (children decide the width)
+                # against the FINAL box (children decide the width).
+                # Compartment rows get full-width boxes so their centered
+                # left edges align; the SVG writer left-anchors their text
+                # (V2: attribute compartments read left-aligned)
+                if is_attribute:
+                    entry["width"] = max_width
                 cursor += height
             else:
-                # leaves: center each line against the widest line, which
-                # the box wraps with an 8px margin either side
-                entry["x"] = 8.0 + (max_width - width) / 2
+                # leaves: titles center against the widest line (which the
+                # box wraps with an 8px margin either side); compartment
+                # rows pin to the left margin (V2)
+                entry["x"] = 8.0 if is_attribute else 8.0 + (max_width - width) / 2
                 entry["y"] = cursor
                 cursor += height
             labels.append(entry)
@@ -397,7 +413,7 @@ def _escape_attr(text: str) -> str:
     return _escape(text).replace('"', "&quot;")
 
 
-def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
+def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None) -> str:
     parts: list[str] = []
 
     # First pass: absolute origins of every node.  elkjs moves each edge to
@@ -472,15 +488,24 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
             )
             parts.append(f'<text {common} fill="{style["fill"]}">{_escape(text)}</text>')
             return
-        # anchor node labels at the middle of the box ELK reserved: the
-        # width heuristic overestimates for most strings, so start-anchored
-        # text drifts left of where the (centered) box actually sits
-        x = ox + label.get("x", 0) + label.get("width", 0) / 2
+        # anchor title/stereotype labels at the middle of the box ELK
+        # reserved: the width heuristic overestimates for most strings, so
+        # start-anchored text drifts left of where the (centered) box
+        # actually sits.  Compartment rows (attributes etc.) left-align at
+        # their box edge instead -- the UML/SysML convention (V2); their
+        # boxes are margin-pinned (leaves) or full-width (containers), so
+        # the box edge IS the compartment's left rule.
+        if "sysml-attribute" in css:
+            x = ox + label.get("x", 0)
+            anchor = "start"
+        else:
+            x = ox + label.get("x", 0) + label.get("width", 0) / 2
+            anchor = "middle"
         y = oy + label.get("y", 0) + size
         parts.append(
             f'<text x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
-            f' text-anchor="middle"{extra}>{_escape(text)}</text>'
+            f' text-anchor="{anchor}"{extra}>{_escape(text)}</text>'
         )
 
     def draw_edge(edge: dict, node_x: float, node_y: float) -> None:
@@ -490,8 +515,10 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
         ox, oy = edge_origin(edge, (node_x, node_y))
         style = _style_for(css, _EDGE_STYLES, {"stroke": "#666666"})
         dashes = style.get("stroke-dasharray")
+        if dashes == "none":
+            dashes = None
         if "sysml-edge-guarded" in css:
-            dashes = "6 2"
+            dashes = _GUARDED_DASHARRAY
         # a group per edge, addressable from longeron.replay: data-edge is
         # "<source id>-><target id>" (qualified names for model nodes),
         # data-event the comma-joined accepted event names (or "")
@@ -520,9 +547,14 @@ def _svg_from_layout(graph: dict, padding: float = 8.0) -> str:
     draw_node(graph, padding, padding)
     width = graph.get("width", 0) + 2 * padding
     height = graph.get("height", 0) + 2 * padding
+    # <title> as the first child names the diagram (V4): hover text in
+    # browsers, the accessible name for assistive tech, and a saved
+    # machine.svg is no longer anonymous
+    caption = f"<title>{_escape(title)}</title>" if title else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
         f'height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">'
+        + caption
         + _arrow_defs()
         + '<rect width="100%" height="100%" fill="white"/>'
         + "".join(parts)
@@ -548,11 +580,40 @@ def _root_of(source: Any) -> Any:
     return source  # assume an ipyelk Node
 
 
+def _svg_title(source: Any, root: Any) -> str | None:
+    """A name for the exported diagram (V4): the element's qualified name.
+
+    Model elements name themselves; for pre-built widgets/nodes the name is
+    recovered from the node ids (qualified names), as the longest common
+    ``::`` prefix of the root's named children.
+    """
+
+    if isinstance(source, M.Model):
+        return getattr(source, "source_name", None) or "model"
+    if isinstance(source, M.Element):
+        return source.qualified_name or source.label
+    if getattr(root, "id", None):
+        return str(root.id)
+    ids = [str(child.id) for child in getattr(root, "children", []) or [] if child.id]
+    if not ids:
+        return None
+    if len(ids) == 1:
+        return ids[0]
+    segments = [identifier.split("::") for identifier in ids]
+    common: list[str] = []
+    for parts in zip(*segments, strict=False):  # stop at the shortest id
+        if len(set(parts)) != 1:
+            break
+        common.append(parts[0])
+    return "::".join(common) or None
+
+
 def to_svg(source: Any, path: str | Path | None = None) -> str:
     """Render a diagram (widget, ipyelk node, or model element) to SVG."""
 
-    graph = layout(_to_elk_json(_root_of(source)))
-    svg = _svg_from_layout(graph)
+    root = _root_of(source)
+    graph = layout(_to_elk_json(root))
+    svg = _svg_from_layout(graph, title=_svg_title(source, root))
     if path is not None:
         Path(path).write_text(svg, encoding="utf-8")
     return svg

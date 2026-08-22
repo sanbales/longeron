@@ -36,6 +36,32 @@ class TestStructure:
         texts = [label.text for label in battery.labels]
         assert any("capacity : Real = 5200.0" in t for t in texts)
 
+    def test_attribute_rows_pre_sized_to_shared_width(self, drone_model):
+        """Regression (V2): attribute rows are pre-sized to the node's widest
+        label so ELK's centered boxes share one left edge (left-aligned
+        compartments); title/stereotype labels stay snug and centered."""
+
+        from longeron.render import _measure
+
+        widget = diagrams.structure_diagram(drone_model)
+        battery = next(n for n in _walk(widget.source.value) if n.id == "Drone::Battery")
+        rows = [
+            label
+            for label in battery.labels
+            if "sysml-attribute" in (label.properties.cssClasses or "")
+        ]
+        assert len(rows) >= 2
+        expected = max(
+            _measure(label.text or "", label.properties.cssClasses or "")[0]
+            for label in battery.labels
+        )
+        for label in rows:
+            shape = label.properties.get_shape()
+            assert shape.width == expected
+            assert shape.height is not None
+        title = next(label for label in battery.labels if label.text == "Battery")
+        assert title.properties.get_shape().width is None  # browser measures it
+
     def test_multiplicity_shown(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
         rotors = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter::rotors")

@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import ast as A
 from .. import model as M
+from ..errors import MissingExtraError
 from ._expr import AnalysisError
 from .trades import TradeStudy
 
@@ -138,10 +139,8 @@ def _ipywidgets() -> Any:
     try:
         import ipywidgets
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "the mission dashboard needs ipywidgets (it arrives with "
-            "anywidget); install the extra with "
-            "'pip install \"longeron[viz]\"'"
+        raise MissingExtraError(
+            "the mission dashboard", "ipywidgets (it arrives with anywidget)", "viz"
         ) from err
     return ipywidgets
 
@@ -463,10 +462,7 @@ def _scatter_class() -> type[anywidget.AnyWidget]:
         import anywidget as _anywidget
         import traitlets
     except ImportError as err:
-        raise ImportError(
-            "the MOE-vs-cost scatter needs anywidget; install the extra "
-            "with 'pip install \"longeron[viz]\"'"
-        ) from err
+        raise MissingExtraError("the MOE-vs-cost scatter", "anywidget", "viz") from err
 
     class MoeFrontWidget(_anywidget.AnyWidget):
         """MOE-vs-cost scatter with the 2D front highlighted."""

@@ -31,7 +31,7 @@ from typing import Any
 
 from .. import ast as A
 from .. import model as M
-from ..errors import EvaluationError, ResolutionError
+from ..errors import EvaluationError, MissingExtraError, ResolutionError
 from ..interpreter import Instance, Interpreter
 from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
@@ -42,9 +42,7 @@ def _z3() -> Any:
     try:
         import z3
     except ImportError as err:  # pragma: no cover - exercised without extra
-        raise ImportError(
-            "longeron.analysis.smt needs Z3; install the extra with 'pip install \"longeron[smt]\"'"
-        ) from err
+        raise MissingExtraError("longeron.analysis.smt", "Z3", "smt") from err
     return z3
 
 
