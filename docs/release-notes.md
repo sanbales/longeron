@@ -1,5 +1,46 @@
 # Release notes
 
+## 0.7.0
+
+- **Lossless JSON omission**: `to_dict` dropped every falsy field
+  unconditionally while import hid omissions behind dataclass defaults
+  -- a True-valued flag could vanish silently, including through the
+  model cache. Omission is now default-aware; all 36 boolean fields on
+  all element types round-trip exactly (old JSON still imports; output
+  is byte-identical for well-formed models)
+- **Coverage 87% -> 93%** with meaningful tests: the audit's surviving
+  mutation probes killed, 20 new round-trip sources over the previously
+  untested builder surface (case bodies, exhibit states, inline
+  performs, event occurrences, individual/portion usages, variant
+  references, metaclassification, ...), CLI/server/analysis suites
+  deepened
+- Diagrams: compartment rows left-align (UML convention) in both the
+  browser and headless pipelines; the palette is single-sourced;
+  exported SVGs carry a `<title>`
+- Parse errors humanized: ANTLR `expecting {...}` soups become compact
+  messages with the offending line and a caret (verbatim text kept on
+  `SyntaxIssue.raw_message`)
+- Every optional-extra guard raises `MissingExtraError` with a uniform
+  `pip install longeron[extra]` message
+- `Client.validate` forwards `strict_imports`; the README pip-route
+  first run works in a fresh clone (vendored ipyelk install step)
+- Perf: succession edges indexed once per plan; the cache fingerprint
+  includes the serialization layer (one-time cache invalidation);
+  `scripts/bench_cache.py` regenerates the warm-load numbers
+- `merge_models` no longer mutates its inputs;
+  `spec_from_api_json`/`spec_from_api_records` are the canonical names
+  for the spec-metamodel importers (aliases kept)
+- Breaking (0.x): `save(format=)` -> `save(fmt=)`; `to_dict`/`to_json`
+  first parameter is `element`; `bindings` is reserved on
+  `evaluate`/`instantiate`/`check_requirement` (a feature named
+  `bindings` must use the mapping form); `Instance.set` raises
+  `EvaluationError` (was `KeyError`/`AttributeError`)
+- Known issues (found by the new tests, documented as skips): four
+  exporter reprint defects (doubled `individual` keyword on bare
+  usages, variant-reference types dropped, inline state-action bodies
+  dropped, bare case result expressions in KerML behavior bodies) and
+  an ecore projection crash on `satisfy <Def> by ...`
+
 ## 0.6.0
 
 - Validation diagnostics carry `file:line:column` (positions stamped by

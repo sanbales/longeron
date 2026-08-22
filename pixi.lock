@@ -9571,8 +9571,8 @@ packages:
   timestamp: 1785276664143
 - pypi: ./
   name: longeron
-  version: 0.6.0
-  sha256: 093907e1ec43bc192cb3a1b31bc11462e643a250b4ea6c38b0eb2e90c23f01e9
+  version: 0.7.0
+  sha256: f77645c5e6f28e93ec648e01d4be53fb211fecdbf05c864a177bfb2dd11fc965
   requires_dist:
   - antlr4-python3-runtime==4.13.2
   - pytest>=8 ; extra == 'dev'
