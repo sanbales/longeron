@@ -149,7 +149,7 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 # -> 'on'
 ```
 
-A complete walk-through lives in `examples/demo.py`, and eight executable
+A complete walk-through lives in `examples/demo.py`, and nine executable
 tutorials live in [`notebooks/`](notebooks/):
 
 | Notebook | Covers |
@@ -162,6 +162,7 @@ tutorials live in [`notebooks/`](notebooks/):
 | `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
 | `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views |
 | `08_semantic_web_and_rag` | RDF projection + SPARQL queries, deterministic retrieval chunks, semantic neighborhoods, keyword search, the agent tool-use loop |
+| `09_m0_interpretations` | M0 populations of identified individuals: stable ids, Annex A sequences, roll-ups over actual instances, seeded random sampling, occurrence individuals from executions, the trade-study bridge |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
