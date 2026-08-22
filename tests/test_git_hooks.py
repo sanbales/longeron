@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,9 +16,10 @@ nbformat = pytest.importorskip("nbformat")
 ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "scripts" / "git-hooks" / "pre-commit"
 
-#: minimal PATH (system git/python only) and no user git config, so the
-#: hook behaves identically on any machine
-_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+#: inherit the real environment (the pixi env provides git on every
+#: platform) but isolate git config so the hook behaves identically on
+#: any machine; os.devnull keeps it Windows-portable
+_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
 
 
 def _run_notebooks_module():

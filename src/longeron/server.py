@@ -81,7 +81,8 @@ def _pilot_timestamp(iso: str) -> str:
     """``Mon Jan 05 12:00:00 UTC 2026`` -- the pilot servers suffix project
     names with such a stamp and pymbe parses it back out."""
 
-    moment = datetime.fromisoformat(iso).astimezone(timezone.utc)
+    # py3.10 fromisoformat rejects a trailing Z (git %cI emits it for UTC)
+    moment = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc)
     return moment.strftime("%a %b %d %H:%M:%S UTC %Y")
 
 

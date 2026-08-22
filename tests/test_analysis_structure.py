@@ -254,7 +254,7 @@ class TestJsMath:
         module.write_text(structure._N2_MATH_JS + "\nexport { isFeedback, related };\n")
         script = tmp_path / "test.mjs"
         script.write_text(f"""
-import {{ isFeedback, related }} from {json.dumps(str(module))};
+import {{ isFeedback, related }} from {json.dumps(module.as_uri())};
 import assert from "node:assert/strict";
 assert.equal(isFeedback(1, 2), false);  // upper triangle: feed-forward
 assert.equal(isFeedback(2, 1), true);   // lower triangle: feedback
@@ -274,7 +274,7 @@ console.log("node n2 math ok");
         module.write_text(structure._NET_MATH_JS + "\nexport { neighborhood };\n")
         script = tmp_path / "test.mjs"
         script.write_text(f"""
-import {{ neighborhood }} from {json.dumps(str(module))};
+import {{ neighborhood }} from {json.dumps(module.as_uri())};
 import assert from "node:assert/strict";
 const edges = [[0, 0], [0, 1], [1, 1], [2, 0]];
 assert.deepEqual(neighborhood(edges, 0, 0),

@@ -123,7 +123,7 @@ class TestParcoordsWidget:
         script = tmp_path / "test.mjs"
         script.write_text(f"""
 import {{ brushZone, moveInterval, resizeInterval, inBrush }}
-  from {json.dumps(str(module))};
+  from {json.dumps(module.as_uri())};
 import assert from "node:assert/strict";
 assert.equal(brushZone(0.4, [0.2, 0.6], 0.02), "body");
 assert.equal(brushZone(0.21, [0.2, 0.6], 0.02), "lo");
