@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from . import model as M
 from .ast import expr_to_text
-from .export import fmt_name, fmt_qname
+from .export import find_emitter, fmt_name, fmt_qname, indent_string
 
 #: SysML definition kind -> KerML classifier keyword
 _DEF_KEYWORDS: dict[str, str] = {
@@ -59,10 +59,14 @@ _FEATURE_KINDS = frozenset(
 _STEP_KINDS = frozenset("action calc state case analysis verification use_case".split())
 
 
-def to_kerml(element: M.Element, indent: str = "    ") -> str:
-    """Render a model element as KerML textual notation (see module doc)."""
+def to_kerml(element: M.Element, indent: int | str = 4) -> str:
+    """Render a model element as KerML textual notation (see module doc).
 
-    printer = _KerMLPrinter(indent)
+    ``indent`` is a number of spaces (or, for back-compat, a literal
+    indentation string).
+    """
+
+    printer = _KerMLPrinter(indent_string(indent))
     if isinstance(element, M.Model):
         for member in element.members:
             printer.emit(member, 0)
@@ -110,45 +114,59 @@ class _KerMLPrinter:
     # -- dispatch ----------------------------------------------------------------
 
     def emit(self, el: M.Element, level: int) -> None:
-        if isinstance(el, M.Package):
-            head = self.prefix(el)
-            if el.is_standard:
-                head += "standard "
-            if el.is_library:
-                head += "library "
-            head += f"package {self.names(el)}"
-            self.body(el.members, level, head)
-        elif isinstance(el, M.Import):
-            target = fmt_qname(el.target)
-            if el.is_namespace:
-                target += "::*"
-            if el.is_recursive:
-                target += "::**"
-            self.line(level, f"{self.prefix(el)}import {target};")
-        elif isinstance(el, M.Alias):
-            self.line(level, f"{self.prefix(el)}alias {self.names(el)} for {fmt_qname(el.target)};")
-        elif isinstance(el, M.Documentation):
-            self.line(level, f"doc {el.body}")
-        elif isinstance(el, M.Comment):
-            self.line(level, el.body)
-        elif isinstance(el, M.Dependency):
-            head = f"{self.prefix(el)}dependency "
-            names = self.names(el)
-            if names:
-                head += f"{names} from "
-            head += ", ".join(fmt_qname(c) for c in el.clients)
-            head += " to " + ", ".join(fmt_qname(s) for s in el.suppliers)
-            self.line(level, head + ";")
-        elif isinstance(el, M.EnumerationDefinition):
-            self._definition(el, level)
-        elif isinstance(el, M.Definition):
-            self._definition(el, level)
-        elif isinstance(el, M.Usage):
-            self._usage(el, level)
-        elif isinstance(el, M.Unsupported):
-            self.omitted(level, el.rule or "unsupported element")
-        else:
+        # Same handler-per-class dispatch as export._Printer (most specific
+        # class along the MRO wins); the projection is best-effort, so an
+        # element without a handler is emitted as an omission comment
+        # rather than raising.
+        handler = find_emitter(self, el)
+        if handler is None:
             self.omitted(level, type(el).__name__)
+            return
+        handler(el, level)
+
+    def emit_Package(self, el: M.Package, level: int) -> None:
+        head = self.prefix(el)
+        if el.is_standard:
+            head += "standard "
+        if el.is_library:
+            head += "library "
+        head += f"package {self.names(el)}"
+        self.body(el.members, level, head)
+
+    def emit_Import(self, el: M.Import, level: int) -> None:
+        target = fmt_qname(el.target)
+        if el.is_namespace:
+            target += "::*"
+        if el.is_recursive:
+            target += "::**"
+        self.line(level, f"{self.prefix(el)}import {target};")
+
+    def emit_Alias(self, el: M.Alias, level: int) -> None:
+        self.line(level, f"{self.prefix(el)}alias {self.names(el)} for {fmt_qname(el.target)};")
+
+    def emit_Documentation(self, el: M.Documentation, level: int) -> None:
+        self.line(level, f"doc {el.body}")
+
+    def emit_Comment(self, el: M.Comment, level: int) -> None:
+        self.line(level, el.body)
+
+    def emit_Dependency(self, el: M.Dependency, level: int) -> None:
+        head = f"{self.prefix(el)}dependency "
+        names = self.names(el)
+        if names:
+            head += f"{names} from "
+        head += ", ".join(fmt_qname(c) for c in el.clients)
+        head += " to " + ", ".join(fmt_qname(s) for s in el.suppliers)
+        self.line(level, head + ";")
+
+    def emit_Definition(self, el: M.Definition, level: int) -> None:
+        self._definition(el, level)
+
+    def emit_Usage(self, el: M.Usage, level: int) -> None:
+        self._usage(el, level)
+
+    def emit_Unsupported(self, el: M.Unsupported, level: int) -> None:
+        self.omitted(level, el.rule or "unsupported element")
 
     def _definition(self, el: M.Definition, level: int) -> None:
         keyword = _DEF_KEYWORDS.get(el.kind, "classifier")

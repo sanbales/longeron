@@ -64,22 +64,47 @@ def fmt_qname(qname: str) -> str:
 _SKIP_FIELDS = {"owner"}
 
 
-def to_dict(obj):
+def _field_default(f: dataclasses.Field) -> object:
+    if f.default is not dataclasses.MISSING:
+        return f.default
+    if f.default_factory is not dataclasses.MISSING:
+        return f.default_factory()
+    return dataclasses.MISSING
+
+
+def _omit_lossless(value, f: dataclasses.Field) -> bool:
+    """True when omitting the field from the JSON round-trips exactly.
+
+    Only the empty/None/False sentinels are ever omitted, and only when the
+    dataclass default reconstructs *exactly* that value -- so every flag
+    (notably True-valued booleans) is emitted whenever omission would not
+    restore it.  The model cache relies on this invariant.
+    """
+
+    if value is None or value is False:
+        return _field_default(f) is value
+    if isinstance(value, (list, tuple)) and not value:
+        default = _field_default(f)
+        return type(default) is type(value) and not default
+    return False
+
+
+def to_dict(element):
     """Convert a model element (or expression) to JSON-able data."""
 
-    if isinstance(obj, Expr):
-        return expr_to_dict(obj)
-    if dataclasses.is_dataclass(obj):
-        data = {"@type": type(obj).__name__}
-        for f in dataclasses.fields(obj):
+    if isinstance(element, Expr):
+        return expr_to_dict(element)
+    if dataclasses.is_dataclass(element):
+        data = {"@type": type(element).__name__}
+        for f in dataclasses.fields(element):
             if f.name in _SKIP_FIELDS:
                 continue
-            value = getattr(obj, f.name)
-            if value is None or value is False or value == [] or value == ():
+            value = getattr(element, f.name)
+            if _omit_lossless(value, f):
                 continue
             data[f.name] = _to_data(value)
         return data
-    return _to_data(obj)
+    return _to_data(element)
 
 
 def _to_data(value):
@@ -94,11 +119,11 @@ def _to_data(value):
     return value
 
 
-def to_json(obj, indent: int = 2) -> str:
-    return json.dumps(to_dict(obj), indent=indent)
+def to_json(element, indent: int = 2) -> str:
+    return json.dumps(to_dict(element), indent=indent)
 
 
-def save(element: M.Element, path, format: str | None = None) -> None:
+def save(element: M.Element, path, fmt: str | None = None) -> None:
     """Write a model element to disk as ``.sysml``, ``.kerml``, or ``.json``.
 
     The format is inferred from the file suffix unless given explicitly.
@@ -107,18 +132,18 @@ def save(element: M.Element, path, format: str | None = None) -> None:
     from pathlib import Path
 
     target = Path(path)
-    if format is None:
-        format = {".json": "json", ".kerml": "kerml"}.get(target.suffix.lower(), "sysml")
-    if format == "json":
+    if fmt is None:
+        fmt = {".json": "json", ".kerml": "kerml"}.get(target.suffix.lower(), "sysml")
+    if fmt == "json":
         text = to_json(element)
-    elif format == "kerml":
+    elif fmt == "kerml":
         from .kerml import to_kerml
 
         text = to_kerml(element)
-    elif format == "sysml":
+    elif fmt == "sysml":
         text = to_sysml(element)
     else:
-        raise ValueError(f"unknown format {format!r}")
+        raise ValueError(f"unknown format {fmt!r}")
     target.write_text(text, encoding="utf-8")
 
 
@@ -145,11 +170,37 @@ _REF_OR_INLINE_KINDS = {
 }
 
 
-def to_sysml(element: M.Element, indent: str = "    ") -> str:
-    """Render a model element (usually a :class:`~longeron.model.Model` or
-    :class:`~longeron.model.Package`) to SysML v2 textual notation."""
+def indent_string(indent: int | str) -> str:
+    """Normalize an ``indent`` argument (space count or literal string)."""
 
-    printer = _Printer(indent)
+    return " " * indent if isinstance(indent, int) else indent
+
+
+def find_emitter(printer, element: M.Element, prefix: str = "emit_"):
+    """Look up ``<prefix><ClassName>`` on ``printer`` along the element's MRO.
+
+    Shared dispatch helper for the textual printers (:class:`_Printer` here
+    and :class:`longeron.kerml._KerMLPrinter`): the most specific handler
+    wins, and ``None`` signals "no handler" so each printer keeps its own
+    unknown-element failure behavior.
+    """
+
+    for klass in type(element).__mro__:
+        handler = getattr(printer, f"{prefix}{klass.__name__}", None)
+        if handler is not None:
+            return handler
+    return None
+
+
+def to_sysml(element: M.Element, indent: int | str = 4) -> str:
+    """Render a model element (usually a :class:`~longeron.model.Model` or
+    :class:`~longeron.model.Package`) to SysML v2 textual notation.
+
+    ``indent`` is a number of spaces (or, for back-compat, a literal
+    indentation string).
+    """
+
+    printer = _Printer(indent_string(indent))
     if isinstance(element, M.Model):
         for member in element.members:
             printer.emit(member, 0)
@@ -291,7 +342,7 @@ class _Printer:
     # -- dispatch ---------------------------------------------------------------
 
     def emit(self, el: M.Element, level: int) -> None:
-        handler = getattr(self, f"emit_{type(el).__name__}", None)
+        handler = find_emitter(self, el)
         if handler is None:
             raise TypeError(f"no printer for {type(el).__name__}")
         handler(el, level)

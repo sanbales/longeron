@@ -27,6 +27,7 @@ way; pass ``cache=False`` to opt out.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -46,16 +47,18 @@ def _fingerprint() -> str:
     """Hash of the code that determines a built model's shape.
 
     Any change to the generated parser, the builder, the model classes, the
-    expression AST, or the package version invalidates all cached models.
+    expression AST, the JSON serialization layer (exporter/importer -- the
+    schema cache entries are written and read in), or the package version
+    invalidates all cached models.
     """
 
     global _FINGERPRINT
     if _FINGERPRINT is None:
-        from . import __version__, ast, builder, model, parser
+        from . import __version__, ast, builder, export, importer, model, parser
         from ._gen.sysml import SysMLParser
 
         digest = hashlib.sha256(__version__.encode())
-        for module in (ast, builder, model, parser, SysMLParser):
+        for module in (ast, builder, export, importer, model, parser, SysMLParser):
             module_file = getattr(module, "__file__", None)
             if module_file:
                 digest.update(Path(module_file).read_bytes())
@@ -151,7 +154,7 @@ def load_many(paths: Iterable, *, cache: bool = True) -> M.Model:
     if not sources:
         raise BuildError("no files to load")
     models = [_load_single(p, cache=cache) for p in sources]
-    return merge_models(models, source_name=", ".join(str(p) for p in sources))
+    return _merge_models_move(models, source_name=", ".join(str(p) for p in sources))
 
 
 def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
@@ -167,11 +170,23 @@ def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
     if not files:
         raise BuildError(f"no .sysml files found under {base}")
     models = [load_file(p, cache=cache) for p in files]
-    return merge_models(models, source_name=str(base))
+    return _merge_models_move(models, source_name=str(base))
 
 
 def merge_models(models: Iterable[M.Model], source_name: str = "<merged>") -> M.Model:
-    """Combine the top-level members of several models under one root."""
+    """Combine the top-level members of several models under one root.
+
+    The inputs are left untouched: each model is deep-copied and the copies'
+    members are re-owned by the merged root, so mutating the result never
+    aliases the sources (and vice versa).
+    """
+
+    return _merge_models_move([copy.deepcopy(m) for m in models], source_name)
+
+
+def _merge_models_move(models: Iterable[M.Model], source_name: str) -> M.Model:
+    """Merge by *moving* members (rebinds ``member.owner``; internal use
+    only, for freshly loaded per-file models that have no other owner)."""
 
     combined = M.Model(source_name=source_name)
     for model in models:

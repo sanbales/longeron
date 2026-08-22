@@ -6,8 +6,9 @@ metaclass, ``@id``/``elementId`` UUIDs, and every reference expressed as
 ``{"@id": ...}``.  This module rides on the :mod:`longeron.ecore` projection
 (so it inherits its scope and its ``pyecore`` requirement):
 
-    records = longeron.api.to_api_json(model)      # model -> API JSON
-    spec = longeron.api.from_api_json(records)     # API JSON -> spec instances
+    records = longeron.api.to_api_json(model)           # model -> API JSON
+    clone = longeron.api.model_from_api_json(records)   # API JSON -> Model (inverse)
+    spec = longeron.api.spec_from_api_json(records)     # API JSON -> spec instances
 
 The export is a structural prototype: element skeletons, names, flags,
 memberships, and specialization/typing relationships -- not expression
@@ -66,7 +67,7 @@ def to_api_records(
     import whose target never resolved, a bare Dependency) simply omit
     the fields.  Pass ``derived=False`` for minimal records restricted
     to stored features.  Round-trips are lossless either way:
-    :func:`from_api_records` accepts records with or without the
+    :func:`spec_from_api_records` accepts records with or without the
     endpoint fields, and a re-export reproduces them.
 
     With ``implied=True`` (requires a :class:`~longeron.model.Model`), the
@@ -291,8 +292,14 @@ def to_api_json(
     return json.dumps(to_api_records(model, implied=implied, derived=derived), indent=indent)
 
 
-def from_api_records(records: list[dict[str, Any]]) -> SpecModel:
-    """Rebuild spec (pyecore) instances from API records."""
+def spec_from_api_records(records: list[dict[str, Any]]) -> SpecModel:
+    """Rebuild spec (pyecore) instances from API records.
+
+    This is the *spec-level* import: the result mirrors the metamodel
+    instances the records serialize.  It is **not** the inverse of
+    :func:`to_api_records` -- for API records back to a
+    :class:`longeron.model.Model`, use :func:`model_from_api_records`.
+    """
 
     from .ecore import SpecReport
 
@@ -356,8 +363,18 @@ def _apply(obj: Any, feature: Any, value: Any, instances: dict[str, Any]) -> Non
     obj.eSet(feature.name, value)
 
 
-def from_api_json(text: str) -> SpecModel:
-    return from_api_records(json.loads(text))
+def spec_from_api_json(text: str) -> SpecModel:
+    """Parse API JSON into spec (pyecore) instances (see
+    :func:`spec_from_api_records`).  **Not** the inverse of
+    :func:`to_api_json` -- that is :func:`model_from_api_json`."""
+
+    return spec_from_api_records(json.loads(text))
+
+
+#: back-compat aliases; prefer the explicit ``spec_from_api_*`` names (or
+#: ``model_from_api_*`` for the model-layer inverse of ``to_api_*``)
+from_api_records = spec_from_api_records
+from_api_json = spec_from_api_json
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +561,7 @@ def model_from_api_records(records: list[dict[str, Any]]) -> M.Model:
     so both longeron exports and pilot-server payloads import.  Records
     are accepted in flat GET form or pilot POST ``identity``/``payload``
     form; unknown ``@type`` values are skipped, never fatal.  Unlike
-    :func:`from_api_records` this needs no pyecore.
+    :func:`spec_from_api_records` this needs no pyecore.
     """
 
     flat = _flat_api_records(records)

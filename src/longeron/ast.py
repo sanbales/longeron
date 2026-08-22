@@ -271,8 +271,6 @@ _BINARY_PREC = {
     "**": _PREC_EXPONENTIAL,
 }
 
-_RESERVED_FOR_NAMES = None  # populated lazily from export to avoid a cycle
-
 
 def _fmt_name(name: str) -> str:
     """Quote a single name part if it is not a plain basic name."""

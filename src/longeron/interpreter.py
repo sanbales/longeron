@@ -60,12 +60,25 @@ class Instance:
         return node
 
     def set(self, path: str, value: Any) -> None:
+        """Assign ``value`` at a (possibly dotted) slot path.
+
+        Error contract matches :meth:`Env.assign`: every failure raises
+        :class:`~longeron.errors.EvaluationError`, and nothing is mutated
+        on failure.  Like ``Env.assign`` for simple names, the *final* slot
+        is created when absent; every intermediate hop must be an existing
+        instance-valued slot.
+        """
+
         parts = path.split(".")
         node: Any = self
         for part in parts[:-1]:
-            node = node.slots[part] if isinstance(node, Instance) else None
-            if node is None:
+            if not isinstance(node, Instance):
                 raise EvaluationError(f"cannot traverse {part!r} in {path!r}")
+            if part not in node.slots:
+                raise EvaluationError(f"instance of {node.type_name} has no feature {part!r}")
+            node = node.slots[part]
+        if not isinstance(node, Instance):
+            raise EvaluationError(f"cannot traverse {parts[-1]!r} in {path!r}")
         node.slots[parts[-1]] = value
 
     def to_dict(self) -> dict[str, Any]:
@@ -730,9 +743,19 @@ class Interpreter:
         return self.resolver.resolve(qname)
 
     def evaluate(
-        self, expr: str | A.Expr, context: str | M.Namespace | None = None, **bindings: Any
+        self,
+        expr: str | A.Expr,
+        context: str | M.Namespace | None = None,
+        bindings: Any = None,
+        **kwargs: Any,
     ) -> Any:
-        """Evaluate an expression (text or AST) with optional name bindings."""
+        """Evaluate an expression (text or AST) with optional name bindings.
+
+        Bindings can be passed as keyword arguments (sugar) or via the
+        ``bindings`` mapping -- the mapping form covers names that collide
+        with the reserved parameters (``expr``, ``context``, ``bindings``).
+        Keyword arguments win on overlap.
+        """
 
         if isinstance(expr, str):
             from .builder import parse_expression
@@ -740,19 +763,25 @@ class Interpreter:
             expr = parse_expression(expr)
         if isinstance(context, str):
             context = self.resolver.resolve(context)  # type: ignore[assignment]
-        env = Env(
-            self, context if isinstance(context, M.Namespace) else self.model, [dict(bindings)]
-        )
+        frame = {**(bindings or {}), **kwargs}
+        env = Env(self, context if isinstance(context, M.Namespace) else self.model, [frame])
         return self.eval(expr, env)
 
-    def instantiate(self, definition: str | M.Definition | M.Usage, **bindings: Any) -> Instance:
+    def instantiate(
+        self,
+        definition: str | M.Definition | M.Usage,
+        bindings: Any = None,
+        **kwargs: Any,
+    ) -> Instance:
         """Create an instance of a part/item definition, evaluating attribute
-        values; ``bindings`` override attribute values by name."""
+        values; bindings (keyword arguments, or the ``bindings`` mapping for
+        names colliding with reserved parameters) override attribute values
+        by name."""
 
         defn = self.resolver.resolve(definition) if isinstance(definition, str) else definition
         if not isinstance(defn, (M.Definition, M.Usage)):
             raise EvaluationError(f"cannot instantiate {definition!r}")
-        return self._instantiate(defn, bindings)
+        return self._instantiate(defn, {**(bindings or {}), **kwargs})
 
     def call(self, calc: str | M.Definition | M.Usage, *args: Any, **kwargs: Any) -> Any:
         """Invoke a calc (or constraint) definition/usage as a function."""
@@ -777,12 +806,13 @@ class Interpreter:
         self,
         requirement: str | M.Definition | M.Usage,
         subject: Instance | None = None,
-        **bindings: Any,
+        bindings: Any = None,
+        **kwargs: Any,
     ) -> RequirementResult:
         req = self.resolver.resolve(requirement) if isinstance(requirement, str) else requirement
         if not isinstance(req, (M.Definition, M.Usage)):
             raise EvaluationError(f"{requirement!r} is not a requirement")
-        frame: dict[str, Any] = dict(bindings)
+        frame: dict[str, Any] = {**(bindings or {}), **kwargs}
         members = self.resolver.members_of(req)
         if subject is not None:
             subject_names = [
@@ -1642,7 +1672,7 @@ class _ActionExecutor:
         raise ExecutionError("action exceeded step limit")
 
     def _next_step(self, current: str, plan: _SuccessionPlan) -> str | None:
-        outgoing = [e for e in plan.edges if e.source == current]
+        outgoing = plan.edges_from(current)
         if not outgoing:
             return None
         for edge in outgoing:
@@ -1660,7 +1690,7 @@ class _ActionExecutor:
     def _run_fork(self, fork_name: str, plan: _SuccessionPlan) -> str | None:
         self.trace.append(f"fork {fork_name}")
         join: str | None = None
-        for edge in [e for e in plan.edges if e.source == fork_name]:
+        for edge in plan.edges_from(fork_name):
             branch: str | None = edge.target
             for _ in range(_MAX_LOOP_ITERATIONS):
                 if branch is None or branch == "done" or self.terminated:
@@ -1863,6 +1893,16 @@ class _SuccessionPlan:
     step_ids: set[int]
     edges: list[_Edge]
     initial: str | None
+    #: edges indexed by source, built once per plan (the plan is static per
+    #: run, and graph execution looks successors up on every step)
+    by_source: dict[str, list[_Edge]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for edge in self.edges:
+            self.by_source.setdefault(edge.source, []).append(edge)
+
+    def edges_from(self, source: str) -> list[_Edge]:
+        return self.by_source.get(source, [])
 
 
 _STEP_TYPES = (
