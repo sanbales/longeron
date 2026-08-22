@@ -35,7 +35,9 @@ The same subcommands share two options:
 
 `--stdlib` mutates the loaded model. `lint` does not need it: the
 validator consults the standard library through its resolver by default
-(see [Validation](validation.md#names-resolve-against-the-standard-library)).
+(see [Validation](validation.md#names-resolve-against-the-standard-library)),
+and library-package internals are never the subject of diagnostics, so
+`--stdlib` does not change what `lint` reports.
 
 ### `name=value` arguments
 

@@ -1,12 +1,14 @@
 """Transform ANTLR parse trees of SysML v2 text into :mod:`longeron.model` objects.
 
-The builder covers the constructs needed to *define, export and execute*
-models: packages, imports/aliases, comments/docs, all common definition and
-usage kinds, expressions, calculations, constraints, requirements, actions
-(assign / if / loops / send / accept / perform / successions) and state
-machines.  Constructs outside this subset (views, interfaces with special
-bodies, flows, metadata usages, ...) are preserved verbatim as
-:class:`~longeron.model.Unsupported` elements so nothing is lost on export.
+The builder covers the full textual notation: packages, imports/aliases,
+comments/docs, every definition and usage kind (including views,
+interfaces, flows, allocations, and metadata), expressions, calculations,
+constraints, requirements, actions (assign / if / loops / send / accept /
+perform / successions) and state machines.  There is no lossy fallback:
+every construct maps to a typed model element, and the test suite asserts
+that building produces zero :class:`~longeron.model.Unsupported` elements.
+``Unsupported`` survives only as a defensive dead-end for grammar rules
+the dispatch fails to claim.
 """
 
 from __future__ import annotations

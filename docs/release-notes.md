@@ -1,5 +1,21 @@
 # Release notes
 
+## 0.5.1
+
+- Single-file loads use the content-addressed model cache by default
+  (`cache=False` opts out) -- repeat CLI invocations on one file drop
+  from ~9 s to ~0.1 s
+- Interpreter: package-level attribute values that depend on the
+  instance in scope are no longer memoized across instances, which could
+  silently flip a constraint verdict (a failing check reported
+  `passed=True`)
+- `validate()` / `longeron lint` treat `library` packages as resolution
+  context only, so `lint --stdlib` no longer floods diagnostics about
+  library internals on a clean model
+- Docs honesty: `builder`/`model` docstrings now describe the
+  no-lossy-fallback coverage; stale test/coverage counts dropped from
+  the README
+
 ## 0.5.0
 
 - Tutorial 09: M0 interpretations (populations, gaps, sequences, the

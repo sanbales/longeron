@@ -14,6 +14,17 @@ class TestCleanModels:
     def test_valid_model_no_diagnostics(self, vehicle_model):
         assert longeron.validate(vehicle_model) == []
 
+    def test_library_packages_are_not_subjects(self):
+        # library packages are resolution context only: internal problems
+        # (here a duplicate name) are not reported against the model
+        assert (
+            diags("""
+            standard library package Lib { part def X; part def X; }
+            package P { part def V; }
+        """)
+            == []
+        )
+
     def test_builtin_types_resolve_against_stdlib(self):
         # no import anywhere: Real/Integer/String resolve through the
         # standard-library fallback (implicit library visibility)
@@ -411,6 +422,16 @@ class TestCLI:
         assert "0 error(s), 0 warning(s)" in capsys.readouterr().out
         assert main(["lint", "--no-stdlib", str(path)]) == 0
         assert "warning[unresolved-reference]" in capsys.readouterr().out
+
+    def test_lint_stdlib_flag_stays_clean(self, tmp_path, capsys):
+        # regression: --stdlib merges the library into the model, which used
+        # to flood lint with hundreds of diagnostics about library internals
+        from longeron.cli import main
+
+        path = tmp_path / "m.sysml"
+        path.write_text("package P { part def V { attribute m : Real; } }")
+        assert main(["lint", "--stdlib", str(path)]) == 0
+        assert "0 error(s), 0 warning(s)" in capsys.readouterr().out
 
     def test_lint_strict_fails_on_warnings(self, tmp_path):
         from longeron.cli import main

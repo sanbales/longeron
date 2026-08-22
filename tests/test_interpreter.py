@@ -89,6 +89,27 @@ class TestConstraints:
         car = vehicle_interp.instantiate("Vehicles::Vehicle")
         assert vehicle_interp.check(car)[0].expression == "mass <= maxMass"
 
+    def test_instance_dependent_value_not_cached_across_instances(self):
+        # Regression: the constant cache memoized package-level values by
+        # element id alone, so a value computed against one instance leaked
+        # into checks of another, silently flipping the verdict.
+        model = longeron.loads(
+            """
+            package P {
+                attribute halfMass : Real = mass / 2.0;
+                part def V {
+                    attribute mass : Real = 100.0;
+                    assert constraint c { halfMass < 100.0 }
+                }
+            }
+            """
+        )
+        interp = longeron.Interpreter(model)
+        first = interp.check(interp.instantiate("P::V", mass=100.0))
+        assert first[0].passed is True  # 50 < 100
+        second = interp.check(interp.instantiate("P::V", mass=400.0))
+        assert second[0].passed is False  # 200 < 100 must fail
+
 
 class TestRequirements:
     def test_requirement_satisfied(self, vehicle_interp):
