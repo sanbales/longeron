@@ -80,3 +80,13 @@ one known precedence deviation from the OMG specification remains. The
 guide [Grammar conformance](guides/grammar.md) carries the patch table,
 the corpus result, and the deviation. The full per-patch rationale lives
 in the [README](https://github.com/sanbales/longeron#grammar-patches).
+
+## Design documents
+
+Deeper design rationale for major subsystems:
+
+```{toctree}
+:maxdepth: 1
+
+design/m0-interpretations
+```
