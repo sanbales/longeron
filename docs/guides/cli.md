@@ -2,7 +2,7 @@
 
 The package installs one console command, `longeron`. It also installs
 `sysml2`, the same program under the pre-rename name (see
-[Migrating from sysml2](compat.md)). The seven subcommands map onto the
+[Migrating from sysml2](compat.md)). The eight subcommands map onto the
 Python API one-to-one, so anything the command line does, a script can do.
 
 | Subcommand | Does | Python equivalent |
@@ -14,6 +14,7 @@ Python API one-to-one, so anything the command line does, a script can do.
 | [`check`](#longeron-check) | instantiate a `part def` and check its constraints | {meth}`Interpreter.instantiate <longeron.interpreter.Interpreter.instantiate>` + `check` |
 | [`run`](#longeron-run) | execute an `action def` | {meth}`Interpreter.run_action <longeron.interpreter.Interpreter.run_action>` |
 | [`simulate`](#longeron-simulate) | simulate a `state def` | {meth}`Interpreter.simulate <longeron.interpreter.Interpreter.simulate>` |
+| [`serve`](#longeron-serve) | serve a workspace over the Systems Modeling API | {func}`~longeron.server.serve` |
 
 ## Model inputs and shared options
 
@@ -182,3 +183,24 @@ Events the machine cannot consume are reported on an
 To advance the simulation clock for `accept after`/`accept at` triggers,
 use the Python API, where a plain number in the `events` list advances
 the clock ({meth}`~longeron.interpreter.Interpreter.simulate`).
+
+## `longeron serve`
+
+`serve` exposes a workspace as a git-backed [OMG Systems Modeling API
+server](api-server.md) (requires `pip install "longeron[server]"`):
+
+```console
+$ longeron serve path/to/models --port 9000
+INFO:     Uvicorn running on http://127.0.0.1:9000 (Press CTRL+C to quit)
+```
+
+| Option | Effect |
+|---|---|
+| `path` | Directory (or single `.sysml` file) to serve; defaults to `.`. |
+| `--host ADDR` | Bind address. Defaults to `127.0.0.1`: the server is local-first and does **no authentication**. |
+| `--port N` | Port; defaults to `9000` (the pilot-server convention). |
+
+Unlike the other subcommands, `serve` takes no `--no-cache`/`--stdlib`
+options: it always loads through the model cache, and it blocks until
+interrupted. See [API server & client](api-server.md) for the resource
+model, the git-commit mapping, and the `/x/` extension endpoints.

@@ -28,6 +28,8 @@ dev = [
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
     # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
     "rdflib>=7.0",  # mirrors [rdf] so notebook 08 executes in CI
+    "fastapi>=0.110", "uvicorn>=0.29",  # mirrors [server] (API server tests)
+    "httpx>=0.27",  # mirrors [client] (API client tests)
     # cadquery ([cad]) stays OUT of dev: the OCC kernel is ~1 GB and the
     # notebook's cadquery cell degrades to a printed note without it
 ]
@@ -43,6 +45,8 @@ docs = [
     "sphinx-design>=0.6",
 ]
 ecore = ["pyecore>=0.15"]
+client = ["httpx>=0.27"]  # longeron.client: Systems Modeling API client
+server = ["fastapi>=0.110", "uvicorn>=0.29", "pyecore>=0.15"]  # longeron serve
 rdf = ["rdflib>=7.0"]  # longeron.rdf; longeron.rag deliberately needs NO extra
 replay = ["anywidget>=0.9"]
 mdao = ["openmdao>=3.30"]
@@ -123,6 +127,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "pyecore.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# lazy imports behind the [client]/[server] extras
+module = ["fastapi.*", "starlette.*", "uvicorn.*", "httpx.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 # vendored, pydantic-v1 models confuse mypy's constructor signatures

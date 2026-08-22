@@ -8,6 +8,7 @@ the [API reference](../reference/index.md).
 |---|---|
 | [Command line](cli.md) | run any `longeron` subcommand, with every flag and exit code |
 | [Workspaces & caching](workspaces.md) | load multi-file projects and control the model cache |
+| [API server & client](api-server.md) | serve a workspace over the OMG Systems Modeling API, or fetch/push models from one |
 | [Validation](validation.md) | lint a model and act on each diagnostic code |
 | [Grammar conformance](grammar.md) | know exactly where the parser follows, patches, or deviates from the OMG grammar |
 | [Choosing an analysis](analysis.md) | pick between trade studies, MDAO sizing, SMT checks, and RDF/RAG queries |
@@ -20,6 +21,7 @@ the [API reference](../reference/index.md).
 
 cli
 workspaces
+api-server
 validation
 grammar
 analysis
