@@ -81,3 +81,18 @@ both. This marriage is the part pymbe could never reach.
 Non-goals now: mutating M1 (pymbe's covering pattern), exhaustive enumeration strategy
 (`all_architectures` already covers the discrete case; a general `exhaustive` strategy
 explodes without domain bounds), per-individual physics re-sizing.
+
+## Decisions (ratified 2026-08-22)
+
+The three open choices were reviewed and the implemented behavior stands:
+
+1. **Nominal ranged multiplicities take the lower bound** — conservative,
+   deterministic, consistent with `instantiate()` and pymbe's atom counts;
+   `strategy="random"` and explicit `bindings` cover everything else.
+2. **M1/M0 divergence lands in `Interpretation.gaps`, never raises** — the
+   trades-style honesty channel: values degrade to `None`, the gap records
+   what and why, and strict callers assert `gaps == []`.
+3. **M0 stays out of the OMG API projection** — `to_dict()` is a separate
+   shape; if serving interpretations over HTTP becomes useful, it enters
+   through the server's `/x/` extension namespace, keeping the standard
+   record stream uncontaminated for pilot-ecosystem consumers.
