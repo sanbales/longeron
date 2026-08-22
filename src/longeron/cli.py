@@ -54,6 +54,12 @@ def main(argv=None) -> int:
         help="export a model to JSON, SysML, KerML, or the OMG API JSON (requires pyecore)",
     )
     p.add_argument("--format", choices=["json", "sysml", "kerml", "api"], default="json")
+    p.add_argument(
+        "--no-derived",
+        action="store_true",
+        help="--format api: omit the derived 'source'/'target' relationship "
+        "endpoint arrays that pilot-API consumers use for navigation",
+    )
     p.add_argument("-o", "--output", help="output path (default stdout)")
 
     p = sub.add_parser(
@@ -139,7 +145,7 @@ def main(argv=None) -> int:
         if ns.format == "api":
             from .api import to_api_json
 
-            text = to_api_json(model)
+            text = to_api_json(model, derived=not ns.no_derived)
         else:
             renderers: dict[str, Callable[[Any], str]] = {
                 "json": to_json,

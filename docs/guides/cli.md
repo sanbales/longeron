@@ -105,6 +105,7 @@ $ longeron export models/ --format json -o merged.json    # directory, merged
 | Option | Effect |
 |---|---|
 | `--format {json,sysml,kerml,api}` | Output format (default `json`). `api` emits OMG Systems Modeling API records and needs the `ecore` extra. |
+| `--no-derived` | With `--format api`: omit the derived `source`/`target` relationship endpoint arrays (emitted by default; pilot-API consumers need them for navigation). |
 | `-o`, `--output PATH` | Write to a file instead of stdout. |
 
 JSON round-trips are lossless. SysML output re-parses to the same model.

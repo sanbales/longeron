@@ -153,3 +153,177 @@ class TestImpliedSpecializations:
         spec = to_spec(longeron.loads(self.MODEL))
         with pytest.raises(longeron.SysMLError, match="needs a longeron Model"):
             api.to_api_records(spec, implied=True)
+
+
+@pytest.fixture(scope="module")
+def derived_records():
+    return api.to_api_records(longeron.loads(TestDerivedEndpoints.MODEL))
+
+
+@pytest.fixture(scope="module")
+def drone_records():
+    from pathlib import Path
+
+    drone = Path(__file__).parent.parent / "examples" / "drone.sysml"
+    return api.to_api_records(longeron.load(drone, cache=False))
+
+
+class TestDerivedEndpoints:
+    """to_api_records(derived=True), the default: relationship records
+    carry the spec-derived ``source``/``target`` endpoint arrays that the
+    pilot-implementation API servers serialize (and that consumers such
+    as pymbe require to recognize and navigate relationships)."""
+
+    MODEL = """package P {
+        part def A { attribute m : Real; }
+        part def B :> A { attribute m2 : Real :>> m; }
+        part a1 : A;
+        part a2 subsets a1;
+    }"""
+
+    @staticmethod
+    def _id_of(records, name):
+        return next(r["@id"] for r in records if r.get("declaredName") == name)
+
+    def _endpoints(self, records, type_):
+        record = next(r for r in records if r["@type"] == type_)
+        return record, record["source"], record["target"]
+
+    def test_subclassification(self, derived_records):
+        record, source, target = self._endpoints(derived_records, "Subclassification")
+        assert source == [record["subclassifier"]] == [{"@id": self._id_of(derived_records, "B")}]
+        assert target == [record["superclassifier"]] == [{"@id": self._id_of(derived_records, "A")}]
+
+    def test_feature_typing(self, derived_records):
+        record, source, target = self._endpoints(derived_records, "FeatureTyping")
+        assert source == [record["typedFeature"]] == [{"@id": self._id_of(derived_records, "a1")}]
+        assert target == [record["type"]] == [{"@id": self._id_of(derived_records, "A")}]
+
+    def test_subsetting(self, derived_records):
+        record, source, target = self._endpoints(derived_records, "Subsetting")
+        assert source == [record["subsettingFeature"]]
+        assert target == [record["subsettedFeature"]]
+        assert target == [{"@id": self._id_of(derived_records, "a1")}]
+
+    def test_redefinition(self, derived_records):
+        _record, source, target = self._endpoints(derived_records, "Redefinition")
+        assert source == [{"@id": self._id_of(derived_records, "m2")}]
+        assert target == [{"@id": self._id_of(derived_records, "m")}]
+
+    def test_memberships_owner_to_member(self, derived_records):
+        # membership endpoints fall back to the stored containment roles:
+        # source = owningRelatedElement, target = ownedRelatedElement
+        memberships = [r for r in derived_records if r["@type"].endswith("Membership")]
+        assert memberships
+        for record in memberships:
+            assert record["source"] == [record["owningRelatedElement"]]
+            assert record["target"] == record["ownedRelatedElement"]
+
+    def test_parameter_memberships(self):
+        records = api.to_api_records(
+            longeron.loads("package P { calc def C { in x : Real; return : Real = x; } }")
+        )
+        calc_id = next(r["@id"] for r in records if r.get("declaredName") == "C")
+        for type_ in ("ParameterMembership", "ReturnParameterMembership"):
+            record = next(r for r in records if r["@type"] == type_)
+            assert record["source"] == [{"@id": calc_id}]
+            assert len(record["target"]) == 1
+
+    def test_underivable_endpoints_omitted(self):
+        # the projector never resolves import targets: no endpoint fields
+        records = api.to_api_records(
+            longeron.loads("package Q { part def X; } package P { import Q::*; }")
+        )
+        imported = next(r for r in records if r["@type"] == "NamespaceImport")
+        assert "source" not in imported and "target" not in imported
+
+    def test_derived_false_restores_minimal_records(self, derived_records):
+        plain = api.to_api_records(longeron.loads(self.MODEL), derived=False)
+        assert not any("source" in r or "target" in r for r in plain)
+        stripped = [
+            {k: v for k, v in r.items() if k not in ("source", "target")} for r in derived_records
+        ]
+        assert plain == stripped
+
+    def test_non_relationship_records_unaffected(self, derived_records):
+        for record in derived_records:
+            if record["@type"] in ("Namespace", "Package", "PartDefinition", "AttributeUsage"):
+                assert "source" not in record and "target" not in record
+
+    def test_round_trip_lossless(self, derived_records):
+        spec = api.from_api_records(derived_records)
+        again = api.to_api_records(spec)
+        assert {r["@id"]: r for r in again} == {r["@id"]: r for r in derived_records}
+
+    def test_implied_records_carry_endpoints(self):
+        records = api.to_api_records(longeron.loads(self.MODEL), implied=True)
+        implied = [r for r in records if r.get("isImplied")]
+        assert implied
+        for record in implied:
+            assert record["source"] and record["target"]
+        plain = api.to_api_records(longeron.loads(self.MODEL), implied=True, derived=False)
+        assert not any("source" in r for r in plain if r.get("isImplied"))
+
+    def test_json_flag_threaded(self):
+        text = api.to_api_json(longeron.loads(self.MODEL), derived=False)
+        assert '"source"' not in text
+        assert '"source"' in api.to_api_json(longeron.loads(self.MODEL))
+
+
+class TestPilotNavigability:
+    """Interop regression distilled from loading a longeron export with
+    pymbe (github.com/sanbales/pymbe): pilot-API consumers detect
+    relationships via the presence of ``source``+``target``
+    (pymbe ``model.py:521``) and navigate exclusively through those
+    arrays.  The drone-model counts (60 relationships / 57 element
+    nodes) reproduce pymbe's proven LPG projection of this export."""
+
+    @staticmethod
+    def _relationships(records):
+        # exactly pymbe's Element._is_relationship test
+        return [r for r in records if "source" in r and "target" in r]
+
+    def test_relationship_and_node_counts(self, drone_records):
+        relationships = self._relationships(drone_records)
+        assert len(relationships) == 60  # pymbe LPG edges
+        assert len(drone_records) - len(relationships) == 57  # pymbe LPG nodes
+
+    def test_every_endpoint_resolves(self, drone_records):
+        ids = {r["@id"] for r in drone_records}
+        for record in self._relationships(drone_records):
+            for end in ("source", "target"):
+                assert record[end], (record["@type"], end)
+                assert all(ref["@id"] in ids for ref in record[end])
+
+    def test_through_feature_membership(self, drone_records):
+        # pymbe: QuadCopter.throughFeatureMembership -> owned features
+        names = {r["@id"]: r.get("declaredName") for r in drone_records}
+        quad = next(r["@id"] for r in drone_records if r.get("declaredName") == "QuadCopter")
+        owned = {
+            names[ref["@id"]]
+            for r in self._relationships(drone_records)
+            if r["@type"] == "FeatureMembership" and r["source"] == [{"@id": quad}]
+            for ref in r["target"]
+        }
+        assert owned == {
+            "payloadMass",
+            "totalMass",
+            "maxTakeoffMass",
+            "chassis",
+            "battery",
+            "rotors",
+            "takeoffMassLimit",
+            "canHover",
+        }
+
+    def test_through_feature_typing(self, drone_records):
+        # pymbe: partUsage.throughFeatureTyping -> its definition
+        names = {r["@id"]: r.get("declaredName") for r in drone_records}
+        typed = {
+            names[r["source"][0]["@id"]]: names[r["target"][0]["@id"]]
+            for r in self._relationships(drone_records)
+            if r["@type"] == "FeatureTyping"
+        }
+        assert typed["chassis"] == "Frame"
+        assert typed["battery"] == "Battery"
+        assert typed["rotors"] == "Rotor"
