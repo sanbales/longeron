@@ -1,11 +1,28 @@
 # Release notes
 
-## 0.4.0 (unreleased)
+## 0.4.0
 
-- OMG API JSON: derived `source`/`target` on relationship records (pilot-API
-  navigability -- in flight)
-- Planned: Systems Modeling API client + server (`longeron serve`), M0
-  interpretation extensions
+- **Systems Modeling API layer**: `longeron serve` exposes any workspace as an
+  OMG Systems Modeling API server (FastAPI/uvicorn, `[server]` extra) with
+  git-backed commits -- an API commit *is* a git commit -- plus `/x/`
+  extension endpoints (`validate`, `instantiate`, `simulate`, `render.svg`);
+  `longeron.client` (`[client]` extra) fetches any project/commit into a
+  `Model` and pushes changes back. Verified end-to-end by a pilot-ecosystem
+  client (pymbe).
+- **API JSON navigability**: relationship records emit derived
+  `source`/`target` endpoints by default (pilot-API schema; `--no-derived`
+  restores the previous format).
+- **M0 interpretations** (`longeron.m0`, stdlib-only): populations of
+  individuals with stable identities from multiplicities (nominal/seeded-
+  random), per-individual attribute evaluation, Annex-A sequences, roll-ups
+  over the actual population, `from_architecture` and `from_timeline` --
+  execution traces and static populations share one representation. Design
+  doc with ratified decisions under *Architecture > Design documents*.
+- **CI platform triangle**: Windows and macOS legs join the ubuntu matrix;
+  `win-64` added to the pixi lock; git is a pinned conda dependency of every
+  environment; workflows on Node24-native action majors.
+- Badges (self-hosted coverage endpoint, corpus 309/309), trove classifiers,
+  stale "pickle" wording purged (the prebuilt stdlib is JSON).
 
 ## 0.3.0
 
