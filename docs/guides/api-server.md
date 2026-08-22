@@ -58,7 +58,10 @@ The server does not invent a commit store — the workspace's git repository
   blobs at that ref, through the same content-addressed cache the loader
   uses, so revisiting historic refs is fast after the first parse.
 - **`working`** — the uncommitted working tree, always the last commit in
-  the list. This is the head everything defaults to.
+  the list. This is the head everything defaults to. Its projection is
+  memoized behind a stat fingerprint of the served files (paths, sizes,
+  mtimes), so repeated requests — every page of a listing, element
+  fetches — reuse one parse until a file changes on disk.
 
 `POST /projects/{id}/commits` accepts pilot-style change records
 (`{"identity": {"@id": ...}, "payload": {...} | null}`; the pymbe

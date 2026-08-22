@@ -47,6 +47,7 @@ still served, as a single ``working`` commit).
 # lazily inside create_app (so the module works without the extra); with
 # postponed annotations those names would not be resolvable.
 
+import hashlib
 import json
 import re
 import subprocess
@@ -65,6 +66,19 @@ from .workspace import _cache_load, _cache_path, _cache_store, load, load_file, 
 
 #: the pseudo-commit id under which the uncommitted working tree is served
 WORKING_COMMIT_ID = "working"
+
+#: how many immutable refs keep their merged models/records memoized (FIFO
+#: eviction; a long-lived server browsing history must not grow unboundedly)
+_MEMO_REFS = 8
+
+
+def _memoize(memo: dict[str, Any], key: str, value: Any) -> None:
+    """Bounded insertion: dicts iterate in insertion order, so dropping the
+    first key evicts the oldest entry once ``_MEMO_REFS`` is exceeded."""
+
+    memo[key] = value
+    while len(memo) > _MEMO_REFS:
+        del memo[next(iter(memo))]
 
 
 def _refspec(sha: str, relpath: PurePath | str) -> str:
@@ -109,6 +123,10 @@ class GitProjectStore:
         self.project_id = str(uuid.uuid5(_UUID_NAMESPACE, f"$project/{self.path.as_posix()}"))
         self._records_memo: dict[str, list[dict[str, Any]]] = {}
         self._models_memo: dict[str, M.Model] = {}
+        # working-tree memo, valid while the stat fingerprint matches
+        self._working_key: str | None = None
+        self._working_model: M.Model | None = None
+        self._working_records: list[dict[str, Any]] | None = None
 
     # -- git plumbing (read-only) ---------------------------------------------
 
@@ -238,14 +256,36 @@ class GitProjectStore:
         files = [PurePath(p) for p in out.split("\0") if p.endswith(".sysml")]
         return sorted(files, key=lambda p: p.as_posix())
 
+    def _working_fingerprint(self) -> str:
+        """A cheap fingerprint of the served working-tree sources: paths,
+        sizes, and mtimes (content is never read).  Any save, add, or
+        delete changes the key, invalidating the working-tree memo."""
+
+        digest = hashlib.sha256()
+        for source in self._working_files():
+            try:
+                stat = source.stat()
+            except OSError:  # racing deletion; treat as absent
+                continue
+            digest.update(
+                f"{source.as_posix()}\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00".encode()
+            )
+        return digest.hexdigest()
+
     def model_at(self, commit_id: str) -> M.Model:
         """The merged model at a commit; historic refs are parsed from
         ``git show`` blobs and memoized (refs are immutable), the working
-        tree is loaded fresh through :func:`longeron.load` each time."""
+        tree is loaded through :func:`longeron.load` and memoized behind a
+        stat fingerprint of the served files (edits invalidate)."""
 
         ref = self.resolve_commit(commit_id)
         if ref == WORKING_COMMIT_ID:
-            return load(self.path)
+            key = self._working_fingerprint()
+            if key != self._working_key or self._working_model is None:
+                self._working_model = load(self.path)
+                self._working_records = None
+                self._working_key = key
+            return self._working_model
         if ref in self._models_memo:
             return self._models_memo[ref]
         files = self._tree_files(ref)
@@ -256,20 +296,26 @@ class GitProjectStore:
             text = self._run_git("show", _refspec(ref, relpath))
             models.append(self._model_for_text(text or "", f"{ref[:12]}:{relpath.as_posix()}"))
         merged = merge_models(models, source_name=f"{self.path}@{ref[:12]}")
-        self._models_memo[ref] = merged
+        _memoize(self._models_memo, ref, merged)
         return merged
 
     def records_at(self, commit_id: str) -> list[dict[str, Any]]:
-        """Flat API records at a commit (memoized for immutable refs)."""
+        """Flat API records at a commit (memoized: per immutable ref, and
+        for the working tree until its stat fingerprint changes -- so a
+        paginated listing projects the model once, not once per page)."""
 
         from .api import to_api_records  # needs pyecore (the server extra)
 
         ref = self.resolve_commit(commit_id)
-        if ref != WORKING_COMMIT_ID and ref in self._records_memo:
+        if ref == WORKING_COMMIT_ID:
+            model = self.model_at(ref)  # validates/refreshes the memo
+            if self._working_records is None:
+                self._working_records = to_api_records(model)
+            return self._working_records
+        if ref in self._records_memo:
             return self._records_memo[ref]
         records = to_api_records(self.model_at(ref))
-        if ref != WORKING_COMMIT_ID:
-            self._records_memo[ref] = records
+        _memoize(self._records_memo, ref, records)
         return records
 
     # -- write side: materializing POSTed commits ---------------------------------
@@ -494,6 +540,7 @@ class GitProjectStore:
             target_file.write_text(text + "\n" if text else "", encoding="utf-8")
             base = self.path if self.path.is_dir() else self.path.parent
             written.append(target_file.relative_to(base).as_posix())
+        self._working_key = None  # the writes invalidate the working-tree memo
         git_commits = self.git_commits()
         return {
             "@id": WORKING_COMMIT_ID,

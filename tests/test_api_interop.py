@@ -23,7 +23,7 @@ from starlette.testclient import TestClient  # noqa: E402 (needs fastapi)
 
 from longeron.client import Client  # noqa: E402
 from longeron.errors import SysMLError  # noqa: E402
-from longeron.server import create_app  # noqa: E402
+from longeron.server import WORKING_COMMIT_ID, GitProjectStore, create_app  # noqa: E402
 
 if shutil.which("git") is None:  # pragma: no cover - git-less machines
     pytest.skip("git executable not available", allow_module_level=True)
@@ -145,6 +145,56 @@ class TestResources:
         pid = project_id(client)
         roots = client._http.get(f"projects/{pid}/commits/working/roots").json()
         assert [r["@type"] for r in roots] == ["Namespace"]
+
+
+class TestWorkingTreeMemo:
+    """The working-tree projection is memoized behind a stat fingerprint:
+    a paginated listing projects the model once, edits invalidate."""
+
+    def test_paginated_listing_loads_the_working_tree_once(self, repo, monkeypatch):
+        import longeron.server as server_module
+
+        calls = {"load": 0}
+        real_load = server_module.load
+
+        def counting_load(path, **kwargs):
+            calls["load"] += 1
+            return real_load(path, **kwargs)
+
+        monkeypatch.setattr(server_module, "load", counting_load)
+        small = Client(http=TestClient(create_app(repo)), page_size=4)
+        records = small.list_elements(small.list_projects()[0]["@id"])
+        assert len(records) > 4  # the listing really spanned several pages
+        assert calls["load"] == 1  # ...but the projection was built once
+
+    def test_working_records_memoized_until_the_tree_changes(self, repo):
+        store = GitProjectStore(repo)
+        first = store.records_at(WORKING_COMMIT_ID)
+        assert store.records_at(WORKING_COMMIT_ID) is first  # memo hit
+        (repo / "vehicle.sysml").write_text(
+            V2 + "package Dirty { part def New; }\n", encoding="utf-8"
+        )
+        second = store.records_at(WORKING_COMMIT_ID)
+        assert second is not first  # the edit invalidated the memo
+        assert any(r.get("declaredName") == "Dirty" for r in second)
+
+    def test_single_file_working_tree_uses_the_content_cache(self, repo, monkeypatch):
+        from longeron import workspace
+
+        GitProjectStore(repo / "vehicle.sysml").model_at(WORKING_COMMIT_ID)
+        builds = {"count": 0}
+        real_build = workspace.build_model
+
+        def counting_build(parse_result):
+            builds["count"] += 1
+            return real_build(parse_result)
+
+        monkeypatch.setattr(workspace, "build_model", counting_build)
+        # a fresh store has a cold memo: the parse must come from the
+        # content-addressed cache, exactly like a historic blob would
+        fresh = GitProjectStore(repo / "vehicle.sysml").model_at(WORKING_COMMIT_ID)
+        assert builds["count"] == 0
+        assert fresh.find("Garage::Car") is not None
 
 
 class TestFetchModel:

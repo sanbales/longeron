@@ -4,6 +4,7 @@ import pytest
 
 import longeron
 from longeron.errors import EvaluationError
+from longeron.interpreter import Env
 
 
 class TestCalc:
@@ -109,6 +110,23 @@ class TestConstraints:
         assert first[0].passed is True  # 50 < 100
         second = interp.check(interp.instantiate("P::V", mass=400.0))
         assert second[0].passed is False  # 200 < 100 must fail
+
+
+class TestEnvAssign:
+    def test_failed_dotted_assign_leaves_no_partial_state(self):
+        # Regression: assign() bound a bogus dotted key into the frame
+        # *before* raising on an unknown dotted path (validate-then-mutate)
+        model = longeron.loads("package P { part def V; }")
+        env = Env(longeron.Interpreter(model), model, [{}])
+        with pytest.raises(EvaluationError, match="cannot assign to unknown path"):
+            env.assign("nope.x", 5)
+        assert env.frames == [{}]  # the failed assignment bound nothing
+
+    def test_plain_assign_still_binds_new_names(self):
+        model = longeron.loads("package P { part def V; }")
+        env = Env(longeron.Interpreter(model), model, [{}])
+        env.assign("x", 5)
+        assert env.frames[0] == {"x": 5}
 
 
 class TestRequirements:

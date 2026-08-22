@@ -28,6 +28,64 @@ from .ast import Literal as LiteralExpr
 
 ENTRY_SOURCE = "<entry>"  # sentinel source for entry-transitions in states
 
+#: the public surface of the model vocabulary -- star-imported by
+#: :mod:`longeron` itself, so this list is deliberate and explicit: closed
+#: vocabularies and element classes only (imports like ``typing.Literal``
+#: or ``dataclasses.field`` must never leak into ``longeron.*``).
+__all__ = [
+    "DEFINITION_KINDS",
+    "USAGE_KINDS",
+    "AcceptAction",
+    "Alias",
+    "AllocationUsage",
+    "AssignmentAction",
+    "BindingConnector",
+    "Comment",
+    "ConnectionUsage",
+    "ConnectorEnd",
+    "ConstraintKind",
+    "ControlNode",
+    "ControlNodeKind",
+    "Definition",
+    "DefinitionKind",
+    "Dependency",
+    "Direction",
+    "Documentation",
+    "Element",
+    "ElementFilter",
+    "EnumerationDefinition",
+    "Expose",
+    "FeatureValue",
+    "FlowUsage",
+    "ForLoop",
+    "IfAction",
+    "Import",
+    "InitialNode",
+    "InterfaceUsage",
+    "MetadataUsage",
+    "MetadataValue",
+    "Model",
+    "Multiplicity",
+    "Namespace",
+    "Package",
+    "PerformAction",
+    "PortionKind",
+    "SatisfyUsage",
+    "SendAction",
+    "StateAction",
+    "StateActionKind",
+    "Succession",
+    "TerminateAction",
+    "TextualRepresentation",
+    "TransitionUsage",
+    "TriggerKind",
+    "Unsupported",
+    "Usage",
+    "UsageKind",
+    "Visibility",
+    "WhileLoop",
+]
+
 # ---------------------------------------------------------------------------
 # Closed vocabularies
 # ---------------------------------------------------------------------------
@@ -583,6 +641,3 @@ class MetadataValue(Element):
 
     def children(self) -> list[Element]:
         return list(self.nested)
-
-
-__all__ = [name for name in dir() if not name.startswith("_")]

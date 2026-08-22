@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from . import ast as A
 from . import model as M
 from .errors import EvaluationError, ResolutionError
-from .interpreter import Env, Instance, Interpreter, _LazyFrame
+from .interpreter import Env, Instance, Interpreter, _join, _PopulationEngine
 
 if TYPE_CHECKING:
     from .analysis.trades import Architecture, TradeStudy
@@ -51,8 +51,6 @@ __all__ = ["Individual", "Interpretation", "from_architecture", "from_timeline",
 #: random strategy: individuals drawn for an unbounded upper bound ``[n..*]``
 #: are capped at ``lower + _UNBOUNDED_SPAN``
 _UNBOUNDED_SPAN = 3
-
-_MAX_DEPTH = 32
 
 
 class _SelectionError(EvaluationError):
@@ -275,6 +273,7 @@ def interpret(
     populator = _Populator(interp, strategy, seed, selection or {})
     root_id = f"{target.qualified_name or target.label}#0"
     root = populator.populate(target, root_id, dict(bindings or {}), "", 0, ())
+    assert isinstance(root, Individual)  # _Populator.make_instance builds Individuals
     return Interpretation(
         source=target.qualified_name or target.label,
         strategy=strategy,
@@ -288,107 +287,58 @@ def interpret(
     )
 
 
-class _Populator:
-    """Mirrors ``Interpreter._instantiate`` with identity + strategy."""
+class _Populator(_PopulationEngine):
+    """``Interpreter._instantiate``'s engine configured for M0: stable
+    identities, seeded strategies, variant selection, and gap recording."""
+
+    recursion_error = "population recursion limit exceeded (cyclic composition?)"
 
     def __init__(
         self, interp: Interpreter, strategy: str, seed: int | None, selection: dict[str, str]
     ):
-        self.interp = interp
+        super().__init__(interp)
         self.strategy = strategy
         self.rng = _random.Random(seed)
         self.selection = selection
         self.chosen: dict[str, str] = {}
         self.gaps: list[str] = []
 
-    def populate(
+    # -- engine hooks ----------------------------------------------------------
+
+    def make_instance(self, defn: M.Definition | M.Usage, ident: str) -> Individual:
+        return Individual(ident, defn.qualified_name or defn.label, defn)
+
+    def slot_members(self, defn: M.Definition | M.Usage) -> list[M.Usage]:
+        # variation points are choices, not compositions
+        return [m for m in super().slot_members(defn) if not m.is_variant]
+
+    def handle_error(
         self,
+        member: M.Usage,
         defn: M.Definition | M.Usage,
-        ident: str,
-        bindings: dict[str, Any],
+        name: str,
         path: str,
-        depth: int,
-        active: tuple[int, ...],
-    ) -> Individual:
-        if depth > _MAX_DEPTH:
-            raise EvaluationError("population recursion limit exceeded (cyclic composition?)")
-        active = (*active, id(defn))
-        individual = Individual(ident, defn.qualified_name or defn.label, defn)
-        interp = self.interp
-        members = [
-            m
-            for m in interp.resolver.members_of(defn)
-            if isinstance(m, M.Usage)
-            and m.kind not in Interpreter._NON_SLOT_KINDS
-            and not m.is_abstract
-            and not m.is_variant  # variation points are choices, not compositions
-        ]
-        pending: dict[str, M.Usage] = {}
-        for member in members:
-            name = member.name or (
-                member.redefines[0].split("::")[-1] if member.redefines else None
-            )
-            if name is None or name in individual.slots or name in pending:
-                continue
-            pending[name] = member
+        exc: EvaluationError,
+    ) -> Any:
+        if isinstance(exc, _SelectionError):
+            raise exc  # a bad variant pin is user input, never a gap
+        if member.owner is defn:
+            # own features degrade too, but leave a trail (unlike
+            # _instantiate, which raises: an interpretation should
+            # report the whole population with honest holes)
+            self.gaps.append(f"{_join(path, name)}: {exc}")
+        return None
 
-        for name, value in bindings.items():
-            if name not in pending:
-                raise EvaluationError(f"{defn.label} has no feature {name!r} to bind")
-            individual.slots[name] = value
+    def default_value(self, member: M.Usage) -> Any:
+        if self.strategy == "random":
+            return self._sample_attribute(member)
+        return None
 
-        in_progress: set[str] = set()
-
-        def materialize(name: str) -> Any:
-            if name in individual.slots:
-                return individual.slots[name]
-            member = pending.get(name)
-            if member is None:
-                raise EvaluationError(f"{defn.label} has no feature {name!r}")
-            if name in in_progress:
-                raise EvaluationError(f"cyclic value dependency on {name!r} in {defn.label}")
-            in_progress.add(name)
-            try:
-                value = compute(member, name)
-            except _SelectionError:
-                raise
-            except EvaluationError as exc:
-                if member.owner is defn:
-                    # own features degrade too, but leave a trail (unlike
-                    # _instantiate, which raises: an interpretation should
-                    # report the whole population with honest holes)
-                    self.gaps.append(f"{_join(path, name)}: {exc}")
-                value = None
-            finally:
-                in_progress.discard(name)
-            individual.slots[name] = value
-            return value
-
-        lazy_env = Env(interp, defn, [_LazyFrame(materialize, pending)], instance=individual)
-
-        def compute(member: M.Usage, name: str) -> Any:
-            if member.value is not None:
-                return interp.eval(member.value.expr, lazy_env)
-            if member.kind in ("part", "item", "occurrence") and member.types:
-                return self._compose(member, name, ident, path, lazy_env, depth, active)
-            if member.kind in ("part", "item") and member.members:
-                return self.populate(
-                    member, f"{ident}.{name}", {}, _join(path, name), depth + 1, active
-                )
-            if self.strategy == "random":
-                return self._sample_attribute(member)
-            return None
-
-        for name in list(pending):
-            if name not in individual.slots:
-                materialize(name)
-        return individual
-
-    def _compose(
+    def compose(
         self,
         member: M.Usage,
         name: str,
-        owner_id: str,
+        ident: str,
         path: str,
         env: Env,
         depth: int,
@@ -404,22 +354,28 @@ class _Populator:
         if id(target) in active:
             return None  # self-referential composition (Part in Part)
         feature_path = _join(path, name)
-        overrides = self._inline_overrides(member, env)
+        overrides = interp._inline_overrides(member, env)
         count = self._count(member, env)
 
-        def build(index: int | None) -> Individual:
+        def build(index: int | None) -> Instance:
             record = feature_path if index is None else f"{feature_path}#{index}"
             concrete = self._pick_variant(target, feature_path, record)
-            suffix = f"{owner_id}.{name}" if index is None else f"{owner_id}.{name}#{index}"
+            suffix = f"{ident}.{name}" if index is None else f"{ident}.{name}#{index}"
             return self.populate(concrete, suffix, dict(overrides), feature_path, depth + 1, active)
 
         if count is None:
             return build(None)
         return [build(i) for i in range(count)]
 
+    # -- strategy --------------------------------------------------------------
+
     def _count(self, member: M.Usage, env: Env) -> int | None:
         """Population size for one feature (``None`` = a single individual)."""
 
+        if self.strategy != "random":
+            # nominal follows _instantiate exactly: exact bounds expand
+            # fully, ranges take their lower bound
+            return self.interp._instance_count(member, env)
         mult = member.multiplicity
         if mult is None or mult.upper is None:
             return None
@@ -430,13 +386,9 @@ class _Populator:
             return 0
         lo = lower if isinstance(lower, int) else 0
         if isinstance(upper, int):
-            if self.strategy == "random" and lo != upper:
-                return self.rng.randint(lo, upper)
-            return upper if lo == upper else lo
+            return self.rng.randint(lo, upper) if lo != upper else upper
         # unbounded upper ('*')
-        if self.strategy == "random":
-            return self.rng.randint(lo, lo + _UNBOUNDED_SPAN)
-        return lo
+        return self.rng.randint(lo, lo + _UNBOUNDED_SPAN)
 
     def _pick_variant(
         self, target: M.Definition | M.Usage, feature_path: str, record: str | None = None
@@ -491,19 +443,6 @@ class _Populator:
             literal = self.rng.choice(typ.literals)
             return self.interp._element_value(literal, Env(self.interp, self.interp.model, [{}]))
         return None
-
-    def _inline_overrides(self, member: M.Usage, env: Env) -> dict[str, Any]:
-        overrides: dict[str, Any] = {}
-        for sub in member.members:
-            if isinstance(sub, M.Usage) and sub.value is not None:
-                name = sub.name or (sub.redefines[0].split("::")[-1] if sub.redefines else None)
-                if name:
-                    overrides[name] = self.interp.eval(sub.value.expr, env)
-        return overrides
-
-
-def _join(path: str, name: str) -> str:
-    return f"{path}.{name}" if path else name
 
 
 # ---------------------------------------------------------------------------

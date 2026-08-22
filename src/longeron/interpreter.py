@@ -29,7 +29,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from . import ast as A
 from . import model as M
@@ -696,9 +696,9 @@ class Env:
         if self.instance is not None and first in self.instance.slots:
             self.instance.set(path, value)
             return
-        self.frames[0][path.split(".")[0] if "." not in path else path] = value
-        if "." in path:
+        if "." in path:  # validate before mutating: no partial state on failure
             raise EvaluationError(f"cannot assign to unknown path {path!r}")
+        self.frames[0][path] = value
 
     def lookup(self, name: str) -> Any:
         for frame in self.frames:
@@ -1281,83 +1281,7 @@ class Interpreter:
     def _instantiate(
         self, defn, bindings: dict[str, Any], _depth: int = 0, _active: tuple[int, ...] = ()
     ) -> Instance:
-        if _depth > 32:
-            raise EvaluationError(
-                "instantiation recursion limit exceeded (cyclic part composition?)"
-            )
-        _active = (*_active, id(defn))
-        instance = Instance(defn.qualified_name or defn.label, defn)
-        members = [
-            m
-            for m in self.resolver.members_of(defn)
-            if isinstance(m, M.Usage) and m.kind not in self._NON_SLOT_KINDS and not m.is_abstract
-        ]
-        pending: dict[str, M.Usage] = {}
-        for member in members:
-            name = member.name or (
-                member.redefines[0].split("::")[-1] if member.redefines else None
-            )
-            if name is None or name in instance.slots or name in pending:
-                continue
-            pending[name] = member
-
-        # first pass: explicit bindings
-        for name, value in bindings.items():
-            if name not in pending:
-                raise EvaluationError(f"{defn.label} has no feature {name!r} to bind")
-            instance.slots[name] = value
-
-        # second pass: evaluate remaining features (attributes lazily to allow
-        # cross-references)
-        in_progress: set = set()
-
-        def materialize(name: str) -> Any:
-            if name in instance.slots:
-                return instance.slots[name]
-            member = pending.get(name)
-            if member is None:
-                raise EvaluationError(f"{defn.label} has no feature {name!r}")
-            if name in in_progress:
-                raise EvaluationError(f"cyclic value dependency on {name!r} in {defn.label}")
-            in_progress.add(name)
-            try:
-                value = compute(member)
-            except EvaluationError:
-                if member.owner is defn:
-                    raise  # errors in the definition's own features surface
-                value = None  # inherited (library) defaults degrade gracefully
-            finally:
-                in_progress.discard(name)
-            instance.slots[name] = value
-            return value
-
-        lazy_env = Env(self, defn, [_LazyFrame(materialize, pending)], instance=instance)
-
-        def compute(member: M.Usage) -> Any:
-            if member.value is not None:
-                return self.eval(member.value.expr, lazy_env)
-            if member.kind in ("part", "item", "occurrence") and member.types:
-                try:
-                    target = self.resolver.resolve(member.types[0], member.owner or defn)
-                except ResolutionError:
-                    return None
-                if id(target) in _active:
-                    return None  # self-referential composition (Part in Part)
-                count = self._instance_count(member, lazy_env)
-                overrides = self._inline_overrides(member, lazy_env)
-                if count is None:
-                    return self._instantiate(target, overrides, _depth + 1, _active)
-                return [
-                    self._instantiate(target, overrides, _depth + 1, _active) for _ in range(count)
-                ]
-            if member.kind in ("part", "item") and member.members:
-                return self._instantiate(member, {}, _depth + 1, _active)
-            return None
-
-        for name in list(pending):
-            if name not in instance.slots:
-                materialize(name)
-        return instance
+        return _PopulationEngine(self).populate(defn, "", bindings, "", _depth, _active)
 
     def _instance_count(self, member: M.Usage, env: Env) -> int | None:
         """How many nested instances to create.
@@ -1441,6 +1365,172 @@ class _LazyFrame(dict):
         if key in self._pending:
             return self._materialize(key)
         raise KeyError(key)
+
+
+#: instantiation/population recursion limit (cyclic compositions abort here)
+_MAX_POPULATION_DEPTH = 32
+
+
+def _join(path: str, name: str) -> str:
+    return f"{path}.{name}" if path else name
+
+
+class _PopulationEngine:
+    """The instantiation engine behind :meth:`Interpreter._instantiate`.
+
+    One core -- pending-slot collection, explicit bindings, lazy
+    cross-referencing materialization, depth and composition-cycle guards --
+    with hook methods for what varies between its two configurations: this
+    base class *is* ``_instantiate`` (anonymous instances, strict errors,
+    nominal multiplicities), and :class:`longeron.m0._Populator` overrides
+    the hooks for identities, strategies, variants, and gap recording.
+    """
+
+    #: message for the depth guard (each configuration keeps its wording)
+    recursion_error = "instantiation recursion limit exceeded (cyclic part composition?)"
+
+    def __init__(self, interp: Interpreter):
+        self.interp = interp
+
+    # -- hooks -----------------------------------------------------------------
+
+    def make_instance(self, defn: M.Definition | M.Usage, ident: str) -> Instance:
+        """The runtime object to fill (``ident`` is unused here; m0 threads
+        stable ``qname#index`` identities through it)."""
+
+        return Instance(defn.qualified_name or defn.label, defn)
+
+    def slot_members(self, defn: M.Definition | M.Usage) -> list[M.Usage]:
+        """The usages that materialize as instance slots."""
+
+        return [
+            m
+            for m in self.interp.resolver.members_of(defn)
+            if isinstance(m, M.Usage)
+            and m.kind not in Interpreter._NON_SLOT_KINDS
+            and not m.is_abstract
+        ]
+
+    def handle_error(
+        self,
+        member: M.Usage,
+        defn: M.Definition | M.Usage,
+        name: str,
+        path: str,
+        exc: EvaluationError,
+    ) -> Any:
+        """The value for a feature whose evaluation failed (or re-raise)."""
+
+        if member.owner is defn:
+            raise exc  # errors in the definition's own features surface
+        return None  # inherited (library) defaults degrade gracefully
+
+    def default_value(self, member: M.Usage) -> Any:
+        """The value for an unvalued, non-composite feature."""
+
+        return None
+
+    def compose(
+        self,
+        member: M.Usage,
+        name: str,
+        ident: str,
+        path: str,
+        env: Env,
+        depth: int,
+        active: tuple[int, ...],
+    ) -> Any:
+        """Populate a typed part/item/occurrence feature (recursing)."""
+
+        interp = self.interp
+        try:
+            resolved = interp.resolver.resolve(member.types[0], member.owner or env.context)
+        except ResolutionError:
+            return None
+        if id(resolved) in active:
+            return None  # self-referential composition (Part in Part)
+        # historically unchecked: _instantiate always trusted the resolved type
+        target = cast("M.Definition | M.Usage", resolved)
+        count = interp._instance_count(member, env)
+        overrides = interp._inline_overrides(member, env)
+        child_id, child_path = f"{ident}.{name}", _join(path, name)
+        if count is None:
+            return self.populate(target, child_id, overrides, child_path, depth + 1, active)
+        return [
+            self.populate(target, child_id, overrides, child_path, depth + 1, active)
+            for _ in range(count)
+        ]
+
+    # -- the engine --------------------------------------------------------------
+
+    def populate(
+        self,
+        defn: M.Definition | M.Usage,
+        ident: str,
+        bindings: dict[str, Any],
+        path: str,
+        depth: int,
+        active: tuple[int, ...],
+    ) -> Instance:
+        if depth > _MAX_POPULATION_DEPTH:
+            raise EvaluationError(self.recursion_error)
+        active = (*active, id(defn))
+        instance = self.make_instance(defn, ident)
+        interp = self.interp
+        pending: dict[str, M.Usage] = {}
+        for member in self.slot_members(defn):
+            name = member.name or (
+                member.redefines[0].split("::")[-1] if member.redefines else None
+            )
+            if name is None or name in instance.slots or name in pending:
+                continue
+            pending[name] = member
+
+        # first pass: explicit bindings
+        for name, value in bindings.items():
+            if name not in pending:
+                raise EvaluationError(f"{defn.label} has no feature {name!r} to bind")
+            instance.slots[name] = value
+
+        # second pass: evaluate remaining features (attributes lazily to allow
+        # cross-references)
+        in_progress: set[str] = set()
+
+        def materialize(name: str) -> Any:
+            if name in instance.slots:
+                return instance.slots[name]
+            member = pending.get(name)
+            if member is None:
+                raise EvaluationError(f"{defn.label} has no feature {name!r}")
+            if name in in_progress:
+                raise EvaluationError(f"cyclic value dependency on {name!r} in {defn.label}")
+            in_progress.add(name)
+            try:
+                value = compute(member, name)
+            except EvaluationError as exc:
+                value = self.handle_error(member, defn, name, path, exc)
+            finally:
+                in_progress.discard(name)
+            instance.slots[name] = value
+            return value
+
+        lazy_env = Env(interp, defn, [_LazyFrame(materialize, pending)], instance=instance)
+
+        def compute(member: M.Usage, name: str) -> Any:
+            if member.value is not None:
+                return interp.eval(member.value.expr, lazy_env)
+            if member.kind in ("part", "item", "occurrence") and member.types:
+                return self.compose(member, name, ident, path, lazy_env, depth, active)
+            if member.kind in ("part", "item") and member.members:
+                return self.populate(
+                    member, f"{ident}.{name}", {}, _join(path, name), depth + 1, active
+                )
+            return self.default_value(member)
+
+        for name in list(pending):
+            if name not in instance.slots:
+                materialize(name)
+        return instance
 
 
 def _is_shadow_free(env: Env, name: str) -> bool:
