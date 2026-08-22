@@ -30,6 +30,15 @@ Requires the `ecore` extra (`pip install "longeron[ecore]"`).
 
 Requires the `ecore` extra (`pip install "longeron[ecore]"`).
 
+Relationship records carry the derived `source`/`target` endpoint arrays by
+default (`to_api_records(..., derived=True)`): the OMG pilot-implementation
+API servers serialize these derived properties, and pilot-ecosystem
+consumers (pymbe, for one) use their presence to recognize relationship
+records and navigate the model graph — an export without them loads but is
+unnavigable. Pass `derived=False` (CLI: `longeron export --format api
+--no-derived`) for minimal records restricted to stored features; round
+trips are lossless either way.
+
 ```{eval-rst}
 .. automodule:: longeron.api
 ```
