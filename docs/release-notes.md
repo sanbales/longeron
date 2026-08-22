@@ -1,5 +1,10 @@
 # Release notes
 
+## 0.5.0 (unreleased)
+
+- Tutorial 09: M0 interpretations (populations, gaps, sequences, the
+  trades bridge) + `longeron.m0` reference page
+
 ## 0.4.0
 
 - **Systems Modeling API layer**: `longeron serve` exposes any workspace as an

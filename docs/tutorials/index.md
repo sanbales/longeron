@@ -1,6 +1,6 @@
 # Tutorials
 
-Eight executable notebooks live in
+Nine executable notebooks live in
 [`notebooks/`](https://github.com/sanbales/longeron/tree/main/notebooks).
 Together they walk every capability of the package, in order: each
 notebook builds on ideas from the ones before it, but each also states
@@ -39,6 +39,7 @@ extra.
 | {doc}`6. Interactive diagrams <06_interactive_diagrams>` | ipyelk structure/state/action diagrams, click-selection, headless SVG/PNG |
 | {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views |
 | {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |
+| {doc}`9. M0 interpretations <09_m0_interpretations>` | populations of identified individuals, Annex A sequences, roll-ups over actual instances, random sampling, occurrences from executions, the trade-study bridge |
 
 ```{toctree}
 :hidden:
@@ -52,4 +53,5 @@ extra.
 06_interactive_diagrams
 07_analysis_and_trades
 08_semantic_web_and_rag
+09_m0_interpretations
 ```

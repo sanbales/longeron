@@ -33,7 +33,7 @@ visualization, and interchange features live behind extras
 
 - [Getting started](getting-started.md) — install, extras, and a
   parse → validate → simulate quickstart.
-- [Tutorials](tutorials/index.md) — eight executable notebooks. The
+- [Tutorials](tutorials/index.md) — nine executable notebooks. The
   documentation build runs them, so every output on those pages is
   current.
 - [Guides](guides/index.md) — one task per page: the
