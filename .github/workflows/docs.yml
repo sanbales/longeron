@@ -34,6 +34,15 @@ jobs:
 
       - run: pixi run docs
 
+      - name: coverage badge endpoint (served from the docs site)
+        run: |
+          pixi run coverage | tee /tmp/cov.txt
+          pct=$(grep -E '^TOTAL' /tmp/cov.txt | awk '{print $NF}' | tr -d '%')
+          color=red; [ "$pct" -ge 70 ] && color=yellow; [ "$pct" -ge 80 ] && color=green; [ "$pct" -ge 90 ] && color=brightgreen
+          mkdir -p build/docs/badges
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > build/docs/badges/coverage.json
+          cat build/docs/badges/coverage.json
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/docs
