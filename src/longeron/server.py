@@ -31,7 +31,8 @@ point of the git mapping.
 
 Endpoints under ``/x/`` are **longeron extensions** (no pilot server has
 them): ``POST /x/validate``, ``POST /x/instantiate/{qname}``,
-``POST /x/simulate/{qname}``, and ``GET /x/render/{qname}.svg`` wrap the
+``POST /x/simulate/{qname}``, ``POST /x/interpret/{qname}``, and
+``GET /x/render/{qname}.svg`` wrap the
 validator, interpreter, and headless renderer.
 
 Security: this is a local-first development server -- no authentication, no
@@ -614,6 +615,7 @@ def create_app(path: str | Path = ".") -> Any:
                 "/x/validate",
                 "/x/instantiate/{qname}",
                 "/x/simulate/{qname}",
+                "/x/interpret/{qname}",
                 "/x/render/{qname}.svg",
             ],
         }
@@ -782,6 +784,35 @@ def create_app(path: str | Path = ".") -> Any:
             "ignored_events": result.ignored_events,
             "time": result.time,
         }
+
+    @app.post("/x/interpret/{qname}")
+    async def x_interpret(qname: str, request: Request) -> dict[str, Any]:
+        from .m0 import interpret
+
+        body = await read_body(request)
+        model = model_or_404(str(body.get("commit") or WORKING_COMMIT_ID))
+        resolve_qname(model, qname)
+        for key in ("bindings", "selection"):
+            if body.get(key) is not None and not isinstance(body[key], dict):
+                raise HTTPException(400, f"{key!r} must be an object")
+        seed = body.get("seed")
+        if seed is not None and not isinstance(seed, int):
+            raise HTTPException(400, "'seed' must be an integer")
+        strategy = body.get("strategy") or "nominal"
+        if not isinstance(strategy, str):
+            raise HTTPException(400, "'strategy' must be a string")
+        try:
+            interpretation = interpret(
+                model,
+                qname,
+                strategy=strategy,
+                seed=seed,
+                bindings=body.get("bindings"),
+                selection=body.get("selection"),
+            )
+        except SysMLError as err:
+            raise HTTPException(400, str(err)) from err
+        return interpretation.to_dict()
 
     @app.get("/x/render/{qname}.svg")
     def x_render(qname: str, commit: str | None = None) -> Any:
