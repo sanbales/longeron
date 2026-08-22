@@ -1,7 +1,7 @@
 # Longeron
 
 [![PyPI](https://img.shields.io/pypi/v/longeron)](https://pypi.org/project/longeron/)
-[![Python](https://img.shields.io/pypi/pyversions/longeron)](https://pypi.org/project/longeron/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/longeron/)
 [![CI](https://github.com/sanbales/longeron/actions/workflows/ci.yml/badge.svg)](https://github.com/sanbales/longeron/actions/workflows/ci.yml)
 [![docs](https://github.com/sanbales/longeron/actions/workflows/docs.yml/badge.svg)](https://sanbales.github.io/longeron/)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fsanbales.github.io%2Flongeron%2Fbadges%2Fcoverage.json)](https://github.com/sanbales/longeron/actions/workflows/docs.yml)
