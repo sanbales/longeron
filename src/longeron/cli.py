@@ -99,6 +99,19 @@ def main(argv=None) -> int:
     p.add_argument("name")
     p.add_argument("--events", help="comma-separated event names", default="")
 
+    p = sub.add_parser(
+        "serve",
+        help="serve a workspace over the OMG Systems Modeling API "
+        "(git-backed; requires longeron[server])",
+    )
+    p.add_argument("path", nargs="?", default=".", help="directory or .sysml file to serve")
+    p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind address (default 127.0.0.1: local-first, no authentication)",
+    )
+    p.add_argument("--port", type=int, default=9000, help="port (default 9000)")
+
     ns = parser.parse_args(argv)
 
     from . import Interpreter, load, parse_file, to_json, to_kerml, to_sysml
@@ -120,6 +133,12 @@ def main(argv=None) -> int:
             print(result.tree_text())
         else:
             print(f"OK: {ns.file} parses as {result.language}")
+        return 0
+
+    if ns.command == "serve":
+        from .server import serve
+
+        serve(ns.path, host=ns.host, port=ns.port)
         return 0
 
     model = load(ns.file, cache=False if ns.no_cache else None)

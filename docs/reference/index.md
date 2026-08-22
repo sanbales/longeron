@@ -19,6 +19,7 @@ objects are defined.
 | [Validation](validation.md) | `longeron.validation` | `validate()` / `longeron lint` diagnostics |
 | [Standard library](stdlib.md) | `longeron.stdlib` | the vendored OMG model library |
 | [Interchange](interchange.md) | `longeron.export`, `longeron.importer`, `longeron.kerml`, `longeron.ecore`, `longeron.api`, `longeron.rdf`, `longeron.rag` | JSON/SysML/KerML exports, spec metamodel, API JSON, RDF/SPARQL, LLM retrieval substrate |
+| [API server & client](api-server.md) | `longeron.server`, `longeron.client` | git-backed Systems Modeling API server, REST client |
 | [Command line](cli.md) | `longeron.cli` | the `longeron` console command |
 
 ## Visualization
@@ -55,6 +56,7 @@ interpreter
 validation
 stdlib
 interchange
+api-server
 cli
 diagrams
 render

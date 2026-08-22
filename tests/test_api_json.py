@@ -327,3 +327,114 @@ class TestPilotNavigability:
         assert typed["chassis"] == "Frame"
         assert typed["battery"] == "Battery"
         assert typed["rotors"] == "Rotor"
+
+
+GARAGE_MODEL = """
+package Garage {
+    doc /* The garage. */
+    abstract part def Machine;
+    part def Car :> Machine {
+        attribute wheels;
+        part engine : Engine {
+            in item fuel;
+        }
+    }
+    part def Engine;
+    part fleetCar : Car;
+    enum def Color { red; green; }
+    requirement def Safe {
+        subject vehicle : Car;
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def rebuilt():
+    records = api.to_api_records(longeron.loads(GARAGE_MODEL))
+    return api.model_from_api_records(records)
+
+
+class TestModelFromApiRecords:
+    """Reverse structural import: flat API records -> longeron Model
+    (pyecore-free; the forward projection in these tests needs it)."""
+
+    MODEL = GARAGE_MODEL
+
+    def test_structure_and_kinds(self, rebuilt):
+        garage = rebuilt.find("Garage")
+        assert [e.name for e in garage.members if e.name] == [
+            "Machine",
+            "Car",
+            "Engine",
+            "fleetCar",
+            "Color",
+            "Safe",
+        ]
+        assert rebuilt.find("Garage::Car::engine").kind == "part"
+        assert rebuilt.find("Garage::Car::engine::fuel").kind == "item"
+
+    def test_relationships_come_back_qualified(self, rebuilt):
+        assert rebuilt.find("Garage::Car").supers == ["Garage::Machine"]
+        assert rebuilt.find("Garage::fleetCar").types == ["Garage::Car"]
+        assert rebuilt.find("Garage::Car::engine").types == ["Garage::Engine"]
+
+    def test_flags_and_directions(self, rebuilt):
+        assert rebuilt.find("Garage::Machine").is_abstract
+        assert rebuilt.find("Garage::Car::engine::fuel").direction == "in"
+
+    def test_membership_kinds(self, rebuilt):
+        subject = rebuilt.find("Garage::Safe::vehicle")
+        assert subject.kind == "subject"
+
+    def test_enum_literals(self, rebuilt):
+        color = rebuilt.find("Garage::Color")
+        assert [lit.name for lit in color.literals] == ["red", "green"]
+
+    def test_documentation(self, rebuilt):
+        assert rebuilt.find("Garage").doc == "The garage."
+
+    def test_reexport_parses(self, rebuilt):
+        text = longeron.to_sysml(rebuilt)
+        assert longeron.loads(text).find("Garage::Car") is not None
+
+    def test_round_trip_is_id_stable(self):
+        # element/membership @ids are deterministic path-based UUIDs and
+        # survive the round trip; typing/specialization record ids may
+        # differ (their id embeds the reference *text*, which the reverse
+        # import qualifies), so compare those by count per kind instead
+        records = api.to_api_records(longeron.loads(self.MODEL))
+        again = api.to_api_records(api.model_from_api_records(records))
+        relationship_kinds = {"FeatureTyping", "Subclassification", "Subsetting", "Redefinition"}
+
+        def ids(recs):
+            return sorted(r["@id"] for r in recs if r["@type"] not in relationship_kinds)
+
+        def kind_counts(recs):
+            counts: dict[str, int] = {}
+            for r in recs:
+                if r["@type"] in relationship_kinds:
+                    counts[r["@type"]] = counts.get(r["@type"], 0) + 1
+            return counts
+
+        assert ids(records) == ids(again)
+        assert kind_counts(records) == kind_counts(again)
+
+    def test_accepts_identity_payload_post_form(self):
+        records = api.to_api_records(longeron.loads(self.MODEL))
+        post_form = [{"identity": {"@id": r["@id"]}, "payload": r} for r in records]
+        model = api.model_from_api_records(post_form)
+        assert model.find("Garage::Car") is not None
+
+    def test_unknown_types_are_skipped_not_fatal(self):
+        model = api.model_from_api_records(
+            [
+                {"@type": "PartDefinition", "@id": "a", "declaredName": "Known"},
+                {"@type": "MysteryMetaclass", "@id": "b", "declaredName": "Ghost"},
+            ]
+        )
+        assert [e.name for e in model.members] == ["Known"]
+
+    def test_json_variant(self):
+        text = api.to_api_json(longeron.loads(self.MODEL))
+        assert api.model_from_api_json(text).find("Garage::Color") is not None

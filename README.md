@@ -24,6 +24,7 @@ for SysML v2 and KerML, taken from
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
 | **Visualize** | `longeron.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. |
 | **Query & retrieve** | Project any model onto RDF (`longeron.rdf`, rdflib) and ask SPARQL questions over structure, specializations, typed attribute values, variation points, and requirements. A dependency-free RAG substrate (`longeron.rag`) chunks the model into stable, re-parseable SysML fragments keyed by qualified name, walks semantic neighborhoods, and does keyword search — retrieval for LLM agents that cite names and resolve them through the interpreter for ground truth. |
+| **Serve & sync** | `longeron serve` exposes any workspace as an OMG Systems-Modeling-API server with honest git-backed history: API commits *are* the git commits touching your `.sysml` sources, and pushed changes are materialized as text for you to review and commit — never auto-committed. `longeron.client.Client` fetches models from (and pushes changes to) any pilot-style server, and `/x/` extension endpoints add validate/instantiate/simulate/render over HTTP. |
 | **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
 
 The builder covers the full grammar: every construct the SysML grammar
@@ -42,8 +43,10 @@ make check        # ruff + mypy + 668 tests
 ```
 
 Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
-projection and API JSON (pyecore), and `pip install -e ".[rdf]"` the RDF
-projection (rdflib; the `longeron.rag` retrieval substrate needs no extra);
+projection and API JSON (pyecore), `pip install -e ".[rdf]"` the RDF
+projection (rdflib; the `longeron.rag` retrieval substrate needs no extra),
+and `pip install -e ".[server]"` / `".[client]"` the Systems Modeling API
+server (`longeron serve`) and REST client;
 `pre-commit install` wires ruff+mypy
 into every commit.
 

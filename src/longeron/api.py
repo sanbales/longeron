@@ -25,7 +25,16 @@ from functools import cache
 from typing import Any
 
 from . import model as M
-from .ecore import _UUID_NAMESPACE, SpecModel, spec_class, spec_metamodel, to_spec
+from .ecore import (
+    _CONTROL_CLASSES,
+    _DEF_CLASSES,
+    _USAGE_CLASSES,
+    _UUID_NAMESPACE,
+    SpecModel,
+    spec_class,
+    spec_metamodel,
+    to_spec,
+)
 from .errors import SysMLError
 from .interpreter import Resolver
 
@@ -349,3 +358,259 @@ def _apply(obj: Any, feature: Any, value: Any, instances: dict[str, Any]) -> Non
 
 def from_api_json(text: str) -> SpecModel:
     return from_api_records(json.loads(text))
+
+
+# ---------------------------------------------------------------------------
+# API records -> longeron model (reverse structural import)
+# ---------------------------------------------------------------------------
+
+
+def _invert_kinds(mapping: dict[str, str]) -> dict[str, str]:
+    """Spec metaclass -> model kind; the *first* kind listed for a
+    metaclass wins (``PartUsage`` -> ``part``, not ``actor``)."""
+
+    inverse: dict[str, str] = {}
+    for kind, class_name in mapping.items():
+        inverse.setdefault(class_name, kind)
+    return inverse
+
+
+_DEF_KIND_BY_CLASS = _invert_kinds(_DEF_CLASSES)
+_USAGE_KIND_BY_CLASS = _invert_kinds(_USAGE_CLASSES)
+_CONTROL_KIND_BY_CLASS = {class_name: kind for kind, class_name in _CONTROL_CLASSES.items()}
+
+#: API record boolean -> model dataclass field (both directions structural)
+_FLAG_FIELDS = {
+    "isAbstract": "is_abstract",
+    "isVariation": "is_variation",
+    "isIndividual": "is_individual",
+    "isParallel": "is_parallel",
+    "isEnd": "is_end",
+    "isDerived": "is_derived",
+    "isReadOnly": "is_readonly",
+}
+
+#: membership metaclass -> usage kind forced on the owned member
+_MEMBERSHIP_USAGE_KINDS = {
+    "SubjectMembership": "subject",
+    "ActorMembership": "actor",
+    "StakeholderMembership": "stakeholder",
+    "ObjectiveMembership": "objective",
+}
+
+#: relationship metaclass -> (source role, target role, model list attribute)
+_RELATIONSHIP_ROLES: dict[str, tuple[str, str, str]] = {
+    "FeatureTyping": ("typedFeature", "type", "types"),
+    "Subclassification": ("subclassifier", "superclassifier", "supers"),
+    "Subsetting": ("subsettingFeature", "subsettedFeature", "subsets"),
+    "Redefinition": ("redefiningFeature", "redefinedFeature", "redefines"),
+}
+
+_USAGE_SPECIAL_CLASSES: dict[str, type] = {
+    "ConnectionUsage": M.ConnectionUsage,
+    "BindingConnectorAsUsage": M.BindingConnector,
+    "SatisfyRequirementUsage": M.SatisfyUsage,
+}
+
+_DIRECTIONS = ("in", "out", "inout")
+
+
+def _flat_api_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize records to the flat GET form.  Accepts both flat records
+    (``{"@id": ..., "@type": ...}``) and the pilot POST change form
+    (``{"identity": {"@id": ...}, "payload": {...}}``); entries whose
+    payload is ``null`` (deletions) are dropped."""
+
+    flat = []
+    for entry in records:
+        identity = entry.get("identity")
+        if isinstance(identity, dict):
+            payload = entry.get("payload")
+            if payload is None:
+                continue
+            record = dict(payload)
+            record.setdefault("@id", identity["@id"])
+            flat.append(record)
+        else:
+            flat.append(entry)
+    return flat
+
+
+def _first_id(record: dict[str, Any], *keys: str) -> str | None:
+    """The first ``@id`` found under ``keys`` (single ref or ref array)."""
+
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, dict):
+            return value.get("@id")
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return value[0].get("@id")
+    return None
+
+
+def _all_ids(record: dict[str, Any], *keys: str) -> list[str]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, dict):
+            return [value["@id"]]
+        if isinstance(value, list) and value:
+            return [ref["@id"] for ref in value if isinstance(ref, dict)]
+    return []
+
+
+def _element_from_api_record(record: dict[str, Any]) -> M.Element | None:
+    """A detached model element for one API record, or ``None`` for record
+    kinds the reverse import does not reconstruct (memberships and
+    specialization/typing relationships are applied structurally; imports,
+    dependencies, and behavioral statement records are skipped -- their
+    API records carry no reconstructable payload)."""
+
+    type_name = str(record.get("@type", ""))
+    element: M.Element
+    if type_name in ("Package", "LibraryPackage"):
+        element = M.Package(
+            is_library=type_name == "LibraryPackage",
+            is_standard=bool(record.get("isStandard")),
+        )
+    elif type_name == "EnumerationDefinition":
+        element = M.EnumerationDefinition()
+    elif type_name in _DEF_KIND_BY_CLASS:
+        element = M.Definition(kind=_DEF_KIND_BY_CLASS[type_name])  # type: ignore[arg-type]
+    elif type_name in _USAGE_SPECIAL_CLASSES:
+        element = _USAGE_SPECIAL_CLASSES[type_name]()
+    elif type_name in _USAGE_KIND_BY_CLASS:
+        element = M.Usage(kind=_USAGE_KIND_BY_CLASS[type_name])  # type: ignore[arg-type]
+    elif type_name in ("Documentation", "Comment"):
+        body = str(record.get("body", ""))
+        if not body.lstrip().startswith("/*"):
+            body = f"/* {body} */"
+        element = (
+            M.Documentation(body=body) if type_name == "Documentation" else M.Comment(body=body)
+        )
+    elif type_name == "TextualRepresentation":
+        element = M.TextualRepresentation(
+            language=str(record.get("language", "")), body=str(record.get("body", ""))
+        )
+    elif type_name in _CONTROL_KIND_BY_CLASS:
+        element = M.ControlNode(kind=_CONTROL_KIND_BY_CLASS[type_name])  # type: ignore[arg-type]
+    else:
+        return None
+    if record.get("declaredName") is not None:
+        element.name = record["declaredName"]
+    if record.get("declaredShortName") is not None:
+        element.short_name = record["declaredShortName"]
+    for record_field, model_field in _FLAG_FIELDS.items():
+        if record.get(record_field) and hasattr(element, model_field):
+            setattr(element, model_field, True)
+    if isinstance(element, M.Usage) and record.get("direction") in _DIRECTIONS:
+        element.direction = record["direction"]
+    return element
+
+
+def _apply_membership_kind(membership: dict[str, Any], child: M.Element) -> None:
+    """Adjust an owned member for what its membership record implies."""
+
+    type_name = str(membership.get("@type", ""))
+    if not isinstance(child, M.Usage):
+        return
+    forced = _MEMBERSHIP_USAGE_KINDS.get(type_name)
+    if forced is not None:
+        child.kind = forced  # type: ignore[assignment]
+    if type_name == "VariantMembership":
+        child.is_variant = True
+    if type_name == "ReturnParameterMembership":
+        child.direction = "return"
+    elif type_name == "ParameterMembership" and child.direction is None:
+        # the exporter omits direction when it equals the spec default
+        # ("in"); the membership kind still pins the member as a parameter
+        child.direction = "in"
+
+
+def _reference_name(target: M.Element) -> str | None:
+    return target.qualified_name or target.name or target.short_name
+
+
+def model_from_api_records(records: list[dict[str, Any]]) -> M.Model:
+    """Rebuild a :class:`~longeron.model.Model` from flat API records.
+
+    This is the reverse of :func:`to_api_records` at the same structural
+    fidelity: element kinds, names, flags, ownership (via the reified
+    membership records), and the FeatureTyping / Subclassification /
+    Subsetting / Redefinition relationships come back; expression trees,
+    attribute values, multiplicities, and import/dependency targets are
+    not part of API records and are therefore absent from the result.
+    Relationship endpoints are read from the stored role features when
+    present and from the derived ``source``/``target`` arrays otherwise,
+    so both longeron exports and pilot-server payloads import.  Records
+    are accepted in flat GET form or pilot POST ``identity``/``payload``
+    form; unknown ``@type`` values are skipped, never fatal.  Unlike
+    :func:`from_api_records` this needs no pyecore.
+    """
+
+    flat = _flat_api_records(records)
+    by_id: dict[str, dict[str, Any]] = {r["@id"]: r for r in flat if "@id" in r}
+    elements: dict[str, M.Element] = {}
+    for record_id, record in by_id.items():
+        element = _element_from_api_record(record)
+        if element is not None:
+            elements[record_id] = element
+    # ownership: walk the reified membership records
+    owned: set[str] = set()
+    root_order: list[str] = []
+    for record in flat:
+        if not str(record.get("@type", "")).endswith("Membership"):
+            continue
+        parent_id = _first_id(record, "owningRelatedElement", "membershipOwningNamespace", "source")
+        parent = elements.get(parent_id) if parent_id else None
+        parent_record = by_id.get(parent_id) if parent_id else None
+        parent_is_root = (
+            parent is None
+            and parent_record is not None
+            and parent_record.get("@type") == "Namespace"
+            and not parent_record.get("declaredName")
+        )
+        for child_id in _all_ids(record, "ownedRelatedElement", "target"):
+            child = elements.get(child_id)
+            if child is None or child_id in owned:
+                continue
+            if isinstance(parent, M.Namespace):
+                parent.add(child)
+                owned.add(child_id)
+                if isinstance(parent, M.EnumerationDefinition) and (
+                    isinstance(child, M.Usage) and child.kind == "enum"
+                ):
+                    child.kind = "enum_literal"
+            elif parent_is_root:
+                root_order.append(child_id)
+            _apply_membership_kind(record, child)
+    # relationships: typing / specialization back onto name lists
+    for record in flat:
+        roles = _RELATIONSHIP_ROLES.get(str(record.get("@type", "")))
+        if roles is None or record.get("isImplied"):
+            continue
+        source_role, target_role, attribute = roles
+        source_id = _first_id(record, source_role, "source")
+        target_id = _first_id(record, target_role, "target")
+        source = elements.get(source_id) if source_id else None
+        target = elements.get(target_id) if target_id else None
+        if source is None or target is None:
+            continue
+        name = _reference_name(target)
+        names = getattr(source, attribute, None)
+        if name and isinstance(names, list) and name not in names:
+            names.append(name)
+    model = M.Model()
+    for root_id in root_order:
+        if root_id not in owned:
+            model.add(elements[root_id])
+            owned.add(root_id)
+    for record_id, element in elements.items():  # unowned leftovers stay roots
+        if record_id not in owned and record_id not in root_order:
+            model.add(element)
+    return model
+
+
+def model_from_api_json(text: str) -> M.Model:
+    """Parse API JSON (see :func:`model_from_api_records`)."""
+
+    return model_from_api_records(json.loads(text))
