@@ -2,6 +2,7 @@
 
 from math import pi
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -163,6 +164,83 @@ class TestDroneGeometry:
     def test_battery_sizing_heuristic(self):
         length, width, height = geometry.battery_size(0.190)
         assert 0.06 < length < 0.09 and length > width > height
+
+
+class TestSplitInstances:
+    """``split_instances=True`` re-partitions the motor/prop meshes
+    per instance; ``False`` (the default) is byte-identical to the
+    pre-flag behavior."""
+
+    SPLIT_NAMES: ClassVar[list[str]] = [
+        "frame",
+        *[f"motor{i}" for i in (1, 2, 3, 4)],
+        *[f"prop{i}" for i in (1, 2, 3, 4)],
+        "battery",
+        "esc",
+    ]
+
+    def test_default_is_byte_identical(self):
+        import json
+
+        merged = json.dumps(geometry.drone_geometry(**RACER), sort_keys=True)
+        explicit = json.dumps(
+            geometry.drone_geometry(**RACER, split_instances=False), sort_keys=True
+        )
+        assert merged == explicit
+
+    def test_split_part_names_match_the_cadquery_children(self):
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        assert [p["name"] for p in mesh["parts"]] == self.SPLIT_NAMES
+
+    def test_instances_inherit_the_kind_color_and_opacity(self):
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        by_name = {p["name"]: p for p in mesh["parts"]}
+        for i in (1, 2, 3, 4):
+            assert by_name[f"motor{i}"]["color"] == geometry.COLORS["motors"]
+            assert by_name[f"motor{i}"]["opacity"] == 1.0
+            assert by_name[f"prop{i}"]["color"] == geometry.COLORS["props"]
+            assert by_name[f"prop{i}"]["opacity"] == 0.55
+
+    def test_split_is_a_pure_repartition_of_the_merged_mesh(self):
+        # concatenating the instance parts (with face-index offsets)
+        # reproduces the merged part exactly -- same bytes, same order
+        merged = geometry.drone_geometry(**CRUISER)
+        split = geometry.drone_geometry(**CRUISER, split_instances=True)
+        merged_by_name = {p["name"]: p for p in merged["parts"]}
+        split_by_name = {p["name"]: p for p in split["parts"]}
+        for kind in ("motor", "prop"):
+            vertices: list[float] = []
+            faces: list[int] = []
+            for i in (1, 2, 3, 4):
+                part = split_by_name[f"{kind}{i}"]
+                offset = len(vertices) // 3
+                vertices += part["vertices"]
+                faces += [f + offset for f in part["faces"]]
+            assert vertices == merged_by_name[f"{kind}s"]["vertices"]
+            assert faces == merged_by_name[f"{kind}s"]["faces"]
+        for name in ("frame", "battery", "esc"):
+            assert split_by_name[name] == merged_by_name[name]
+        assert split["bounds"] == merged["bounds"] and split["unit"] == merged["unit"]
+
+    def test_each_instance_is_a_watertight_solid(self):
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        instances = [p for p in mesh["parts"] if p["name"][-1].isdigit()]
+        assert len(instances) == 8
+        for part in instances:
+            assert _watertight(part["vertices"], part["faces"]), part["name"]
+            assert _volume(part["vertices"], part["faces"]) > 0
+
+    def test_instances_tag_to_m0_individual_ids(self):
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        mapping = {
+            f"{kind}{i + 1}": f"Drone::QuadCopter#0.rotors#{i}"
+            for kind in ("motor", "prop")
+            for i in range(4)
+        }
+        tagged = geometry.tag_parts(mesh, mapping)
+        keys = {p["name"]: p.get("key") for p in tagged["parts"]}
+        assert keys["motor3"] == keys["prop3"] == "Drone::QuadCopter#0.rotors#2"
+        assert keys["frame"] is None  # unmapped parts stay untagged
 
 
 class TestNewPrimitives:

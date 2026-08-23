@@ -9,8 +9,10 @@ scene, and clicking a mesh selects the diagram node.
 
 The bridge between the two worlds is the mesh part ``key`` stamped by
 :func:`longeron.analysis.geometry.tag_parts`: the qualified name of the
-model part a mesh component renders.  Selections resolve to keys with
-containment-and-typing semantics (see :func:`selection_keys`):
+model part a mesh component renders, or -- for per-instance parts --
+the **M0 individual id** from :func:`longeron.m0.interpret`.
+Selections resolve to keys with containment-and-typing semantics (see
+:func:`selection_keys`):
 
 * a **usage** matches every key equal to its qualified name or nested
   under it, so selecting an assembly highlights all of its rendered
@@ -18,6 +20,10 @@ containment-and-typing semantics (see :func:`selection_keys`):
 * a **definition** additionally matches every usage *directly typed* by
   it (``part rotors : Rotor`` lights up for ``Rotor``) -- one def, all
   its occurrences; specializations of the def do not count;
+* an **M0 individual id** key (``Drone::QuadCopter#0.rotors#2``)
+  belongs to the usage its dotted path derives from
+  (:func:`individual_qname` -- here ``Drone::QuadCopter::rotors``), so
+  selecting the one M1 usage lights up every rendered individual;
 * a selection that touches nothing in the scene **clears** the
   highlight rather than dimming the whole craft -- only affirmative
   matches dim the rest.
@@ -30,6 +36,7 @@ the pixel-level effects (emissive pop, raycast picking) need a browser.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -37,7 +44,31 @@ from .. import model as M
 from ..interpreter import Interpreter
 from .geometry import tag_parts
 
-__all__ = ["link_selection", "selection_keys"]
+__all__ = ["individual_qname", "link_selection", "selection_keys"]
+
+#: an M0 instance-index suffix on one dotted id segment (``rotors#2``)
+_INSTANCE_INDEX = re.compile(r"#\d+$")
+
+
+def individual_qname(key: str) -> str | None:
+    """The M1 usage qualified name an M0 individual id derives from.
+
+    :func:`longeron.m0.interpret` ids are dotted feature paths whose
+    segments optionally carry a ``#index`` -- ``Drone::QuadCopter#0.
+    rotors#2`` is the third rotor individual of the root ``QuadCopter``.
+    The derivation strips each segment's instance index and joins the
+    segments with ``::`` (the first segment is already a qualified
+    name), so that id derives ``Drone::QuadCopter::rotors`` -- the one
+    usage all four rotor individuals belong to.  Returns ``None`` for a
+    key that carries no instance index (a plain qualified name or a
+    bare part name), so pure-qname keys keep their exact semantics.
+    """
+
+    segments = key.split(".")
+    stripped = [_INSTANCE_INDEX.sub("", segment) for segment in segments]
+    if stripped == segments:
+        return None
+    return "::".join(stripped)
 
 
 def _typed_usage_qnames(model: M.Model, definition: M.Definition, interp: Interpreter) -> set[str]:
@@ -75,8 +106,12 @@ def selection_keys(
     matches a selected element's qualified name exactly or nested under
     it (``A::b`` matches selecting ``A``); a selected
     :class:`~longeron.model.Definition` also matches through every
-    usage directly typed by it.  Untagged keys (bare part names) only
-    ever match themselves, so an untagged scene stays inert.
+    usage directly typed by it.  A key that is an **M0 individual id**
+    additionally matches through the usage qualified name it derives
+    (see :func:`individual_qname`), so selecting the one ``rotors``
+    usage matches every ``rotors#i`` individual key.  Untagged keys
+    (bare part names) only ever match themselves, so an untagged scene
+    stays inert.
     """
 
     interp = interpreter if interpreter is not None else Interpreter(model)
@@ -89,7 +124,15 @@ def selection_keys(
             targets.update(_typed_usage_qnames(model, element, interp))
     matched: set[str] = set()
     for key in keys:
-        if any(key == target or key.startswith(target + "::") for target in targets):
+        identities = [key]
+        derived = individual_qname(key)
+        if derived is not None:
+            identities.append(derived)
+        if any(
+            identity == target or identity.startswith(target + "::")
+            for identity in identities
+            for target in targets
+        ):
             matched.add(key)
     return matched
 
@@ -101,6 +144,7 @@ def link_selection(
     *,
     part_map: Mapping[str, str] | None = None,
     bidirectional: bool = True,
+    on_pick: Callable[[list[str]], None] | None = None,
 ) -> Callable[[], None]:
     """Wire diagram clicks to 3D highlights (and mesh picks back).
 
@@ -116,12 +160,20 @@ def link_selection(
 
     With ``bidirectional`` (the default), a plain click on a mesh
     (reported by the viewer's raycaster on ``picked_json``) selects the
-    matching diagram node by qualified name; picks that resolve to
-    nothing in the model -- the background, or an untagged part --
-    clear the diagram selection.  One traitlets caveat: repeating the
-    *identical* pick twice in a row (same part, or background twice)
-    does not re-fire -- equal traitlet values coalesce -- so the second
-    click is a no-op until something else changes the pick.
+    matching diagram node by qualified name -- a picked **M0 individual
+    id** selects the usage it derives (:func:`individual_qname`): the
+    diagram has no individual nodes, so M0 -> M1 is a many-to-one
+    projection; picks that resolve to nothing in the model -- the
+    background, or an untagged part -- clear the diagram selection.
+    ``on_pick`` preserves what the projection discards: it is called on
+    every pick report with the raw key list exactly as the raycaster
+    wrote it (the individual id for a per-instance part, ``[]`` for a
+    background click), *before* the diagram selection is driven, and it
+    fires even with ``bidirectional=False``.  One traitlets caveat:
+    repeating the *identical* pick twice in a row (same part, or
+    background twice) does not re-fire -- equal traitlet values coalesce
+    -- so the second click is a no-op until something else changes the
+    pick.
 
     Returns an ``unlink()`` callable that deactivates both directions
     and clears the highlight.  (:func:`longeron.diagrams.on_select`
@@ -162,16 +214,26 @@ def link_selection(
     def _on_pick(change: Any) -> None:
         if not active:
             return
+        picked: list[str] = json.loads(change["new"] or "[]")
+        if on_pick is not None:
+            on_pick(list(picked))
+        if not bidirectional:
+            return
         ids: list[str] = []
-        for key in json.loads(change["new"] or "[]"):
-            try:
-                interp.resolve(key)
-            except Exception:
-                continue
-            ids.append(key)
+        for key in picked:
+            for identity in (key, individual_qname(key)):
+                if identity is None:
+                    continue
+                try:
+                    interp.resolve(identity)
+                except Exception:
+                    continue
+                if identity not in ids:
+                    ids.append(identity)
+                break
         diagram.view.selection.ids = ids  # on_select then drives the highlight
 
-    picking = bool(bidirectional) and viewer.has_trait("picked_json")
+    picking = (bool(bidirectional) or on_pick is not None) and viewer.has_trait("picked_json")
     if picking:
         viewer.observe(_on_pick, names="picked_json")
 

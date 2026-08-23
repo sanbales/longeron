@@ -1,6 +1,6 @@
 # Tutorials
 
-Nine executable notebooks live in
+Ten executable notebooks live in
 [`notebooks/`](https://github.com/sanbales/longeron/tree/main/notebooks).
 Together they walk every capability of the package, in order: each
 notebook builds on ideas from the ones before it, but each also states
@@ -15,7 +15,8 @@ the outputs you see here always match the code.
 **Interactive widgets require JupyterLab.** The diagram and analysis
 widgets (ipyelk diagrams in tutorial 6; the parallel-coordinates plot,
 N2 map, 3D viewer, and dashboard in tutorial 7; the replay player in
-tutorial 6) are live browser applications and cannot run on a
+tutorial 6; the linked diagram + 3D pair in tutorial 10) are live
+browser applications and cannot run on a
 static site, so those cells show a textual placeholder here. Run the
 notebooks in JupyterLab (`pixi run lab`) for the full experience. Static
 SVG/PNG exports ({mod}`longeron.render`) and matplotlib figures render
@@ -40,6 +41,7 @@ extra.
 | {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views |
 | {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |
 | {doc}`9. M0 interpretations <09_m0_interpretations>` | populations of identified individuals, Annex A sequences, roll-ups over actual instances, random sampling, occurrences from executions, the trade-study bridge |
+| {doc}`10. Diagrams meet CAD: M1 and M0 <10_diagram_3d_link>` | linked selection between a structure diagram and the 3D viewer, per-instance geometry keyed by M0 individual ids, the M1 -> M0 fan-out and the M0 -> M1 projection |
 
 ```{toctree}
 :hidden:
@@ -54,4 +56,5 @@ extra.
 07_analysis_and_trades
 08_semantic_web_and_rag
 09_m0_interpretations
+10_diagram_3d_link
 ```

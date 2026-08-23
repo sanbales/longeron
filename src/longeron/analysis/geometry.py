@@ -321,9 +321,17 @@ def board_thickness(mass: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _pack(named: list[tuple[str, Mesh, float]]) -> dict[str, Any]:
-    """Round, color, and bound a list of (name, mesh, opacity) parts."""
+def _pack(
+    named: list[tuple[str, Mesh, float]], colors: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Round, color, and bound a list of (name, mesh, opacity) parts.
 
+    ``colors`` adds per-part color entries on top of the module
+    :data:`COLORS` (for generated names like ``motor1`` that are not in
+    the fixed palette).
+    """
+
+    palette = {**COLORS, **(colors or {})}
     parts: list[dict[str, Any]] = []
     rounded_parts: list[list[float]] = []
     for name, (vertices, faces), opacity in named:
@@ -332,7 +340,7 @@ def _pack(named: list[tuple[str, Mesh, float]]) -> dict[str, Any]:
         parts.append(
             {
                 "name": name,
-                "color": COLORS[name],
+                "color": palette[name],
                 "opacity": opacity,
                 "vertices": rounded,
                 "faces": faces,
@@ -356,6 +364,7 @@ def drone_geometry(
     arm_thickness: float = _ARM_THICKNESS,
     arm_width: float = _ARM_WIDTH,
     segments: int = 24,
+    split_instances: bool = False,
 ) -> dict[str, Any]:
     """A to-scale quad-copter mesh dict from catalog attribute values.
 
@@ -366,6 +375,15 @@ def drone_geometry(
     :func:`mission_geometry`) pass the sized outer diameter so heavier-
     loaded designs genuinely look beefier.  Parts of one kind merge into
     a single mesh (one draw call each in the viewer).
+
+    ``split_instances`` keeps the motor and prop instances as separate
+    parts -- ``motor1`` .. ``motor4`` and ``prop1`` .. ``prop4``, the
+    same names and order as the :func:`to_cadquery` assembly children --
+    so each can carry its own identity key (e.g. an M0 individual id,
+    see :func:`tag_parts`) for per-instance linked selection.  The
+    geometry is a pure re-partition: concatenating the instance parts
+    reproduces the merged part exactly, and the default (``False``)
+    output is unchanged.
     """
 
     prop_d = prop_diameter_in * IN
@@ -393,7 +411,19 @@ def drone_geometry(
     battery = _box(bat_l, bat_w, bat_h, cy=-(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2))
     esc = _box(_BOARD_SIDE, esc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t / 2)
 
-    parts: list[tuple[str, Mesh, float]] = [
+    if split_instances:
+        parts: list[tuple[str, Mesh, float]] = [
+            ("frame", frame, 1.0),
+            *((f"motor{i + 1}", motor, 1.0) for i, motor in enumerate(motors)),
+            *((f"prop{i + 1}", prop, 0.55) for i, prop in enumerate(props)),
+            ("battery", battery, 1.0),
+            ("esc", esc, 1.0),
+        ]
+        instance_colors = {
+            f"{kind}{i + 1}": COLORS[f"{kind}s"] for kind in ("motor", "prop") for i in range(4)
+        }
+        return _pack(parts, colors=instance_colors)
+    parts = [
         ("frame", frame, 1.0),
         ("motors", _merge(*motors), 1.0),
         ("props", _merge(*props), 0.55),
@@ -984,11 +1014,17 @@ def tag_parts(
 
     Returns a copy of ``mesh`` whose parts named in ``mapping`` carry a
     ``key`` -- by convention the *qualified name* of the model part the
-    component renders.  Several mesh parts may share one key (a quad's
-    ``motors`` and ``props`` both render the ``rotors`` usage); parts
-    not named keep no key and fall back to their ``name`` as their
-    identity in :mod:`longeron.analysis.viewer3d`.  Vertex and face
-    arrays are shared with the input, not copied.
+    component renders, or, for per-instance parts (see
+    :func:`drone_geometry`'s ``split_instances``), the **M0 individual
+    id** from :func:`longeron.m0.interpret` (``Drone::QuadCopter#0.
+    rotors#2``), whose dotted path derives the owning usage for linked
+    selection (:func:`longeron.analysis.link.individual_qname`).
+    Several mesh parts may share one key (a quad's ``motors`` and
+    ``props`` both render the ``rotors`` usage; a ``motor``/``prop``
+    pair renders one rotor individual); parts not named keep no key and
+    fall back to their ``name`` as their identity in
+    :mod:`longeron.analysis.viewer3d`.  Vertex and face arrays are
+    shared with the input, not copied.
 
     With ``strict`` (the default) every mapping entry must name a part,
     so typos fail loudly; pass ``strict=False`` to reuse one mapping
