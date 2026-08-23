@@ -13,6 +13,13 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 RACER = {"prop_diameter_in": 5.0, "motor_mass": 0.033, "battery_mass": 0.19, "esc_mass": 0.012}
 CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, "esc_mass": 0.009}
 
+QUAD_MAP = {
+    "frame": "Drone::QuadCopter::chassis",
+    "motors": "Drone::QuadCopter::rotors",
+    "props": "Drone::QuadCopter::rotors",
+    "battery": "Drone::QuadCopter::battery",
+}
+
 
 @pytest.fixture(scope="module")
 def study():
@@ -739,6 +746,42 @@ class TestLineup:
             geometry.lineup([])
         with pytest.raises(AnalysisError):
             geometry.lineup([geometry.interceptor_geometry(**DART)], labels=["a", "b"])
+
+
+class TestTagParts:
+    def test_stamps_keys_without_copying_geometry(self):
+        mesh = geometry.drone_geometry(**RACER)
+        tagged = geometry.tag_parts(mesh, QUAD_MAP)
+        assert [p.get("key") for p in tagged["parts"]] == [
+            "Drone::QuadCopter::chassis",
+            "Drone::QuadCopter::rotors",
+            "Drone::QuadCopter::rotors",
+            "Drone::QuadCopter::battery",
+            None,  # esc has no model part: identity stays its name
+        ]
+        # the input mesh is untouched; vertex arrays are shared, not copied
+        assert all("key" not in p for p in mesh["parts"])
+        assert all(
+            t["vertices"] is m["vertices"] and t["faces"] is m["faces"]
+            for t, m in zip(tagged["parts"], mesh["parts"], strict=True)
+        )
+        assert tagged["bounds"] == mesh["bounds"] and tagged["unit"] == "m"
+
+    def test_typos_fail_loudly_unless_relaxed(self):
+        mesh = geometry.drone_geometry(**RACER)
+        with pytest.raises(AnalysisError, match="rotor"):
+            geometry.tag_parts(mesh, {"rotor": "Drone::QuadCopter::rotors"})
+        # one shared map across families: unknown names are ignored
+        relaxed = geometry.tag_parts(mesh, {"wing": "X::wing"}, strict=False)
+        assert all("key" not in p for p in relaxed["parts"])
+
+    def test_lineup_carries_keys_through_the_label_prefix(self):
+        tagged = geometry.tag_parts(geometry.drone_geometry(**RACER), QUAD_MAP)
+        scene = geometry.lineup([tagged, geometry.drone_geometry(**CRUISER)], labels=["a", "b"])
+        by_name = {p["name"]: p.get("key") for p in scene["parts"]}
+        assert by_name["a:motors"] == "Drone::QuadCopter::rotors"
+        assert by_name["a:esc"] is None  # untagged part stays untagged
+        assert by_name["b:motors"] is None  # the untagged mesh is inert
 
 
 class TestArchitectureBridge:

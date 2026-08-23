@@ -19,6 +19,10 @@ third-party dependencies):
   export needs ``pip install "longeron[cad]"``).
 * :mod:`longeron.analysis.dashboard` -- the linked mission-compromise
   dashboard composing the widgets above with ipywidgets (``viz`` extra).
+* :mod:`longeron.analysis.link` -- linked selection between the
+  interactive diagrams and the 3D viewer: diagram clicks highlight the
+  matching meshes, mesh picks select the diagram node (``viz`` extra
+  plus the vendored ipyelk for the diagram side).
 * :mod:`longeron.analysis.structure` -- interactive views of the analysis
   problems' *shape*: an N2 matrix over a built OpenMDAO problem and a
   bipartite constraint-participation network over a trade study
@@ -31,6 +35,7 @@ __all__ = [
     "AnalysisError",
     "dashboard",
     "geometry",
+    "link",
     "mdao",
     "smt",
     "structure",

@@ -23,6 +23,17 @@ sprites above each configuration, so a grid lineup names its cells
 in-scene.  Updating ``mesh_json`` from Python (e.g. observing another
 widget's traitlet) re-bakes the scene in place.
 
+Linked selection: ``highlight_json`` (a JSON array of part identity
+keys -- each part's ``key`` if tagged via
+:func:`longeron.analysis.geometry.tag_parts`, else its ``name``) pops
+the matched meshes with an emissive accent (the JupyterLab selection
+blue, read live from ``--jp-brand-color2``) and dims the rest;
+``"[]"`` restores every material instantly.  A plain click (no drag)
+raycasts the scene and reports the hit part's key on ``picked_json``
+(``"[]"`` for a background click), so Python can select the
+corresponding diagram node --
+:func:`longeron.analysis.link.link_selection` wires both directions.
+
 Offline tradeoff: the front-end imports three.js (~630 kB) from the
 jsDelivr CDN at view time -- the one exception to the otherwise
 self-contained widget.  Vendoring the library into the package would add
@@ -41,6 +52,8 @@ from typing import TYPE_CHECKING, Any
 from ..errors import MissingExtraError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     import anywidget
 
 __all__ = ["mesh_viewer"]
@@ -162,7 +175,12 @@ async function render({ model, el }) {
       const material = new THREE.MeshStandardMaterial({
         color: part.color, roughness: 0.65, metalness: 0.05,
         transparent: opacity < 1, opacity });
-      group.add(new THREE.Mesh(geometry, material));
+      const node = new THREE.Mesh(geometry, material);
+      // model identity for linked selection: the tagged key (a model
+      // part's qualified name) or the bare part name
+      node.userData.key = part.key || part.name;
+      node.userData.baseOpacity = opacity;
+      group.add(node);
     }
     const span = Math.max(
       mesh.bounds[1][0] - mesh.bounds[0][0],
@@ -230,7 +248,40 @@ async function render({ model, el }) {
     renderer.domElement.setAttribute("aria-label",
       "3D drone view: " + [model.get("label"), model.get("label_b")]
         .filter(Boolean).join(" vs. "));
+    applyHighlight();  // a swapped-in mesh keeps the active highlight
     fit();
+  }
+
+  // --- linked selection: highlighted keys pop (emissive accent -- the
+  // JupyterLab selection blue, so the 3D pop matches the diagram's),
+  // the rest dim; an empty set restores every material instantly
+  function applyHighlight() {
+    let keys;
+    try { keys = new Set(JSON.parse(model.get("highlight_json") || "[]")); }
+    catch (err) { keys = new Set(); }
+    const accent = (getComputedStyle(el)
+      .getPropertyValue("--jp-brand-color2") || "").trim() || "#2196f3";
+    content.traverse((node) => {
+      if (!node.isMesh) return;
+      const material = node.material;
+      const base = node.userData.baseOpacity === undefined
+        ? 1.0 : node.userData.baseOpacity;
+      if (keys.size && keys.has(node.userData.key)) {
+        material.emissive.set(accent);
+        material.emissiveIntensity = 0.55;
+        material.opacity = base;
+        material.transparent = base < 1;
+      } else if (keys.size) {
+        material.emissiveIntensity = 0;
+        material.opacity = Math.max(0.08, 0.16 * base);
+        material.transparent = true;
+      } else {
+        material.emissiveIntensity = 0;
+        material.opacity = base;
+        material.transparent = base < 1;
+      }
+    });
+    requestRender();
   }
 
   function relabel() {
@@ -254,11 +305,12 @@ async function render({ model, el }) {
     event.preventDefault();
     event.stopPropagation();
   });
-  let dragging = null;  // { mode: "orbit" | "pan", x, y }
+  let dragging = null;  // { mode: "orbit" | "pan", x, y, x0, y0, moved }
   canvas.addEventListener("pointerdown", (event) => {
     const pan = event.button === 2 || event.shiftKey;
     dragging = { mode: pan ? "pan" : "orbit",
-                 x: event.clientX, y: event.clientY };
+                 x: event.clientX, y: event.clientY,
+                 x0: event.clientX, y0: event.clientY, moved: false };
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
@@ -267,6 +319,8 @@ async function render({ model, el }) {
     const dy = event.clientY - dragging.y;
     dragging.x = event.clientX;
     dragging.y = event.clientY;
+    if (Math.abs(event.clientX - dragging.x0)
+        + Math.abs(event.clientY - dragging.y0) > 5) dragging.moved = true;
     if (dragging.mode === "pan") {
       // world units per screen pixel at the target distance
       const scale = 2 * radius
@@ -285,7 +339,28 @@ async function render({ model, el }) {
     }
     applyCamera();
   });
-  canvas.addEventListener("pointerup", () => (dragging = null));
+  canvas.addEventListener("pointerup", (event) => {
+    // a still left-click (no drag, no shift) is a pick, not an orbit
+    const wasClick = dragging && dragging.mode === "orbit" && !dragging.moved;
+    dragging = null;
+    if (wasClick) pick(event);
+  });
+
+  // --- picking: raycast the baked parts and report the hit key so the
+  // Python side can select the matching diagram node (reverse link)
+  const raycaster = new THREE.Raycaster();
+  function pick(event) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    raycaster.setFromCamera(new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1), camera);
+    const hit = raycaster.intersectObject(content, true)
+      .find((h) => h.object.isMesh);
+    model.set("picked_json",
+              JSON.stringify(hit ? [hit.object.userData.key] : []));
+    model.save_changes();
+  }
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     radius = Math.min(20, Math.max(0.02,
@@ -296,6 +371,7 @@ async function render({ model, el }) {
 
   model.on("change:mesh_json", rebuild);
   model.on("change:mesh_b_json", rebuild);
+  model.on("change:highlight_json", applyHighlight);
   model.on("change:label", relabel);
   model.on("change:label_b", relabel);
   relabel();
@@ -353,9 +429,25 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         mesh_b_json = traitlets.Unicode("").tag(sync=True)  # "" = single
         label = traitlets.Unicode("").tag(sync=True)
         label_b = traitlets.Unicode("").tag(sync=True)
+        #: JSON array of part identity keys to pop ("[]" = none): each
+        #: part's tagged ``key`` if present, else its ``name``
+        highlight_json = traitlets.Unicode("[]").tag(sync=True)
+        #: JSON array with the key of the last clicked part ("[]" =
+        #: background click); written by the front-end raycaster
+        picked_json = traitlets.Unicode("[]").tag(sync=True)
         #: aspect ratio + fallback width; the canvas fills the host width
         width_px = traitlets.Int(760).tag(sync=True)
         height_px = traitlets.Int(430).tag(sync=True)
+
+        def highlight(self, keys: Iterable[str] = ()) -> None:
+            """Pop the parts whose identity key is in ``keys``.
+
+            Matched meshes get the emissive accent, the rest dim; an
+            empty ``keys`` (the default) clears the highlight and
+            restores every material.
+            """
+
+            self.highlight_json = json.dumps(sorted({str(key) for key in keys}))
 
     _VIEWER_CLS = MeshViewer
     return MeshViewer
@@ -380,6 +472,15 @@ def mesh_viewer(
     to re-fit.  Assign a new JSON string to the returned widget's
     ``mesh_json`` to swap the scene in place -- e.g. from an ``observe``
     handler on another widget.
+
+    Linked selection: ``widget.highlight(keys)`` pops the parts whose
+    identity key (the ``key`` stamped by
+    :func:`longeron.analysis.geometry.tag_parts`, else the part
+    ``name``) is in ``keys`` and dims the rest; ``widget.highlight()``
+    clears.  A plain click on a part reports its key on the
+    ``picked_json`` traitlet.  See
+    :func:`longeron.analysis.link.link_selection` for wiring both to a
+    diagram.
     """
 
     cls = _viewer_class()

@@ -49,6 +49,42 @@ class TestMeshViewer:
         for token in ("mesh.labels", "Sprite", "CanvasTexture", "label.anchor"):
             assert token in widget._esm, token
 
+    def test_esm_linked_selection_contracts(self):
+        """The linked-selection front-end, encoded: every part mesh
+        carries its model identity key; highlight changes pop matches
+        with the JupyterLab selection accent and dim the rest (a mesh
+        swap re-applies the active highlight); a still click raycasts
+        and reports the hit key on picked_json."""
+
+        pytest.importorskip("anywidget")
+        widget = viewer3d.mesh_viewer(MESH)
+        for token in (
+            "userData.key",
+            "part.key || part.name",
+            "change:highlight_json",
+            "--jp-brand-color2",
+            "emissive",
+            "applyHighlight",
+            "Raycaster",
+            "picked_json",
+            "save_changes",
+            "moved",
+        ):
+            assert token in widget._esm, token
+
+    def test_highlight_round_trip(self):
+        """widget.highlight(keys) bakes a sorted, deduplicated JSON set
+        into the synced traitlet; highlight() clears it instantly."""
+
+        pytest.importorskip("anywidget")
+        widget = viewer3d.mesh_viewer(MESH)
+        assert widget.highlight_json == "[]"  # nothing popped by default
+        assert widget.picked_json == "[]"  # nothing picked either
+        widget.highlight(["Drone::QuadCopter::rotors", "frame", "frame"])
+        assert json.loads(widget.highlight_json) == ["Drone::QuadCopter::rotors", "frame"]
+        widget.highlight()
+        assert widget.highlight_json == "[]"
+
     def test_esm_ux_contracts(self):
         """The UX rework, encoded: the canvas fills the host width and
         re-fits on resize; right-drag pan works under JupyterLab (the

@@ -25,6 +25,12 @@ call turns a configuration into the mesh dict
                 "vertices": [x, y, z, ...], "faces": [i, j, k, ...]}, ...],
      "bounds": [[xmin, ymin, zmin], [xmax, ymax, zmax]]}
 
+A part may additionally carry a ``key`` -- a stable model identity (by
+convention the SysML part usage's qualified name) stamped by
+:func:`tag_parts` -- which the viewer uses for linked selection
+(:mod:`longeron.analysis.link`); untagged parts fall back to their
+``name``.
+
 House pattern: geometry is baked in Python once per configuration (a
 millisecond or so -- no CAD kernel in the loop); the front-end never
 recomputes it.  Y is up, +X is forward, one unit is one metre, and every
@@ -41,6 +47,7 @@ deliberately does not need the ~1 GB OCC kernel.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from math import atan, atan2, ceil, cos, floor, pi, sin, sqrt
 from typing import Any
 
@@ -57,6 +64,7 @@ __all__ = [
     "mission_geometry",
     "mission_params",
     "naca4_profile",
+    "tag_parts",
     "teardrop_quad_geometry",
     "to_cadquery",
     "winged_vtol_geometry",
@@ -935,15 +943,16 @@ def lineup(
         dz = cz - (z0 + z1) / 2
         prefix = labels[index] if labels is not None else str(index + 1)
         for part in mesh["parts"]:
-            parts.append(
-                {
-                    "name": f"{prefix}:{part['name']}",
-                    "color": part["color"],
-                    "opacity": part.get("opacity", 1.0),
-                    "vertices": [round(c, 5) for c in _translate(part["vertices"], dx, dy, dz)],
-                    "faces": list(part["faces"]),
-                }
-            )
+            entry = {
+                "name": f"{prefix}:{part['name']}",
+                "color": part["color"],
+                "opacity": part.get("opacity", 1.0),
+                "vertices": [round(c, 5) for c in _translate(part["vertices"], dx, dy, dz)],
+                "faces": list(part["faces"]),
+            }
+            if "key" in part:  # model identity survives the label prefix
+                entry["key"] = part["key"]
+            parts.append(entry)
         if labels is not None:
             captions.append(
                 {
@@ -966,6 +975,42 @@ def lineup(
     if captions:
         scene["labels"] = captions
     return scene
+
+
+def tag_parts(
+    mesh: dict[str, Any], mapping: Mapping[str, str], *, strict: bool = True
+) -> dict[str, Any]:
+    """Stamp model identities onto mesh parts (linked-selection plumbing).
+
+    Returns a copy of ``mesh`` whose parts named in ``mapping`` carry a
+    ``key`` -- by convention the *qualified name* of the model part the
+    component renders.  Several mesh parts may share one key (a quad's
+    ``motors`` and ``props`` both render the ``rotors`` usage); parts
+    not named keep no key and fall back to their ``name`` as their
+    identity in :mod:`longeron.analysis.viewer3d`.  Vertex and face
+    arrays are shared with the input, not copied.
+
+    With ``strict`` (the default) every mapping entry must name a part,
+    so typos fail loudly; pass ``strict=False`` to reuse one mapping
+    across airframe families with different part sets.  :func:`lineup`
+    carries keys through unchanged (its label prefixes only rename), so
+    tag each configuration *before* merging and a selection lights up
+    in every cell.
+    """
+
+    names = {part["name"] for part in mesh["parts"]}
+    missing = sorted(set(mapping) - names)
+    if strict and missing:
+        raise AnalysisError(
+            f"tag_parts: no mesh part named {missing} (parts: {sorted(names)}; "
+            "pass strict=False to ignore)"
+        )
+    out = dict(mesh)
+    out["parts"] = [
+        {**part, "key": mapping[part["name"]]} if part["name"] in mapping else dict(part)
+        for part in mesh["parts"]
+    ]
+    return out
 
 
 def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:
