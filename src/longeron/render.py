@@ -58,10 +58,40 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
 _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-specializes": {"stroke": "#4878a8", "stroke-dasharray": "none"},
     "sysml-edge-typed": {"stroke": "#6a9a48", "stroke-dasharray": "4 2"},
+    "sysml-edge-redefines": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
+    "sysml-edge-subsets": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
     "sysml-edge-connect": {"stroke": "#555555"},
     "sysml-edge-transition": {"stroke": "#b58900"},
     "sysml-edge-succession": {"stroke": "#6c56a8"},
 }
+
+#: cssClasses fragment -> arrowhead form at the target end, per the SysML
+#: v2/KerML graphical notation (single source for BOTH pipelines):
+#: * ``hollow`` -- white-filled, outlined triangle pointing at the more
+#:   general element: subclassification (solid line) and feature typing
+#:   (dashed line), the UML-inherited Specialization notation.
+#: * ``open`` -- two-stroke V: transitions, successions, and the
+#:   keyword-labeled subsetting/redefinition edges.
+#: * ``none`` -- connectors (connect/interface/allocate/binding) are
+#:   non-directional; matches the browser pipeline, which never put a
+#:   head on them.
+_EDGE_ENDS: dict[str, str] = {
+    "sysml-edge-specializes": "hollow",
+    "sysml-edge-typed": "hollow",
+    "sysml-edge-redefines": "open",
+    "sysml-edge-subsets": "open",
+    "sysml-edge-connect": "none",
+    "sysml-edge-transition": "open",
+    "sysml-edge-succession": "open",
+}
+
+
+def _edge_end(css: str) -> str:
+    for name, end in _EDGE_ENDS.items():
+        if name in css:
+            return end
+    return "open"
+
 
 #: guarded transitions/successions (edges also carrying sysml-edge-guarded)
 _GUARDED_DASHARRAY = "6 2"
@@ -74,22 +104,43 @@ def _arrow_id(stroke: str) -> str:
     return "arrow-" + stroke.lstrip("#")
 
 
-def _arrow_defs() -> str:
-    """One marker per edge color, arrowhead matching its edge.
+def _hollow_arrow_id(stroke: str) -> str:
+    return "arrow-hollow-" + stroke.lstrip("#")
 
-    ``userSpaceOnUse`` keeps the head a constant size when a stylesheet
-    widens the path stroke (e.g. the replay fired-edge highlight).
+
+def _arrow_defs() -> str:
+    """Markers per arrowhead form and edge color (see ``_EDGE_ENDS``).
+
+    Open V heads for every edge color (plus the default gray and the
+    replay fired-edge orange -- longeron.replay swaps fired edges to that
+    marker id, so it must stay defined); hollow triangles -- white-filled
+    and outlined in the edge color, so they occlude the line underneath --
+    for the specialization-family colors.  ``userSpaceOnUse`` keeps heads
+    a constant size when a stylesheet widens the path stroke (e.g. the
+    replay fired-edge highlight).
     """
 
-    strokes = sorted(
+    open_strokes = sorted(
         {style["stroke"] for style in _EDGE_STYLES.values()} | {"#666666", _FIRED_STROKE}
+    )
+    hollow_strokes = sorted(
+        {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == "hollow"}
     )
     markers = [
         f'<marker id="{_arrow_id(stroke)}" viewBox="0 0 10 10" refX="9" '
         f'refY="5" markerWidth="10" markerHeight="10" '
         f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
-        f'<path d="M 0 1 L 9 5 L 0 9 z" fill="{stroke}"/></marker>'
-        for stroke in strokes
+        f'<path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="{stroke}" '
+        f'stroke-width="1.4"/></marker>'
+        for stroke in open_strokes
+    ]
+    markers += [
+        f'<marker id="{_hollow_arrow_id(stroke)}" viewBox="0 0 12 12" refX="11" '
+        f'refY="6" markerWidth="12" markerHeight="12" '
+        f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M 1 1 L 11 6 L 1 11 z" fill="#ffffff" stroke="{stroke}" '
+        f'stroke-width="1.2"/></marker>'
+        for stroke in hollow_strokes
     ]
     return "<defs>" + "".join(markers) + "</defs>"
 
@@ -439,8 +490,9 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             style = _style_for(
                 css, _NODE_STYLES, {"fill": "#ffffff", "stroke": "#999999", "rx": "2"}
             )
-            # data-qname (the node id, a model qualified name for model
-            # nodes) makes states addressable from longeron.replay
+            # data-qname (the node id: a model qualified name, instance-
+            # qualified for expanded typed submachine states) makes states
+            # addressable from longeron.replay
             parts.append(
                 f'<rect data-qname="{_escape_attr(str(node.get("id")))}" '
                 f'x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
@@ -528,6 +580,13 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
         parts.append(
             f'<g data-edge="{_escape_attr(data_edge)}" data-event="{_escape_attr(event)}">'
         )
+        end = _edge_end(css)
+        if end == "hollow":
+            marker = f' marker-end="url(#{_hollow_arrow_id(style["stroke"])})"'
+        elif end == "open":
+            marker = f' marker-end="url(#{_arrow_id(style["stroke"])})"'
+        else:  # connectors are non-directional
+            marker = ""
         for section in edge.get("sections", []):
             points = [section["startPoint"], *section.get("bendPoints", []), section["endPoint"]]
             path = " ".join(
@@ -537,8 +596,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             dash = f' stroke-dasharray="{dashes}"' if dashes else ""
             parts.append(
                 f'<path d="{path}" fill="none" stroke="{style["stroke"]}" '
-                f'stroke-width="1.4"{dash} '
-                f'marker-end="url(#{_arrow_id(style["stroke"])})"/>'
+                f'stroke-width="1.4"{dash}{marker}/>'
             )
         for label in edge.get("labels", []):
             draw_label(label, ox, oy, on_edge=True)

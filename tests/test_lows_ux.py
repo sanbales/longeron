@@ -73,13 +73,30 @@ class TestPaletteSingleSource:
             assert diagrams.SYSML_STYLE[f" .{css} > rect"] == style
         for css, style in render._EDGE_STYLES.items():
             assert diagrams.SYSML_STYLE[f" .{css} > path"] == style
-            assert diagrams.SYSML_STYLE[f" .{css} > .elkarrow"] == {"stroke": style["stroke"]}
+            expected_arrow = {"stroke": style["stroke"]}
+            if render._EDGE_ENDS.get(css) == "hollow":
+                # the specialization family (subclassification, feature
+                # typing) gets HOLLOW triangle heads: white fill occludes
+                # the line, the outline takes the edge color -- derived
+                # from the same _EDGE_ENDS table the headless markers use
+                expected_arrow["fill"] = "#ffffff"
+            assert diagrams.SYSML_STYLE[f" .{css} > .elkarrow"] == expected_arrow
         for css, style in render._LABEL_STYLES.items():
             derived = diagrams.SYSML_STYLE[f" .{css} > text"]
             assert derived["fill"] == style["fill"]
             assert derived["font-size"] == f"{style['font-size']}px"
         guarded = diagrams.SYSML_STYLE[" .sysml-edge-guarded > path"]
         assert guarded == {"stroke-dasharray": render._GUARDED_DASHARRAY}
+
+    def test_every_edge_kind_declares_an_arrowhead_form(self):
+        """V3 companion: _EDGE_ENDS is the single source for arrowhead
+        forms, so every styled edge kind must declare one (and only known
+        forms), keeping the browser symbols and headless markers aligned."""
+
+        from longeron import render
+
+        assert set(render._EDGE_ENDS) == set(render._EDGE_STYLES)
+        assert set(render._EDGE_ENDS.values()) <= {"hollow", "open", "none"}
 
     def test_replay_css_marker_reference_matches_fired_stroke(self):
         from longeron import render, replay

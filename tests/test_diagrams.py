@@ -8,6 +8,23 @@ import longeron
 from longeron import diagrams
 from longeron import model as M
 
+_TYPED_SUBMACHINE = """
+package P {
+    state def Inner {
+        entry; then a;
+        state a;
+        transition first a accept go then b;
+        state b;
+    }
+    state def Outer {
+        entry; then x;
+        state x : Inner;
+        transition first x accept quit then off;
+        state off;
+    }
+}
+"""
+
 
 def _walk(node):
     yield node
@@ -102,6 +119,52 @@ class TestStructure:
         edges = widget.source.value.edges
         assert len(edges) == 1
         assert "sysml-edge-specializes" in edges[0].properties.cssClasses
+        # spec notation: a (hollow) triangle pointing at the general
+        assert edges[0].properties.shape.end == "generalization"
+
+    def test_specialization_family_heads_are_hollow_triangles(self, drone_model):
+        """SysML v2 notation: subclassification and feature typing point at
+        the general/type with a hollow triangle -- the closed symbol plus a
+        white fill in the stylesheet; everything else keeps the open V."""
+
+        widget = diagrams.structure_diagram(drone_model)
+        typed = [
+            e for e in widget.source.value.edges if "sysml-edge-typed" in e.properties.cssClasses
+        ]
+        assert typed
+        assert all(e.properties.shape.end == "generalization" for e in typed)
+        assert diagrams.SYSML_STYLE[" .sysml-edge-typed > .elkarrow"]["fill"] == "#ffffff"
+        assert diagrams.SYSML_STYLE[" .sysml-edge-specializes > .elkarrow"]["fill"] == "#ffffff"
+
+    def test_redefinition_and_subsetting_edges(self):
+        """KerML notation for the other Specialization kinds: an open arrow
+        to the general feature, labeled with the relationship keyword."""
+
+        model = longeron.loads("""
+            package Q {
+                part def V { part engine; }
+                part car : V { part engine :>> engine; }
+                part vehicle;
+                part truck :> vehicle;
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        found = {}
+        for e in widget.source.value.edges:
+            css = e.properties.cssClasses
+            if "sysml-edge-redefines" in css or "sysml-edge-subsets" in css:
+                assert e.properties.shape.end == "arrow"  # open V, not a triangle
+                found[css.split()[-1]] = (e.source.id, e.target.id, e.labels[0].text)
+        assert found["sysml-edge-redefines"] == (
+            "Q::car::engine",
+            "Q::V::engine",  # the shadowed inherited feature, not a self-loop
+            "\u00abredefines\u00bb",
+        )
+        assert found["sysml-edge-subsets"] == (
+            "Q::truck",
+            "Q::vehicle",
+            "\u00absubsets\u00bb",
+        )
 
     def test_connection_edges(self):
         model = longeron.loads("""
@@ -190,6 +253,65 @@ class TestStates:
         widget = diagrams.state_diagram(model.find("P::M"))
         outer = next(n for n in _walk(widget.source.value) if n.id == "P::M::outer")
         assert any(n.id == "P::M::outer::inner" for n in _walk(outer))
+
+    def test_typed_submachine_expands(self):
+        model = longeron.loads(_TYPED_SUBMACHINE)
+        widget = diagrams.state_diagram(model.find("P::Outer"))
+        root = widget.source.value
+        x = next(n for n in _walk(root) if n.id == "P::Outer::x")
+        ids = {n.id for n in _walk(x) if n.id}
+        # instance-qualified ids: unique per expansion site, and exactly the
+        # keys longeron.replay records (never the shared definition's)
+        assert {"P::Outer::x::a", "P::Outer::x::b"} <= ids
+        # the definition's entry marker and transitions are drawn too
+        assert any("sysml-marker" in (n.properties.cssClasses or "") for n in _walk(x))
+        pairs = {(e.source.id, e.target.id) for e in root.edges}
+        assert ("P::Outer::x::a", "P::Outer::x::b") in pairs
+        # the typed state names its definition, SysML usage style
+        assert any(label.text == "x : Inner" for label in x.labels)
+
+    def test_typed_submachine_depth_zero_is_collapsed(self):
+        model = longeron.loads(_TYPED_SUBMACHINE)
+        widget = diagrams.state_diagram(model.find("P::Outer"), submachine_depth=0)
+        x = next(n for n in _walk(widget.source.value) if n.id == "P::Outer::x")
+        assert not x.children  # the pre-expansion behavior
+
+    def test_sibling_typed_usages_expand_independently(self):
+        model = longeron.loads("""
+            package P {
+                state def Inner { entry; then a; state a; }
+                state def Outer {
+                    entry; then left;
+                    state left { entry; then x; state x : Inner; }
+                    state right { entry; then x; state x : Inner; }
+                    transition first left accept go then right;
+                }
+            }
+        """)
+        widget = diagrams.state_diagram(model.find("P::Outer"))
+        ids = [n.id for n in _walk(widget.source.value) if n.id]
+        assert "P::Outer::left::x::a" in ids
+        assert "P::Outer::right::x::a" in ids
+        assert len(ids) == len(set(ids))  # instance ids stay unique
+
+    def test_typed_submachine_cycles_collapse(self):
+        """A definition reached again through its own submachine must not
+        recurse forever: the repeated level draws as a collapsed leaf."""
+
+        model = longeron.loads("""
+            package P {
+                state def A { entry; then s; state s : B; }
+                state def B { entry; then t; state t : A; }
+            }
+        """)
+        widget = diagrams.state_diagram(model.find("P::A"))  # must terminate
+        t = next(n for n in _walk(widget.source.value) if n.id == "P::A::s::t")
+        assert not t.children
+
+    def test_dispatcher_forwards_submachine_depth(self):
+        model = longeron.loads(_TYPED_SUBMACHINE)
+        widget = diagrams.diagram(model.find("P::Outer::x"), submachine_depth=0)
+        assert type(widget).__name__ == "Diagram"
 
 
 class TestActions:

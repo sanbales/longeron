@@ -58,6 +58,93 @@ class TestSvg:
         body = svg.split("</defs>")[1]
         assert "<path" not in body  # no edges drawn for packing chains
 
+    def test_arrowhead_forms_follow_the_spec_notation(self):
+        """SysML v2/KerML notation (single-sourced in render._EDGE_ENDS):
+        specialization = solid line + hollow triangle, feature typing =
+        dashed line + hollow triangle, connections = no arrowhead."""
+
+        model = longeron.loads("""
+            package P {
+                part def Base;
+                part def Derived :> Base;
+                part a : Derived;
+                part sys { part x; part y; connect x to y; }
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+
+        def edge_group(key):
+            return svg.split(f'data-edge="{key}"')[1].split("</g>")[0]
+
+        specializes = edge_group("P::Derived-&gt;P::Base")
+        assert f'marker-end="url(#{render._hollow_arrow_id("#4878a8")})"' in specializes
+        assert "dasharray" not in specializes  # solid line
+        typed = edge_group("P::a-&gt;P::Derived")
+        assert f'marker-end="url(#{render._hollow_arrow_id("#6a9a48")})"' in typed
+        assert 'stroke-dasharray="4 2"' in typed  # dashed 'defined by'
+        connect = edge_group("P::sys::x-&gt;P::sys::y")
+        assert "marker-end" not in connect  # connectors are non-directional
+        # hollow marker defs: white fill occludes the line, the outline
+        # takes the edge color
+        assert 'd="M 1 1 L 11 6 L 1 11 z" fill="#ffffff" stroke="#4878a8"' in svg
+
+    def test_transition_arrowheads_are_open(self, drone_model):
+        """Transitions/successions keep open (two-stroke V) heads; the
+        replay fired-edge marker id stays defined and open too."""
+
+        defs = render._arrow_defs()
+        for stroke in ("#b58900", "#6c56a8", render._FIRED_STROKE):
+            marker = defs.split(f'id="{render._arrow_id(stroke)}"')[1].split("</marker>")[0]
+            assert f'd="M 0 1 L 9 5 L 0 9" fill="none" stroke="{stroke}"' in marker
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
+        assert 'marker-end="url(#arrow-b58900)"' in svg
+
+    def test_typed_submachine_replay_keys_are_instance_qualified(self):
+        """Two expansions of one state def must not alias in replay: while
+        the simulation sits in the SOURCE-side submachine, only the
+        source-side copy may match the timeline.  Every recorded track key
+        and fired edge must address exactly ONE node/edge in the baked SVG
+        (the double-highlight defect: definition-based keys matched every
+        expansion site at once)."""
+
+        from longeron import replay
+
+        model = longeron.loads("""
+            package P {
+                state def Inner {
+                    entry; then a;
+                    state a;
+                    transition first a accept go then b;
+                    state b;
+                }
+                state def Outer {
+                    entry; then source;
+                    state source { entry; then x; state x : Inner; }
+                    state dest { entry; then x; state x : Inner; }
+                    transition first source accept swap then dest;
+                }
+            }
+        """)
+        svg = render.to_svg(diagrams.state_diagram(model.find("P::Outer")))
+        interp = longeron.Interpreter(model)
+        timeline = replay.record_timeline(interp, "P::Outer", ["go", "swap"])
+        # keys are per expansion site (the simulator's dotted activation
+        # paths, qualified), never the shared definition's
+        assert "P::Outer::source::x::a" in timeline.tracks
+        assert "P::Outer::dest::x::a" in timeline.tracks  # entered after 'swap'
+        assert "P::Inner::a" not in timeline.tracks  # no aliased def key
+        # every recorded state/transition addresses exactly one SVG element
+        for qname in timeline.tracks:
+            assert svg.count(f'data-qname="{qname}"') == 1, qname
+        for fired in timeline.fired:
+            key = f'data-edge="{fired.source}-&gt;{fired.target}"'
+            assert svg.count(key) == 1, key
+        # the source-side 'go' fired inside the SOURCE copy only
+        assert (
+            "P::Outer::source::x::a",
+            "P::Outer::source::x::b",
+        ) in {(f.source, f.target) for f in timeline.fired}
+
     def test_layout_produces_coordinates(self, drone_model):
         widget = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
         graph = render.layout(render._to_elk_json(widget.source.value))

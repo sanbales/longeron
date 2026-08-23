@@ -4,9 +4,13 @@ Requires the vendored ipyelk (``pip install -e vendor/ipyelk``; the pixi
 environments install it automatically).  Three views, one dispatcher:
 
 * :func:`structure_diagram` -- packages, definitions (with attribute
-  compartments), nested usages; specialization / typing / connection edges.
+  compartments), nested usages; specialization / typing / redefinition /
+  subsetting / connection edges, with spec-notation arrowheads (hollow
+  triangles for the specialization family, open arrows elsewhere).
 * :func:`state_diagram` -- hierarchical states, entry markers, transitions
-  labeled ``trigger [guard] / effect``.
+  labeled ``trigger [guard] / effect``; state usages typed by a state def
+  expand into the definition's submachine (``submachine_depth`` bounds the
+  expansion).
 * :func:`action_diagram` -- the succession control-flow graph (the same one
   the interpreter executes), including start/done markers.
 * :func:`diagram` -- picks a view based on the element's kind.
@@ -48,6 +52,7 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
 from . import model as M
 from .interpreter import Interpreter, _succession_plan
 from .render import (
+    _EDGE_ENDS,
     _EDGE_STYLES,
     _GUARDED_DASHARRAY,
     _LABEL_STYLES,
@@ -89,7 +94,14 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         # arrowheads (the <use class="elkarrow"> child) must be recolored
         # separately: they inherit the theme gray from the edge <g>, not the
         # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics)
-        style[f" .{css} > .elkarrow"] = {"stroke": edge_style["stroke"]}
+        arrow_style = {"stroke": edge_style["stroke"]}
+        if _EDGE_ENDS.get(css) == "hollow":
+            # specialization-family heads are HOLLOW triangles (SysML v2 /
+            # KerML): white fill occludes the line underneath, the outline
+            # takes the edge color -- derived from the same table the
+            # headless markers use (V3)
+            arrow_style["fill"] = "#ffffff"
+        style[f" .{css} > .elkarrow"] = arrow_style
     # AFTER the per-kind rules: same specificity, so source order decides
     style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
     style.update(
@@ -294,6 +306,15 @@ class _EdgeMetadata(ElementMetadata):
 
 
 def _symbols() -> SymbolSpec:
+    """Edge-end symbols per the SysML v2 / KerML graphical notation.
+
+    ``generalization`` is the closed triangle of the Specialization family
+    (subclassification and feature typing); it renders hollow because the
+    stylesheet fills it white (see :func:`_sysml_style`).  ``arrow`` is the
+    open two-stroke V used by transitions, successions, and the
+    keyword-labeled subsetting/redefinition edges.
+    """
+
     return SymbolSpec().add(
         StraightArrow("generalization", closed=True),
         ThinArrow("arrow"),
@@ -483,7 +504,29 @@ class _StructureBuilder:
                 for type_name in element.types:
                     target = self._resolve_node(type_name.lstrip("~"), element)
                     if target is not None:
-                        root.edges.append(_edge(node, target, "sysml-edge-typed", end="arrow"))
+                        # feature typing is a Specialization (KerML): dashed
+                        # line, hollow triangle at the type
+                        root.edges.append(
+                            _edge(node, target, "sysml-edge-typed", end="generalization")
+                        )
+                for names, css, keyword in (
+                    (element.redefines, "sysml-edge-redefines", "redefines"),
+                    (element.subsets, "sysml-edge-subsets", "subsets"),
+                ):
+                    for name in names:
+                        target = self._resolve_feature_node(name, element)
+                        if target is not None:
+                            # KerML convention for the other Specialization
+                            # kinds: open arrow to the general, keyword label
+                            root.edges.append(
+                                _edge(
+                                    node,
+                                    target,
+                                    css,
+                                    end="arrow",
+                                    text=f"\u00ab{keyword}\u00bb",
+                                )
+                            )
             if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage, M.AllocationUsage)):
                 self._connect_ends(root, element)
         # connections owned by anything we visited
@@ -597,17 +640,70 @@ class _StructureBuilder:
             return None
         return self.nodes.get(id(found))
 
+    def _resolve_feature_node(self, name: str, element: M.Usage) -> Node | None:
+        """Resolve a subsets/redefines target to its node.
+
+        The redefining feature usually shadows the name it redefines
+        (``part engine :>> engine;``), so a plain scope lookup finds the
+        element itself; the intended target then lives in the owner's
+        generals.  Never yields the element's own node (no self-loops).
+        """
+
+        found: M.Element | None
+        try:
+            found = self.interp.resolver.resolve(name.split(".")[0], element.owner or self.model)
+            for part in name.split(".")[1:]:
+                found = self.interp.resolver.resolve(part, found)
+        except Exception:
+            return None
+        if found is element and element.owner is not None:
+            found = None
+            for general in _state_generals(element.owner, self.interp.resolver):
+                try:
+                    found = self.interp.resolver.resolve(name, general)
+                    break
+                except Exception:
+                    continue
+        if found is None or found is element:
+            return None
+        return self.nodes.get(id(found))
+
 
 # ---------------------------------------------------------------------------
 # state view
 # ---------------------------------------------------------------------------
 
 
-def state_diagram(machine: M.Definition | M.Usage) -> Any:
-    """A hierarchical state machine: states, entry markers, transitions."""
+def state_diagram(machine: M.Definition | M.Usage, *, submachine_depth: int | None = None) -> Any:
+    """A hierarchical state machine: states, entry markers, transitions.
+
+    A state usage typed by a state def (``state swap : ToteSwap;``) is
+    expanded into the definition's full submachine -- states, entry
+    marker, transitions -- the same member view the interpreter executes
+    (``StateMachine`` descends through ``members_of``).  Expansion is
+    recursive and cycle-safe: a definition reached again through its own
+    submachine draws as a collapsed leaf.
+
+    ``submachine_depth`` bounds how many *typing hops* to expand:
+    ``None`` (the default) is unlimited, ``0`` draws typed states as
+    plain leaves (the pre-0.8 behavior).  Plain nested states are always
+    shown.
+
+    Expanded substate ids are instance-qualified
+    (``…::swapSource::swap::evaluating``) so they stay unique per
+    expansion site, selectable in the browser (the resolver walks typing
+    hops), and exactly what :mod:`longeron.replay` records: two usages of
+    one definition never share a replay key.
+    """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
-    _fill_states(root, machine, root)
+    owner: M.Element = machine
+    while owner.owner is not None:
+        owner = owner.owner
+    model = owner if isinstance(owner, M.Model) else M.Model()
+    resolver = Interpreter(model).resolver
+    base = machine.qualified_name or machine.label
+    _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
     return _finish(root)
 
 
@@ -644,17 +740,66 @@ def _transition_event(transition: M.TransitionUsage) -> str | None:
     return ",".join(names) or None
 
 
-def _fill_states(container_node: Node, container: M.Definition | M.Usage, root: Node) -> None:
+def _state_generals(container: M.Element, resolver: Any) -> list[M.Element]:
+    """The definitions a state container inherits members from.
+
+    Its types (``state swap : ToteSwap``) and supers (``state def X :>
+    Y``), resolved in the container's owner scope -- unresolvable names
+    are skipped, mirroring how the relationship edges resolve.
+    """
+
+    names = [name.lstrip("~") for name in getattr(container, "types", [])]
+    names += list(getattr(container, "supers", []))
+    found: list[M.Element] = []
+    for name in names:
+        try:
+            found.append(resolver.resolve(name, container.owner or container))
+        except Exception:
+            continue
+    return found
+
+
+def _fill_states(
+    container_node: Node,
+    container: M.Definition | M.Usage,
+    root: Node,
+    resolver: Any,
+    base: str,
+    budget: int | None,
+    seen: frozenset[int],
+) -> None:
+    """Draw ``container``'s states and transitions into ``container_node``.
+
+    ``budget`` is the number of typing hops still allowed below this
+    container (``None`` = unlimited); ``seen`` holds the ids of
+    definitions already being expanded on this branch, so a submachine
+    that reaches a definition again draws it as a collapsed leaf instead
+    of recursing forever.
+    """
+
+    members: list[M.Element] = list(container.members)
+    child_budget = budget
+    if budget is None or budget > 0:
+        generals = _state_generals(container, resolver)
+        if generals and not any(id(general) in seen for general in generals):
+            # inline the inherited submachine: the exact member view the
+            # interpreter executes (StateMachine._states_of -> members_of)
+            members = list(resolver.members_of(container))
+            seen = seen | {id(general) for general in generals}
+            child_budget = None if budget is None else budget - 1
     states: dict[str, Node] = {}
-    for member in container.members:
+    for member in members:
         if isinstance(member, M.Usage) and member.kind == "state" and member.name:
-            node = _node(member, member.label, "sysml-state", "state")
-            if any(isinstance(m, M.Usage) and m.kind == "state" for m in member.members):
-                _fill_states(node, member, root)
+            node = _node(member, _usage_title(member), "sysml-state", "state")
+            # instance-qualified (unique per expansion site of a typed
+            # submachine, unlike the shared definition members' qualified
+            # names) -- the same key longeron.replay records
+            node.id = f"{base}::{member.name}"
+            _fill_states(node, member, root, resolver, node.id, child_budget, seen)
             states[member.name] = node
             container_node.children.append(node)
     marker: Node | None = None
-    for member in container.members:
+    for member in members:
         if not isinstance(member, M.TransitionUsage):
             continue
         target = states.get(member.target)
@@ -779,7 +924,7 @@ def diagram(element: M.Model | M.Element, **kwargs: Any) -> Any:
 
     kind = getattr(element, "kind", None)
     if kind == "state":
-        return state_diagram(element)  # type: ignore[arg-type]
+        return state_diagram(element, **kwargs)  # type: ignore[arg-type]
     if kind == "action":
         return action_diagram(element)  # type: ignore[arg-type]
     return structure_diagram(element, **kwargs)  # type: ignore[arg-type]

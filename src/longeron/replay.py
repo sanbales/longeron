@@ -4,8 +4,10 @@
 through the same event protocol as ``Interpreter.simulate`` while observing
 every step through the machine's ``on_step`` hook, producing a
 :class:`Timeline`: per-state activation keyframes plus fired-transition
-instants, addressed by model *qualified names* (the same ``::`` ids the
-diagrams and headless SVG use).  :func:`record_action_timeline` does the
+instants, addressed by *instance-qualified* names -- the machine's
+qualified name extended along the active-state path (the same ``::`` ids
+the diagrams and headless SVG use, unique per typed-submachine expansion
+site).  :func:`record_action_timeline` does the
 same for action executions via the executor's step observer: the active
 node is the currently-executing named action step, fired records are the
 traversed successions, and the axis is always the step index.
@@ -94,10 +96,11 @@ class Timeline:
     sends: list[SentEvent]
     time: float = 0.0
     active_states: list[str] = field(default_factory=list)
-    #: parent relation between recorded nodes (child qname -> parent qname);
-    #: lets the front-end tint composite ancestors without guessing from
-    #: "::" prefixes -- which breaks for typed submachines, whose inner
-    #: states live under the *definition's* qualified name
+    #: parent relation between recorded nodes (child qname -> parent qname):
+    #: the recorded truth the front-end tints composite ancestors with --
+    #: keys are instance-qualified, so it now agrees with the "::" prefix
+    #: relation, but it stays authoritative (and keeps older front-end
+    #: payload handling honest)
     parents: dict[str, str] = field(default_factory=dict)
     #: per-step scalar env snapshots [(t_or_index, {name: value})], shown
     #: as the readout line under the widget's controls (step semantics,
@@ -159,34 +162,45 @@ def record_timeline(
     )
     if not isinstance(target, (M.Definition, M.Usage)):
         raise ExecutionError(f"{state_machine!r} is not a state machine")
+    machine_qname = target.qualified_name
+    if machine_qname is None:
+        raise ExecutionError(
+            f"replay needs a named state machine: {target.label!r} has no qualified name"
+        )
     machine = StateMachine(interpreter, target, dict(inputs or {}))
 
     steps: list[tuple[float, TransitionFired | None, list[str], dict[str, Any]]] = []
     # dotted active-state paths (TransitionFired.source/target format) to
-    # qualified names, learned from live configurations rather than parsed
+    # instance-qualified names, learned from live configurations
     path_to_qname: dict[str, str] = {}
     parents: dict[str, str] = {}
 
     def observe(now: float, fired: TransitionFired | None) -> None:
         # snapshot the FULL active configuration (composites and leaves) as
-        # model qualified names -- the addressing the diagrams/SVG use
+        # INSTANCE-qualified names: the machine's qualified name extended
+        # along the active path -- the addressing the diagrams/SVG use.
+        # Deliberately NOT the usage's own qualified name: for typed
+        # submachines (state swap : ToteSwap) the active usages are the
+        # DEFINITION's members, and two expansion sites sharing one
+        # definition must never share a replay key (the double-highlight
+        # aliasing defect)
         active: list[str] = []
 
-        def visit(node: _ActiveState) -> None:
-            qname = node.usage.qualified_name
-            if qname is None:
+        def visit(node: _ActiveState, base: str) -> None:
+            if node.usage.name is None:
                 raise ExecutionError(
-                    f"replay needs named states: active state {node.path()!r} has no qualified name"
+                    f"replay needs named states: active state {node.path()!r} has no name"
                 )
+            qname = f"{base}::{node.usage.name}"
             path_to_qname[node.path()] = qname
             if node.parent is not None:  # recorded, not prefix-guessed
                 parents.setdefault(qname, path_to_qname[node.parent.path()])
             active.append(qname)
             for child in node.children:
-                visit(child)
+                visit(child, qname)
 
         for root in machine.roots:
-            visit(root)
+            visit(root, machine_qname)
         steps.append((now, fired, active, _scalar_env(machine.env.frames[0])))
 
     machine.on_step = observe
@@ -414,7 +428,8 @@ function render({ model, el }) {
   const timeline = JSON.parse(model.get("timeline_json"));
   const stepMode = timeline.step_mode;
   // parent relation recorded by replay.py (child qname -> parent qname);
-  // older payloads lack it and fall back to "::"-prefix guessing
+  // the recorded truth for tinting composite ancestors -- older payloads
+  // lack it and fall back to "::"-prefix guessing
   const parents = timeline.parents || null;
   const envSteps = timeline.env_steps || [];
   // step mode (Timeline.step_mode in replay.py): the axis is the step
@@ -518,8 +533,8 @@ function render({ model, el }) {
       if (activeAt(keyframes, t)) active.add(qname);
     }
     // composite ancestors of an active node get the branch tint: from
-    // the recorded parents map when present (correct for typed
-    // submachines), else the legacy "::"-prefix guess
+    // the recorded parents map when present, else the legacy
+    // "::"-prefix guess
     let branches = null;
     if (parents) {
       branches = new Set();

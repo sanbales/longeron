@@ -65,9 +65,10 @@ package P {
 }
 """
 
-# the submachine's states live under the DEFINITION's qualified name
-# (P::Inner::a), not under the using state's (P::Outer::x) -- the case
-# "::"-prefix branch detection cannot see
+# the submachine's active states are the DEFINITION's members (P::Inner::a),
+# reached through the using state (P::Outer::x) -- replay must record them
+# under INSTANCE-qualified keys (P::Outer::x::a) or two usages of one
+# definition alias onto the same key (the double-highlight defect)
 TYPED_SUBMACHINE_MODEL = """
 package P {
     state def Inner {
@@ -238,17 +239,20 @@ def test_parents_map_hierarchical(timed_interp):
 
 
 def test_parents_map_typed_submachine():
-    """Typed submachines descend into the *definition's* states, whose
-    qualified names are not prefixed by the using state's -- the recorded
-    parents map is the only correct branch/leaf signal there."""
+    """Typed submachines descend into the *definition's* states; replay
+    records them under instance-qualified keys (the using state's path),
+    so two expansion sites of one definition never share a track -- and
+    the recorded parents map matches those keys."""
 
     interp = longeron.Interpreter(longeron.loads(TYPED_SUBMACHINE_MODEL))
     timeline = replay.record_timeline(interp, "P::Outer", ["go", "quit"])
     assert timeline.tracks["P::Outer::x"] == [(0.0, True), (2.0, False)]
-    assert timeline.tracks["P::Inner::a"] == [(0.0, True), (1.0, False)]
-    assert timeline.parents == {"P::Inner::a": "P::Outer::x", "P::Inner::b": "P::Outer::x"}
-    # the "::"-prefix fallback would misclassify x as a leaf here
-    assert not "P::Inner::a".startswith("P::Outer::x::")
+    assert timeline.tracks["P::Outer::x::a"] == [(0.0, True), (1.0, False)]
+    assert "P::Inner::a" not in timeline.tracks  # no definition-based alias
+    assert timeline.parents == {
+        "P::Outer::x::a": "P::Outer::x",
+        "P::Outer::x::b": "P::Outer::x",
+    }
 
 
 # -- env readout --------------------------------------------------------------
