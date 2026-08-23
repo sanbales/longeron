@@ -1,5 +1,7 @@
 """Validation tests: longeron.validate / longeron lint."""
 
+from pathlib import Path
+
 import longeron
 
 
@@ -386,7 +388,7 @@ class TestDiagnosticLocations:
         (tmp_path / "b.sysml").write_text("package B {\n\n    part y : Spook;\n}\n")
         model = longeron.load_dir(tmp_path, cache=False)
         found = longeron.validate(model)
-        places = sorted((d.location.source_name.rsplit("/", 1)[-1], d.location.line) for d in found)
+        places = sorted((Path(d.location.source_name).name, d.location.line) for d in found)
         assert places == [("a.sysml", 2), ("b.sysml", 3)]
 
 
