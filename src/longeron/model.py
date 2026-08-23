@@ -377,6 +377,7 @@ class Multiplicity:
 class ConnectorEnd:
     target: str = ""
     name: str | None = None  # 'name ::> target' form
+    multiplicity: Multiplicity | None = None  # cross multiplicity '[m..n]'
 
 
 # ---------------------------------------------------------------------------

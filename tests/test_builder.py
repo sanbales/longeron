@@ -144,7 +144,34 @@ def test_connection_usage():
     conns = [m for m in system.members if isinstance(m, M.ConnectionUsage)]
     assert len(conns) == 2
     assert [e.target for e in conns[0].ends] == ["a", "b"]
+    assert all(e.multiplicity is None for e in conns[0].ends)
     assert conns[1].name == "joint"
+
+
+def test_connector_end_cross_multiplicity():
+    # the grammar's ownedCrossMultiplicityMember used to be dropped by the
+    # builder; connector ends now capture it for end-multiplicity labels
+    model = longeron.loads("""
+        package P {
+            part def System {
+                part a;
+                part b;
+                connect [1] a to [0..4] b;
+            }
+        }
+    """)
+    conn = next(m for m in model.find("P::System").members if isinstance(m, M.ConnectionUsage))
+    first, second = conn.ends
+    assert first.multiplicity is not None
+    assert first.multiplicity.lower is None
+    assert first.multiplicity.upper.to_text() == "1"
+    assert second.multiplicity.lower.to_text() == "0"
+    assert second.multiplicity.upper.to_text() == "4"
+    # the JSON interchange stays lossless with the new field
+    clone = longeron.from_json(longeron.to_json(model))
+    assert longeron.to_dict(clone) == longeron.to_dict(model)
+    cloned = next(m for m in clone.find("P::System").members if isinstance(m, M.ConnectionUsage))
+    assert cloned.ends[1].multiplicity.upper.to_text() == "4"
 
 
 def test_quoted_names():

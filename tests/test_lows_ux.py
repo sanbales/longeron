@@ -69,18 +69,48 @@ class TestPaletteSingleSource:
         pytest.importorskip("ipyelk")
         from longeron import diagrams, render
 
+        selected = "var(--jp-elk-color-selected)"
         for css, style in render._NODE_STYLES.items():
-            assert diagrams.SYSML_STYLE[f" .{css} > rect"] == style
+            attrs = {key: value for key, value in style.items() if key != "shape"}
+            shape = style.get("shape")
+            if shape is None:
+                assert diagrams.SYSML_STYLE[f" .{css} > rect"] == attrs
+            elif shape == "diamond":
+                derived = diagrams.SYSML_STYLE[f" .{css} > polygon"]
+                assert derived["fill"] == attrs["fill"]
+                assert derived["stroke"] == attrs["stroke"]
+            else:  # bullseye / circle-x: circle ring + inner glyph
+                assert shape in ("bullseye", "circle-x")
+                ring = diagrams.SYSML_STYLE[f" .{css} .glyph-ring"]
+                assert ring["stroke"] == attrs["stroke"]
+                # selection recolors the ring stroke, never its fill
+                assert (
+                    diagrams.SYSML_STYLE[f" .{css} > .elknode.selected .glyph-ring"]["stroke"]
+                    == selected
+                )
         for css, style in render._EDGE_STYLES.items():
             assert diagrams.SYSML_STYLE[f" .{css} > path"] == style
-            expected_arrow = {"stroke": style["stroke"]}
-            if render._EDGE_ENDS.get(css) == "hollow":
-                # the specialization family (subclassification, feature
-                # typing) gets HOLLOW triangle heads: white fill occludes
-                # the line, the outline takes the edge color -- derived
-                # from the same _EDGE_ENDS table the headless markers use
-                expected_arrow["fill"] = "#ffffff"
-            assert diagrams.SYSML_STYLE[f" .{css} > .elkarrow"] == expected_arrow
+            derived = diagrams.SYSML_STYLE[f" .{css} > .elkarrow"]
+            assert derived["stroke"] == style["stroke"]
+            end_form = render._EDGE_ENDS.get(css, "")
+            start_form = render._EDGE_STARTS.get(css)
+            if end_form.startswith("hollow"):
+                # the specialization family gets HOLLOW closed-triangle
+                # heads: white fill occludes the line, the outline takes
+                # the edge color -- derived from the same _EDGE_ENDS table
+                # the headless markers use
+                assert derived["fill"] == "#ffffff"
+                if end_form != "hollow":
+                    # adorned heads: filled dots/tick draw with currentColor
+                    assert derived["color"] == style["stroke"]
+            if start_form == "filled-diamond":
+                # filled family: fill is BOUND to the stroke, and selection
+                # flips both together (contract rule 3)
+                assert derived["fill"] == style["stroke"]
+                selected_arrow = diagrams.SYSML_STYLE[f" .elkedge.{css}.selected > .elkarrow"]
+                assert selected_arrow["fill"] == selected
+            elif start_form == "hollow-diamond":
+                assert derived["fill"] == "#ffffff"  # hollow stays white forever
         for css, style in render._LABEL_STYLES.items():
             derived = diagrams.SYSML_STYLE[f" .{css} > text"]
             assert derived["fill"] == style["fill"]
@@ -89,14 +119,58 @@ class TestPaletteSingleSource:
         assert guarded == {"stroke-dasharray": render._GUARDED_DASHARRAY}
 
     def test_every_edge_kind_declares_an_arrowhead_form(self):
-        """V3 companion: _EDGE_ENDS is the single source for arrowhead
-        forms, so every styled edge kind must declare one (and only known
-        forms), keeping the browser symbols and headless markers aligned."""
+        """V3 companion: _EDGE_ENDS / _EDGE_STARTS are the single source for
+        endpoint glyph forms, so every styled edge kind must declare an end
+        form (and only known forms), and every start glyph must belong to a
+        styled kind -- keeping the browser symbols and headless markers
+        aligned."""
 
         from longeron import render
 
         assert set(render._EDGE_ENDS) == set(render._EDGE_STYLES)
-        assert set(render._EDGE_ENDS.values()) <= {"hollow", "open", "none"}
+        assert set(render._EDGE_ENDS.values()) <= {
+            "hollow",
+            "hollow-colon",
+            "hollow-tick",
+            "hollow-dcolon",
+            "open",
+            "none",
+        }
+        assert set(render._EDGE_STARTS) <= set(render._EDGE_STYLES)
+        assert set(render._EDGE_STARTS.values()) <= {"filled-diamond", "hollow-diamond"}
+        # a start glyph and a hollow end on one kind would fight over the
+        # single .elkarrow fill rule -- the palette forbids the combination
+        for css in render._EDGE_STARTS:
+            assert render._EDGE_ENDS[css] == "none"
+
+    def test_browser_symbols_cover_every_declared_form(self):
+        """Every end/start form maps to a registered browser symbol, so the
+        two pipelines cannot drift (the symbol id doubles as the .elkarrow
+        CSS hook)."""
+
+        pytest.importorskip("ipyelk")
+        from longeron import diagrams, render
+
+        library = diagrams._symbols().library
+        for form in set(render._EDGE_ENDS.values()) - {"none"}:
+            assert diagrams._END_SYMBOLS[form] in library
+        for form in set(render._EDGE_STARTS.values()):
+            assert diagrams._START_SYMBOLS[form] in library
+        for badge in ("accept-badge", "send-badge"):
+            assert badge in library
+
+    def test_node_glyph_classes_are_styled(self):
+        """Every glyph node family declares a node style (the headless
+        drawer and the derived browser CSS both key off it)."""
+
+        from longeron import render
+
+        for css in render._GLYPH_NODE_CLASSES:
+            assert css in render._NODE_STYLES
+        assert render._NODE_STYLES["sysml-ctrl-diamond"]["shape"] == "diamond"
+        assert render._NODE_STYLES["sysml-final"]["shape"] == "bullseye"
+        assert render._NODE_STYLES["sysml-terminate"]["shape"] == "circle-x"
+        assert "shape" not in render._NODE_STYLES["sysml-ctrl-bar"]  # a rect
 
     def test_replay_css_marker_reference_matches_fired_stroke(self):
         from longeron import render, replay

@@ -59,9 +59,12 @@ class TestSvg:
         assert "<path" not in body  # no edges drawn for packing chains
 
     def test_arrowhead_forms_follow_the_spec_notation(self):
-        """SysML v2/KerML notation (single-sourced in render._EDGE_ENDS):
-        specialization = solid line + hollow triangle, feature typing =
-        dashed line + hollow triangle, connections = no arrowhead."""
+        """SysML v2 notation (single-sourced in render._EDGE_ENDS): the
+        specialization family draws SOLID lines into a closed hollow
+        triangle -- plain for subclassification, colon-dotted on the shaft
+        for feature typing -- and connections carry no arrowhead.
+        (Updated with the spec errata: typing was wrongly dashed and
+        unadorned before; spec 8.2.3 BNF printed p.200.)"""
 
         model = longeron.loads("""
             package P {
@@ -80,13 +83,175 @@ class TestSvg:
         assert f'marker-end="url(#{render._hollow_arrow_id("#4878a8")})"' in specializes
         assert "dasharray" not in specializes  # solid line
         typed = edge_group("P::a-&gt;P::Derived")
-        assert f'marker-end="url(#{render._hollow_arrow_id("#6a9a48")})"' in typed
-        assert 'stroke-dasharray="4 2"' in typed  # dashed 'defined by'
+        assert f'marker-end="url(#{render._marker_id("hollow-colon", "#6a9a48")})"' in typed
+        assert "dasharray" not in typed  # typing is SOLID (errata E2)
         connect = edge_group("P::sys::x-&gt;P::sys::y")
         assert "marker-end" not in connect  # connectors are non-directional
         # hollow marker defs: white fill occludes the line, the outline
         # takes the edge color
         assert 'd="M 1 1 L 11 6 L 1 11 z" fill="#ffffff" stroke="#4878a8"' in svg
+
+    def test_specialization_family_shaft_adornments(self):
+        """The family rule (spec errata E1-E5): head always a closed hollow
+        triangle, line always solid, and the shaft adornment mirrors the
+        extra textual characters -- ':' = two filled dots straddling the
+        shaft, ':>>' = one perpendicular bar tick, '::>' = 2x2 dots."""
+
+        model = longeron.loads("""
+            package Q {
+                part def V { part engine; }
+                part tuned : V { part engine :>> engine; }
+                part vehicle;
+                part truck :> vehicle;
+                part pool;
+                part spare ::> pool;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+
+        def edge_group(key):
+            return svg.split(f'data-edge="{key}"')[1].split("</g>")[0]
+
+        redefines = edge_group("Q::tuned::engine-&gt;Q::V::engine")
+        assert f'marker-end="url(#{render._marker_id("hollow-tick", "#6a9a48")})"' in redefines
+        assert "dasharray" not in redefines
+        assert "\u00ab" not in redefines  # NO «redefines» keyword label (errata E3)
+        subsets = edge_group("Q::truck-&gt;Q::vehicle")
+        # plain subsetting: the SAME head as subclassification, no adornment
+        assert f'marker-end="url(#{render._hollow_arrow_id("#6a9a48")})"' in subsets
+        assert "\u00ab" not in subsets  # NO «subsets» keyword label (errata E4)
+        references = edge_group("Q::spare-&gt;Q::pool")
+        assert f'marker-end="url(#{render._marker_id("hollow-dcolon", "#6a9a48")})"' in references
+        # marker geometry: the colon dots are FILLED in the edge color and
+        # straddle the shaft (one above, one below); the tick is a bar
+        # perpendicular across the shaft just behind the head
+        defs = svg.split("</defs>")[0]
+        colon = defs.split(f'id="{render._marker_id("hollow-colon", "#6a9a48")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert colon.count('fill="#6a9a48"') == 2  # two dots
+        assert 'cy="3"' in colon and 'cy="9"' in colon  # straddling the shaft
+        tick = defs.split(f'id="{render._marker_id("hollow-tick", "#6a9a48")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'stroke-width="1.4"' in tick  # the perpendicular bar
+        dcolon = defs.split(f'id="{render._marker_id("hollow-dcolon", "#6a9a48")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert dcolon.count('fill="#6a9a48"') == 4  # 2x2 dots
+
+    def test_membership_diamonds_and_end_multiplicities(self):
+        """Composite part membership draws a FILLED diamond at the whole
+        end (errata E6), referential membership a HOLLOW one (E7); the
+        member's multiplicity labels the part end and connector cross
+        multiplicities label their ends (spec pp.37-38)."""
+
+        model = longeron.loads("""
+            package P {
+                part def Wheel;
+                part def Driver;
+                part def Car {
+                    part wheels : Wheel [4];
+                    ref part driver : Driver;
+                    part w1 : Wheel;
+                    part w2 : Wheel;
+                    connect [1] w1 to [0..2] w2;
+                }
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+
+        def edge_groups(key):
+            return svg.split(f'data-edge="{key}"')[1:]
+
+        composite = edge_groups("P::Car-&gt;P::Wheel")
+        assert len(composite) == 3  # wheels, w1, w2
+        for group in composite:
+            body = group.split("</g>")[0]
+            assert f'marker-start="url(#{render._diamond_id("#555555", hollow=False)})"' in body
+            assert "marker-end" not in body  # no head at the part end
+        assert any(">wheels<" in g.split("</g>")[0] for g in composite)  # role name
+        assert any(">[4]<" in g.split("</g>")[0] for g in composite)  # end multiplicity
+        referential = edge_groups("P::Car-&gt;P::Driver")[0].split("</g>")[0]
+        assert f'marker-start="url(#{render._diamond_id("#555555", hollow=True)})"' in referential
+        # connector cross multiplicities ride the connect edge's ends
+        connect = edge_groups("P::Car::w1-&gt;P::Car::w2")[0].split("</g>")[0]
+        assert ">[1]<" in connect and ">[0..2]<" in connect
+        # diamond defs: filled binds fill to the stroke, hollow stays white
+        defs = svg.split("</defs>")[0]
+        filled = defs.split(f'id="{render._diamond_id("#555555", hollow=False)}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'fill="#555555"' in filled
+        hollow = defs.split(f'id="{render._diamond_id("#555555", hollow=True)}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'fill="#ffffff"' in hollow
+
+    def test_behavior_view_glyphs(self):
+        """Action-flow node glyphs per the spec (errata N5-N10 + terminate):
+        done = bullseye, terminate = circle-X, fork/join = thick filled
+        bar, decision/merge = empty rhombus, accept/send = standard action
+        box with a filled top-left badge; successions render DASHED (E12)."""
+
+        model = longeron.loads("""
+            package P {
+                item def Go;
+                action def Flow {
+                    action a;
+                    action b;
+                    fork f;
+                    join j;
+                    decide d;
+                    merge g;
+                    action rx accept go : Go;
+                    action tx send new Go() via ch;
+                    first start then f;
+                    first f then a;
+                    first f then b;
+                    first a then j;
+                    first b then j;
+                    first j then d;
+                    first d if x > 0 then rx;
+                    first d then g;
+                    first rx then tx;
+                    first tx then g;
+                    first g then done;
+                }
+                action def Abort {
+                    action warn send new Go() via ch;
+                    terminate;
+                }
+            }
+        """)
+        svg = render.to_svg(diagrams.action_diagram(model.find("P::Flow")))
+        # fork/join: filled bars (rects in the marker family)
+        for name in ("P::Flow::f", "P::Flow::j"):
+            bar = svg.split(f'data-qname="{name}"')[1].split("/>")[0]
+            assert 'fill="#333333"' in bar
+        # decision/merge: hollow rhombi
+        for name in ("P::Flow::d", "P::Flow::g"):
+            prefix = svg.split(f'data-qname="{name}"')[0]
+            assert prefix.rstrip().endswith("<polygon")
+        diamond = svg.split('data-qname="P::Flow::d"')[1].split("/>")[0]
+        assert 'fill="#ffffff"' in diamond
+        # done: bullseye (empty ring + filled core)
+        glyph_groups = [g.split("</g>")[0] for g in svg.split("<g data-qname=")[1:]]
+        assert any(
+            group.count("<circle") == 2 and 'fill="#333333"' in group for group in glyph_groups
+        )
+        # accept/send: badge polygons at the box's top-left (the control
+        # rhombi render as data-qname polygons, badges as plain ones)
+        assert svg.count("<polygon points=") == 2
+        # successions are dashed with open-V heads
+        succession = svg.split('data-edge="P::Flow::rx-&gt;P::Flow::tx"')[1].split("</g>")[0]
+        assert 'stroke-dasharray="4 2"' in succession
+        assert f'marker-end="url(#{render._arrow_id("#6c56a8")})"' in succession
+        # terminate: circle with an inscribed X
+        abort = render.to_svg(diagrams.action_diagram(model.find("P::Abort")))
+        groups = [g.split("</g>")[0] for g in abort.split("<g data-qname=")[1:]]
+        assert any("<circle" in g and "<path" in g and " L " in g for g in groups)
+        assert "terminate" in abort  # the glyph label
 
     def test_transition_arrowheads_are_open(self, drone_model):
         """Transitions/successions keep open (two-stroke V) heads; the

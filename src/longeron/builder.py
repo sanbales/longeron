@@ -1175,15 +1175,17 @@ class _Builder:
         mult = M.Multiplicity()
         owned = mp_ctx.ownedMultiplicity()
         if owned is not None:
-            rng = owned.multiplicityRange()
-            bounds = [self._multiplicity_bound(m) for m in rng.multiplicityExpressionMember()]
-            if len(bounds) == 2:
-                mult.lower, mult.upper = bounds
-            else:
-                mult.upper = bounds[0]
+            self._fill_multiplicity_range(mult, owned.multiplicityRange())
         mult.is_ordered = getattr(mp_ctx, "isOrdered", None) is not None
         mult.is_nonunique = getattr(mp_ctx, "isNonunique", None) is not None
         usage.multiplicity = mult
+
+    def _fill_multiplicity_range(self, mult: M.Multiplicity, rng) -> None:
+        bounds = [self._multiplicity_bound(m) for m in rng.multiplicityExpressionMember()]
+        if len(bounds) == 2:
+            mult.lower, mult.upper = bounds
+        else:
+            mult.upper = bounds[0]
 
     def _multiplicity_bound(self, ctx) -> A.Expr:
         if ctx.literalExpression() is not None:
@@ -1280,6 +1282,15 @@ class _Builder:
         end = M.ConnectorEnd(target=self.chain_str(ctx.ownedReferenceSubsetting()))
         if ctx.declaredName is not None:
             end.name = self.name_of(ctx.declaredName)
+        # cross multiplicity ('connect [1] a to [4] b'): rendered at the
+        # connector ends per the SysML v2 graphical notation
+        cross = getattr(ctx, "ownedCrossMultiplicityMember", None)
+        cross_ctx = cross() if callable(cross) else None
+        if cross_ctx is not None:
+            rng = cross_ctx.ownedCrossMultiplicity().ownedMultiplicity().multiplicityRange()
+            mult = M.Multiplicity()
+            self._fill_multiplicity_range(mult, rng)
+            end.multiplicity = mult
         return end
 
     def connection_usage(self, ctx) -> M.Element:

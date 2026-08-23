@@ -123,22 +123,28 @@ class TestStructure:
         assert edges[0].properties.shape.end == "generalization"
 
     def test_specialization_family_heads_are_hollow_triangles(self, drone_model):
-        """SysML v2 notation: subclassification and feature typing point at
-        the general/type with a hollow triangle -- the closed symbol plus a
-        white fill in the stylesheet; everything else keeps the open V."""
+        """SysML v2 notation: the whole specialization family points at the
+        general/type with a closed hollow triangle -- white-filled in the
+        stylesheet; feature typing carries the colon-dot shaft adornment
+        (symbol id ``generalization-colon``, errata E2)."""
 
         widget = diagrams.structure_diagram(drone_model)
         typed = [
             e for e in widget.source.value.edges if "sysml-edge-typed" in e.properties.cssClasses
         ]
         assert typed
-        assert all(e.properties.shape.end == "generalization" for e in typed)
+        assert all(e.properties.shape.end == "generalization-colon" for e in typed)
         assert diagrams.SYSML_STYLE[" .sysml-edge-typed > .elkarrow"]["fill"] == "#ffffff"
         assert diagrams.SYSML_STYLE[" .sysml-edge-specializes > .elkarrow"]["fill"] == "#ffffff"
+        # the filled colon dots draw with currentColor, bound to the stroke
+        assert diagrams.SYSML_STYLE[" .sysml-edge-typed > .elkarrow"]["color"] == "#6a9a48"
 
     def test_redefinition_and_subsetting_edges(self):
-        """KerML notation for the other Specialization kinds: an open arrow
-        to the general feature, labeled with the relationship keyword."""
+        """Spec notation for the rest of the Specialization family (errata
+        E3-E5): the SAME solid line and hollow triangle as subclassification,
+        distinguished ONLY by the shaft adornment -- a perpendicular bar
+        tick for redefinition, nothing for subsetting, double colon dots
+        for reference subsetting; no keyword labels."""
 
         model = longeron.loads("""
             package Q {
@@ -146,25 +152,111 @@ class TestStructure:
                 part car : V { part engine :>> engine; }
                 part vehicle;
                 part truck :> vehicle;
+                part pool;
+                part spare ::> pool;
             }
         """)
         widget = diagrams.structure_diagram(model)
         found = {}
         for e in widget.source.value.edges:
             css = e.properties.cssClasses
-            if "sysml-edge-redefines" in css or "sysml-edge-subsets" in css:
-                assert e.properties.shape.end == "arrow"  # open V, not a triangle
-                found[css.split()[-1]] = (e.source.id, e.target.id, e.labels[0].text)
-        assert found["sysml-edge-redefines"] == (
+            for kind in ("redefines", "subsets", "references"):
+                if f"sysml-edge-{kind}" in css:
+                    assert not e.labels  # NO «keyword» labels (spec p.200)
+                    found[kind] = (e.source.id, e.target.id, e.properties.shape.end)
+        assert found["redefines"] == (
             "Q::car::engine",
             "Q::V::engine",  # the shadowed inherited feature, not a self-loop
-            "\u00abredefines\u00bb",
+            "generalization-tick",
         )
-        assert found["sysml-edge-subsets"] == (
+        assert found["subsets"] == (
             "Q::truck",
             "Q::vehicle",
-            "\u00absubsets\u00bb",
+            "generalization",  # identical head to subclassification
         )
+        assert found["references"] == (
+            "Q::spare",
+            "Q::pool",
+            "generalization-dcolon",
+        )
+
+    def test_membership_edges_carry_diamonds_and_multiplicities(self):
+        """Definition-level membership edges (errata E6/E7): filled diamond
+        at the whole end for composite members, hollow for referential
+        (``ref``) members; role name on the line, multiplicity at the part
+        end.  Members whose type is drawn INSIDE the whole stay nesting-only."""
+
+        model = longeron.loads("""
+            package P {
+                part def Wheel;
+                part def Driver;
+                part def Car {
+                    part wheels : Wheel [4];
+                    ref part driver : Driver;
+                    part def Trunk;
+                    part trunk : Trunk;
+                }
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        members = {}
+        for e in widget.source.value.edges:
+            css = e.properties.cssClasses
+            if "sysml-edge-member" in css or "sysml-edge-refmember" in css:
+                members[(e.source.id, e.target.id)] = e
+        composite = members[("P::Car", "P::Wheel")]
+        assert composite.properties.shape.start == "composition"
+        assert composite.properties.shape.end is None
+        texts = [label.text for label in composite.labels]
+        assert "wheels" in texts  # role name rides the line
+        mult = next(label for label in composite.labels if label.text == "[4]")
+        assert mult.layoutOptions["elk.edgeLabels.placement"] == "HEAD"
+        assert "sysml-attribute" in mult.properties.cssClasses
+        referential = members[("P::Car", "P::Driver")]
+        assert referential.properties.shape.start == "aggregation"
+        # trunk : Trunk is drawn nested inside Car -- nesting already shows
+        # the membership, so no diamond edge duplicates it
+        assert ("P::Car", "P::Car::Trunk") not in members
+        # the browser stylesheet binds the filled diamond to the stroke and
+        # flips both on selection; the hollow diamond stays white
+        assert diagrams.SYSML_STYLE[" .sysml-edge-member > .elkarrow"]["fill"] == "#555555"
+        assert (
+            diagrams.SYSML_STYLE[" .elkedge.sysml-edge-member.selected > .elkarrow"]["fill"]
+            == "var(--jp-elk-color-selected)"
+        )
+        assert diagrams.SYSML_STYLE[" .sysml-edge-refmember > .elkarrow"]["fill"] == "#ffffff"
+        assert " .elkedge.sysml-edge-refmember.selected > .elkarrow" not in diagrams.SYSML_STYLE
+
+    def test_membership_edges_can_be_disabled(self):
+        model = longeron.loads("""
+            package P {
+                part def Wheel;
+                part def Car { part wheels : Wheel [4]; }
+            }
+        """)
+        widget = diagrams.structure_diagram(model, composition="none")
+        assert not any(
+            "sysml-edge-member" in e.properties.cssClasses for e in widget.source.value.edges
+        )
+
+    def test_connector_end_multiplicities_label_the_ends(self):
+        model = longeron.loads("""
+            package P {
+                part def S {
+                    part a;
+                    part b;
+                    connect [1] a to [0..2] b;
+                }
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        connect = next(
+            e for e in widget.source.value.edges if "sysml-edge-connect" in e.properties.cssClasses
+        )
+        placements = {
+            label.text: label.layoutOptions["elk.edgeLabels.placement"] for label in connect.labels
+        }
+        assert placements == {"[1]": "TAIL", "[0..2]": "HEAD"}
 
     def test_connection_edges(self):
         model = longeron.loads("""
@@ -330,7 +422,9 @@ class TestActions:
         widget = diagrams.action_diagram(model.find("P::Pipeline"))
         root = widget.source.value
         markers = [n for n in _walk(root) if "sysml-marker" in n.properties.cssClasses]
-        assert len(markers) == 2  # start + done
+        assert len(markers) == 1  # start (done is a bullseye glyph now)
+        finals = [n for n in _walk(root) if "sysml-final" in n.properties.cssClasses]
+        assert len(finals) == 1  # done = bullseye (spec errata N6)
         guarded = [e for e in root.edges if "sysml-edge-guarded" in e.properties.cssClasses]
         assert len(guarded) == 1
         assert guarded[0].labels[0].text == "[x > 0]"
@@ -341,6 +435,115 @@ class TestActions:
         steps = [n for n in _walk(root) if "sysml-step" in n.properties.cssClasses]
         assert len(steps) == 2  # assign + if
         assert len(root.edges) == len(steps) + 1  # chain through start/done
+
+    def test_control_nodes_use_spec_glyphs(self):
+        """Spec errata N7/N8: fork/join draw as thick filled bars, decision/
+        merge as empty rhombi -- identical within each pair, role by
+        topology -- not as «keyword» step boxes."""
+
+        model = longeron.loads("""
+            package P {
+                action def Flow {
+                    action a;
+                    action b;
+                    fork f;
+                    join j;
+                    decide d;
+                    merge g;
+                    first start then f;
+                    first f then a;
+                    first f then b;
+                    first a then j;
+                    first b then j;
+                    first j then d;
+                    first d if x > 0 then g;
+                    first d then g;
+                    first g then done;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Flow"))
+        root = widget.source.value
+        by_id = {n.id: n for n in _walk(root) if n.id}
+        for name in ("P::Flow::f", "P::Flow::j"):
+            node = by_id[name]
+            assert "sysml-ctrl-bar" in node.properties.cssClasses
+            assert (node.width, node.height) == (6, 40)  # bar, not a box
+            assert "sysml-step" not in node.properties.cssClasses
+        for name in ("P::Flow::d", "P::Flow::g"):
+            node = by_id[name]
+            assert "sysml-ctrl-diamond" in node.properties.cssClasses
+            assert type(node.properties.shape).__name__ == "Diamond"
+        # glyph labels hang OUTSIDE, below the glyph
+        f_label = by_id["P::Flow::f"].labels[0]
+        assert f_label.text == "f"
+        assert "OUTSIDE" in f_label.layoutOptions["nodeLabels.placement"]
+
+    def test_accept_and_send_actions_get_badged_boxes(self):
+        """Spec errata N9/N10: accept/send are STANDARD rounded action boxes
+        with a small filled top-left badge (notched banner for accept,
+        pointed tag for send) -- not whole-node pentagons."""
+
+        model = longeron.loads("""
+            package P {
+                item def Go;
+                action def Chat {
+                    action rx accept go : Go;
+                    action tx send new Go() via ch;
+                    first start then rx;
+                    first rx then tx;
+                    first tx then done;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Chat"))
+        by_id = {n.id: n for n in _walk(widget.source.value) if n.id}
+        for name, form in (("P::Chat::rx", "accept"), ("P::Chat::tx", "send")):
+            node = by_id[name]
+            assert f"sysml-step-{form}" in node.properties.cssClasses
+            assert "sysml-step" in node.properties.cssClasses  # standard box
+            badge = node.labels[0]
+            assert f"sysml-badge-{form}" in badge.properties.cssClasses
+            shape = badge.properties.shape
+            assert type(shape).__name__ == "Icon" and shape.use == f"{form}-badge"
+            assert badge.layoutOptions["nodeLabels.placement"] == "H_LEFT V_TOP INSIDE"
+            stereotype = node.labels[1]
+            assert stereotype.text == f"\u00ab{form}\u00bb"
+        # both badge symbols are registered and filled via the stylesheet
+        assert "accept-badge" in widget.symbols.library
+        assert "send-badge" in widget.symbols.library
+        assert diagrams.SYSML_STYLE[" .accept-badge"]["fill"] == "#333333"
+
+    def test_terminate_renders_as_circle_x(self):
+        model = longeron.loads("""
+            package P {
+                action def Abort {
+                    action warn { assign x := 1; }
+                    terminate;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Abort"))
+        terminates = [
+            n
+            for n in _walk(widget.source.value)
+            if "sysml-terminate" in (n.properties.cssClasses or "")
+        ]
+        assert len(terminates) == 1
+        assert terminates[0].labels[0].text == "terminate"
+        shape = terminates[0].properties.shape
+        assert type(shape).__name__ == "SVG"
+        assert "glyph-x" in shape.use  # the inscribed X
+
+    def test_successions_render_dashed(self):
+        """Spec errata E12: action-flow successions are DASHED with open-V
+        arrows; state-view transitions stay solid."""
+
+        from longeron import render
+
+        assert render._EDGE_STYLES["sysml-edge-succession"]["stroke-dasharray"] == "4 2"
+        assert "stroke-dasharray" not in render._EDGE_STYLES["sysml-edge-transition"]
+        assert render._EDGE_ENDS["sysml-edge-succession"] == "open"
 
 
 class TestDispatcherAndSelection:

@@ -1,5 +1,5 @@
 {
- "fingerprint": "a3b651135d047831",
+ "fingerprint": "1fada21bf1a4b04b",
  "model": {
   "@type": "Model",
   "members": [
@@ -26388,7 +26388,15 @@
          },
          {
           "@type": "ConnectorEnd",
-          "target": "source"
+          "target": "source",
+          "multiplicity": {
+           "@type": "Multiplicity",
+           "upper": {
+            "@expr": "Literal",
+            "value": 1,
+            "text": "1"
+           }
+          }
          }
         ]
        },
@@ -26405,7 +26413,15 @@
          },
          {
           "@type": "ConnectorEnd",
-          "target": "target"
+          "target": "target",
+          "multiplicity": {
+           "@type": "Multiplicity",
+           "upper": {
+            "@expr": "Literal",
+            "value": 1,
+            "text": "1"
+           }
+          }
          }
         ]
        },

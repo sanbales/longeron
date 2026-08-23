@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -45,7 +46,11 @@ new ELK().layout(graph).then(
 # The browser stylesheet (diagrams.SYSML_STYLE) and the replay widget's CSS
 # (replay._CSS) are DERIVED from these tables; change colors here only.
 
-#: cssClasses fragment -> SVG attributes
+#: cssClasses fragment -> SVG attributes.  A non-CSS ``shape`` key selects a
+#: non-rectangular glyph drawing (consumed by ``draw_node`` headless and by
+#: the derived browser stylesheet; never emitted as a CSS property):
+#: ``diamond`` (decision/merge rhombus), ``bullseye`` (done/final), and
+#: ``circle-x`` (terminate).
 _NODE_STYLES: dict[str, dict[str, str]] = {
     "sysml-package": {"fill": "#fbfbfb", "stroke": "#b0b0b0", "rx": "0"},
     "sysml-definition": {"fill": "#eef4fb", "stroke": "#4878a8", "rx": "4"},
@@ -53,36 +58,79 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
     "sysml-state": {"fill": "#fdf6e3", "stroke": "#b58900", "rx": "12"},
     "sysml-step": {"fill": "#f2eefb", "stroke": "#6c56a8", "rx": "6"},
     "sysml-marker": {"fill": "#333333", "stroke": "#333333", "rx": "7"},
+    # behavior-view control glyphs (SysML v2 action flow notation): fork/join
+    # bar (a filled rect), decision/merge rhombus, done/final bullseye, and
+    # the terminate circle-X -- all in the neutral marker family
+    "sysml-ctrl-bar": {"fill": "#333333", "stroke": "#333333", "rx": "1"},
+    "sysml-ctrl-diamond": {"fill": "#ffffff", "stroke": "#333333", "shape": "diamond"},
+    "sysml-final": {"fill": "#333333", "stroke": "#333333", "shape": "bullseye"},
+    "sysml-terminate": {"fill": "#ffffff", "stroke": "#333333", "shape": "circle-x"},
 }
+
+#: fixed-size glyph nodes: no title box, labels hang below the glyph
+_GLYPH_NODE_CLASSES = (
+    "sysml-marker",
+    "sysml-ctrl-bar",
+    "sysml-ctrl-diamond",
+    "sysml-final",
+    "sysml-terminate",
+)
 
 _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-specializes": {"stroke": "#4878a8", "stroke-dasharray": "none"},
-    "sysml-edge-typed": {"stroke": "#6a9a48", "stroke-dasharray": "4 2"},
+    # the WHOLE specialization family draws SOLID lines (spec 8.2.3 BNF
+    # printed p.200): feature typing is distinguished by its shaft
+    # adornment, never by a dashed line
+    "sysml-edge-typed": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
     "sysml-edge-redefines": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
     "sysml-edge-subsets": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
+    "sysml-edge-references": {"stroke": "#6a9a48", "stroke-dasharray": "none"},
+    "sysml-edge-member": {"stroke": "#555555"},
+    "sysml-edge-refmember": {"stroke": "#555555"},
     "sysml-edge-connect": {"stroke": "#555555"},
     "sysml-edge-transition": {"stroke": "#b58900"},
-    "sysml-edge-succession": {"stroke": "#6c56a8"},
+    # action-flow successions are DASHED with open-V arrows (spec figures
+    # printed pp.90-92); state-view transitions stay solid
+    "sysml-edge-succession": {"stroke": "#6c56a8", "stroke-dasharray": "4 2"},
 }
 
 #: cssClasses fragment -> arrowhead form at the target end, per the SysML
-#: v2/KerML graphical notation (single source for BOTH pipelines):
-#: * ``hollow`` -- white-filled, outlined triangle pointing at the more
-#:   general element: subclassification (solid line) and feature typing
-#:   (dashed line), the UML-inherited Specialization notation.
-#: * ``open`` -- two-stroke V: transitions, successions, and the
-#:   keyword-labeled subsetting/redefinition edges.
-#: * ``none`` -- connectors (connect/interface/allocate/binding) are
-#:   non-directional; matches the browser pipeline, which never put a
-#:   head on them.
+#: v2/KerML graphical notation (single source for BOTH pipelines).
+#:
+#: The specialization family rule (spec 8.2.3, printed p.200): the line is
+#: ALWAYS solid, the head ALWAYS a closed hollow triangle at the general/
+#: definition end, and the shaft adornment tight behind the head mirrors
+#: the extra textual characters of the relationship:
+#: * ``hollow`` -- plain triangle: subclassification and subsetting ``:>``
+#: * ``hollow-colon`` -- two filled dots straddling the shaft (a colon):
+#:   feature typing ``:``
+#: * ``hollow-tick`` -- one bar tick perpendicular across the shaft:
+#:   redefinition ``:>>``
+#: * ``hollow-dcolon`` -- two columns of two filled dots (double colon):
+#:   reference subsetting ``::>``
+#: * ``open`` -- two-stroke V: transitions and successions.
+#: * ``none`` -- connectors (connect/interface/binding) and the membership
+#:   edges (whose glyph is the diamond at the START end) carry no head.
 _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-specializes": "hollow",
-    "sysml-edge-typed": "hollow",
-    "sysml-edge-redefines": "open",
-    "sysml-edge-subsets": "open",
+    "sysml-edge-typed": "hollow-colon",
+    "sysml-edge-redefines": "hollow-tick",
+    "sysml-edge-subsets": "hollow",
+    "sysml-edge-references": "hollow-dcolon",
+    "sysml-edge-member": "none",
+    "sysml-edge-refmember": "none",
     "sysml-edge-connect": "none",
     "sysml-edge-transition": "open",
     "sysml-edge-succession": "open",
+}
+
+#: cssClasses fragment -> glyph form at the SOURCE end (marker-start).
+#: Membership edges put a diamond at the whole/type end (spec 8.2.3 printed
+#: pp.200-201): filled black for composite part membership, hollow for
+#: referential (``ref``) membership.
+_EDGE_STARTS: dict[str, str] = {
+    "sysml-edge-member": "filled-diamond",
+    "sysml-edge-refmember": "hollow-diamond",
 }
 
 
@@ -93,11 +141,70 @@ def _edge_end(css: str) -> str:
     return "open"
 
 
+def _edge_start(css: str) -> str | None:
+    for name, form in _EDGE_STARTS.items():
+        if name in css:
+            return form
+    return None
+
+
 #: guarded transitions/successions (edges also carrying sysml-edge-guarded)
 _GUARDED_DASHARRAY = "6 2"
 
 #: replay highlight (longeron.replay swaps fired edges to this marker)
 _FIRED_STROKE = "#e05a00"
+
+# ---------------------------------------------------------------------------
+# shared glyph geometry -- one geometry, two encodings (SVG markers headless,
+# ipyelk symbols in the browser); all sizes in diagram units
+# ---------------------------------------------------------------------------
+
+#: specialization-family shaft adornments (behind the hollow triangle head)
+_ADORN_GAP = 2.5  # gap between the head's back edge and the adornment
+_DOT_RADIUS = 1.6  # colon dot radius (dots are FILLED in the edge color)
+_DOT_OFFSET = 3.0  # dot center distance from the shaft
+_DCOLON_SPACING = 4.0  # spacing between the double-colon dot columns
+_TICK_HALF = 5.0  # redefinition bar tick half-height
+
+#: membership diamonds (12 long x 6 across, matches ipyelk Rhomb r=6)
+_DIAMOND_LENGTH = 12.0
+_DIAMOND_HALF = 3.0
+
+#: behavior-view node glyphs
+_GLYPH_SIZE = 16.0  # bullseye / terminate circle bounding box
+_BULLSEYE_CORE_RATIO = 0.28  # core dot radius as a fraction of the box
+_BAR_SHORT, _BAR_LONG = 6.0, 40.0  # fork/join bar (perpendicular to flow)
+_CTRL_DIAMOND_SIZE = 24.0  # decision/merge rhombus
+
+#: accept/send action badges (small filled tag at the box's top-left corner)
+_BADGE_WIDTH, _BADGE_HEIGHT = 18.0, 12.0
+_BADGE_NOTCH = 5.0  # accept: triangular notch depth cut into the LEFT edge
+_BADGE_POINT = 5.0  # send: pointed RIGHT edge depth
+
+
+def _badge_points(form: str, width: float, height: float) -> list[tuple[float, float]]:
+    """Corner points of the accept/send action badges (filled, top-left).
+
+    ``accept`` is a banner whose LEFT edge has a triangular notch cut into
+    it; ``send`` is a pentagon tag with a flat left edge and a pointed
+    right edge (spec 8.2.3 printed p.228; examples p.97).
+    """
+
+    if form == "accept":
+        return [
+            (0, 0),
+            (width, 0),
+            (width, height),
+            (0, height),
+            (_BADGE_NOTCH, height / 2),
+        ]
+    return [
+        (0, 0),
+        (width - _BADGE_POINT, 0),
+        (width, height / 2),
+        (width - _BADGE_POINT, height),
+        (0, height),
+    ]
 
 
 def _arrow_id(stroke: str) -> str:
@@ -108,23 +215,93 @@ def _hollow_arrow_id(stroke: str) -> str:
     return "arrow-hollow-" + stroke.lstrip("#")
 
 
+def _marker_id(form: str, stroke: str) -> str:
+    if form == "open":
+        return _arrow_id(stroke)
+    return f"arrow-{form}-{stroke.lstrip('#')}"  # hollow / hollow-colon / ...
+
+
+def _diamond_id(stroke: str, hollow: bool) -> str:
+    return ("diamond-hollow-" if hollow else "diamond-") + stroke.lstrip("#")
+
+
+#: extra shaft length a hollow marker reserves behind the head, per form
+_ADORN_TAIL = {
+    "hollow": 0.0,
+    "hollow-colon": _ADORN_GAP + 2 * _DOT_RADIUS + 1.5,
+    "hollow-tick": _ADORN_GAP + 2 * _DOT_RADIUS + 1.5,
+    "hollow-dcolon": _ADORN_GAP + 2 * _DOT_RADIUS + 1.5 + _DCOLON_SPACING,
+}
+
+
+def _hollow_marker(form: str, stroke: str) -> str:
+    """A closed hollow triangle marker, optionally shaft-adorned (see
+    ``_EDGE_ENDS``).  The white fill occludes the line underneath the head;
+    the adornments sit behind the back edge, over the still-visible shaft.
+    """
+
+    tail = _ADORN_TAIL[form]
+    width = 12 + tail
+    back, tip = 1 + tail, 11 + tail
+    bits = [
+        f'<marker id="{_marker_id(form, stroke)}" viewBox="0 0 {width:g} 12" '
+        f'refX="{tip:g}" refY="6" markerWidth="{width:g}" markerHeight="12" '
+        f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M {back:g} 1 L {tip:g} 6 L {back:g} 11 z" fill="#ffffff" '
+        f'stroke="{stroke}" stroke-width="1.2"/>'
+    ]
+    if form in ("hollow-colon", "hollow-dcolon"):
+        near = back - _ADORN_GAP - _DOT_RADIUS
+        columns = [near] if form == "hollow-colon" else [near, near - _DCOLON_SPACING]
+        bits += [
+            f'<circle cx="{cx:g}" cy="{cy:g}" r="{_DOT_RADIUS:g}" fill="{stroke}"/>'
+            for cx in columns
+            for cy in (6 - _DOT_OFFSET, 6 + _DOT_OFFSET)
+        ]
+    elif form == "hollow-tick":
+        x = back - _ADORN_GAP - 0.7
+        bits.append(
+            f'<path d="M {x:g} {6 - _TICK_HALF:g} L {x:g} {6 + _TICK_HALF:g}" '
+            f'fill="none" stroke="{stroke}" stroke-width="1.4"/>'
+        )
+    bits.append("</marker>")
+    return "".join(bits)
+
+
+def _diamond_marker(stroke: str, hollow: bool) -> str:
+    """A membership diamond for marker-start: it rides the line from the
+    whole/type end outward; filled = composite, hollow = referential."""
+
+    length, half = _DIAMOND_LENGTH, _DIAMOND_HALF
+    width, height = length + 2, 2 * half + 2
+    mid = half + 1
+    fill = "#ffffff" if hollow else stroke
+    return (
+        f'<marker id="{_diamond_id(stroke, hollow)}" viewBox="0 0 {width:g} {height:g}" '
+        f'refX="1" refY="{mid:g}" markerWidth="{width:g}" markerHeight="{height:g}" '
+        f'markerUnits="userSpaceOnUse" orient="auto">'
+        f'<path d="M 1 {mid:g} L {1 + length / 2:g} 1 L {1 + length:g} {mid:g} '
+        f'L {1 + length / 2:g} {height - 1:g} z" '
+        f'fill="{fill}" stroke="{stroke}" stroke-width="1.2"/></marker>'
+    )
+
+
 def _arrow_defs() -> str:
-    """Markers per arrowhead form and edge color (see ``_EDGE_ENDS``).
+    """Markers per glyph form and edge color (see ``_EDGE_ENDS`` /
+    ``_EDGE_STARTS``).
 
     Open V heads for every edge color (plus the default gray and the
     replay fired-edge orange -- longeron.replay swaps fired edges to that
-    marker id, so it must stay defined); hollow triangles -- white-filled
-    and outlined in the edge color, so they occlude the line underneath --
-    for the specialization-family colors.  ``userSpaceOnUse`` keeps heads
-    a constant size when a stylesheet widens the path stroke (e.g. the
-    replay fired-edge highlight).
+    marker id, so it must stay defined); closed hollow triangles -- plain
+    and shaft-adorned, white-filled so they occlude the line underneath --
+    for the specialization family; filled/hollow diamonds at the START end
+    for the membership edges.  ``userSpaceOnUse`` keeps heads a constant
+    size when a stylesheet widens the path stroke (e.g. the replay
+    fired-edge highlight).
     """
 
     open_strokes = sorted(
         {style["stroke"] for style in _EDGE_STYLES.values()} | {"#666666", _FIRED_STROKE}
-    )
-    hollow_strokes = sorted(
-        {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == "hollow"}
     )
     markers = [
         f'<marker id="{_arrow_id(stroke)}" viewBox="0 0 10 10" refX="9" '
@@ -134,14 +311,20 @@ def _arrow_defs() -> str:
         f'stroke-width="1.4"/></marker>'
         for stroke in open_strokes
     ]
-    markers += [
-        f'<marker id="{_hollow_arrow_id(stroke)}" viewBox="0 0 12 12" refX="11" '
-        f'refY="6" markerWidth="12" markerHeight="12" '
-        f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
-        f'<path d="M 1 1 L 11 6 L 1 11 z" fill="#ffffff" stroke="{stroke}" '
-        f'stroke-width="1.2"/></marker>'
-        for stroke in hollow_strokes
-    ]
+    for form in ("hollow", "hollow-colon", "hollow-tick", "hollow-dcolon"):
+        strokes = sorted(
+            {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == form}
+        )
+        markers += [_hollow_marker(form, stroke) for stroke in strokes]
+    for start_form, hollow in (("filled-diamond", False), ("hollow-diamond", True)):
+        strokes = sorted(
+            {
+                style["stroke"]
+                for css, style in _EDGE_STYLES.items()
+                if _EDGE_STARTS.get(css) == start_form
+            }
+        )
+        markers += [_diamond_marker(stroke, hollow) for stroke in strokes]
     return "<defs>" + "".join(markers) + "</defs>"
 
 
@@ -303,7 +486,7 @@ def _to_elk_json(root: Any) -> dict:
     def convert(node: Any) -> dict:
         identifier = node_id(node)
         css = node.properties.cssClasses or ""
-        is_marker = "sysml-marker" in css
+        is_marker = any(name in css for name in _GLYPH_NODE_CLASSES)
         has_children = bool(node.children)
 
         # place labels manually: a snug vertical stack (the browser pipeline
@@ -314,7 +497,12 @@ def _to_elk_json(root: Any) -> dict:
         for label in node.labels or []:
             text = label.text or ""
             label_css = label.properties.cssClasses or ""
-            measured.append((text, label_css, *_measure(text, label_css)))
+            shape = label.properties.shape
+            if "sysml-badge" in label_css and shape is not None and shape.width:
+                # accept/send badges: pre-sized glyph labels, no text
+                measured.append((text, label_css, float(shape.width), float(shape.height or 12)))
+            else:
+                measured.append((text, label_css, *_measure(text, label_css)))
         max_width = max((m[2] for m in measured), default=0.0)
         for index, (text, label_css, width, height) in enumerate(measured):
             is_attribute = "sysml-attribute" in label_css
@@ -325,7 +513,14 @@ def _to_elk_json(root: Any) -> dict:
                 "height": height,
                 "properties": {"cssClasses": label_css},
             }
-            if is_marker:  # keep the dot small; hang the label below it
+            if "sysml-badge" in label_css:
+                # the badge pins to the box's top-left corner; the text
+                # stack starts below it (spec: badge in the top-left,
+                # keyword/name to its right at spec zoom -- stacking keeps
+                # the headless geometry overlap-free)
+                entry["x"], entry["y"] = 6.0, 4.0
+                cursor = max(cursor, 4.0 + height + 2.0)
+            elif is_marker:  # keep the dot small; hang the label below it
                 entry["x"] = ((node.width or 14) - width) / 2
                 entry["y"] = (node.height or 14) + 2 + index * height
             elif has_children:
@@ -493,12 +688,47 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             # data-qname (the node id: a model qualified name, instance-
             # qualified for expanded typed submachine states) makes states
             # addressable from longeron.replay
-            parts.append(
-                f'<rect data-qname="{_escape_attr(str(node.get("id")))}" '
-                f'x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
-                f'height="{height:.1f}" rx="{style["rx"]}" '
-                f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
-            )
+            qname = f'data-qname="{_escape_attr(str(node.get("id")))}"'
+            shape = style.get("shape")
+            if shape == "diamond":
+                points = (
+                    f"{x + width / 2:.1f},{y:.1f} {x + width:.1f},{y + height / 2:.1f} "
+                    f"{x + width / 2:.1f},{y + height:.1f} {x:.1f},{y + height / 2:.1f}"
+                )
+                parts.append(
+                    f'<polygon {qname} points="{points}" fill="{style["fill"]}" '
+                    f'stroke="{style["stroke"]}" stroke-width="1.2"/>'
+                )
+            elif shape == "bullseye":
+                cx, cy = x + width / 2, y + height / 2
+                ring = min(width, height) / 2 - 0.6
+                core = min(width, height) * _BULLSEYE_CORE_RATIO
+                parts.append(
+                    f"<g {qname}>"
+                    f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{ring:.1f}" fill="#ffffff" '
+                    f'stroke="{style["stroke"]}" stroke-width="1.2"/>'
+                    f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{core:.1f}" '
+                    f'fill="{style["fill"]}"/></g>'
+                )
+            elif shape == "circle-x":
+                cx, cy = x + width / 2, y + height / 2
+                ring = min(width, height) / 2 - 0.6
+                k = ring / math.sqrt(2)
+                parts.append(
+                    f"<g {qname}>"
+                    f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{ring:.1f}" '
+                    f'fill="{style["fill"]}" stroke="{style["stroke"]}" stroke-width="1.2"/>'
+                    f'<path d="M {cx - k:.1f} {cy - k:.1f} L {cx + k:.1f} {cy + k:.1f} '
+                    f'M {cx + k:.1f} {cy - k:.1f} L {cx - k:.1f} {cy + k:.1f}" '
+                    f'fill="none" stroke="{style["stroke"]}" stroke-width="1.2"/></g>'
+                )
+            else:
+                parts.append(
+                    f"<rect {qname} "
+                    f'x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
+                    f'height="{height:.1f}" rx="{style["rx"]}" '
+                    f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
+                )
         for label in node.get("labels", []):
             draw_label(label, x, y)
         for child in node.get("children", []):
@@ -513,10 +743,21 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
         return default
 
     def draw_label(label: dict, ox: float, oy: float, on_edge: bool = False) -> None:
+        css = label.get("properties", {}).get("cssClasses", "")
+        if "sysml-badge" in css:
+            # accept/send action badges: a small filled polygon at the box's
+            # top-left corner (see _badge_points); no text
+            bx, by = ox + label.get("x", 0), oy + label.get("y", 0)
+            form = "accept" if "sysml-badge-accept" in css else "send"
+            points = _badge_points(
+                form, label.get("width", _BADGE_WIDTH), label.get("height", _BADGE_HEIGHT)
+            )
+            rendered = " ".join(f"{bx + px:.1f},{by + py:.1f}" for px, py in points)
+            parts.append(f'<polygon points="{rendered}" fill="#333333"/>')
+            return
         text = label.get("text", "")
         if not text:
             return
-        css = label.get("properties", {}).get("cssClasses", "")
         style = _style_for(css, _LABEL_STYLES, {"font-size": "11", "fill": "#222222"})
         size = float(style["font-size"])
         extra = ' font-style="italic"' if style.get("font-style") else ""
@@ -581,12 +822,14 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             f'<g data-edge="{_escape_attr(data_edge)}" data-event="{_escape_attr(event)}">'
         )
         end = _edge_end(css)
-        if end == "hollow":
-            marker = f' marker-end="url(#{_hollow_arrow_id(style["stroke"])})"'
-        elif end == "open":
-            marker = f' marker-end="url(#{_arrow_id(style["stroke"])})"'
-        else:  # connectors are non-directional
-            marker = ""
+        if end == "none":
+            marker = ""  # connectors and membership lines carry no head
+        else:
+            marker = f' marker-end="url(#{_marker_id(end, style["stroke"])})"'
+        start = _edge_start(css)
+        if start is not None:  # membership diamond at the whole/type end
+            hollow = start == "hollow-diamond"
+            marker += f' marker-start="url(#{_diamond_id(style["stroke"], hollow)})"'
         for section in edge.get("sections", []):
             points = [section["startPoint"], *section.get("bendPoints", []), section["endPoint"]]
             path = " ".join(
