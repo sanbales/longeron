@@ -1,0 +1,332 @@
+"""The compact diagram toolbar and its search-and-highlight tool (headless)."""
+
+import pytest
+
+pytest.importorskip("ipyelk")
+
+import ipywidgets as W
+from ipyelk.tools import PipelineProgressBar, ToggleCollapsedTool
+
+import longeron
+from longeron import diagrams, toolbar
+from longeron.toolbar import (
+    SEARCH_ACTIVE_CSS,
+    SEARCH_DIM_CSS,
+    SEARCH_HIT_CSS,
+    TOOLBAR_STYLE,
+    DiagramSearch,
+    _iter_edges,
+    _iter_nodes,
+)
+
+_TYPED_SUBMACHINE = """
+package P {
+    state def Inner {
+        entry; then a;
+        state a;
+        transition first a accept go then b;
+        state b;
+    }
+    state def Outer {
+        entry; then x;
+        state x : Inner;
+        transition first x accept quit then off;
+        state off;
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def drone_model():
+    return longeron.load("examples/drone.sysml")
+
+
+@pytest.fixture()
+def widget(drone_model):
+    return diagrams.structure_diagram(drone_model)
+
+
+def _search(widget) -> DiagramSearch:
+    return widget.get_tool(DiagramSearch)
+
+
+def _classes(element) -> set:
+    return set((element.properties.cssClasses or "").split())
+
+
+def _css_snapshot(root) -> dict:
+    snap = {}
+    for node in _iter_nodes(root):
+        snap[id(node)] = node.properties.cssClasses
+        for label in node.labels:
+            snap[id(label)] = label.properties.cssClasses
+    for edge in _iter_edges(root):
+        snap[id(edge)] = edge.properties.cssClasses
+    return snap
+
+
+class TestComposition:
+    def test_compact_icon_buttons(self, widget):
+        cases = [
+            (widget.view.fit_tool.ui, "expand"),
+            (widget.view.center_tool.ui, "crosshairs"),
+            (widget.get_tool(ToggleCollapsedTool).ui, "sitemap"),
+        ]
+        for button, icon in cases:
+            assert isinstance(button, W.Button)
+            assert button.description == ""  # icon-only
+            assert button.icon == icon
+            assert button.tooltip  # every control explains itself
+            assert button.layout.width == "30px"
+
+    def test_single_row_order(self, widget):
+        kinds = [type(child).__name__ for child in widget.toolbar.children]
+        # styled-widget css carrier, 3 icon buttons, search box, progress, close
+        assert kinds == ["HTML", "Button", "Button", "Button", "HBox", "FloatProgress", "Button"]
+
+    def test_every_control_has_a_tooltip(self, widget):
+        search = _search(widget)
+        box, count, clear = search.ui.children
+        controls = [
+            widget.view.fit_tool.ui,
+            widget.view.center_tool.ui,
+            widget.get_tool(ToggleCollapsedTool).ui,
+            box,
+            count,
+            clear,
+            widget.get_tool(PipelineProgressBar).bar,
+            widget.toolbar.close_btn,
+        ]
+        assert all(control.tooltip for control in controls)
+
+    def test_search_ui_is_compact(self, widget):
+        box, _count, clear = _search(widget).ui.children
+        assert isinstance(box, W.Text)
+        assert box.continuous_update  # live, per keystroke
+        assert box.layout.width == "150px"
+        assert isinstance(clear, W.Button)
+        assert clear.icon == "times"
+        assert clear.layout.visibility == "hidden"  # only shown mid-search
+
+    def test_all_views_get_the_toolbar(self, drone_model):
+        widgets = [
+            diagrams.structure_diagram(drone_model),
+            diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
+            diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
+            diagrams.diagram(drone_model.find("Drone::FlightStates")),
+            diagrams.diagram(drone_model.find("Drone::PlanBattery")),
+            diagrams.diagram(drone_model),
+        ]
+        for built in widgets:
+            assert any(isinstance(tool, DiagramSearch) for tool in built.tools)
+            assert built.view.fit_tool.ui.icon == "expand"
+
+    def test_classic_escape_hatch(self, drone_model):
+        classic = diagrams.structure_diagram(drone_model, toolbar=False)
+        assert not any(isinstance(tool, DiagramSearch) for tool in classic.tools)
+        assert classic.view.fit_tool.ui.description == "Fit"  # the stock button
+        assert not any(key in classic.style for key in TOOLBAR_STYLE)
+        state = diagrams.state_diagram(drone_model.find("Drone::FlightStates"), toolbar=False)
+        action = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), toolbar=False)
+        for built in (state, action):
+            assert not any(isinstance(tool, DiagramSearch) for tool in built.tools)
+
+    def test_upgrade_is_idempotent(self, widget):
+        before = list(widget.tools)
+        assert toolbar.upgrade_toolbar(widget) is widget
+        assert list(widget.tools) == before
+
+    def test_style_rules_merged_and_scoped(self, widget):
+        for key, rules in TOOLBAR_STYLE.items():
+            assert widget.style[key] == rules
+            assert key.startswith(" ")  # namespaced to this widget only
+        assert f" .{SEARCH_HIT_CSS} > rect" in widget.style
+        assert f" .{SEARCH_DIM_CSS} > rect" in widget.style
+        # the base style is untouched by the merge
+        assert widget.style[" .sysml-edge-typed > .elkarrow"]["fill"] == "#ffffff"
+
+
+class TestSearchMatching:
+    def test_title_match_is_case_insensitive(self, widget):
+        search = _search(widget)
+        search.query = "BATTERY"
+        assert search.hit_ids == {
+            "Drone::Battery",
+            "Drone::PlanBattery",  # title 'PlanBattery' contains 'battery'
+            "Drone::QuadCopter::battery",
+        }
+        assert search.match_count == 3
+
+    def test_qualified_name_match(self, widget):
+        search = _search(widget)
+        search.query = "quadcopter::rotors"  # no title contains this
+        assert search.hit_ids == {"Drone::QuadCopter::rotors"}
+
+    def test_usage_titles_include_their_type(self, widget):
+        search = _search(widget)
+        search.query = "rotor"
+        # the def by title, the usage via 'rotors : Rotor [4]' / its qname
+        assert search.hit_ids == {"Drone::Rotor", "Drone::QuadCopter::rotors"}
+
+    def test_count_is_displayed(self, widget):
+        search = _search(widget)
+        search.query = "battery"
+        assert f">{search.match_count}/{search.total_count}<" in search._count_html.value
+        assert search.total_count > search.match_count > 0
+
+    def test_zero_matches_still_reported(self, widget):
+        search = _search(widget)
+        search.query = "no such thing anywhere"
+        assert search.match_count == 0
+        assert f">0/{search.total_count}<" in search._count_html.value
+
+    def test_attribute_rows_are_not_titles(self, widget):
+        search = _search(widget)
+        search.query = "capacity"  # only appears in an attribute compartment
+        assert search.match_count == 0
+
+    def test_whitespace_query_is_inactive(self, widget):
+        search = _search(widget)
+        search.query = "   "
+        assert search.match_count == 0
+        assert search._count_html.value == ""  # not a zero-match search
+        assert not any(
+            SEARCH_DIM_CSS in _classes(node) for node in _iter_nodes(widget.source.value)
+        )
+
+    def test_expanded_submachine_instance_ids_match(self):
+        model = longeron.loads(_TYPED_SUBMACHINE)
+        built = diagrams.state_diagram(model.find("P::Outer"))
+        search = _search(built)
+        search.query = "x::a"  # instance-qualified: unique per expansion site
+        assert search.hit_ids == {"P::Outer::x::a"}
+        node = next(n for n in _iter_nodes(built.source.value) if n.id == "P::Outer::x::a")
+        assert SEARCH_HIT_CSS in _classes(node)
+
+    def test_markers_are_not_searchable(self, drone_model):
+        built = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        search = _search(built)
+        marker_free = {entry.node_id for entry in search._entries}
+        markers = [n for n in _iter_nodes(built.source.value) if "sysml-marker" in _classes(n)]
+        assert markers
+        assert all(n.id not in marker_free for n in markers)
+
+
+class TestHighlightApplication:
+    def test_hits_and_dims_on_nodes_and_labels(self, widget):
+        search = _search(widget)
+        search.query = "battery"
+        for node in _iter_nodes(widget.source.value):
+            if not node.id:
+                continue
+            classes = _classes(node)
+            expected = SEARCH_HIT_CSS if node.id in search.hit_ids else SEARCH_DIM_CSS
+            other = SEARCH_DIM_CSS if expected == SEARCH_HIT_CSS else SEARCH_HIT_CSS
+            assert expected in classes and other not in classes
+            for label in node.labels:  # labels carry the state for text css
+                assert expected in _classes(label)
+
+    def test_markers_and_packing_groups_untouched(self, drone_model):
+        built = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        search = _search(built)
+        search.query = "idle"
+        for node in _iter_nodes(built.source.value):
+            if "sysml-marker" in _classes(node) or "sysml-packgroup" in _classes(node):
+                assert SEARCH_HIT_CSS not in _classes(node)
+                assert SEARCH_DIM_CSS not in _classes(node)
+
+    def test_edges_dim_while_searching(self, widget):
+        search = _search(widget)
+        search.query = "battery"
+        real, packing = [], []
+        for edge in _iter_edges(widget.source.value):
+            (real if "sysml-edge" in _classes(edge) else packing).append(edge)
+        assert real and packing
+        assert all(SEARCH_DIM_CSS in _classes(edge) for edge in real)
+        # layout-only packing chains are invisible: never touched
+        assert all(SEARCH_DIM_CSS not in _classes(edge) for edge in packing)
+
+    def test_clear_restores_exactly(self, widget):
+        pristine = _css_snapshot(widget.source.value)
+        search = _search(widget)
+        search.query = "battery"
+        assert _css_snapshot(widget.source.value) != pristine
+        search.query = ""
+        assert _css_snapshot(widget.source.value) == pristine
+        assert search._count_html.value == ""
+        assert search._clear_btn.layout.visibility == "hidden"
+
+    def test_clear_button_clears(self, widget):
+        search = _search(widget)
+        search.query = "battery"
+        assert search._clear_btn.layout.visibility == "visible"
+        search._clear_btn.click()
+        assert search.query == ""
+        assert search.match_count == 0
+
+    def test_search_never_fires_on_select(self, widget, drone_model):
+        received: list = []
+        diagrams.on_select(widget, drone_model, received.extend)
+        search = _search(widget)
+        search.query = "battery"
+        search.query = "rotor"
+        search.query = ""
+        assert received == []  # the registered callback MUST NOT be called
+        assert widget.view.selection.ids == ()
+
+    def test_search_never_marks_the_pipeline_dirty(self, widget):
+        flow_before = widget.source.flow
+        search = _search(widget)
+        search.query = "battery"
+        search.query = ""
+        assert widget.source.flow == flow_before
+
+    def test_toolbar_pins_while_search_active(self, widget):
+        search = _search(widget)
+        search.query = "battery"
+        assert SEARCH_ACTIVE_CSS in widget.toolbar._dom_classes
+        search.query = ""
+        assert SEARCH_ACTIVE_CSS not in widget.toolbar._dom_classes
+        assert f" .jp-ElkToolbar.{SEARCH_ACTIVE_CSS}" in widget.style
+
+    def test_highlight_survives_view_tree_replacement(self, widget):
+        """When the browser hands back a new post-layout tree, an active
+        search re-applies to it (and clearing cleans both trees)."""
+
+        from ipyelk.elements import Registry, convert_elkjson
+        from ipyelk.elements import index as elk_index
+
+        search = _search(widget)
+        search.query = "battery"
+        with Registry():
+            replacement = convert_elkjson(widget.source.value.dict())
+            for element in elk_index.iter_elements(replacement):
+                element.id = element.get_id()
+        widget.view.source.value = replacement  # what the frontend does
+
+        view_tree = widget.view.source.value
+        hit = next(n for n in _iter_nodes(view_tree) if n.id == "Drone::Battery")
+        assert SEARCH_HIT_CSS in _classes(hit)
+        # markers got uuid ids in the round-trip: still untouched
+        for node in _iter_nodes(view_tree):
+            if node.id not in {entry.node_id for entry in search._entries}:
+                assert SEARCH_HIT_CSS not in _classes(node)
+                assert SEARCH_DIM_CSS not in _classes(node)
+
+        search.query = ""
+        for tree in (widget.source.value, widget.view.source.value):
+            for node in _iter_nodes(tree):
+                assert SEARCH_HIT_CSS not in _classes(node)
+                assert SEARCH_DIM_CSS not in _classes(node)
+
+    def test_search_after_view_tree_exists_updates_both(self, widget):
+        from ipyelk.elements import Registry, convert_elkjson
+
+        with Registry():
+            widget.view.source.value = convert_elkjson(widget.source.value.dict())
+        search = _search(widget)
+        search.query = "rotor"
+        for tree in (widget.source.value, widget.view.source.value):
+            ids = {n.id for n in _iter_nodes(tree) if SEARCH_HIT_CSS in _classes(n)}
+            assert ids == {"Drone::Rotor", "Drone::QuadCopter::rotors"}

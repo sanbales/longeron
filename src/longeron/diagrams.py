@@ -15,6 +15,11 @@ environments install it automatically).  Three views, one dispatcher:
   the interpreter executes), including start/done markers.
 * :func:`diagram` -- picks a view based on the element's kind.
 
+Every view ships a compact toolbar (:mod:`longeron.toolbar`): icon-only
+Fit / Center / Toggle-Collapse buttons plus a live search box that
+highlights matching elements without touching the selection; pass
+``toolbar=False`` to keep ipyelk's stock text buttons.
+
 Node ids are qualified names, so browser-side selections map back to model
 elements: use :func:`on_select` to react to clicks.
 """
@@ -59,6 +64,7 @@ from .render import (
     _NODE_STYLES,
     _measure,
 )
+from .toolbar import upgrade_toolbar
 
 __all__ = [
     "SYSML_STYLE",
@@ -321,7 +327,12 @@ def _symbols() -> SymbolSpec:
     )
 
 
-def _finish(root: Node, style: dict | None = None, direction: str | None = None) -> Any:
+def _finish(
+    root: Node,
+    style: dict | None = None,
+    direction: str | None = None,
+    toolbar: bool = True,
+) -> Any:
     root.layoutOptions = dict(_ROOT_LAYOUT)
     if direction:
         root.layoutOptions["elk.direction"] = direction
@@ -329,6 +340,8 @@ def _finish(root: Node, style: dict | None = None, direction: str | None = None)
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
     result.layout.min_height = "400px"
+    if toolbar:  # compact icon toolbar + search (longeron.toolbar)
+        upgrade_toolbar(result)
     return result
 
 
@@ -338,9 +351,17 @@ def _finish(root: Node, style: dict | None = None, direction: str | None = None)
 
 
 def structure_diagram(
-    element: M.Model | M.Namespace, *, show_attributes: bool = True, show_relationships: bool = True
+    element: M.Model | M.Namespace,
+    *,
+    show_attributes: bool = True,
+    show_relationships: bool = True,
+    toolbar: bool = True,
 ) -> Any:
-    """Containment structure with specialization/typing/connection edges."""
+    """Containment structure with specialization/typing/connection edges.
+
+    ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
+    the compact icon+search one (:mod:`longeron.toolbar`).
+    """
 
     builder = _StructureBuilder(element, show_attributes)
     root = builder.build()
@@ -348,7 +369,7 @@ def structure_diagram(
         builder.add_relationship_edges(root)
     builder.pack_components(root)
     _size_compartment_rows(root)
-    return _finish(root)
+    return _finish(root, toolbar=toolbar)
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -674,7 +695,12 @@ class _StructureBuilder:
 # ---------------------------------------------------------------------------
 
 
-def state_diagram(machine: M.Definition | M.Usage, *, submachine_depth: int | None = None) -> Any:
+def state_diagram(
+    machine: M.Definition | M.Usage,
+    *,
+    submachine_depth: int | None = None,
+    toolbar: bool = True,
+) -> Any:
     """A hierarchical state machine: states, entry markers, transitions.
 
     A state usage typed by a state def (``state swap : ToteSwap;``) is
@@ -687,7 +713,7 @@ def state_diagram(machine: M.Definition | M.Usage, *, submachine_depth: int | No
     ``submachine_depth`` bounds how many *typing hops* to expand:
     ``None`` (the default) is unlimited, ``0`` draws typed states as
     plain leaves (the pre-0.8 behavior).  Plain nested states are always
-    shown.
+    shown.  ``toolbar=False`` keeps ipyelk's stock toolbar.
 
     Expanded substate ids are instance-qualified
     (``…::swapSource::swap::evaluating``) so they stay unique per
@@ -704,7 +730,7 @@ def state_diagram(machine: M.Definition | M.Usage, *, submachine_depth: int | No
     resolver = Interpreter(model).resolver
     base = machine.qualified_name or machine.label
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
-    return _finish(root)
+    return _finish(root, toolbar=toolbar)
 
 
 def _transition_text(transition: M.TransitionUsage) -> str | None:
@@ -842,8 +868,11 @@ def _fill_states(
 # ---------------------------------------------------------------------------
 
 
-def action_diagram(action: M.Definition | M.Usage) -> Any:
-    """The succession control-flow graph the interpreter executes."""
+def action_diagram(action: M.Definition | M.Usage, *, toolbar: bool = True) -> Any:
+    """The succession control-flow graph the interpreter executes.
+
+    ``toolbar=False`` keeps ipyelk's stock toolbar.
+    """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
 
@@ -907,7 +936,7 @@ def action_diagram(action: M.Definition | M.Usage) -> Any:
                 previous = node
         root.edges.append(_edge(previous, marker("done"), "sysml-edge-succession", end="arrow"))
 
-    return _finish(root, direction="RIGHT")
+    return _finish(root, direction="RIGHT", toolbar=toolbar)
 
 
 def _statement_title(member: M.Element) -> str:
@@ -926,7 +955,7 @@ def diagram(element: M.Model | M.Element, **kwargs: Any) -> Any:
     if kind == "state":
         return state_diagram(element, **kwargs)  # type: ignore[arg-type]
     if kind == "action":
-        return action_diagram(element)  # type: ignore[arg-type]
+        return action_diagram(element, **kwargs)  # type: ignore[arg-type]
     return structure_diagram(element, **kwargs)  # type: ignore[arg-type]
 
 

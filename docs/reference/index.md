@@ -27,7 +27,7 @@ objects are defined.
 
 | Page | Modules | What lives there |
 |---|---|---|
-| [Diagrams](diagrams.md) | `longeron.diagrams` | interactive ELK diagrams (ipyelk) |
+| [Diagrams](diagrams.md) | `longeron.diagrams`, `longeron.toolbar` | interactive ELK diagrams (ipyelk) and their compact search toolbar |
 | [Rendering](render.md) | `longeron.render` | headless SVG/PNG export (elkjs via node) |
 | [Replay](replay.md) | `longeron.replay` | animated simulation/action replays |
 

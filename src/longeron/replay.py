@@ -771,10 +771,12 @@ def replay_widget(
         raise ExecutionError(f"unknown replay kind {kind!r} (expected 'state' or 'action')")
     from . import diagrams, render  # need ipyelk + node; import late
 
+    # the diagram widget here is disposable (baked straight to SVG), so
+    # skip the interactive toolbar upgrade
     if kind == "action":
         timeline = record_action_timeline(interpreter, target, events, inputs=inputs)
-        svg = render.to_svg(diagrams.action_diagram(target))
+        svg = render.to_svg(diagrams.action_diagram(target, toolbar=False))
     else:
         timeline = record_timeline(interpreter, target, events, inputs=inputs)
-        svg = render.to_svg(diagrams.state_diagram(target))
+        svg = render.to_svg(diagrams.state_diagram(target, toolbar=False))
     return cls(svg=svg, timeline_json=timeline.to_json(), width_px=width_px)
