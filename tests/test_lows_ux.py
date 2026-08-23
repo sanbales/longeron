@@ -135,13 +135,62 @@ class TestPaletteSingleSource:
             "hollow-dcolon",
             "open",
             "none",
+            "pin-arrow",  # flow target-input pin + filled arrowhead (E16)
+            "ball-notch",  # portion-membership ball at the whole end
         }
         assert set(render._EDGE_STARTS) <= set(render._EDGE_STYLES)
-        assert set(render._EDGE_STARTS.values()) <= {"filled-diamond", "hollow-diamond"}
+        assert set(render._EDGE_STARTS.values()) <= {
+            "filled-diamond",
+            "hollow-diamond",
+            "pin",  # flow source-output pin (E16)
+            "circle",  # alias/unowned-membership circle (E18)
+        }
         # a start glyph and a hollow end on one kind would fight over the
-        # single .elkarrow fill rule -- the palette forbids the combination
-        for css in render._EDGE_STARTS:
-            assert render._EDGE_ENDS[css] == "none"
+        # single .elkarrow fill rule -- the palette forbids the combination.
+        # The flow pins are exempt: both pin symbols are self-painted raw
+        # SVG (explicit white body + currentColor), so no fill rule applies.
+        for css, form in render._EDGE_STARTS.items():
+            if form == "pin":
+                assert render._EDGE_ENDS[css] == "pin-arrow"
+            else:
+                assert render._EDGE_ENDS[css] == "none"
+
+    def test_arrowheads_share_the_slender_spec_proportions(self):
+        """Item 9: every head keeps ~2:1 length:half-width (the spec's
+        slender ~27-degree heads, never 45 degrees) -- single-sourced
+        constants that BOTH pipelines derive from."""
+
+        from longeron import render
+
+        for length, half in (
+            (render._HEAD_LENGTH, render._HEAD_HALF),
+            (render._V_LENGTH, render._V_HALF),
+            (render._FLOW_HEAD_LENGTH, render._FLOW_HEAD_HALF),
+        ):
+            assert 2.0 <= length / half <= 2.5
+        # headless markers derive from the constants
+        defs = render._arrow_defs()
+        v = render._V_LENGTH, render._V_HALF
+        assert f'd="M 0 1 L {v[0]:g} {v[1] + 1:g} L 0 {2 * v[1] + 1:g}"' in defs
+        tri = render._HEAD_LENGTH, render._HEAD_HALF
+        assert f"L {1 + tri[0]:g} {tri[1] + 1:g} L 1 {2 * tri[1] + 1:g} z" in defs
+
+    def test_browser_symbols_mirror_the_marker_geometry(self):
+        """Item 9 (browser side): the EndpointSymbol paths derive from the
+        SAME slenderness constants as the headless markers -- the vendored
+        45-degree StraightArrow is out."""
+
+        pytest.importorskip("ipyelk")
+        from longeron import diagrams, render
+
+        library = diagrams._symbols().library
+        tri = library["generalization"].element.properties.shape.use
+        assert f"{render._HEAD_LENGTH},{-render._HEAD_HALF}" in tri  # 'M10.0,-5.0...'
+        v = library["arrow"].element.properties.shape.use
+        assert f"{render._V_LENGTH},{-render._V_HALF}" in v
+        # the adorned triangle SVG shares the geometry too
+        adorned = diagrams._specialization_svg("colon")
+        assert f"M {render._HEAD_LENGTH:g},{-render._HEAD_HALF:g} L 0,0" in adorned
 
     def test_browser_symbols_cover_every_declared_form(self):
         """Every end/start form maps to a registered browser symbol, so the
@@ -171,6 +220,48 @@ class TestPaletteSingleSource:
         assert render._NODE_STYLES["sysml-final"]["shape"] == "bullseye"
         assert render._NODE_STYLES["sysml-terminate"]["shape"] == "circle-x"
         assert "shape" not in render._NODE_STYLES["sysml-ctrl-bar"]  # a rect
+        # the n-ary dependency junction is a filled dot in the family hue
+        assert render._NODE_STYLES["sysml-junction"]["fill"] == "#a85c78"
+        # swim lanes carry a dashed boundary in BOTH pipelines (the style
+        # table's dasharray reaches the headless rect and the browser CSS)
+        assert render._NODE_STYLES["sysml-lane"]["stroke-dasharray"] == "4 3"
+
+    def test_port_styles_derive_from_node_palette(self):
+        """Item 11: ports (and ipyelk's collapse stubs -- 'slack' ports)
+        take the OWNING node kind's stroke color with a white body; stroke
+        widths stay pinned and selection recolors the fill (rule 4)."""
+
+        pytest.importorskip("ipyelk")
+        from longeron import diagrams, render
+
+        selected = "var(--jp-elk-color-selected)"
+        pinned = "var(--jp-elk-stroke-width)"
+        assert diagrams.SYSML_STYLE[" .elkport"]["fill"] == "#ffffff"
+        assert diagrams.SYSML_STYLE[" .elkport"]["stroke-width"] == pinned
+        assert diagrams.SYSML_STYLE[" .elkport.selected"]["stroke-width"] == pinned
+        assert diagrams.SYSML_STYLE[" .elkport.mouseover"]["stroke-width"] == pinned
+        for css, style in render._NODE_STYLES.items():
+            assert diagrams.SYSML_STYLE[f" .{css} .elkport"]["stroke"] == style["stroke"]
+            derived = diagrams.SYSML_STYLE[f" .{css} .elkport.selected"]
+            assert derived["fill"] == selected
+            assert derived["stroke-width"] == pinned
+
+    def test_label_kinds_keep_their_measured_font_sizes_in_the_browser(self):
+        """Item 12: the blanket 11px !important label rule (needed against
+        theme fonts) must not inflate the 10px/9px label kinds the boxes
+        were measured for -- per-kind higher-specificity rules restate the
+        measured sizes, and selection still recolors."""
+
+        pytest.importorskip("ipyelk")
+        from longeron import diagrams, render
+
+        assert diagrams.SYSML_STYLE[" text.elklabel"]["font-size"] == "11px !important"
+        for css, style in render._LABEL_STYLES.items():
+            derived = diagrams.SYSML_STYLE[f" text.elklabel.{css}"]
+            assert derived["font-size"] == f"{style['font-size']}px !important"
+            assert derived["fill"] == style["fill"]
+            selected = diagrams.SYSML_STYLE[f" text.elklabel.{css}.selected"]
+            assert selected["fill"] == "var(--jp-elk-color-selected)"
 
     def test_replay_css_marker_reference_matches_fired_stroke(self):
         from longeron import render, replay

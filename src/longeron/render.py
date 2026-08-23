@@ -65,6 +65,12 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
     "sysml-ctrl-diamond": {"fill": "#ffffff", "stroke": "#333333", "shape": "diamond"},
     "sysml-final": {"fill": "#333333", "stroke": "#333333", "shape": "bullseye"},
     "sysml-terminate": {"fill": "#ffffff", "stroke": "#333333", "shape": "circle-x"},
+    # the n-ary dependency junction dot (spec errata E8): a small filled
+    # circle in the dependency family hue, dashed links radiating from it
+    "sysml-junction": {"fill": "#a85c78", "stroke": "#a85c78", "rx": "4"},
+    # "Perform Actions Swimlanes" (spec printed p.90, BNF pp.231-232):
+    # dashed-boundary «performer» lane containers in the action view
+    "sysml-lane": {"fill": "#ffffff", "stroke": "#888888", "rx": "8", "stroke-dasharray": "4 3"},
 }
 
 #: fixed-size glyph nodes: no title box, labels hang below the glyph
@@ -74,6 +80,7 @@ _GLYPH_NODE_CLASSES = (
     "sysml-ctrl-diamond",
     "sysml-final",
     "sysml-terminate",
+    "sysml-junction",
 )
 
 _EDGE_STYLES: dict[str, dict[str, str]] = {
@@ -88,6 +95,23 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-member": {"stroke": "#555555"},
     "sysml-edge-refmember": {"stroke": "#555555"},
     "sysml-edge-connect": {"stroke": "#555555"},
+    # flow connections (errata E16/M1): solid connector-family line between
+    # the border pins, small filled arrowhead at the target pin
+    "sysml-edge-flow": {"stroke": "#555555"},
+    # binding connectors (errata E15): plain solid line, '=' rides mid-span
+    "sysml-edge-binding": {"stroke": "#555555"},
+    # membership circles (errata E18): alias/unowned member -- solid line,
+    # hollow circle at the referencing end, alias name as the edge label
+    "sysml-edge-alias": {"stroke": "#555555"},
+    # portion membership (errata new row): solid line, filled ball with an
+    # open-V notch at the WHOLE-occurrence end
+    "sysml-edge-portion": {"stroke": "#555555"},
+    # the dependency/requirement family shares ONE muted hue (plan §2.0):
+    # dependency dashed client->supplier (errata E8), satisfy keyword edges
+    # solid (spec keyword-arrow convention, BNF pdf 263/276)
+    "sysml-edge-dependency": {"stroke": "#a85c78", "stroke-dasharray": "4 2"},
+    "sysml-edge-depclient": {"stroke": "#a85c78", "stroke-dasharray": "4 2"},
+    "sysml-edge-satisfies": {"stroke": "#a85c78"},
     "sysml-edge-transition": {"stroke": "#b58900"},
     # action-flow successions are DASHED with open-V arrows (spec figures
     # printed pp.90-92); state-view transitions stay solid
@@ -108,7 +132,13 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
 #:   redefinition ``:>>``
 #: * ``hollow-dcolon`` -- two columns of two filled dots (double colon):
 #:   reference subsetting ``::>``
-#: * ``open`` -- two-stroke V: transitions and successions.
+#: * ``open`` -- two-stroke V: transitions, successions, dependency and
+#:   satisfy keyword edges.
+#: * ``pin-arrow`` -- flow connections (errata E16): a small square
+#:   target-input pin straddling the border with a small FILLED arrowhead
+#:   tight against it.
+#: * ``ball-notch`` -- portion membership: a filled ball with an open-V
+#:   notch on the line side, at the whole-occurrence end.
 #: * ``none`` -- connectors (connect/interface/binding) and the membership
 #:   edges (whose glyph is the diamond at the START end) carry no head.
 _EDGE_ENDS: dict[str, str] = {
@@ -120,6 +150,13 @@ _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-member": "none",
     "sysml-edge-refmember": "none",
     "sysml-edge-connect": "none",
+    "sysml-edge-flow": "pin-arrow",
+    "sysml-edge-binding": "none",
+    "sysml-edge-alias": "none",
+    "sysml-edge-portion": "ball-notch",
+    "sysml-edge-dependency": "open",
+    "sysml-edge-depclient": "none",
+    "sysml-edge-satisfies": "open",
     "sysml-edge-transition": "open",
     "sysml-edge-succession": "open",
 }
@@ -127,10 +164,14 @@ _EDGE_ENDS: dict[str, str] = {
 #: cssClasses fragment -> glyph form at the SOURCE end (marker-start).
 #: Membership edges put a diamond at the whole/type end (spec 8.2.3 printed
 #: pp.200-201): filled black for composite part membership, hollow for
-#: referential (``ref``) membership.
+#: referential (``ref``) membership.  Flow connections put a small square
+#: source-output ``pin`` on the source border (errata E16); alias edges a
+#: small hollow ``circle`` at the referencing end (errata E18).
 _EDGE_STARTS: dict[str, str] = {
     "sysml-edge-member": "filled-diamond",
     "sysml-edge-refmember": "hollow-diamond",
+    "sysml-edge-flow": "pin",
+    "sysml-edge-alias": "circle",
 }
 
 
@@ -159,6 +200,15 @@ _FIRED_STROKE = "#e05a00"
 # ipyelk symbols in the browser); all sizes in diagram units
 # ---------------------------------------------------------------------------
 
+#: arrowhead slenderness: every head keeps a 2:1 length:half-width ratio
+#: (half-angle ~27 degrees) -- the spec figures draw slender heads, never
+#: the 45-degree stocky ones (measured on gt-zoom-*.png).  The browser
+#: EndpointSymbol paths derive from THESE constants too, so the pipelines
+#: cannot diverge.
+_HEAD_LENGTH, _HEAD_HALF = 10.0, 5.0  # closed hollow triangle family
+_V_LENGTH, _V_HALF = 9.0, 4.0  # open two-stroke V
+_FLOW_HEAD_LENGTH, _FLOW_HEAD_HALF = 6.0, 3.0  # small filled flow arrowhead
+
 #: specialization-family shaft adornments (behind the hollow triangle head)
 _ADORN_GAP = 2.5  # gap between the head's back edge and the adornment
 _DOT_RADIUS = 1.6  # colon dot radius (dots are FILLED in the edge color)
@@ -180,6 +230,20 @@ _CTRL_DIAMOND_SIZE = 24.0  # decision/merge rhombus
 _BADGE_WIDTH, _BADGE_HEIGHT = 18.0, 12.0
 _BADGE_NOTCH = 5.0  # accept: triangular notch depth cut into the LEFT edge
 _BADGE_POINT = 5.0  # send: pointed RIGHT edge depth
+
+#: flow-connection pins (errata E16): small squares straddling the border
+_PIN_SIZE = 8.0
+_PIN_RX = 1.5
+
+#: portion-membership ball (filled, open-V notch on the line side)
+_BALL_RADIUS = 5.5
+_BALL_MOUTH_DEG = 40.0  # notch half-angle
+
+#: alias/unowned-membership hollow circle at the referencing end
+_CIRCLE_RADIUS = 5.0
+
+#: n-ary dependency junction dot (drawn as a tiny glyph node)
+_JUNCTION_SIZE = 8.0
 
 
 def _badge_points(form: str, width: float, height: float) -> list[tuple[float, float]]:
@@ -225,6 +289,14 @@ def _diamond_id(stroke: str, hollow: bool) -> str:
     return ("diamond-hollow-" if hollow else "diamond-") + stroke.lstrip("#")
 
 
+def _start_marker_id(form: str, stroke: str) -> str:
+    """Marker-start ids per _EDGE_STARTS form."""
+
+    if form in ("filled-diamond", "hollow-diamond"):
+        return _diamond_id(stroke, hollow=form == "hollow-diamond")
+    return f"start-{form}-{stroke.lstrip('#')}"  # pin / circle
+
+
 #: extra shaft length a hollow marker reserves behind the head, per form
 _ADORN_TAIL = {
     "hollow": 0.0,
@@ -238,16 +310,20 @@ def _hollow_marker(form: str, stroke: str) -> str:
     """A closed hollow triangle marker, optionally shaft-adorned (see
     ``_EDGE_ENDS``).  The white fill occludes the line underneath the head;
     the adornments sit behind the back edge, over the still-visible shaft.
+    Head geometry derives from the shared slenderness constants
+    (``_HEAD_LENGTH``/``_HEAD_HALF``, 2:1 like the spec figures).
     """
 
     tail = _ADORN_TAIL[form]
-    width = 12 + tail
-    back, tip = 1 + tail, 11 + tail
+    height = 2 * _HEAD_HALF + 2
+    mid = _HEAD_HALF + 1
+    width = _HEAD_LENGTH + 2 + tail
+    back, tip = 1 + tail, 1 + tail + _HEAD_LENGTH
     bits = [
-        f'<marker id="{_marker_id(form, stroke)}" viewBox="0 0 {width:g} 12" '
-        f'refX="{tip:g}" refY="6" markerWidth="{width:g}" markerHeight="12" '
+        f'<marker id="{_marker_id(form, stroke)}" viewBox="0 0 {width:g} {height:g}" '
+        f'refX="{tip:g}" refY="{mid:g}" markerWidth="{width:g}" markerHeight="{height:g}" '
         f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
-        f'<path d="M {back:g} 1 L {tip:g} 6 L {back:g} 11 z" fill="#ffffff" '
+        f'<path d="M {back:g} 1 L {tip:g} {mid:g} L {back:g} {height - 1:g} z" fill="#ffffff" '
         f'stroke="{stroke}" stroke-width="1.2"/>'
     ]
     if form in ("hollow-colon", "hollow-dcolon"):
@@ -256,12 +332,12 @@ def _hollow_marker(form: str, stroke: str) -> str:
         bits += [
             f'<circle cx="{cx:g}" cy="{cy:g}" r="{_DOT_RADIUS:g}" fill="{stroke}"/>'
             for cx in columns
-            for cy in (6 - _DOT_OFFSET, 6 + _DOT_OFFSET)
+            for cy in (mid - _DOT_OFFSET, mid + _DOT_OFFSET)
         ]
     elif form == "hollow-tick":
         x = back - _ADORN_GAP - 0.7
         bits.append(
-            f'<path d="M {x:g} {6 - _TICK_HALF:g} L {x:g} {6 + _TICK_HALF:g}" '
+            f'<path d="M {x:g} {mid - _TICK_HALF:g} L {x:g} {mid + _TICK_HALF:g}" '
             f'fill="none" stroke="{stroke}" stroke-width="1.4"/>'
         )
     bits.append("</marker>")
@@ -286,6 +362,84 @@ def _diamond_marker(stroke: str, hollow: bool) -> str:
     )
 
 
+def _pin_marker(stroke: str) -> str:
+    """The flow source-output pin (errata E16): a small hollow square whose
+    center rides the line START -- the line starts ON the node border, so
+    the square straddles it."""
+
+    size = _PIN_SIZE
+    box = size + 2
+    mid = box / 2
+    return (
+        f'<marker id="{_start_marker_id("pin", stroke)}" viewBox="0 0 {box:g} {box:g}" '
+        f'refX="{mid:g}" refY="{mid:g}" markerWidth="{box:g}" markerHeight="{box:g}" '
+        f'markerUnits="userSpaceOnUse" orient="auto">'
+        f'<rect x="1" y="1" width="{size:g}" height="{size:g}" rx="{_PIN_RX:g}" '
+        f'fill="#ffffff" stroke="{stroke}" stroke-width="1.2"/></marker>'
+    )
+
+
+def _pin_arrow_marker(stroke: str) -> str:
+    """The flow target-input pin + direction arrowhead (errata E16): the
+    square's center rides the line END (the target border) and a small
+    FILLED arrowhead sits tight against the square's outer edge."""
+
+    size, alen, ahalf = _PIN_SIZE, _FLOW_HEAD_LENGTH, _FLOW_HEAD_HALF
+    width = size + alen + 2
+    height = size + 2
+    mid = height / 2
+    sq = 1 + alen  # square's near (outer) edge
+    return (
+        f'<marker id="{_marker_id("pin-arrow", stroke)}" '
+        f'viewBox="0 0 {width:g} {height:g}" '
+        f'refX="{sq + size / 2:g}" refY="{mid:g}" markerWidth="{width:g}" '
+        f'markerHeight="{height:g}" markerUnits="userSpaceOnUse" '
+        f'orient="auto-start-reverse">'
+        f'<path d="M 1 {mid - ahalf:g} L {sq:g} {mid:g} L 1 {mid + ahalf:g} z" '
+        f'fill="{stroke}" stroke="none"/>'
+        f'<rect x="{sq:g}" y="1" width="{size:g}" height="{size:g}" rx="{_PIN_RX:g}" '
+        f'fill="#ffffff" stroke="{stroke}" stroke-width="1.2"/></marker>'
+    )
+
+
+def _ball_marker(stroke: str) -> str:
+    """Portion membership (errata new row): a FILLED ball with an open-V
+    notch on the line side, at the whole-occurrence end.  The notch vertex
+    sits at the ball center; the line runs under the open mouth and reads
+    as ending at the vertex (gt-portion.png)."""
+
+    r = _BALL_RADIUS
+    box = 2 * r + 2
+    cx = cy = r + 1
+    rad = math.radians(_BALL_MOUTH_DEG)
+    px = cx - r * math.cos(rad)
+    py = r * math.sin(rad)
+    return (
+        f'<marker id="{_marker_id("ball-notch", stroke)}" viewBox="0 0 {box:g} {box:g}" '
+        f'refX="{cx + r:g}" refY="{cy:g}" markerWidth="{box:g}" markerHeight="{box:g}" '
+        f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M {cx:g} {cy:g} L {px:.2f} {cy - py:.2f} '
+        f'A {r:g} {r:g} 0 1 1 {px:.2f} {cy + py:.2f} z" '
+        f'fill="{stroke}" stroke="none"/></marker>'
+    )
+
+
+def _circle_marker(stroke: str) -> str:
+    """Alias/unowned membership (errata E18): a small HOLLOW circle at the
+    referencing end, touching the node border (marker-start)."""
+
+    r = _CIRCLE_RADIUS
+    box = 2 * r + 2
+    mid = r + 1
+    return (
+        f'<marker id="{_start_marker_id("circle", stroke)}" viewBox="0 0 {box:g} {box:g}" '
+        f'refX="1" refY="{mid:g}" markerWidth="{box:g}" markerHeight="{box:g}" '
+        f'markerUnits="userSpaceOnUse" orient="auto">'
+        f'<circle cx="{mid:g}" cy="{mid:g}" r="{r:g}" '
+        f'fill="#ffffff" stroke="{stroke}" stroke-width="1.2"/></marker>'
+    )
+
+
 def _arrow_defs() -> str:
     """Markers per glyph form and edge color (see ``_EDGE_ENDS`` /
     ``_EDGE_STARTS``).
@@ -294,20 +448,24 @@ def _arrow_defs() -> str:
     replay fired-edge orange -- longeron.replay swaps fired edges to that
     marker id, so it must stay defined); closed hollow triangles -- plain
     and shaft-adorned, white-filled so they occlude the line underneath --
-    for the specialization family; filled/hollow diamonds at the START end
-    for the membership edges.  ``userSpaceOnUse`` keeps heads a constant
-    size when a stylesheet widens the path stroke (e.g. the replay
-    fired-edge highlight).
+    for the specialization family; flow pin(+arrowhead) squares and the
+    portion ball at the target end; filled/hollow diamonds, source pins
+    and alias circles at the START end.  ``userSpaceOnUse`` keeps heads a
+    constant size when a stylesheet widens the path stroke (e.g. the
+    replay fired-edge highlight).
     """
 
     open_strokes = sorted(
         {style["stroke"] for style in _EDGE_STYLES.values()} | {"#666666", _FIRED_STROKE}
     )
+    v_l, v_h = _V_LENGTH, _V_HALF
     markers = [
-        f'<marker id="{_arrow_id(stroke)}" viewBox="0 0 10 10" refX="9" '
-        f'refY="5" markerWidth="10" markerHeight="10" '
+        f'<marker id="{_arrow_id(stroke)}" viewBox="0 0 {v_l + 1:g} {2 * v_h + 2:g}" '
+        f'refX="{v_l:g}" '
+        f'refY="{v_h + 1:g}" markerWidth="{v_l + 1:g}" markerHeight="{2 * v_h + 2:g}" '
         f'markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
-        f'<path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="{stroke}" '
+        f'<path d="M 0 1 L {v_l:g} {v_h + 1:g} L 0 {2 * v_h + 1:g}" fill="none" '
+        f'stroke="{stroke}" '
         f'stroke-width="1.4"/></marker>'
         for stroke in open_strokes
     ]
@@ -316,6 +474,12 @@ def _arrow_defs() -> str:
             {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == form}
         )
         markers += [_hollow_marker(form, stroke) for stroke in strokes]
+    end_factories = {"pin-arrow": _pin_arrow_marker, "ball-notch": _ball_marker}
+    for form, factory in end_factories.items():
+        strokes = sorted(
+            {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == form}
+        )
+        markers += [factory(stroke) for stroke in strokes]
     for start_form, hollow in (("filled-diamond", False), ("hollow-diamond", True)):
         strokes = sorted(
             {
@@ -325,6 +489,16 @@ def _arrow_defs() -> str:
             }
         )
         markers += [_diamond_marker(stroke, hollow) for stroke in strokes]
+    start_factories = {"pin": _pin_marker, "circle": _circle_marker}
+    for start_form, start_factory in start_factories.items():
+        strokes = sorted(
+            {
+                style["stroke"]
+                for css, style in _EDGE_STYLES.items()
+                if _EDGE_STARTS.get(css) == start_form
+            }
+        )
+        markers += [start_factory(stroke) for stroke in strokes]
     return "<defs>" + "".join(markers) + "</defs>"
 
 
@@ -553,6 +727,19 @@ def _to_elk_json(root: Any) -> dict:
             "labels": labels,
             "children": [convert(child) for child in node.children],
         }
+        ports = [
+            {
+                "id": node_id(port),
+                "width": port.width or 0,
+                "height": port.height or 0,
+                "layoutOptions": dict(port.layoutOptions or {}),
+            }
+            for port in getattr(node, "ports", None) or []
+        ]
+        if ports:
+            # invisible anchor points (e.g. the control-glyph convergence
+            # ports): emitted for elkjs, never drawn
+            data["ports"] = ports
         if is_marker or node.width:
             data["width"] = node.width or 14
             data["height"] = node.height or 14
@@ -575,22 +762,39 @@ def _to_elk_json(root: Any) -> dict:
             edge_id = f"{identifier}.e{index}"
             # `event` rides through elkjs untouched (like cssClasses) and
             # becomes the SVG data-event attribute (longeron.replay matches
-            # fired transitions against it)
+            # fired transitions against it).  Edges may anchor on invisible
+            # convergence PORTS; identity (data-edge, replay keys) always
+            # uses the owning NODE's id, so the replay contract is
+            # port-blind.
+            source_anchor, source_node = endpoint_ids(edge.source)
+            target_anchor, target_node = endpoint_ids(edge.target)
             edges.append(
                 {
                     "id": edge_id,
-                    "sources": [node_id(edge.source)],
-                    "targets": [node_id(edge.target)],
+                    "sources": [source_anchor],
+                    "targets": [target_anchor],
                     "labels": convert_edge_labels(edge, edge_id),
                     "properties": {
                         "cssClasses": edge.properties.cssClasses or "",
                         "event": getattr(edge.metadata, "event", None) or "",
+                        "sourceNode": source_node,
+                        "targetNode": target_node,
                     },
                 }
             )
         if edges:
             data["edges"] = edges
         return data
+
+    def endpoint_ids(endpoint: Any) -> tuple[str, str]:
+        """(anchor id, owning-node id) for an edge endpoint: a Node is its
+        own anchor; a Port anchors the edge but identity stays with its
+        parent node."""
+
+        if hasattr(endpoint, "children"):  # a Node
+            identifier = node_id(endpoint)
+            return identifier, identifier
+        return node_id(endpoint), node_id(endpoint.get_parent())
 
     return convert(root)
 
@@ -723,11 +927,16 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'fill="none" stroke="{style["stroke"]}" stroke-width="1.2"/></g>'
                 )
             else:
+                dash_attr = ""
+                node_dash = style.get("stroke-dasharray")
+                if node_dash and node_dash != "none":
+                    # dashed-boundary containers (the «performer» swim lanes)
+                    dash_attr = f' stroke-dasharray="{node_dash}"'
                 parts.append(
                     f"<rect {qname} "
                     f'x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
                     f'height="{height:.1f}" rx="{style["rx"]}" '
-                    f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
+                    f'fill="{style["fill"]}" stroke="{style["stroke"]}"{dash_attr}/>'
                 )
         for label in node.get("labels", []):
             draw_label(label, x, y)
@@ -813,10 +1022,13 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
         if "sysml-edge-guarded" in css:
             dashes = _GUARDED_DASHARRAY
         # a group per edge, addressable from longeron.replay: data-edge is
-        # "<source id>-><target id>" (qualified names for model nodes),
+        # "<source id>-><target id>" (qualified names for model nodes; the
+        # OWNING node even when the edge anchors on a convergence port),
         # data-event the comma-joined accepted event names (or "")
         sources, targets = edge.get("sources", []), edge.get("targets", [])
-        data_edge = f"{sources[0]}->{targets[0]}" if sources and targets else ""
+        source_id = edge.get("properties", {}).get("sourceNode") or (sources[0] if sources else "")
+        target_id = edge.get("properties", {}).get("targetNode") or (targets[0] if targets else "")
+        data_edge = f"{source_id}->{target_id}" if sources and targets else ""
         event = edge.get("properties", {}).get("event", "") or ""
         parts.append(
             f'<g data-edge="{_escape_attr(data_edge)}" data-event="{_escape_attr(event)}">'
@@ -827,9 +1039,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
         else:
             marker = f' marker-end="url(#{_marker_id(end, style["stroke"])})"'
         start = _edge_start(css)
-        if start is not None:  # membership diamond at the whole/type end
-            hollow = start == "hollow-diamond"
-            marker += f' marker-start="url(#{_diamond_id(style["stroke"], hollow)})"'
+        if start is not None:  # source-end glyph (diamond / pin / circle)
+            marker += f' marker-start="url(#{_start_marker_id(start, style["stroke"])})"'
         for section in edge.get("sections", []):
             points = [section["startPoint"], *section.get("bendPoints", []), section["endPoint"]]
             path = " ".join(

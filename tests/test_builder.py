@@ -232,3 +232,101 @@ def test_metadata_prefixed_enum_value():
     """)
     literal = model.find("P::Level::secret")
     assert literal.metadata == ["Security"]
+
+
+def test_flow_usage_carries_ends_and_payload():
+    """The diagram contract for flow connections (errata E16): dotted end
+    paths and the payload item text live on the FlowUsage."""
+
+    model = longeron.loads("""
+        package P {
+            item def Item1;
+            action def A { in x : Item1; out y : Item1; }
+            action a1 : A;
+            action a2 : A;
+            flow of Item1 from a1.y to a2.x;
+        }
+    """)
+    flow = next(m for m in model.find("P").members if isinstance(m, M.FlowUsage))
+    assert flow.kind == "flow"
+    assert flow.source == "a1.y"
+    assert flow.target_end == "a2.x"
+    assert flow.payload == "Item1"
+
+
+def test_nary_dependency_clients_and_suppliers():
+    """The grammar allows comma lists on both sides -- the model keeps the
+    full n-ary shape (the diagram draws a junction dot for it)."""
+
+    model = longeron.loads("package P { part a; part b; part s; dependency D from a, b to s; }")
+    dep = next(m for m in model.find("P").members if isinstance(m, M.Dependency))
+    assert dep.name == "D"
+    assert dep.clients == ["a", "b"]
+    assert dep.suppliers == ["s"]
+
+
+def test_satisfy_forms_keep_requirement_and_by():
+    """Anonymous shorthand parks the requirement in subsets (a reference
+    subsetting) plus `by`; the named longhand uses `references`."""
+
+    model = longeron.loads("""
+        package P {
+            requirement requirement1;
+            part sys;
+            satisfy requirement1 by sys;
+            part part1 {
+                satisfy requirement requirement2 references requirement1;
+            }
+        }
+    """)
+    shorthand = next(m for m in model.find("P").members if isinstance(m, M.SatisfyUsage))
+    assert shorthand.name is None
+    assert shorthand.subsets == ["requirement1"]
+    assert shorthand.by == "sys"
+    longhand = model.find("P::part1::requirement2")
+    assert isinstance(longhand, M.SatisfyUsage)
+    assert longhand.references == "requirement1"
+    assert longhand.by is None
+
+
+def test_alias_member_target():
+    model = longeron.loads("""
+        package Lib { part def Target; }
+        package App { alias T for Lib::Target; }
+    """)
+    alias = next(m for m in model.find("App").members if isinstance(m, M.Alias))
+    assert alias.name == "T"
+    assert alias.target == "Lib::Target"
+
+
+def test_portion_usages_keep_kind_and_type():
+    model = longeron.loads("""
+        package P {
+            individual part def Rover;
+            individual rover : Rover;
+            timeslice t1 : Rover;
+            snapshot s1 : Rover;
+        }
+    """)
+    assert model.find("P::Rover").is_individual
+    rover = model.find("P::rover")
+    assert rover.kind == "individual" and rover.is_individual
+    t1 = model.find("P::t1")
+    assert t1.kind == "timeslice" and t1.portion_kind == "timeslice"
+    s1 = model.find("P::s1")
+    assert s1.kind == "snapshot" and s1.portion_kind == "snapshot"
+    assert t1.types == ["Rover"]
+
+
+def test_actor_and_stakeholder_usages():
+    model = longeron.loads("""
+        package P {
+            part def Person;
+            use case def Deliver { actor driver : Person; }
+            requirement def Comfort { stakeholder owner : Person; }
+        }
+    """)
+    driver = model.find("P::Deliver::driver")
+    assert driver.kind == "actor" and driver.types == ["Person"]
+    owner = model.find("P::Comfort::owner")
+    assert owner.kind == "stakeholder" and owner.types == ["Person"]

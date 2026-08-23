@@ -17,6 +17,12 @@ def drone_model():
     return longeron.load("examples/drone.sysml")
 
 
+def _walk_children(node):
+    yield node
+    for child in node.children:
+        yield from _walk_children(child)
+
+
 class TestSvg:
     def test_structure_svg(self, drone_model, tmp_path):
         path = tmp_path / "structure.svg"
@@ -252,6 +258,273 @@ class TestSvg:
         groups = [g.split("</g>")[0] for g in abort.split("<g data-qname=")[1:]]
         assert any("<circle" in g and "<path" in g and " L " in g for g in groups)
         assert "terminate" in abort  # the glyph label
+
+    def test_flow_connections_draw_pins_and_payload_labels(self):
+        """Flow connections (errata E16/M1): solid line from a small square
+        source-output pin to a small square target-input pin, small FILLED
+        arrowhead at the target pin, payload item labels near each end."""
+
+        model = longeron.loads("""
+            package P {
+                item def Item1;
+                action def A { in x : Item1; out y : Item1; }
+                action a1 : A;
+                action a2 : A;
+                flow of Item1 from a1.y to a2.x;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        flow = svg.split('data-edge="P::a1-&gt;P::a2"')[1].split("</g>")[0]
+        assert f'marker-start="url(#{render._start_marker_id("pin", "#555555")})"' in flow
+        assert f'marker-end="url(#{render._marker_id("pin-arrow", "#555555")})"' in flow
+        assert "dasharray" not in flow  # flows are solid connector lines
+        assert flow.count(">Item1</text>") == 4  # 2 ends x (halo + fill)
+        # marker geometry: hollow squares straddle the border (white body),
+        # the target pin carries a small FILLED arrowhead tight against it
+        defs = svg.split("</defs>")[0]
+        pin = defs.split(f'id="{render._start_marker_id("pin", "#555555")}"')[1].split("</marker>")[
+            0
+        ]
+        assert 'fill="#ffffff"' in pin and "<rect" in pin
+        pin_arrow = defs.split(f'id="{render._marker_id("pin-arrow", "#555555")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'fill="#555555"' in pin_arrow  # the filled direction head
+        assert 'fill="#ffffff"' in pin_arrow  # the hollow pin square
+
+    def test_binding_connectors_carry_the_equals_glyph(self):
+        """Binding connectors (errata E15): '=' rides the solid line
+        mid-span; no endpoint glyphs."""
+
+        model = longeron.loads("""
+            package P {
+                part a;
+                part b;
+                binding bind a = b;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        bind = svg.split('data-edge="P::a-&gt;P::b"')[1].split("</g>")[0]
+        assert ">=</text>" in bind
+        assert "marker-end" not in bind and "marker-start" not in bind
+        assert "dasharray" not in bind
+
+    def test_dependency_edges_binary_and_nary(self):
+        """Dependencies (errata E8): dashed open-V client->supplier with the
+        optional (rel-name) label; n-ary form radiates dashed links from a
+        filled junction dot -- client links plain, supplier links arrowed."""
+
+        model = longeron.loads("""
+            package P {
+                part a;
+                part b;
+                part c;
+                part s;
+                dependency Uses from a to s;
+                dependency Multi from b, c to s;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        binary = svg.split('data-edge="P::a-&gt;P::s"')[1].split("</g>")[0]
+        assert f'marker-end="url(#{render._arrow_id("#a85c78")})"' in binary
+        assert 'stroke-dasharray="4 2"' in binary
+        assert ">(Uses)</text>" in binary  # optional (rel-name) label
+        # n-ary: a filled junction dot node; client links carry NO head
+        junction = svg.split('data-qname="P::Multi"')[1].split("/>")[0]
+        assert 'fill="#a85c78"' in junction
+        client = svg.split('data-edge="P::b-&gt;P::Multi"')[1].split("</g>")[0]
+        assert "marker-end" not in client
+        assert 'stroke-dasharray="4 2"' in client
+        supplier = svg.split('data-edge="P::Multi-&gt;P::s"')[1].split("</g>")[0]
+        assert f'marker-end="url(#{render._arrow_id("#a85c78")})"' in supplier
+
+    def test_satisfy_notation_both_forms(self):
+        """Satisfy (spec printed p.133): the anonymous shorthand draws a
+        solid «satisfy» keyword edge from the satisfying element to the
+        requirement; the named longhand draws a «satisfy requirement» box
+        wired to the «requirement» box by REFERENCE subsetting (the
+        double-colon dotted hollow triangle)."""
+
+        model = longeron.loads("""
+            package Reqs { requirement requirement1; }
+            package Sys {
+                part part1 {
+                    satisfy requirement requirement2 references Reqs::requirement1;
+                }
+                part sys;
+                satisfy Reqs::requirement1 by sys;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        assert "\u00abrequirement\u00bb" in svg  # requirement usages draw as boxes
+        assert "\u00absatisfy requirement\u00bb" in svg
+        longhand = svg.split('data-edge="Sys::part1::requirement2-&gt;Reqs::requirement1"')[
+            1
+        ].split("</g>")[0]
+        assert f'marker-end="url(#{render._marker_id("hollow-dcolon", "#6a9a48")})"' in longhand
+        shorthand = svg.split('data-edge="Sys::sys-&gt;Reqs::requirement1"')[1].split("</g>")[0]
+        assert f'marker-end="url(#{render._arrow_id("#a85c78")})"' in shorthand
+        assert "\u00absatisfy\u00bb" in shorthand
+        assert "dasharray" not in shorthand  # keyword edges are solid
+
+    def test_alias_membership_circle(self):
+        """Membership (unowned/alias, errata E18): solid line, small HOLLOW
+        circle at the referencing namespace end, alias name as the label."""
+
+        model = longeron.loads("""
+            package Lib { part def Target; }
+            package App { alias T for Lib::Target; }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        alias = svg.split('data-edge="App-&gt;Lib::Target"')[1].split("</g>")[0]
+        assert f'marker-start="url(#{render._start_marker_id("circle", "#555555")})"' in alias
+        assert "marker-end" not in alias
+        assert ">T</text>" in alias  # the alias name labels the edge
+        defs = svg.split("</defs>")[0]
+        circle = defs.split(f'id="{render._start_marker_id("circle", "#555555")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'fill="#ffffff"' in circle  # hollow, forever
+
+    def test_portion_membership_ball(self):
+        """Portion membership (errata new row): timeslice/snapshot usages
+        link to their individual with a FILLED ball, open-V notch on the
+        line side, at the WHOLE-occurrence end -- replacing the plain
+        typing edge; the «individual»/«timeslice»/«snapshot» keywords
+        ride the boxes."""
+
+        model = longeron.loads("""
+            package P {
+                individual part def Rover;
+                timeslice t1 : Rover;
+                snapshot s1 : Rover;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        assert "\u00abindividual part def\u00bb" in svg
+        assert "\u00abtimeslice\u00bb" in svg and "\u00absnapshot\u00bb" in svg
+        for name in ("t1", "s1"):
+            edge = svg.split(f'data-edge="P::{name}-&gt;P::Rover"')[1].split("</g>")[0]
+            assert f'marker-end="url(#{render._marker_id("ball-notch", "#555555")})"' in edge
+            # the portion edge REPLACES the typing edge (no colon-dot head)
+            assert "hollow-colon" not in edge
+        assert svg.count('data-edge="P::t1-&gt;P::Rover"') == 1  # no duplicate
+        defs = svg.split("</defs>")[0]
+        ball = defs.split(f'id="{render._marker_id("ball-notch", "#555555")}"')[1].split(
+            "</marker>"
+        )[0]
+        assert 'fill="#555555"' in ball and " A " in ball  # filled, notched
+
+    def test_actor_and_stakeholder_keyword_boxes(self):
+        """Actors/stakeholders (errata N17): the keyword-box form -- a
+        rounded usage box with «actor»/«stakeholder» -- not invisible."""
+
+        model = longeron.loads("""
+            package P {
+                part def Person;
+                use case def Deliver {
+                    subject route;
+                    actor driver : Person;
+                }
+                requirement def Comfort {
+                    stakeholder owner : Person;
+                }
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        assert "\u00abactor\u00bb" in svg
+        assert "\u00abstakeholder\u00bb" in svg
+        assert 'data-qname="P::Deliver::driver"' in svg
+        # the actor's typing edge draws like any usage->def typing
+        typed = svg.split('data-edge="P::Deliver::driver-&gt;P::Person"')[1].split("</g>")[0]
+        assert "hollow-colon" in typed
+
+    def test_swimlanes_draw_dashed_performer_lanes(self):
+        """Perform Actions Swimlanes (spec printed p.90): lanes=... adds
+        dashed-boundary «performer» containers ordered left-to-right by
+        ELK layer partitioning; steps sit inside their performer's lane,
+        start/done stay outside; default stays lane-free."""
+
+        model = longeron.loads("""
+            package P {
+                part station { action a1; action a4; }
+                part rover { action a2; action a3; }
+                action def Swim {
+                    perform station.a1;
+                    perform rover.a2;
+                    perform rover.a3;
+                    perform station.a4;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Swim"), lanes=True)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        lanes = [c for c in graph["children"] if "sysml-lane" in c["properties"]["cssClasses"]]
+        assert [lane["labels"][1]["text"] for lane in lanes] == ["station", "rover"]
+        assert all(lane["labels"][0]["text"] == "\u00abperformer\u00bb" for lane in lanes)
+        # partitioning orders the lanes left-to-right, start before, done after
+        station, rover = lanes
+        assert station["x"] + station["width"] <= rover["x"]
+        start = next(c for c in graph["children"] if "sysml-marker" in str(c["properties"]))
+        done = next(c for c in graph["children"] if "sysml-final" in str(c["properties"]))
+        assert start["x"] + start["width"] <= station["x"]
+        assert done["x"] >= rover["x"] + rover["width"]
+        # both a2 and a3 sit INSIDE the rover lane
+        rover_steps = {child["labels"][-1]["text"] for child in rover["children"]}
+        assert rover_steps == {"rover.a2", "rover.a3"}
+        # the boundary is dashed in the headless SVG
+        svg = render._svg_from_layout(graph)
+        assert svg.count('stroke-dasharray="4 3"') == 2
+        # default: no lanes
+        plain = diagrams.action_diagram(model.find("P::Swim"))
+        assert not any(
+            "sysml-lane" in (n.properties.cssClasses or "")
+            for n in _walk_children(plain.source.value)
+        )
+
+    def test_control_glyphs_converge_edges_on_single_anchors(self):
+        """Item 10: decision/merge/done/start/terminate glyphs anchor ALL
+        incoming edges at one point and all outgoing at one point (fixed
+        west/east convergence ports); fork/join bars keep distributing
+        edges along the bar; replay's data-edge keys stay node-qualified."""
+
+        model = longeron.loads("""
+            package P {
+                action def Flow {
+                    action a;
+                    action b;
+                    action c;
+                    decide d;
+                    merge g;
+                    first start then d;
+                    first d if x > 0 then a;
+                    first d if x < 0 then b;
+                    first d then c;
+                    first a then g;
+                    first b then g;
+                    first c then g;
+                    first g then done;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Flow"))
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        starts: dict = {}
+        ends: dict = {}
+        for edge in graph.get("edges", []):
+            section = edge["sections"][0]
+            source = edge["properties"]["sourceNode"]
+            target = edge["properties"]["targetNode"]
+            point = section["startPoint"]
+            starts.setdefault(source, set()).add((point["x"], point["y"]))
+            point = section["endPoint"]
+            ends.setdefault(target, set()).add((point["x"], point["y"]))
+        assert len(starts["P::Flow::d"]) == 1  # 3 out-edges, ONE anchor
+        assert len(ends["P::Flow::g"]) == 1  # 3 in-edges, ONE anchor
+        # data-edge keys keep the replay contract (node ids, never ports)
+        svg = render._svg_from_layout(graph)
+        assert 'data-edge="P::Flow::d-&gt;P::Flow::a"' in svg
+        assert '.in"' not in svg and '.out"' not in svg
 
     def test_transition_arrowheads_are_open(self, drone_model):
         """Transitions/successions keep open (two-stroke V) heads; the

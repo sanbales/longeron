@@ -273,6 +273,176 @@ class TestStructure:
             "sysml-edge-connect" in e.properties.cssClasses for e in widget.source.value.edges
         )
 
+    def test_flow_edges_carry_pin_symbols(self):
+        """Flow connections (errata E16): border pin at BOTH ends -- the
+        square source-output pin and the square-plus-filled-arrowhead
+        target-input pin -- with payload item labels near each end."""
+
+        model = longeron.loads("""
+            package P {
+                item def Item1;
+                action def A { in x : Item1; out y : Item1; }
+                action a1 : A;
+                action a2 : A;
+                flow of Item1 from a1.y to a2.x;
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        flow = next(
+            e for e in widget.source.value.edges if "sysml-edge-flow" in e.properties.cssClasses
+        )
+        assert flow.properties.shape.start == "flow-source-pin"
+        assert flow.properties.shape.end == "flow-target-pin"
+        assert (flow.source.id, flow.target.id) == ("P::a1", "P::a2")
+        placements = {
+            label.layoutOptions["elk.edgeLabels.placement"]
+            for label in flow.labels
+            if label.text == "Item1"
+        }
+        assert placements == {"TAIL", "HEAD"}  # payload labels at both ends
+        # both pin symbols are registered, self-painted (white body +
+        # currentColor), and the stylesheet binds currentColor to the stroke
+        library = widget.symbols.library
+        for identifier in ("flow-source-pin", "flow-target-pin"):
+            assert 'fill="#ffffff"' in library[identifier].element.properties.shape.use
+        assert "currentColor" in library["flow-target-pin"].element.properties.shape.use
+        assert diagrams.SYSML_STYLE[" .sysml-edge-flow > .elkarrow"]["color"] == "#555555"
+
+    def test_binding_edge_rides_the_equals_glyph(self):
+        model = longeron.loads("package P { part a; part b; binding bind a = b; }")
+        widget = diagrams.structure_diagram(model)
+        binding = next(
+            e for e in widget.source.value.edges if "sysml-edge-binding" in e.properties.cssClasses
+        )
+        assert [label.text for label in binding.labels] == ["="]
+        assert binding.properties.shape is None  # no endpoint glyphs
+
+    def test_named_satisfy_draws_reference_subsetting_to_the_requirement(self):
+        model = longeron.loads("""
+            package Reqs { requirement requirement1; }
+            package Sys {
+                part part1 {
+                    satisfy requirement requirement2 references Reqs::requirement1;
+                }
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        node = next(n for n in _walk(widget.source.value) if n.id == "Sys::part1::requirement2")
+        assert node.labels[0].text == "\u00absatisfy requirement\u00bb"
+        edge = next(
+            e
+            for e in widget.source.value.edges
+            if "sysml-edge-references" in e.properties.cssClasses
+        )
+        assert (edge.source.id, edge.target.id) == (
+            "Sys::part1::requirement2",
+            "Reqs::requirement1",
+        )
+        assert edge.properties.shape.end == "generalization-dcolon"
+
+    def test_anonymous_satisfy_draws_keyword_edge(self):
+        model = longeron.loads("""
+            package P {
+                requirement requirement1;
+                part sys;
+                satisfy requirement1 by sys;
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        edge = next(
+            e
+            for e in widget.source.value.edges
+            if "sysml-edge-satisfies" in e.properties.cssClasses
+        )
+        assert (edge.source.id, edge.target.id) == ("P::sys", "P::requirement1")
+        label = edge.labels[0]
+        assert label.text == "\u00absatisfy\u00bb"
+        assert "sysml-stereotype" in label.properties.cssClasses  # keyword typography
+
+    def test_nary_dependency_junction(self):
+        model = longeron.loads("""
+            package P {
+                part a;
+                part b;
+                part s;
+                dependency Multi from a, b to s;
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        root = widget.source.value
+        junction = next(
+            n for n in _walk(root) if "sysml-junction" in (n.properties.cssClasses or "")
+        )
+        assert junction.labels[0].text == "(Multi)"
+        kinds = [
+            (e.source.id, e.target.id, e.properties.cssClasses)
+            for e in root.edges
+            if "sysml-edge-dep" in e.properties.cssClasses
+        ]
+        client_edges = [k for k in kinds if "depclient" in k[2]]
+        supplier_edges = [k for k in kinds if "sysml-edge-dependency" in k[2]]
+        assert len(client_edges) == 2 and len(supplier_edges) == 1
+        # selection contract: the junction is a FILLED glyph (fill follows
+        # the stroke on selection) with a pinned stroke width
+        selected = diagrams.SYSML_STYLE[" .sysml-junction > .elknode.selected"]
+        assert selected == {
+            "fill": "var(--jp-elk-color-selected)",
+            "stroke": "var(--jp-elk-color-selected)",
+        }
+        assert diagrams.SYSML_STYLE[" .sysml-junction > .elknode"] == {"stroke-width": "1.2"}
+
+    def test_alias_edge_carries_the_hollow_circle(self):
+        model = longeron.loads("""
+            package Lib { part def Target; }
+            package App { alias T for Lib::Target; }
+        """)
+        widget = diagrams.structure_diagram(model)
+        alias = next(
+            e for e in widget.source.value.edges if "sysml-edge-alias" in e.properties.cssClasses
+        )
+        assert (alias.source.id, alias.target.id) == ("App", "Lib::Target")
+        assert alias.properties.shape.start == "alias-circle"
+        assert alias.labels[0].text == "T"
+        # hollow forever: the alias circle stays white even selected
+        assert diagrams.SYSML_STYLE[" .sysml-edge-alias > .elkarrow"]["fill"] == "#ffffff"
+
+    def test_portion_membership_edge(self):
+        model = longeron.loads("""
+            package P {
+                individual part def Rover;
+                timeslice t1 : Rover;
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        edges = [
+            e for e in widget.source.value.edges if "sysml-edge-portion" in e.properties.cssClasses
+        ]
+        assert [(e.source.id, e.target.id) for e in edges] == [("P::t1", "P::Rover")]
+        assert edges[0].properties.shape.end == "portion-ball"
+        # the portion edge REPLACES the plain typing edge
+        assert not any(
+            "sysml-edge-typed" in e.properties.cssClasses for e in widget.source.value.edges
+        )
+        # keywords ride the boxes (errata N15)
+        t1 = next(n for n in _walk(widget.source.value) if n.id == "P::t1")
+        assert t1.labels[0].text == "\u00abtimeslice\u00bb"
+        rover = next(n for n in _walk(widget.source.value) if n.id == "P::Rover")
+        assert rover.labels[0].text == "\u00abindividual part def\u00bb"
+
+    def test_actor_and_stakeholder_boxes(self):
+        model = longeron.loads("""
+            package P {
+                part def Person;
+                use case def Deliver {
+                    actor driver : Person;
+                }
+            }
+        """)
+        widget = diagrams.structure_diagram(model)
+        driver = next(n for n in _walk(widget.source.value) if n.id == "P::Deliver::driver")
+        assert driver.labels[0].text == "\u00abactor\u00bb"
+        assert "sysml-usage" in driver.properties.cssClasses
+
     def test_relationships_can_be_disabled(self, drone_model):
         widget = diagrams.structure_diagram(drone_model, show_relationships=False)
         edges = widget.source.value.edges
@@ -544,6 +714,84 @@ class TestActions:
         assert render._EDGE_STYLES["sysml-edge-succession"]["stroke-dasharray"] == "4 2"
         assert "stroke-dasharray" not in render._EDGE_STYLES["sysml-edge-transition"]
         assert render._EDGE_ENDS["sysml-edge-succession"] == "open"
+
+    def test_control_glyphs_get_convergence_anchor_ports(self):
+        """Item 10: decision/merge/terminate/start/done glyphs carry two
+        invisible fixed-side ports (west in, east out) so ELK joins every
+        fan at a single point; fork/join bars stay port-free (edges
+        distribute along the bar, their semantic)."""
+
+        model = longeron.loads("""
+            package P {
+                action def Flow {
+                    action a;
+                    fork f;
+                    decide d;
+                    first start then f;
+                    first f then d;
+                    first d then a;
+                    first a then done;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Flow"))
+        root = widget.source.value
+        by_css = {}
+        for node in _walk(root):
+            for fragment in (node.properties.cssClasses or "").split():
+                by_css.setdefault(fragment, node)
+        for css in ("sysml-ctrl-diamond", "sysml-marker", "sysml-final"):
+            node = by_css[css]
+            sides = [port.layoutOptions["elk.port.side"] for port in node.ports]
+            assert sides == ["WEST", "EAST"], css
+            assert all((port.width, port.height) == (0, 0) for port in node.ports)
+            assert node.layoutOptions["elk.portConstraints"] == "FIXED_SIDE"
+            assert node.layoutOptions["elk.portAlignment.default"] == "CENTER"
+        assert by_css["sysml-ctrl-bar"].ports == []  # bars distribute
+        # edges into/out of anchored glyphs reference the PORTS
+        diamond = by_css["sysml-ctrl-diamond"]
+        into = [e for e in root.edges if getattr(e.target, "get_parent", None) is not None]
+        assert any(e.target in diamond.ports for e in root.edges)
+        assert any(e.source in diamond.ports for e in root.edges)
+        assert into  # port-anchored edges exist
+
+    def test_swimlanes_default_off_and_explicit_mapping(self):
+        """lanes= partitions steps into dashed «performer» containers; an
+        explicit mapping wins over derivation; default draws no lanes."""
+
+        model = longeron.loads("""
+            package P {
+                action def Pipeline {
+                    action a { assign x := 1; }
+                    action b { assign x := 2; }
+                    first start then a;
+                    first a then b;
+                    first b then done;
+                }
+            }
+        """)
+        pipeline = model.find("P::Pipeline")
+        plain = diagrams.action_diagram(pipeline)
+        assert not any(
+            "sysml-lane" in (n.properties.cssClasses or "") for n in _walk(plain.source.value)
+        )
+        widget = diagrams.action_diagram(pipeline, lanes={"robot": ["a", "b"]})
+        root = widget.source.value
+        lanes = [n for n in _walk(root) if "sysml-lane" in (n.properties.cssClasses or "")]
+        assert len(lanes) == 1
+        lane = lanes[0]
+        assert [label.text for label in lane.labels] == ["\u00abperformer\u00bb", "robot"]
+        assert {child.id for child in lane.children} == {"P::Pipeline::a", "P::Pipeline::b"}
+        # lanes order left-to-right by ELK layer partitioning
+        assert root.layoutOptions["elk.partitioning.activate"] == "true"
+        assert lane.layoutOptions["elk.partitioning.partition"] == "1"
+        start = next(n for n in _walk(root) if "sysml-marker" in (n.properties.cssClasses or ""))
+        done = next(n for n in _walk(root) if "sysml-final" in (n.properties.cssClasses or ""))
+        assert start.layoutOptions["elk.partitioning.partition"] == "0"
+        assert done.layoutOptions["elk.partitioning.partition"] == "2"
+        # the lane boundary is dashed and its stroke width pinned
+        assert diagrams.SYSML_STYLE[" .sysml-lane > rect"]["stroke-dasharray"] == "4 3"
+        assert diagrams.SYSML_STYLE[" .sysml-lane > .elknode"] == {"stroke-width": "1.2"}
 
 
 class TestDispatcherAndSelection:

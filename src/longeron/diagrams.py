@@ -11,6 +11,15 @@ environments install it automatically).  Three views, one dispatcher:
   (colon dots = typing, bar tick = redefinition, double colon dots =
   reference subsetting); composite/referential membership draws a
   filled/hollow diamond at the whole end with end multiplicities.
+  Connector-family notation: flow connections run pin-to-pin (small
+  border squares, filled arrowhead at the target pin, payload labels at
+  both ends), binding connectors ride an ``=`` glyph, dependencies draw
+  dashed open-V client->supplier (n-ary via a filled junction dot),
+  satisfies draw the «satisfy» keyword edge or -- for named satisfy
+  usages -- the reference-subsetting head into the «requirement» box;
+  aliases draw a hollow circle at the referencing end, portion usages
+  (timeslice/snapshot) a filled notched ball at their individual, and
+  actors/stakeholders render as «actor»/«stakeholder» keyword boxes.
 * :func:`state_diagram` -- hierarchical states, entry markers, transitions
   labeled ``trigger [guard] / effect``; state usages typed by a state def
   expand into the definition's submachine (``submachine_depth`` bounds the
@@ -18,7 +27,9 @@ environments install it automatically).  Three views, one dispatcher:
 * :func:`action_diagram` -- the succession control-flow graph (the same one
   the interpreter executes), with the spec behavior glyphs: start dot,
   done bullseye, terminate circle-X, fork/join bars, decision/merge
-  rhombi, accept/send badge boxes; successions render dashed.
+  rhombi, accept/send badge boxes; successions render dashed.  Control
+  glyphs converge their edge fans on single anchor points; ``lanes=``
+  partitions the flow into dashed «performer» swim lanes.
 * :func:`diagram` -- picks a view based on the element's kind.
 
 Every view ships a compact toolbar (:mod:`longeron.toolbar`): icon-only
@@ -34,12 +45,12 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 try:
     import ipyelk
-    from ipyelk.contrib.molds.connectors import Rhomb, StraightArrow, ThinArrow
+    from ipyelk.contrib.molds.connectors import Rhomb
     from ipyelk.elements import (
         Edge,
         EdgeProperties,
@@ -48,6 +59,8 @@ try:
         LabelProperties,
         Node,
         NodeProperties,
+        Port,
+        PortProperties,
     )
     from ipyelk.elements.elements import ElementMetadata
     from ipyelk.elements.shapes import SVG, Diamond, Icon, Path, Point
@@ -67,9 +80,12 @@ from .render import (
     _ADORN_GAP,
     _BADGE_HEIGHT,
     _BADGE_WIDTH,
+    _BALL_MOUTH_DEG,
+    _BALL_RADIUS,
     _BAR_LONG,
     _BAR_SHORT,
     _BULLSEYE_CORE_RATIO,
+    _CIRCLE_RADIUS,
     _CTRL_DIAMOND_SIZE,
     _DCOLON_SPACING,
     _DOT_OFFSET,
@@ -77,11 +93,20 @@ from .render import (
     _EDGE_ENDS,
     _EDGE_STARTS,
     _EDGE_STYLES,
+    _FLOW_HEAD_HALF,
+    _FLOW_HEAD_LENGTH,
     _GLYPH_SIZE,
     _GUARDED_DASHARRAY,
+    _HEAD_HALF,
+    _HEAD_LENGTH,
+    _JUNCTION_SIZE,
     _LABEL_STYLES,
     _NODE_STYLES,
+    _PIN_RX,
+    _PIN_SIZE,
     _TICK_HALF,
+    _V_HALF,
+    _V_LENGTH,
     _badge_points,
     _edge_end,
     _edge_start,
@@ -98,7 +123,13 @@ __all__ = [
     "structure_diagram",
 ]
 
-_KIND_STEREOTYPES = {"use_case": "use case", "enum_literal": "", "feature": ""}
+_KIND_STEREOTYPES = {
+    "use_case": "use case",
+    "enum_literal": "",
+    "feature": "",
+    # the «satisfy requirement» usage box (spec printed p.133)
+    "satisfy": "satisfy requirement",
+}
 
 
 def _sysml_style() -> dict[str, dict[str, str]]:
@@ -147,12 +178,17 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             }
             style[f" .{css} > .elknode.selected .glyph-ring"] = {"stroke": selected}
             style[f" .{css} > .elknode.selected .glyph-x"] = {"stroke": selected}
-    # fork/join bars are FILLED rects: selection flips fill with the stroke
-    # (rule 3); the tiny glyph nodes pin their stroke width in every state
-    # (the theme bumps selected nodes to width 3 -- a 6px bar becomes a blob)
-    style[" .sysml-ctrl-bar > .elknode.selected"] = {"fill": selected, "stroke": selected}
-    for css in ("sysml-marker", "sysml-ctrl-bar", "sysml-ctrl-diamond"):
+    # fork/join bars and the n-ary dependency junction dot are FILLED
+    # glyphs: selection flips fill with the stroke (rule 3); the tiny glyph
+    # nodes pin their stroke width in every state (the theme bumps selected
+    # nodes to width 3 -- a 6px bar becomes a blob).  Lane boundaries pin
+    # too: selection recolors the dashed border, never fattens it.
+    for css in ("sysml-ctrl-bar", "sysml-junction"):
+        style[f" .{css} > .elknode.selected"] = {"fill": selected, "stroke": selected}
+    for css in ("sysml-marker", "sysml-ctrl-bar", "sysml-ctrl-diamond", "sysml-junction"):
         style[f" .{css} > .elknode"] = {"stroke-width": "1.2"}
+    style[" .sysml-lane > .elknode"] = {"stroke-width": "1.2"}
+    style[" .sysml-lane > .elknode.selected"] = {"stroke-width": "1.2"}
     for css, label_style in _LABEL_STYLES.items():
         style[f" .{css} > text"] = {
             "fill": label_style["fill"],
@@ -162,8 +198,11 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         style[f" .{css} > path"] = dict(edge_style)
         # arrowheads (the <use class="elkarrow"> child) must be recolored
         # separately: they inherit the theme gray from the edge <g>, not the
-        # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics)
-        arrow_style = {"stroke": edge_style["stroke"]}
+        # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics).
+        # `color` binds currentColor for the self-painted symbol geometry
+        # (adorned triangle dots/ticks, flow pins, portion ball) to the
+        # edge stroke.
+        arrow_style = {"stroke": edge_style["stroke"], "color": edge_style["stroke"]}
         end_form = _EDGE_ENDS.get(css, "")
         start_form = _EDGE_STARTS.get(css)
         if end_form.startswith("hollow"):
@@ -172,17 +211,12 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             # the outline takes the edge color -- derived from the same
             # table the headless markers use (V3)
             arrow_style["fill"] = "#ffffff"
-            if end_form != "hollow":
-                # adorned heads (typing colon dots, redefinition tick,
-                # reference-subsetting double dots) draw their FILLED
-                # adornments with currentColor: bind it to the edge stroke
-                arrow_style["color"] = edge_style["stroke"]
         if start_form == "filled-diamond":
             # composite membership: the diamond fill is BOUND to the edge
             # stroke (selection flips both, rule 3)
             arrow_style["fill"] = edge_style["stroke"]
-        elif start_form == "hollow-diamond":
-            # referential membership: hollow diamonds stay white forever
+        elif start_form in ("hollow-diamond", "circle"):
+            # referential membership diamonds / alias circles stay white
             arrow_style["fill"] = "#ffffff"
         style[f" .{css} > .elkarrow"] = arrow_style
         if start_form == "filled-diamond":
@@ -242,6 +276,39 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             },
         }
     )
+    # ... but the label KINDS are measured at their own sizes (attribute
+    # rows 10px, «keyword» stereotypes 9px, per _LABEL_STYLES): the blanket
+    # 11px !important above was inflating them in the browser, so their
+    # pre-sized boxes overflowed the node (maintainer repro: QuadCopter's
+    # totalMass row).  Per-kind rules -- higher specificity than the
+    # blanket rule -- restore the measured sizes; selection still recolors.
+    for css, label_style in _LABEL_STYLES.items():
+        kind_style = {
+            "font-size": f"{label_style['font-size']}px !important",
+            "fill": label_style["fill"],
+        }
+        if label_style.get("font-style"):
+            kind_style["font-style"] = label_style["font-style"]
+        style[f" text.elklabel.{css}"] = kind_style
+        style[f" text.elklabel.{css}.selected"] = {"fill": selected}
+    # ports (interconnection squares to come, flow pins, and the stubs
+    # ipyelk substitutes for collapsed content -- 'slack' ports): white
+    # body, border in the OWNING node kind's stroke color, stroke width
+    # pinned in every state; selection recolors the FILL (§2.0 rule 4),
+    # hover never fattens.  Single-sourced from _NODE_STYLES.
+    style[" .elkport"] = {"fill": "#ffffff", "stroke-width": "var(--jp-elk-stroke-width)"}
+    style[" .elkport.selected"] = {
+        "fill": selected,
+        "stroke-width": "var(--jp-elk-stroke-width)",
+    }
+    style[" .elkport.mouseover"] = {"stroke-width": "var(--jp-elk-stroke-width)"}
+    for css, node_style in _NODE_STYLES.items():
+        style[f" .{css} .elkport"] = {"stroke": node_style["stroke"]}
+        style[f" .{css} .elkport.selected"] = {
+            "fill": selected,
+            "stroke": selected,
+            "stroke-width": "var(--jp-elk-stroke-width)",
+        }
     return style
 
 
@@ -335,6 +402,26 @@ def _mult_bracket_text(mult: M.Multiplicity) -> str | None:
     return text.split("]")[0] + "]"
 
 
+def _add_end_label(edge: Edge, text: str, placement: str, css: str = "sysml-attribute") -> None:
+    """Attach a label near the edge's HEAD or TAIL (end multiplicities,
+    flow payload items), pre-sized like every edge label."""
+
+    label = _label(text, css)
+    label.layoutOptions = {"elk.edgeLabels.placement": placement}
+    shape = label.properties.get_shape()
+    shape.width, shape.height = _measure(text, css)
+    edge.labels = [*(edge.labels or []), label]
+
+
+def _add_center_label(edge: Edge, text: str, css: str = "") -> None:
+    """Append a centered, pre-sized label to an edge (the binding ``=``)."""
+
+    label = _label(text, css)
+    shape = label.properties.get_shape()
+    shape.width, shape.height = _measure(text, css)
+    edge.labels = [*(edge.labels or []), label]
+
+
 def _add_end_multiplicity(edge: Edge, mult: M.Multiplicity, placement: str) -> None:
     """Attach an end-multiplicity label (``[4]``) near the edge's HEAD or
     TAIL, in the attribute typography; pre-sized like every edge label."""
@@ -342,11 +429,7 @@ def _add_end_multiplicity(edge: Edge, mult: M.Multiplicity, placement: str) -> N
     text = _mult_bracket_text(mult)
     if text is None:
         return
-    label = _label(text, "sysml-attribute")
-    label.layoutOptions = {"elk.edgeLabels.placement": placement}
-    shape = label.properties.get_shape()
-    shape.width, shape.height = _measure(text, "sysml-attribute")
-    edge.labels = [*(edge.labels or []), label]
+    _add_end_label(edge, text, placement)
 
 
 _MARKER_LAYOUT = {
@@ -357,6 +440,44 @@ _MARKER_LAYOUT = {
 
 def _marker_node(text: str | None = None) -> Node:
     return _glyph_node(None, text, "sysml-marker", 14, 14)
+
+
+#: convergence anchors for control glyphs (fixed sides, centered): all
+#: incoming edges join at ONE west port, all outgoing leave from ONE east
+#: port, so multi-branch fans meet the tiny glyph at a single point each
+_ANCHOR_LAYOUT = {
+    "elk.portConstraints": "FIXED_SIDE",
+    "elk.portAlignment.default": "CENTER",
+}
+
+
+def _add_anchor_ports(node: Node) -> Node:
+    """Give a glyph node single in/out convergence points (invisible 0-size
+    ELK ports on its west/east sides).  Fork/join bars deliberately do NOT
+    get these: their edges distribute along the bar's long side, which is
+    the bar's semantic."""
+
+    node.layoutOptions.update(_ANCHOR_LAYOUT)
+    for side, key in (("WEST", "in"), ("EAST", "out")):
+        port = Port(
+            width=0,
+            height=0,
+            layoutOptions={"elk.port.side": side},
+            properties=PortProperties(key=key),
+        )
+        node.add_port(port, key=key)
+    return node
+
+
+def _anchor(node: Node, key: str) -> Node | Port:
+    """The node's convergence port (``in``/``out``) if it has one, else the
+    node itself -- edge endpoints resolve through this everywhere in the
+    action view."""
+
+    for port in node.ports:
+        if port.properties.key == key:
+            return port
+    return node
 
 
 def _glyph_node(
@@ -452,21 +573,26 @@ _END_SYMBOLS = {
     "hollow-tick": "generalization-tick",
     "hollow-dcolon": "generalization-dcolon",
     "open": "arrow",
+    "pin-arrow": "flow-target-pin",
+    "ball-notch": "portion-ball",
 }
 
 #: edge-start form (render._EDGE_STARTS) -> browser symbol identifier
 _START_SYMBOLS = {
     "filled-diamond": "composition",
     "hollow-diamond": "aggregation",
+    "pin": "flow-source-pin",
+    "circle": "alias-circle",
 }
 
 
 def _edge(
-    source: Node,
-    target: Node,
+    source: Node | Port,
+    target: Node | Port,
     css: str,
     text: str | None = None,
     event: str | None = None,
+    text_css: str = "",
 ) -> Edge:
     edge = Edge(
         source=source, target=target, properties=EdgeProperties(cssClasses=f"sysml-edge {css}")
@@ -483,14 +609,14 @@ def _edge(
     if text:
         # not inline: inline labels sit ON the line (the sprotty renderer
         # never interrupts it) and their dummy nodes add edge jogs
-        label = _label(text)
+        label = _label(text, text_css)
         # pre-size edge labels: in the live pipeline they reach elkjs
         # unmeasured (the browser text-sizer path loses them), so ELK
         # "centers" a zero-width box and the text overflows right of the
         # midpoint. Pre-sized labels skip the browser sizer entirely and
         # match the headless renderer's geometry (same heuristic).
         shape = label.properties.get_shape()
-        shape.width, shape.height = _measure(text)
+        shape.width, shape.height = _measure(text, text_css)
         edge.labels = [label]
     return edge
 
@@ -508,12 +634,15 @@ def _specialization_svg(adorn: str) -> str:
     Explicit paints are required here: CSS cannot select into <use> shadow
     content, so the white triangle body and the currentColor adornments
     (bound to the edge stroke by the stylesheet) ride the geometry itself.
+    Head geometry mirrors the headless markers (render._HEAD_LENGTH /
+    _HEAD_HALF -- the slender 2:1 spec proportions, never 45 degrees).
     """
 
+    back = _HEAD_LENGTH
     bits = [
-        '<path d="M 6,-6 L 0,0 L 6,6 Z" fill="#ffffff" stroke="currentColor" stroke-width="1"/>'
+        f'<path d="M {back:g},{-_HEAD_HALF:g} L 0,0 L {back:g},{_HEAD_HALF:g} Z" '
+        f'fill="#ffffff" stroke="currentColor" stroke-width="1"/>'
     ]
-    back = 6.0
     if adorn in ("colon", "dcolon"):
         near = back + _ADORN_GAP + _DOT_RADIUS
         columns = [near] if adorn == "colon" else [near, near + _DCOLON_SPACING]
@@ -537,7 +666,123 @@ def _adorned_triangle(identifier: str, adorn: str) -> EndpointSymbol:
         identifier=identifier,
         element=Node(properties=NodeProperties(shape=SVG(use=_specialization_svg(adorn)))),
         symbol_offset=Point(x=-1, y=0),
-        path_offset=Point(x=-7, y=0),  # the line stops at the triangle back
+        path_offset=Point(x=-_HEAD_LENGTH - 1, y=0),  # line stops at the head's back
+    )
+
+
+def _closed_triangle(identifier: str) -> EndpointSymbol:
+    """The plain hollow specialization head: same slender 2:1 geometry as
+    the headless markers (was ipyelk's 45-degree ``StraightArrow``)."""
+
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=Path.from_list(
+                    [(_HEAD_LENGTH, -_HEAD_HALF), (0, 0), (_HEAD_LENGTH, _HEAD_HALF)],
+                    closed=True,
+                )
+            )
+        ),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-_HEAD_LENGTH - 1, y=0),
+    )
+
+
+def _open_v(identifier: str) -> EndpointSymbol:
+    """The open two-stroke V, sized like the headless markers (9x4 -- the
+    vendored ``ThinArrow`` drew a smaller 6x3 head)."""
+
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=Path.from_list([(_V_LENGTH, -_V_HALF), (0, 0), (_V_LENGTH, _V_HALF)])
+            )
+        ),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-1, y=0),
+    )
+
+
+def _pin_svg(with_arrow: bool) -> str:
+    """Raw SVG for the flow pins, in endpoint-symbol space (line end at the
+    origin = the node border, +x back along the edge).  The square
+    straddles the border; the target-input pin adds a small FILLED
+    arrowhead tight against the square's outer edge (errata E16).
+    Explicit paints: white body, currentColor outline/arrow (the
+    stylesheet binds currentColor to the edge stroke)."""
+
+    half = _PIN_SIZE / 2
+    bits = [
+        f'<rect x="{-half:g}" y="{-half:g}" width="{_PIN_SIZE:g}" height="{_PIN_SIZE:g}" '
+        f'rx="{_PIN_RX:g}" fill="#ffffff" stroke="currentColor" stroke-width="1.2"/>'
+    ]
+    if with_arrow:
+        back = half + _FLOW_HEAD_LENGTH
+        bits.insert(
+            0,
+            f'<path d="M {half:g},0 L {back:g},{-_FLOW_HEAD_HALF:g} '
+            f'L {back:g},{_FLOW_HEAD_HALF:g} Z" fill="currentColor" stroke="none"/>',
+        )
+    return "".join(bits)
+
+
+def _pin_symbol(identifier: str, with_arrow: bool) -> EndpointSymbol:
+    reach = _PIN_SIZE / 2 + (_FLOW_HEAD_LENGTH if with_arrow else 0)
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(properties=NodeProperties(shape=SVG(use=_pin_svg(with_arrow)))),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-reach, y=0),
+    )
+
+
+def _portion_ball_svg() -> str:
+    """Raw SVG for the portion-membership ball (filled, open-V notch on the
+    line side; notch vertex at the ball center), in endpoint-symbol space:
+    the ball's forward edge touches the origin (the whole-occurrence node
+    border), the mouth opens back along the edge (+x)."""
+
+    r = _BALL_RADIUS
+    cx = r  # ball center; forward edge at the origin
+    rad = math.radians(_BALL_MOUTH_DEG)
+    px = cx + r * math.cos(rad)
+    py = r * math.sin(rad)
+    return (
+        f'<path d="M {cx:g},0 L {px:.2f},{-py:.2f} A {r:g} {r:g} 0 1 0 {px:.2f},{py:.2f} Z" '
+        f'fill="currentColor" stroke="none"/>'
+    )
+
+
+def _portion_ball(identifier: str) -> EndpointSymbol:
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(properties=NodeProperties(shape=SVG(use=_portion_ball_svg()))),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-_BALL_RADIUS, y=0),  # the line ends at the notch vertex
+    )
+
+
+def _alias_circle(identifier: str) -> EndpointSymbol:
+    """The small hollow circle at the alias/unowned-membership referencing
+    end, touching the node border (errata E18)."""
+
+    r = _CIRCLE_RADIUS
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=SVG(
+                    use=(
+                        f'<circle cx="{r:g}" cy="0" r="{r:g}" fill="#ffffff" '
+                        f'stroke="currentColor" stroke-width="1.2"/>'
+                    )
+                )
+            )
+        ),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-2 * r, y=0),
     )
 
 
@@ -564,18 +809,27 @@ def _symbols() -> SymbolSpec:
     for feature typing, ``-tick`` for redefinition, ``-dcolon`` for
     reference subsetting).  ``composition``/``aggregation`` are the
     filled/hollow membership diamonds at the whole end.  ``arrow`` is the
-    open two-stroke V of transitions and successions.  ``accept-badge`` /
-    ``send-badge`` are the filled top-left action-box tags.
+    open two-stroke V of transitions and successions.  ``flow-source-pin``
+    / ``flow-target-pin`` are the flow-connection border squares (the
+    target pin carries the filled direction arrowhead), ``portion-ball``
+    the notched portion-membership ball, ``alias-circle`` the hollow
+    unowned-membership circle.  ``accept-badge`` / ``send-badge`` are the
+    filled top-left action-box tags.  All heads share the slender 2:1
+    proportions of the headless markers (single-sourced in render.py).
     """
 
     return SymbolSpec().add(
-        StraightArrow("generalization", closed=True),
-        ThinArrow("arrow"),
+        _closed_triangle("generalization"),
+        _open_v("arrow"),
         _adorned_triangle("generalization-colon", "colon"),
         _adorned_triangle("generalization-tick", "tick"),
         _adorned_triangle("generalization-dcolon", "dcolon"),
         Rhomb("composition", r=6),
         Rhomb("aggregation", r=6),
+        _pin_symbol("flow-source-pin", with_arrow=False),
+        _pin_symbol("flow-target-pin", with_arrow=True),
+        _portion_ball("portion-ball"),
+        _alias_circle("alias-circle"),
         _badge_symbol("accept-badge", "accept"),
         _badge_symbol("send-badge", "send"),
     )
@@ -586,10 +840,13 @@ def _finish(
     style: dict | None = None,
     direction: str | None = None,
     toolbar: bool = True,
+    layout: dict[str, str] | None = None,
 ) -> Any:
     root.layoutOptions = dict(_ROOT_LAYOUT)
     if direction:
         root.layoutOptions["elk.direction"] = direction
+    if layout:
+        root.layoutOptions.update(layout)
     result = ipyelk.from_element(root)
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
@@ -618,9 +875,11 @@ def structure_diagram(
     edges -- a filled diamond at the whole end for composite part/item
     members, a hollow diamond for referential (``ref``) members, role name
     on the line, multiplicity at the part end -- per the SysML v2 Parts
-    notation; ``composition="none"`` suppresses them.  ``toolbar=False``
-    keeps ipyelk's stock text-button toolbar instead of the compact
-    icon+search one (:mod:`longeron.toolbar`).
+    notation; ``composition="none"`` suppresses them.  Flow / binding /
+    dependency / satisfy / alias / portion notation is always drawn when
+    both ends resolve to drawn nodes (see the module docstring).
+    ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
+    the compact icon+search one (:mod:`longeron.toolbar`).
     """
 
     builder = _StructureBuilder(element, show_attributes, composition=composition)
@@ -721,6 +980,8 @@ class _StructureBuilder:
                     node.children.append(child)
         elif isinstance(element, M.Definition):
             stereotype = _KIND_STEREOTYPES.get(element.kind, element.kind)
+            if element.is_individual:  # «individual part def» (errata N15)
+                stereotype = f"individual {stereotype}".strip()
             node = _node(element, element.label, "sysml-definition", f"{stereotype} def".strip())
             self._fill_features(node, element)
         elif isinstance(element, M.Usage) and element.kind in (
@@ -730,8 +991,26 @@ class _StructureBuilder:
             "action",
             "state",
             "occurrence",
+            # «individual» / «timeslice» / «snapshot» occurrence boxes
+            # (errata N15 keywords + the portion-membership row)
+            "individual",
+            "timeslice",
+            "snapshot",
+            # «actor» / «stakeholder» keyword-box form (errata N17: the
+            # official alternative to the stick figure)
+            "actor",
+            "stakeholder",
+            # «requirement» usage boxes: the ends of satisfy edges
+            # (spec printed p.133 draws requirement USAGES as boxes)
+            "requirement",
+            "satisfy",
         ):
-            node = _node(element, _usage_title(element), "sysml-usage", element.kind)
+            if element.kind == "satisfy" and not element.name:
+                # the anonymous shorthand (`satisfy R by sys;`) draws as a
+                # «satisfy» keyword edge, not a box (spec printed p.133)
+                return None
+            stereotype = _KIND_STEREOTYPES.get(element.kind, element.kind)
+            node = _node(element, _usage_title(element), "sysml-usage", stereotype)
             self._fill_features(node, element)
         else:
             return None
@@ -788,19 +1067,41 @@ class _StructureBuilder:
                 if self.composition != "none":
                     self._add_membership_edges(root, element, node)
             if isinstance(element, M.Usage):
+                # portion usages (timeslice/snapshot) draw the portion-
+                # membership glyph INSTEAD of a plain typing edge to their
+                # portioned occurrence: solid line, filled ball with an
+                # open-V notch at the WHOLE end (errata new row; spec
+                # printed p.52, BNF p.205)
+                portion_target: Node | None = None
+                if element.portion_kind and element.types:
+                    portion_target = self._resolve_node(element.types[0].lstrip("~"), element)
                 for type_name in element.types:
                     target = self._resolve_node(type_name.lstrip("~"), element)
-                    if target is not None:
-                        # feature typing is a Specialization (KerML): SOLID
-                        # line, hollow triangle at the definition, colon
-                        # dots on the shaft (spec 8.2.3 printed p.200)
-                        root.edges.append(_edge(node, target, "sysml-edge-typed"))
+                    if target is None:
+                        continue
+                    if portion_target is not None and target is portion_target:
+                        # ball rides the TARGET (whole-occurrence) end
+                        root.edges.append(_edge(node, target, "sysml-edge-portion"))
+                        portion_target = None  # one portion edge only
+                        continue
+                    # feature typing is a Specialization (KerML): SOLID
+                    # line, hollow triangle at the definition, colon
+                    # dots on the shaft (spec 8.2.3 printed p.200)
+                    root.edges.append(_edge(node, target, "sysml-edge-typed"))
                 # the rest of the specialization family: same solid line
                 # and hollow head, told apart by the shaft adornment (the
-                # spec draws NO keyword labels on these edges)
+                # spec draws NO keyword labels on these edges).  A satisfy
+                # usage's satisfied requirement is a REFERENCE subsetting
+                # whichever list the builder parked it in (spec printed
+                # p.133 draws the double-colon dots).
+                subsets_css = (
+                    "sysml-edge-references"
+                    if isinstance(element, M.SatisfyUsage)
+                    else "sysml-edge-subsets"
+                )
                 for names, css in (
                     (element.redefines, "sysml-edge-redefines"),
-                    (element.subsets, "sysml-edge-subsets"),
+                    (element.subsets, subsets_css),
                     ([element.references] if element.references else [], "sysml-edge-references"),
                 ):
                     for name in names:
@@ -809,14 +1110,22 @@ class _StructureBuilder:
                             root.edges.append(_edge(node, target, css))
             if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage, M.AllocationUsage)):
                 self._connect_ends(root, element)
-        # connections owned by anything we visited
+        # relationship members owned by anything we visited: connections,
+        # bindings, flows, dependencies, anonymous satisfies, aliases
         for element in list(self.nodes_elements()):
             for member in element.members if isinstance(element, M.Namespace) else []:
-                if (
-                    isinstance(member, (M.ConnectionUsage, M.BindingConnector))
-                    and id(member) not in self.nodes
-                ):
+                if id(member) in self.nodes:
+                    continue
+                if isinstance(member, (M.ConnectionUsage, M.BindingConnector)):
                     self._connect_ends(root, member)
+                elif isinstance(member, M.FlowUsage) and member.kind == "flow":
+                    self._add_flow_edge(root, member)
+                elif isinstance(member, M.SatisfyUsage):
+                    self._add_satisfy_edges(root, member)
+                elif isinstance(member, M.Dependency):
+                    self._add_dependency_edges(root, member)
+                elif isinstance(member, M.Alias):
+                    self._add_alias_edge(root, element, member)
 
     def _add_membership_edges(self, root: Node, element: M.Definition, node: Node) -> None:
         """Definition-level part membership edges (spec Parts notation,
@@ -861,19 +1170,139 @@ class _StructureBuilder:
                 if e
             ]
         )
+        binding = isinstance(element, M.BindingConnector)
+        css = "sysml-edge-binding" if binding else "sysml-edge-connect"
         resolved = [self._resolve_node(end.target, element) for end in ends]
         if len(resolved) >= 2 and all(n is not None for n in resolved):
             label = element.label if element.name else None
             for (end_a, source), (end_b, target) in itertools.pairwise(
                 zip(ends, resolved, strict=True)
             ):
-                edge = _edge(source, target, "sysml-edge-connect", text=label)
+                edge = _edge(source, target, css, text=label)
+                if binding:
+                    # the '=' glyph rides the solid line mid-span (errata
+                    # E15) -- a centered, pre-sized label like any other
+                    _add_center_label(edge, "=")
                 # cross multiplicities render near the ends they constrain
                 if end_a.multiplicity is not None:
                     _add_end_multiplicity(edge, end_a.multiplicity, "TAIL")
                 if end_b.multiplicity is not None:
                     _add_end_multiplicity(edge, end_b.multiplicity, "HEAD")
                 root.edges.append(edge)
+
+    def _resolve_deepest_node(self, name: str, context: M.Element) -> Node | None:
+        """Resolve a dotted feature path to the DEEPEST drawn node along it.
+
+        Flow ends name pins (``a1.y``) whose terminal feature is usually a
+        compartment row, not a node: the edge then anchors on the owning
+        action/part box -- the honest approximation of a border pin.
+        """
+
+        parts = name.split(".")
+        try:
+            found = self.interp.resolver.resolve(parts[0], context.owner or self.model)
+        except Exception:
+            return None
+        node = self.nodes.get(id(found))
+        for part in parts[1:]:
+            try:
+                found = self.interp.resolver.resolve(part, found)
+            except Exception:
+                break
+            node = self.nodes.get(id(found)) or node
+        return node
+
+    def _add_flow_edge(self, root: Node, flow: M.FlowUsage) -> None:
+        """A flow connection (errata E16/M1): solid line from a small square
+        source-output pin to a small square target-input pin, small FILLED
+        arrowhead at the target pin, payload item labels near each end."""
+
+        if not flow.source or not flow.target_end:
+            return
+        source = self._resolve_deepest_node(flow.source, flow)
+        target = self._resolve_deepest_node(flow.target_end, flow)
+        if source is None or target is None or source is target:
+            return
+        edge = _edge(source, target, "sysml-edge-flow", text=flow.name or None)
+        if flow.payload:  # payload item labels near BOTH ends (spec p.81)
+            _add_end_label(edge, flow.payload, "TAIL")
+            _add_end_label(edge, flow.payload, "HEAD")
+        root.edges.append(edge)
+
+    def _add_satisfy_edges(self, root: Node, satisfy: M.SatisfyUsage) -> None:
+        """The shorthand satisfy (``satisfy R by sys;``): a plain solid line
+        with an open-V arrow and the «satisfy» keyword from the satisfying
+        element to the requirement (spec printed p.133; BNF keyword-arrow
+        convention).  Named satisfy usages draw as boxes instead, with the
+        reference-subsetting edge (handled by the specialization family)."""
+
+        if not satisfy.by:
+            return
+        source = self._resolve_node(satisfy.by, satisfy)
+        if source is None:
+            return
+        names = [*satisfy.subsets, *([satisfy.references] if satisfy.references else [])]
+        for name in names:
+            target = self._resolve_node(name, satisfy)
+            if target is not None and target is not source:
+                root.edges.append(
+                    _edge(
+                        source,
+                        target,
+                        "sysml-edge-satisfies",
+                        text="\u00absatisfy\u00bb",
+                        text_css="sysml-stereotype",
+                    )
+                )
+
+    def _add_dependency_edges(self, root: Node, dep: M.Dependency) -> None:
+        """Dependencies (errata E8): dashed open-V client->supplier with the
+        optional ``(rel-name)`` label; n-ary dependencies radiate dashed
+        links from a small filled junction dot (client links plain,
+        supplier links arrowed)."""
+
+        clients = [self._resolve_node(name, dep) for name in dep.clients]
+        suppliers = [self._resolve_node(name, dep) for name in dep.suppliers]
+        clients = [node for node in clients if node is not None]
+        suppliers = [node for node in suppliers if node is not None]
+        if not clients or not suppliers:
+            return
+        label = f"({dep.name})" if dep.name else None
+        if len(clients) == 1 and len(suppliers) == 1:
+            root.edges.append(_edge(clients[0], suppliers[0], "sysml-edge-dependency", text=label))
+            return
+        junction = _glyph_node(dep, label, "sysml-junction", _JUNCTION_SIZE, _JUNCTION_SIZE)
+        # lay the dot out inside the namespace that owns the dependency
+        # (falling back to the diagram root)
+        owner_node = self.nodes.get(id(dep.owner)) if dep.owner is not None else None
+        (owner_node or root).children.append(junction)
+        for client in clients:
+            root.edges.append(_edge(client, junction, "sysml-edge-depclient"))
+        for supplier in suppliers:
+            root.edges.append(_edge(junction, supplier, "sysml-edge-dependency"))
+
+    def _add_alias_edge(self, root: Node, owner: M.Element, alias: M.Alias) -> None:
+        """Membership (unowned/alias member, errata E18 official v2 form):
+        solid line, small HOLLOW circle at the referencing namespace end,
+        alias name as the edge label.  (The owned-member circle-plus form
+        is not drawn: longeron shows owned membership as nesting, the
+        spec's primary form, so no cross-namespace owned-member edge
+        exists to decorate.)"""
+
+        owner_node = self.nodes.get(id(owner))
+        if owner_node is None or not alias.target:
+            return
+        try:
+            found = self.interp.resolver.resolve(alias.target, owner)
+        except Exception:
+            return
+        target = self.nodes.get(id(found))
+        if target is None or target is owner_node:
+            return
+        inside = {id(child) for child in _walk_nodes(owner_node)}
+        if id(target) in inside:  # nesting already shows the membership
+            return
+        root.edges.append(_edge(owner_node, target, "sysml-edge-alias", text=alias.name))
 
     # -- component packing ----------------------------------------------------
 
@@ -1158,24 +1587,43 @@ def _fill_states(
 # ---------------------------------------------------------------------------
 
 
-def action_diagram(action: M.Definition | M.Usage, *, toolbar: bool = True) -> Any:
+def action_diagram(
+    action: M.Definition | M.Usage,
+    *,
+    lanes: Mapping[str, Sequence[str]] | bool | None = None,
+    toolbar: bool = True,
+) -> Any:
     """The succession control-flow graph the interpreter executes.
 
     Successions render dashed with open-V arrows and the behavior nodes
     use the spec glyphs (spec 8.2.3 printed p.227-228; figures pp.90-92):
     start = filled dot, done = bullseye, terminate = circle-X, fork/join =
     thick filled bar, decision/merge = empty rhombus, accept/send = the
-    standard rounded action box with a filled top-left badge.
-    ``toolbar=False`` keeps ipyelk's stock toolbar.
+    standard rounded action box with a filled top-left badge.  Control
+    glyphs carry single convergence anchors: every incoming edge joins at
+    one point and every outgoing edge leaves from one point (fork/join
+    bars excepted -- their edges distribute along the bar, which is the
+    bar's semantic).
+
+    ``lanes`` (default off) partitions the flow into dashed-boundary
+    «performer» swim lanes (spec "Perform Actions Swimlanes", printed
+    p.90): pass a mapping of lane title -> step names, or ``True`` to
+    derive lanes from ``perform`` targets (``perform part1.action1`` lands
+    in lane ``part1``).  Lanes are content-sized dashed containers ordered
+    left-to-right via ELK layer partitioning -- an honest approximation of
+    the spec's full-height, shared-boundary lanes.  Steps in no lane stay
+    outside (like the spec's start/done markers).  ``toolbar=False`` keeps
+    ipyelk's stock toolbar.
     """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
 
     plan = _succession_plan(list(action.members))
     steps: dict[str, Node] = {}
+    elements: dict[str, M.Element] = {}
 
     def marker(name: str) -> Node:
-        node = _marker_node(name)
+        node = _add_anchor_ports(_marker_node(name))
         root.children.append(node)
         return node
 
@@ -1183,18 +1631,24 @@ def action_diagram(action: M.Definition | M.Usage, *, toolbar: bool = True) -> A
         node = _glyph_node(
             None, "done", "sysml-final", _GLYPH_SIZE, _GLYPH_SIZE, shape=SVG(use=_bullseye_svg())
         )
+        _add_anchor_ports(node)
         root.children.append(node)
         return node
+
+    def link(source: Node, target: Node, css: str, text: str | None = None) -> Edge:
+        # control glyphs converge their fans on single anchor points
+        return _edge(_anchor(source, "out"), _anchor(target, "in"), css, text=text)
 
     if plan is not None:
         for name, element in plan.steps.items():
             node = _action_step_node(element, name)
             steps[name] = node
+            elements[name] = element
             root.children.append(node)
         steps["start"] = marker("start")
         steps["done"] = done_node()
         if plan.initial in steps:
-            root.edges.append(_edge(steps["start"], steps[plan.initial], "sysml-edge-succession"))
+            root.edges.append(link(steps["start"], steps[plan.initial], "sysml-edge-succession"))
         for edge in plan.edges:
             if edge.source == "start":
                 continue  # covered by the initial edge above
@@ -1209,9 +1663,10 @@ def action_diagram(action: M.Definition | M.Usage, *, toolbar: bool = True) -> A
             elif edge.is_else:
                 css += " sysml-edge-guarded"
                 text = "[else]"
-            root.edges.append(_edge(source, target, css, text=text))
+            root.edges.append(link(source, target, css, text=text))
     else:  # declaration order: a simple chain
         previous = marker("start")
+        steps["start"] = previous
         for member in action.members:
             if isinstance(
                 member,
@@ -1229,40 +1684,104 @@ def action_diagram(action: M.Definition | M.Usage, *, toolbar: bool = True) -> A
                 title = member.name or _statement_title(member)
                 node = _action_step_node(member, title)
                 root.children.append(node)
-                root.edges.append(_edge(previous, node, "sysml-edge-succession"))
+                root.edges.append(link(previous, node, "sysml-edge-succession"))
+                steps[title] = node
+                elements[title] = member
                 previous = node
-        root.edges.append(_edge(previous, done_node(), "sysml-edge-succession"))
+        steps["done"] = done_node()
+        root.edges.append(link(previous, steps["done"], "sysml-edge-succession"))
 
-    return _finish(root, direction="RIGHT", toolbar=toolbar)
+    layout = None
+    if lanes:
+        layout = _apply_lanes(root, lanes, steps, elements)
+
+    return _finish(root, direction="RIGHT", toolbar=toolbar, layout=layout)
+
+
+def _lane_groups(
+    lanes: Mapping[str, Sequence[str]] | bool,
+    steps: dict[str, Node],
+    elements: dict[str, M.Element],
+) -> dict[str, list[str]]:
+    """Lane title -> step names.  ``True`` derives lanes from perform
+    targets: a ``perform part1.action1`` step performs in lane ``part1``
+    (the target path minus its final segment)."""
+
+    if lanes is True:
+        derived: dict[str, list[str]] = {}
+        for name, element in elements.items():
+            if isinstance(element, M.PerformAction) and element.target and "." in element.target:
+                lane = element.target.rsplit(".", 1)[0]
+                derived.setdefault(lane, []).append(name)
+        return derived
+    if not isinstance(lanes, Mapping):  # lanes=False behaves like None
+        return {}
+    return {title: [n for n in names if n in steps] for title, names in lanes.items()}
+
+
+def _apply_lanes(
+    root: Node,
+    lanes: Mapping[str, Sequence[str]] | bool,
+    steps: dict[str, Node],
+    elements: dict[str, M.Element],
+) -> dict[str, str] | None:
+    """Re-parent lane member steps into dashed «performer» containers and
+    order the lanes left-to-right with ELK layer partitioning (start
+    before the first lane, done after the last).  Returns the extra root
+    layout options, or ``None`` when no lane has members."""
+
+    groups = _lane_groups(lanes, steps, elements)
+    groups = {title: names for title, names in groups.items() if names}
+    if not groups:
+        return None
+    start, done = steps.get("start"), steps.get("done")
+    if start is not None:
+        start.layoutOptions["elk.partitioning.partition"] = "0"
+    for index, (title, names) in enumerate(groups.items(), start=1):
+        lane = _node(None, title, "sysml-lane", "performer")
+        lane.layoutOptions["elk.partitioning.partition"] = str(index)
+        members = {id(steps[name]) for name in names}
+        lane.children = [child for child in root.children if id(child) in members]
+        root.children = [child for child in root.children if id(child) not in members]
+        root.children.append(lane)
+    if done is not None:
+        done.layoutOptions["elk.partitioning.partition"] = str(len(groups) + 1)
+    return {"elk.partitioning.activate": "true"}
 
 
 def _action_step_node(element: M.Element, title: str) -> Node:
     """A node for one action-flow step, using the spec glyph for control
     nodes, terminate, and the accept/send badge boxes; everything else is
-    the standard rounded «keyword» step box."""
+    the standard rounded «keyword» step box.  Control glyphs (not bars)
+    get single-point convergence anchors."""
 
     if isinstance(element, M.ControlNode):
         if element.kind in ("fork", "join"):
             # a thick filled bar, perpendicular to the (horizontal) flow;
-            # fork vs join is topology, the glyph is identical
+            # fork vs join is topology, the glyph is identical; edges
+            # deliberately distribute along the bar (no anchor ports)
             return _glyph_node(element, title, "sysml-ctrl-bar", _BAR_SHORT, _BAR_LONG)
         # decision vs merge: identical empty rhombus, role by topology
-        return _glyph_node(
-            element,
-            title,
-            "sysml-ctrl-diamond",
-            _CTRL_DIAMOND_SIZE,
-            _CTRL_DIAMOND_SIZE,
-            shape=Diamond(),
+        return _add_anchor_ports(
+            _glyph_node(
+                element,
+                title,
+                "sysml-ctrl-diamond",
+                _CTRL_DIAMOND_SIZE,
+                _CTRL_DIAMOND_SIZE,
+                shape=Diamond(),
+            )
         )
     if isinstance(element, M.TerminateAction):
-        return _glyph_node(
-            element,
-            element.name or "terminate",
-            "sysml-terminate",
-            _GLYPH_SIZE,
-            _GLYPH_SIZE,
-            shape=SVG(use=_terminate_svg()),
+        return _add_anchor_ports(
+            _glyph_node(
+                element,
+                element.name or "terminate",
+                "sysml-terminate",
+                _GLYPH_SIZE,
+                _GLYPH_SIZE,
+                shape=SVG(use=_terminate_svg()),
+            )
         )
     if isinstance(element, (M.AcceptAction, M.SendAction)):
         form = "accept" if isinstance(element, M.AcceptAction) else "send"
