@@ -34,30 +34,33 @@ def wait_for_change(widget, value, timeout: Optional[float] = None):
                 future.set_exception(asyncio.TimeoutError())
 
         timer = loop.call_later(timeout, on_timeout)
-        future.add_done_callback(lambda f: timer.cancel())
+        future.add_done_callback(lambda _: timer.cancel())
 
     return future
 
 
-async def browser_roundtrip(pipe, trait: str = "value",
-                            initial_delay: float = 0.5,
-                            max_delay: float = 10.0,
-                            timeout: Optional[float] = None):
-    """Send ``{"action": "run"}`` to a synced pipe's frontend and wait for
-    its outlet to change.
+async def browser_roundtrip(
+    pipe,
+    trait: str = "value",
+    initial_delay: float = 0.5,
+    max_delay: float = 10.0,
+    timeout: Optional[float] = None,
+):
+    """Send ``{"action": "run"}`` to a synced pipe's frontend and wait for the
+    pipe's outlet to change.
 
-    LOCAL PATCH (sysml2-experiments), merging two fixes:
+    ``Widget.send`` only reaches a frontend that is already attached: a pipe
+    that runs before its diagram is displayed (the common notebook flow --
+    build in one cell, render later) would otherwise wait on a message nobody
+    received. The request is therefore re-sent with backoff until one of:
 
-    * resend with backoff -- ``Widget.send`` only reaches *views that
-      already exist*; a pipe that runs before its diagram is displayed
-      would otherwise hang forever.  Resending is idempotent and converges
-      as soon as a view attaches.
-    * error channel + deadline (F6 from the workplace/ipyelk
-      ``critical-fixes-batch-1`` branch) -- the pipe may expose the pending
-      future (``pipe._roundtrip_future``) so a browser ``action: error``
-      message rejects it, and an optional overall ``timeout`` turns a
-      permanently silent browser into :class:`asyncio.TimeoutError`
-      instead of an infinite wait.
+    * the outlet changes -- the browser answered; re-sending is idempotent,
+      so retrying converges as soon as a frontend attaches;
+    * the browser reports a failure -- an ``action: error`` message rejects
+      the pending future (see ``SyncedPipe._handle_browser_msg``): an errored
+      run must stop the retries, not feed them;
+    * the ``timeout`` deadline passes -- :class:`asyncio.TimeoutError`, so a
+      permanently silent browser cannot hang the kernel forever.
     """
     future_value = wait_for_change(pipe.outlet, trait)
     pipe._roundtrip_future = future_value
@@ -71,7 +74,6 @@ async def browser_roundtrip(pipe, trait: str = "value",
                 wait = min(delay, max(deadline - monotonic(), 0.01))
             try:
                 await asyncio.wait_for(asyncio.shield(future_value), wait)
-                return
             except asyncio.TimeoutError:
                 if deadline is not None and monotonic() >= deadline:
                     future_value.cancel()
@@ -80,5 +82,7 @@ async def browser_roundtrip(pipe, trait: str = "value",
             except asyncio.CancelledError:
                 future_value.cancel()
                 raise
+            else:
+                return
     finally:
         pipe._roundtrip_future = None

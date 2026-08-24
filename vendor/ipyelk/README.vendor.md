@@ -31,7 +31,8 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
 3. **Resend-with-backoff browser round-trips** (`util.browser_roundtrip`) --
    `Widget.send` only reaches existing views, so pipes that ran before the
    diagram was displayed hung forever ("diagram never loads" until a kernel
-   interrupt).
+   interrupt). Retry semantics refined by patch 9: a browser-reported error
+   stops the resends and the default deadline is finite.
 4. **F1-F6 ported from `~/workplace/ipyelk` branch `critical-fixes-batch-1`**
    (same author, targeting upstream master):
    - F1: `IDReport.message` printed literal `{eid}`/`{el}` instead of ids
@@ -45,8 +46,9 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    - F6 (python): `wait_for_change(timeout=...)`, an ElkJS browser error
      channel (`action: error` rejects the pending future), and a `timeout`
      trait on ElkJS/BrowserTextSizer -- **merged with patch 3**: default
-     `timeout=0` keeps resending forever (correct for not-yet-displayed
-     widgets); a positive timeout is a hard deadline
+     `timeout=0` kept resending forever (correct for not-yet-displayed
+     widgets); a positive timeout is a hard deadline (the default became a
+     finite 30 s deadline in patch 9)
    - F5/F6 (JS): exporter enabled-flag fix and browser-side layout error
      reporting, applied to the TypeScript sources (active in the shipped
      bundles since the source rebuild, patch 7)
@@ -114,3 +116,33 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    keeps 24px of edge-node clearance). The math is pinned by a Python
    reference implementation (`longeron.render._route_end_angle` /
    `_covered_route_points`) tested against real elkjs section data.
+9. **F10 backported from `~/workplace/ipyelk` branch
+   `critical-fixes-batch-2` (849769f, same author, targeting upstream
+   master): errored layouts surface instead of loading forever.** Python
+   only -- `js/` and the shipped bundles are untouched. Replaces the retry
+   semantics of patches 3 and 4/F6 with the upstream final form (which was
+   itself derived from the vendored `browser_roundtrip`):
+   - `PipeStatus.STEPS` gains a terminal `error: 1` entry -- the missing
+     entry made `get_progress_value()` raise `TypeError` inside the
+     pipeline's own error path, so `on_error` saw the wrong exception and
+     the progress bar sat mid-flight forever
+   - `PipelineProgressBar` fills the bar and leaves it visible as a
+     warning on an errored run (previously an eternally "in progress"
+     sliver); a faulty `on_progress` callback logs instead of clobbering
+     the pipe's surfaced error
+   - the browser error channel (`action: error`, patch 4/F6) is hoisted
+     `ElkJS` -> `SyncedPipe`, so `BrowserTextSizer` is covered too; a
+     browser-reported layout error rejects the pending future and stops
+     the patch-3 resend loop immediately -- "no frontend yet" and "layout
+     errored" are distinct outcomes
+   - **semantics change**: the `timeout` default on `ElkJS` and
+     `BrowserTextSizer` is now a finite 30 s deadline (was 0 = forever), so
+     a permanently silent browser cannot hang the kernel; `timeout=0` opts
+     back into wait-forever. The build-in-one-cell/display-later pattern
+     patch 3 existed for still works: requests are re-sent with backoff
+     until a frontend answers (within the deadline)
+   - vendored-only adaptations kept: headless-safe `schedule_run` and
+     `_CompletedTask` (patch 1)
+   - the upstream tests are ported:
+     `tests/pipes/test_layout_error_semantics.py`,
+     `tests/tools/test_progress.py`

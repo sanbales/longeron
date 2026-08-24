@@ -75,9 +75,10 @@ class BrowserTextSizer(SyncedPipe, StyledWidget, TextSizer):
     _view_module = T.Unicode(EXTENSION_NAME).tag(sync=True)
     _view_module_version = T.Unicode(EXTENSION_SPEC_VERSION).tag(sync=True)
 
-    #: seconds to wait for the browser before giving up; 0 waits forever
-    #: (requests are re-sent with backoff until a view answers)
-    timeout = T.Float(default_value=0.0)
+    #: seconds to wait for the browser to return measured sizes before
+    #: giving up; 0 waits forever (the request is re-sent with backoff until
+    #: a frontend answers)
+    timeout = T.Float(default_value=30.0)
 
     async def run(self):
         """Go measure some DOM"""
@@ -85,7 +86,7 @@ class BrowserTextSizer(SyncedPipe, StyledWidget, TextSizer):
         if self.outlet is None:
             return
 
-        # signal to browser (resending until a view answers -- LOCAL PATCH,
-        # see util.browser_roundtrip) and wait for done / deadline
+        # signal to browser (re-sending until a frontend answers) and wait
+        # for done, browser error, or deadline
         await browser_roundtrip(self, timeout=self.timeout or None)
         self.outlet.persist()
