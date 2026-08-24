@@ -66,6 +66,13 @@ trades = ["ortools>=9.8"]
 smt = ["z3-solver>=4.12"]
 viz = ["matplotlib>=3.8", "anywidget>=0.9"]
 cad = ["cadquery>=2.5"]
+browser-test = [
+    # the browser-truth test tier (tests/browser/): drives real JupyterLab
+    # in headless Chromium; kept OUT of dev so default envs never grow a
+    # browser (mirrored by the pixi `browser` feature below)
+    "playwright>=1.55",
+    "pytest-rerunfailures>=14",
+]
 
 [project.scripts]
 longeron = "longeron.cli:main"
@@ -87,6 +94,12 @@ longeron = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "browser: browser-truth tests (JupyterLab + Playwright); deselected by default, run with `pixi run test-browser`",
+]
+# the browser tier needs a booted JupyterLab and a Chromium binary: plain
+# `pytest -q` deselects it; `pixi run test-browser` opts back in with `-m browser`
+addopts = "-m 'not browser'"
 
 [tool.ruff]
 target-version = "py310"
@@ -248,6 +261,12 @@ python = "3.12.*"
 [tool.pixi.feature.py313.dependencies]
 python = "3.13.*"
 
+[tool.pixi.feature.browser.pypi-dependencies]
+# mirrors [project.optional-dependencies].browser-test (dependency truth
+# stays in [project]; this feature only opts an environment into it)
+playwright = ">=1.55"
+pytest-rerunfailures = ">=14"
+
 [tool.pixi.environments]
 # per-Python test environments; `pixi run -e py310 test` etc.
 py310 = ["py310"]
@@ -256,6 +275,8 @@ py312 = ["py312"]
 py313 = ["py313"]
 # docs = default toolchain (node, dev extras for notebook execution) + sphinx
 docs = ["docs"]
+# browser = default toolchain + playwright: the browser-truth test tier
+browser = ["browser"]
 
 [tool.pixi.tasks]
 test = "pytest -q"
@@ -278,6 +299,19 @@ lab = { cmd = "jupyter lab notebooks/", env = { PYTHONHASHSEED = "0" }, depends-
     "sync-labextension",
 ] }
 check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
+
+[tool.pixi.feature.browser.tasks.test-browser]
+# the browser-truth tier (tests/browser/): boots JupyterLab headless and
+# drives it with Playwright. Defined on the browser feature, so
+# `pixi run test-browser` resolves to the browser environment. Depends on
+# sync-labextension for the same reason `lab` does: JupyterLab serves the
+# env's COPY of the vendored jupyter-elk bundle, and testing a stale copy
+# proves nothing (browser binary: `pixi run -e browser playwright install
+# chromium`, once per machine). --reruns 1 is the retry-once flake policy
+# (see tests/browser/README.md).
+cmd = "pytest -q -m browser --reruns 1 tests/browser"
+env = { PYTHONHASHSEED = "0" }
+depends-on = ["sync-labextension"]
 
 [tool.pixi.tasks.sync-labextension]
 # rsync the vendored labextension BUILD (vendor/ipyelk/src/_d/...) over the

@@ -45,6 +45,47 @@ jobs:
 
       - run: pixi run -e ${{ matrix.environment }} test
 
+  browser:
+    # the browser-truth tier (tests/browser/): a real JupyterLab driven by
+    # headless Chromium -- catches what kernel-side tests cannot (stale
+    # bundles, marker paint, layout-error starvation, auto-fit). Runs in
+    # parallel with the matrix; one Python (the locked browser env).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.67.0
+          cache: true
+          environments: browser
+
+      - name: Compute playwright cache key
+        id: playwright
+        run: |
+          version=$(pixi run -e browser python -c 'from importlib.metadata import version; print(version("playwright"))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the chromium binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install chromium (no-op on cache hit)
+        run: pixi run -e browser playwright install --with-deps chromium
+
+      - run: pixi run test-browser
+
+      - name: Upload failure artifacts (screenshots, console + server logs)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-artifacts
+          path: build/test-artifacts/
+          if-no-files-found: ignore
+
   grammar-regen:
     # the committed parsers must match the grammars (antlr + JDK come from
     # the lockfile; invoked directly to bypass the task's input/output cache)

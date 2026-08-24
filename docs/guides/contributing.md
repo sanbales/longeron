@@ -42,6 +42,7 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `check` | `lint` + `typecheck` + `test` + `test-vendor`. The full gate. |
 | `test` | `pytest -q` over `tests/`. |
 | `test-vendor` | the vendored ipyelk test suite (`vendor/ipyelk/tests`). |
+| `test-browser` (pixi) | the browser-truth tier (`tests/browser/`): headless JupyterLab driven by Playwright/Chromium. See below. |
 | `lint` | `ruff format --check` and `ruff check` over `src tests examples scripts notebooks docs`. |
 | `format` | `ruff format` plus `ruff check --fix` over the same paths. |
 | `typecheck` | `mypy` over `src/longeron` and `src/sysml2` (generated code excluded). |
@@ -58,6 +59,31 @@ Every task exists in both runners. `make <target>` uses the venv, and
 Ruff formats and lints the notebooks too (`extend-include = ["*.ipynb"]`
 in `pyproject.toml`), so `lint` gates notebook code cells exactly like
 `.py` files.
+
+## Browser-truth tests
+
+`tests/browser/` drives a **real** JupyterLab in headless Chromium:
+elkjs layout, sprotty rendering, widget trait sync, and the served
+labextension bundle all run for real. Kernel-side tests cannot see that
+class of regression (stale served bundles, unpainted arrowheads,
+layout-error starvation), so this tier exists as its own opt-in gate:
+
+```bash
+pixi run -e browser playwright install chromium   # once per machine
+pixi run test-browser
+```
+
+The tier is deselected from plain `pytest -q` (everything there carries
+`@pytest.mark.browser`, and the default `addopts` excludes that marker),
+and its dependencies live in the `browser-test` extra / the pixi
+`browser` environment -- **not** in `dev`, so default environments never
+grow a browser. This is the one task without a `make` twin: it needs the
+pixi-locked JupyterLab plus a Chromium binary. The task syncs the
+vendored labextension first (the stale-bundle footgun below applies
+doubly to tests). Assertions are semantic only -- settle states, error
+counts, DOM presence, kernel round trips; never pixels or timing
+margins. The full flake policy, quarantine convention, and
+failure-artifact locations are documented in `tests/browser/README.md`.
 
 ## Notebook conventions
 
@@ -109,7 +135,7 @@ Three workflows run on pixi (`prefix-dev/setup-pixi`, cached by
 
 | Workflow | Runs |
 |---|---|
-| `ci.yml` | the `check` job (lint, mypy, coverage), a test matrix across the four Python environments (`py310`–`py313`), and the grammar-regen drift check |
+| `ci.yml` | the `check` job (lint, mypy, coverage), a test matrix across the four Python environments (`py310`–`py313`), the browser-truth job (`tests/browser/` in headless Chromium, failure screenshots uploaded as artifacts), and the grammar-regen drift check |
 | `docs.yml` | the documentation build, published to GitHub Pages |
 | `release.yml` | on tag push: build, wheel smoke test, and PyPI trusted publishing |
 
