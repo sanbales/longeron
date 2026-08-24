@@ -1,5 +1,49 @@
 # Release notes
 
+## 0.8.0
+
+- **Spec-exact SysML v2 graphical notation**, grounded in the OMG 2.0
+  spec's figures and clause 8.2.3 BNF (a rendered notation atlas of all
+  205 element rows drove the work; every glyph family ships with an
+  implementation-vs-spec evidence sheet):
+  - specialization family: solid lines, closed hollow triangle heads,
+    shaft adornments mirroring the textual characters -- typing `:`
+    colon dots, redefinition `:>>` bar tick, reference subsetting `::>`
+    2x2 dots; keyword edge labels dropped
+  - membership: filled (composite) / hollow (`ref`) diamonds with role
+    + end multiplicities via `structure_diagram(composition=)`; owned
+    membership as the spec's p.26 edge presentation via
+    `membership="edges"` (true circled-plus); alias members draw a
+    hollow circle + name
+  - connector-end multiplicities render at both ends (the builder now
+    captures what the grammar always parsed)
+  - flow connections: border pins, filled head at the target pin,
+    payload labels; satisfy draws the p.133 form exactly; dependency
+    (incl. n-ary junction) and binding `=` edges; portion membership's
+    notched ball; `individual`/`timeslice`/`snapshot` keywords
+  - behavior views: done bullseye, terminate circle-X, fork/join bars,
+    decision/merge rhombi with single in/out convergence anchors,
+    accept/send as boxes with spec-form top-left badges, dashed action
+    successions, `action_diagram(lanes=)` performer swim lanes,
+    actor/stakeholder keyword boxes
+  - all arrowheads re-derived from single-source ~27-degree slender
+    geometry in both pipelines
+- **State diagrams expand typed submachines** (`submachine_depth`),
+  cycle-protected; replay keys became instance-qualified -- two
+  expansions of one submachine no longer cross-highlight
+- **Compact diagram toolbar**: icon buttons with tooltips plus a
+  search box that highlights every matching element (never touches the
+  selection -- `on_select` provably cannot fire); collapse-stub ports
+  take their node kind's palette color
+- **Diagrams meet CAD** (`longeron.analysis.link`): bidirectional
+  linked selection between structure diagrams and the three.js viewer
+  -- M1 selections fan out to M0 individual meshes, 3D picks project
+  back (with the picked individual surfaced); tutorial 10 teaches the
+  M1/M0 distinction through it; `drone_geometry(split_instances=True)`
+- Diagnostic-location test made Windows-safe (the only red CI leg)
+- Design docs: the OCL stance (ratified) and the notation plan +
+  spec-grounded errata live in the repo's session notes
+
 ## 0.7.1
 
 - The five 0.7.0 known issues are fixed: bare `individual`/`snapshot`/
