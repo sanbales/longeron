@@ -20,6 +20,9 @@ environments install it automatically).  Three views, one dispatcher:
   aliases draw a hollow circle at the referencing end, portion usages
   (timeslice/snapshot) a filled notched ball at their individual, and
   actors/stakeholders render as «actor»/«stakeholder» keyword boxes.
+  ``membership="edges"`` swaps package nesting for the spec's ALTERNATIVE
+  owned-membership presentation: members as sibling nodes, solid edges
+  with a circle-plus at the owning namespace end.
 * :func:`state_diagram` -- hierarchical states, entry markers, transitions
   labeled ``trigger [guard] / effect``; state usages typed by a state def
   expand into the definition's submachine (``submachine_depth`` bounds the
@@ -215,8 +218,11 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             # composite membership: the diamond fill is BOUND to the edge
             # stroke (selection flips both, rule 3)
             arrow_style["fill"] = edge_style["stroke"]
-        elif start_form in ("hollow-diamond", "circle"):
-            # referential membership diamonds / alias circles stay white
+        elif start_form in ("hollow-diamond", "circle", "circle-plus"):
+            # referential membership diamonds / membership circles (alias
+            # hollow circle, owned-member circle-plus) stay white; the
+            # circle-plus cross strokes are self-painted currentColor, so
+            # they follow the stroke color (selection contract rule 3)
             arrow_style["fill"] = "#ffffff"
         style[f" .{css} > .elkarrow"] = arrow_style
         if start_form == "filled-diamond":
@@ -583,6 +589,7 @@ _START_SYMBOLS = {
     "hollow-diamond": "aggregation",
     "pin": "flow-source-pin",
     "circle": "alias-circle",
+    "circle-plus": "owned-circle-plus",
 }
 
 
@@ -786,6 +793,34 @@ def _alias_circle(identifier: str) -> EndpointSymbol:
     )
 
 
+def _circle_plus(identifier: str) -> EndpointSymbol:
+    """The circle-plus at the owned-membership OWNING namespace end,
+    touching the node border (errata E18, spec printed p.26).  A TRUE
+    circled plus: both cross strokes span the full diameter, endpoints ON
+    the circle -- never a floating '+' inside the circle.  Hollow family:
+    explicit white body, cross strokes in currentColor (bound to the edge
+    stroke by the stylesheet, so selection recolors circle and cross)."""
+
+    r = _CIRCLE_RADIUS
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=SVG(
+                    use=(
+                        f'<circle cx="{r:g}" cy="0" r="{r:g}" fill="#ffffff" '
+                        f'stroke="currentColor" stroke-width="1.2"/>'
+                        f'<path d="M 0,0 L {2 * r:g},0 M {r:g},{-r:g} L {r:g},{r:g}" '
+                        f'fill="none" stroke="currentColor" stroke-width="1.2"/>'
+                    )
+                )
+            )
+        ),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-2 * r, y=0),
+    )
+
+
 def _badge_symbol(identifier: str, form: str) -> Symbol:
     return Symbol(
         identifier=identifier,
@@ -813,7 +848,9 @@ def _symbols() -> SymbolSpec:
     / ``flow-target-pin`` are the flow-connection border squares (the
     target pin carries the filled direction arrowhead), ``portion-ball``
     the notched portion-membership ball, ``alias-circle`` the hollow
-    unowned-membership circle.  ``accept-badge`` / ``send-badge`` are the
+    unowned-membership circle, ``owned-circle-plus`` the true circled plus
+    at the owned-membership owning end.  ``accept-badge`` / ``send-badge``
+    are the
     filled top-left action-box tags.  All heads share the slender 2:1
     proportions of the headless markers (single-sourced in render.py).
     """
@@ -830,6 +867,7 @@ def _symbols() -> SymbolSpec:
         _pin_symbol("flow-target-pin", with_arrow=True),
         _portion_ball("portion-ball"),
         _alias_circle("alias-circle"),
+        _circle_plus("owned-circle-plus"),
         _badge_symbol("accept-badge", "accept"),
         _badge_symbol("send-badge", "send"),
     )
@@ -867,6 +905,7 @@ def structure_diagram(
     show_attributes: bool = True,
     show_relationships: bool = True,
     composition: str = "defs",
+    membership: str = "nested",
     toolbar: bool = True,
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
@@ -878,11 +917,28 @@ def structure_diagram(
     notation; ``composition="none"`` suppresses them.  Flow / binding /
     dependency / satisfy / alias / portion notation is always drawn when
     both ends resolve to drawn nodes (see the module docstring).
+
+    ``membership="nested"`` (the default) draws each package's owned
+    members NESTED inside its box -- the spec's primary presentation and
+    exactly the pre-0.8 output.  ``membership="edges"`` draws the spec's
+    ALTERNATIVE presentation instead (printed p.26, errata E18): packages
+    do not swallow their drawn members -- every member becomes a SIBLING
+    node and a solid owned-membership edge runs from the owning package,
+    carrying a true circle-plus at the owning end.  (Siblings keep ELK's
+    layered layout stable: an edge between a package and a node nested
+    inside it is the ancestor<->descendant case the layout mishandles.)
+    Membership edges are containment presentation, not relationship
+    edges, so ``show_relationships=False`` keeps them.
+
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
     """
 
-    builder = _StructureBuilder(element, show_attributes, composition=composition)
+    if membership not in ("nested", "edges"):
+        raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
+    builder = _StructureBuilder(
+        element, show_attributes, composition=composition, membership=membership
+    )
     root = builder.build()
     if show_relationships:
         builder.add_relationship_edges(root)
@@ -951,16 +1007,22 @@ class _StructureBuilder:
         element: M.Model | M.Namespace,
         show_attributes: bool,
         composition: str = "defs",
+        membership: str = "nested",
     ):
         self.element = element
         self.show_attributes = show_attributes
         self.composition = composition
+        self.membership = membership
         owner: M.Element = element
         while owner.owner is not None:
             owner = owner.owner
         self.model = owner if isinstance(owner, M.Model) else M.Model()
         self.interp = Interpreter(self.model)
         self.nodes: dict[int, Node] = {}
+        # membership="edges": members unnested into diagram-root siblings,
+        # and the (owning package node, member node) pairs to connect
+        self._unnested: list[Node] = []
+        self._owned: list[tuple[Node, Node]] = []
 
     def build(self) -> Node:
         root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -969,6 +1031,15 @@ class _StructureBuilder:
             child = self._visit(member)
             if child is not None:
                 root.children.append(child)
+        # membership="edges" (errata E18, spec printed p.26): packages did
+        # not swallow their drawn members -- every member becomes a SIBLING
+        # node at the diagram root, joined to its owning package by a solid
+        # owned-membership edge with the circle-plus at the owning end.
+        # These edges are containment presentation (they replace nesting),
+        # so they draw regardless of show_relationships.
+        root.children.extend(self._unnested)
+        for owner_node, member_node in self._owned:
+            root.edges.append(_edge(owner_node, member_node, "sysml-edge-owned"))
         return root
 
     def _visit(self, element: M.Element) -> Node | None:
@@ -976,7 +1047,12 @@ class _StructureBuilder:
             node = _node(element, element.label, "sysml-package", "package")
             for member in element.members:
                 child = self._visit(member)
-                if child is not None:
+                if child is None:
+                    continue
+                if self.membership == "edges":
+                    self._unnested.append(child)
+                    self._owned.append((node, child))
+                else:
                     node.children.append(child)
         elif isinstance(element, M.Definition):
             stereotype = _KIND_STEREOTYPES.get(element.kind, element.kind)
@@ -1285,9 +1361,9 @@ class _StructureBuilder:
         """Membership (unowned/alias member, errata E18 official v2 form):
         solid line, small HOLLOW circle at the referencing namespace end,
         alias name as the edge label.  (The owned-member circle-plus form
-        is not drawn: longeron shows owned membership as nesting, the
-        spec's primary form, so no cross-namespace owned-member edge
-        exists to decorate.)"""
+        is the ``membership="edges"`` presentation -- by default longeron
+        shows owned membership as nesting, the spec's primary form, so no
+        cross-namespace owned-member edge exists to decorate.)"""
 
         owner_node = self.nodes.get(id(owner))
         if owner_node is None or not alias.target:

@@ -386,6 +386,57 @@ class TestSvg:
         )[0]
         assert 'fill="#ffffff"' in circle  # hollow, forever
 
+    def test_owned_membership_edges_draw_the_circle_plus(self):
+        """Membership (owned member, errata E18 official v2 ALTERNATIVE
+        presentation, spec printed p.26): membership="edges" unnests
+        package members into siblings and joins them to the owning package
+        with a solid line carrying a TRUE circled-plus at the OWNING end;
+        both membership forms coexist in one diagram."""
+
+        import math
+
+        model = longeron.loads("""
+            package Package0 { package Package1; }
+            package Package2 { alias Package1Alias for Package0::Package1; }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model, membership="edges"))
+        owned = svg.split('data-edge="Package0-&gt;Package0::Package1"')[1].split("</g>")[0]
+        plus_id = render._start_marker_id("circle-plus", "#555555")
+        assert f'marker-start="url(#{plus_id})"' in owned
+        assert "marker-end" not in owned  # no head at the member end
+        assert "dasharray" not in owned  # solid line
+        assert "<text" not in owned  # unlabeled (unlike the alias form)
+        # both E18 forms in one diagram: the alias circle still draws
+        alias = svg.split('data-edge="Package2-&gt;Package0::Package1"')[1].split("</g>")[0]
+        assert f'marker-start="url(#{render._start_marker_id("circle", "#555555")})"' in alias
+        assert "Package1Alias" in alias
+        # marker geometry: a TRUE circled plus -- hollow white body, both
+        # cross strokes spanning the FULL diameter (endpoints ON the
+        # circle; the maintainer rejected a floating '+' inside the circle)
+        defs = svg.split("</defs>")[0]
+        glyph = defs.split(f'id="{plus_id}"')[1].split("</marker>")[0]
+        r = render._CIRCLE_RADIUS
+        mid, far = r + 1, 2 * r + 1
+        assert f'<circle cx="{mid:g}" cy="{mid:g}" r="{r:g}" fill="#ffffff"' in glyph
+        assert f'd="M 1 {mid:g} L {far:g} {mid:g} M {mid:g} 1 L {mid:g} {far:g}"' in glyph
+        for x, y in ((1, mid), (far, mid), (mid, 1), (mid, far)):
+            assert math.hypot(x - mid, y - mid) == pytest.approx(r)  # ON the circle
+
+    def test_membership_nested_default_is_byte_identical(self, drone_model):
+        """membership="nested" IS the default (today's behavior): the SVG
+        is byte-identical with and without the argument, and no owned-
+        membership glyph reaches the drawn body -- packages keep swallowing
+        their members."""
+
+        default = render.to_svg(diagrams.structure_diagram(drone_model))
+        nested = render.to_svg(diagrams.structure_diagram(drone_model, membership="nested"))
+        assert default == nested
+        body = default.split("</defs>")[1]
+        assert "circle-plus" not in body  # glyph never referenced
+        assert "sysml-edge-owned" not in body
+        # members still NEST: the QuadCopter usages sit inside their box
+        assert 'data-qname="Drone::QuadCopter::rotors"' in body
+
     def test_portion_membership_ball(self):
         """Portion membership (errata new row): timeslice/snapshot usages
         link to their individual with a FILLED ball, open-V notch on the

@@ -100,8 +100,11 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-flow": {"stroke": "#555555"},
     # binding connectors (errata E15): plain solid line, '=' rides mid-span
     "sysml-edge-binding": {"stroke": "#555555"},
-    # membership circles (errata E18): alias/unowned member -- solid line,
-    # hollow circle at the referencing end, alias name as the edge label
+    # membership circles (errata E18): owned member -- solid line, TRUE
+    # circle-plus at the OWNING namespace end (structure_diagram
+    # membership="edges"); alias/unowned member -- solid line, hollow
+    # circle at the referencing end, alias name as the edge label
+    "sysml-edge-owned": {"stroke": "#555555"},
     "sysml-edge-alias": {"stroke": "#555555"},
     # portion membership (errata new row): solid line, filled ball with an
     # open-V notch at the WHOLE-occurrence end
@@ -140,7 +143,8 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
 #: * ``ball-notch`` -- portion membership: a filled ball with an open-V
 #:   notch on the line side, at the whole-occurrence end.
 #: * ``none`` -- connectors (connect/interface/binding) and the membership
-#:   edges (whose glyph is the diamond at the START end) carry no head.
+#:   edges (whose glyphs -- diamonds and membership circles -- ride the
+#:   START end) carry no head.
 _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-specializes": "hollow",
     "sysml-edge-typed": "hollow-colon",
@@ -152,6 +156,7 @@ _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-connect": "none",
     "sysml-edge-flow": "pin-arrow",
     "sysml-edge-binding": "none",
+    "sysml-edge-owned": "none",
     "sysml-edge-alias": "none",
     "sysml-edge-portion": "ball-notch",
     "sysml-edge-dependency": "open",
@@ -166,11 +171,13 @@ _EDGE_ENDS: dict[str, str] = {
 #: pp.200-201): filled black for composite part membership, hollow for
 #: referential (``ref``) membership.  Flow connections put a small square
 #: source-output ``pin`` on the source border (errata E16); alias edges a
-#: small hollow ``circle`` at the referencing end (errata E18).
+#: small hollow ``circle`` at the referencing end and owned-membership
+#: edges a ``circle-plus`` at the OWNING namespace end (errata E18).
 _EDGE_STARTS: dict[str, str] = {
     "sysml-edge-member": "filled-diamond",
     "sysml-edge-refmember": "hollow-diamond",
     "sysml-edge-flow": "pin",
+    "sysml-edge-owned": "circle-plus",
     "sysml-edge-alias": "circle",
 }
 
@@ -239,7 +246,9 @@ _PIN_RX = 1.5
 _BALL_RADIUS = 5.5
 _BALL_MOUTH_DEG = 40.0  # notch half-angle
 
-#: alias/unowned-membership hollow circle at the referencing end
+#: membership circles (errata E18): the owned-member circle-plus at the
+#: owning end and the alias hollow circle at the referencing end share one
+#: radius (the spec's p.26 figures draw both glyphs the same size)
 _CIRCLE_RADIUS = 5.0
 
 #: n-ary dependency junction dot (drawn as a tiny glyph node)
@@ -440,6 +449,28 @@ def _circle_marker(stroke: str) -> str:
     )
 
 
+def _circle_plus_marker(stroke: str) -> str:
+    """Owned membership (errata E18): a small hollow circle-plus at the
+    OWNING namespace end, touching the node border (marker-start).  A TRUE
+    circled plus (spec printed p.26): both cross strokes span the FULL
+    diameter, so each stroke endpoint sits exactly ON the circle -- never
+    a floating '+' inside the circle."""
+
+    r = _CIRCLE_RADIUS
+    box = 2 * r + 2
+    mid = r + 1
+    return (
+        f'<marker id="{_start_marker_id("circle-plus", stroke)}" '
+        f'viewBox="0 0 {box:g} {box:g}" '
+        f'refX="1" refY="{mid:g}" markerWidth="{box:g}" markerHeight="{box:g}" '
+        f'markerUnits="userSpaceOnUse" orient="auto">'
+        f'<circle cx="{mid:g}" cy="{mid:g}" r="{r:g}" '
+        f'fill="#ffffff" stroke="{stroke}" stroke-width="1.2"/>'
+        f'<path d="M 1 {mid:g} L {box - 1:g} {mid:g} M {mid:g} 1 L {mid:g} {box - 1:g}" '
+        f'fill="none" stroke="{stroke}" stroke-width="1.2"/></marker>'
+    )
+
+
 def _arrow_defs() -> str:
     """Markers per glyph form and edge color (see ``_EDGE_ENDS`` /
     ``_EDGE_STARTS``).
@@ -449,8 +480,9 @@ def _arrow_defs() -> str:
     marker id, so it must stay defined); closed hollow triangles -- plain
     and shaft-adorned, white-filled so they occlude the line underneath --
     for the specialization family; flow pin(+arrowhead) squares and the
-    portion ball at the target end; filled/hollow diamonds, source pins
-    and alias circles at the START end.  ``userSpaceOnUse`` keeps heads a
+    portion ball at the target end; filled/hollow diamonds, source pins,
+    alias circles and owned-membership circle-pluses at the START end.
+    ``userSpaceOnUse`` keeps heads a
     constant size when a stylesheet widens the path stroke (e.g. the
     replay fired-edge highlight).
     """
@@ -489,7 +521,11 @@ def _arrow_defs() -> str:
             }
         )
         markers += [_diamond_marker(stroke, hollow) for stroke in strokes]
-    start_factories = {"pin": _pin_marker, "circle": _circle_marker}
+    start_factories = {
+        "pin": _pin_marker,
+        "circle": _circle_marker,
+        "circle-plus": _circle_plus_marker,
+    }
     for start_form, start_factory in start_factories.items():
         strokes = sorted(
             {

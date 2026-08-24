@@ -109,8 +109,12 @@ class TestPaletteSingleSource:
                 assert derived["fill"] == style["stroke"]
                 selected_arrow = diagrams.SYSML_STYLE[f" .elkedge.{css}.selected > .elkarrow"]
                 assert selected_arrow["fill"] == selected
-            elif start_form == "hollow-diamond":
-                assert derived["fill"] == "#ffffff"  # hollow stays white forever
+            elif start_form in ("hollow-diamond", "circle", "circle-plus"):
+                # hollow family (referential diamonds, membership circles):
+                # white bodies forever; the circle-plus cross strokes are
+                # self-painted currentColor, bound to the edge stroke
+                assert derived["fill"] == "#ffffff"
+                assert derived["color"] == style["stroke"]
         for css, style in render._LABEL_STYLES.items():
             derived = diagrams.SYSML_STYLE[f" .{css} > text"]
             assert derived["fill"] == style["fill"]
@@ -144,6 +148,7 @@ class TestPaletteSingleSource:
             "hollow-diamond",
             "pin",  # flow source-output pin (E16)
             "circle",  # alias/unowned-membership circle (E18)
+            "circle-plus",  # owned-membership circled plus at the owning end (E18)
         }
         # a start glyph and a hollow end on one kind would fight over the
         # single .elkarrow fill rule -- the palette forbids the combination.

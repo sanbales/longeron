@@ -406,6 +406,75 @@ class TestStructure:
         # hollow forever: the alias circle stays white even selected
         assert diagrams.SYSML_STYLE[" .sysml-edge-alias > .elkarrow"]["fill"] == "#ffffff"
 
+    def test_membership_edges_unnest_package_members(self):
+        """membership="edges" (errata E18, spec printed p.26): packages do
+        not swallow their drawn members -- members become SIBLING nodes at
+        the diagram root (never ELK ancestor<->descendant edges) joined by
+        a solid unlabeled edge with the circle-plus at the OWNING end."""
+
+        model = longeron.loads("""
+            package Package0 { package Package1 { part def X; } }
+        """)
+        widget = diagrams.structure_diagram(model, membership="edges")
+        root = widget.source.value
+        # recursively flattened: every package and member is a root sibling
+        assert {n.id for n in root.children} == {
+            "Package0",
+            "Package0::Package1",
+            "Package0::Package1::X",
+        }
+        assert all(not n.children for n in root.children)
+        owned = [e for e in root.edges if "sysml-edge-owned" in e.properties.cssClasses]
+        assert {(e.source.id, e.target.id) for e in owned} == {
+            ("Package0", "Package0::Package1"),
+            ("Package0::Package1", "Package0::Package1::X"),
+        }
+        for edge in owned:
+            assert edge.properties.shape.start == "owned-circle-plus"
+            assert edge.properties.shape.end is None  # no head at the member
+            assert not edge.labels  # the spec draws the edge unlabeled
+
+    def test_membership_edges_draw_without_relationships(self):
+        """Membership edges are containment presentation (they replace
+        nesting), not relationship edges: show_relationships=False keeps
+        them; membership defaults to "nested" (no owned edges) and other
+        values are rejected."""
+
+        model = longeron.loads("package Package0 { package Package1; }")
+        widget = diagrams.structure_diagram(model, membership="edges", show_relationships=False)
+        kinds = [e.properties.cssClasses for e in widget.source.value.edges]
+        assert any("sysml-edge-owned" in k for k in kinds)
+        nested = diagrams.structure_diagram(model)
+        assert not any(
+            "sysml-edge-owned" in e.properties.cssClasses for e in nested.source.value.edges
+        )
+        with pytest.raises(ValueError, match="membership"):
+            diagrams.structure_diagram(model, membership="flat")
+
+    def test_owned_membership_circle_plus_is_a_true_circled_plus(self):
+        """The owning-end glyph is a TRUE circled plus (spec p.26 crop):
+        both cross strokes span the FULL diameter, so every stroke endpoint
+        sits exactly ON the circle -- never a floating '+' inside it.
+        Selection contract: hollow family -- explicit white body, circle
+        outline and cross strokes in currentColor (bound to the edge
+        stroke, so selection recolors both, never the fill)."""
+
+        import math
+
+        from longeron.render import _CIRCLE_RADIUS as r
+
+        use = diagrams._symbols().library["owned-circle-plus"].element.properties.shape.use
+        assert f'<circle cx="{r:g}" cy="0" r="{r:g}" fill="#ffffff"' in use
+        assert f'd="M 0,0 L {2 * r:g},0 M {r:g},{-r:g} L {r:g},{r:g}"' in use
+        # prove it: each cross-stroke endpoint is exactly r from the center
+        center = (r, 0.0)
+        for x, y in ((0, 0), (2 * r, 0), (r, -r), (r, r)):
+            assert math.hypot(x - center[0], y - center[1]) == pytest.approx(r)
+        assert use.count('stroke="currentColor"') == 2  # circle + cross
+        style = diagrams.SYSML_STYLE[" .sysml-edge-owned > .elkarrow"]
+        assert style["fill"] == "#ffffff"  # hollow forever, even selected
+        assert style["stroke"] == "#555555" and style["color"] == "#555555"
+
     def test_portion_membership_edge(self):
         model = longeron.loads("""
             package P {
