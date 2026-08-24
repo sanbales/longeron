@@ -94,6 +94,9 @@ from .interpreter import Interpreter, _succession_plan
 from .render import (
     _ADORN_GAP,
     _BADGE_HEIGHT,
+    _BADGE_INSET_X,
+    _BADGE_INSET_Y,
+    _BADGE_STRIP,
     _BADGE_WIDTH,
     _BALL_MOUTH_DEG,
     _BALL_RADIUS,
@@ -105,6 +108,7 @@ from .render import (
     _DCOLON_SPACING,
     _DOT_OFFSET,
     _DOT_RADIUS,
+    _EDGE_END_CLEARANCE,
     _EDGE_ENDS,
     _EDGE_STARTS,
     _EDGE_STYLES,
@@ -188,7 +192,10 @@ def _sysml_style() -> dict[str, dict[str, str]]:
                 "stroke": attrs["stroke"],
                 "stroke-width": "1.2",
             }
-            style[f" .{css} .glyph-core"] = {"fill": attrs["fill"]}
+            # stroke NONE: the core is pure fill -- without it the circle
+            # inherits the theme's .elknode stroke (a gray outline around
+            # the filled center dot; maintainer repro: the done node)
+            style[f" .{css} .glyph-core"] = {"fill": attrs["fill"], "stroke": "none"}
             # selection contract rule 3: the FILLED core follows the stroke
             # color; the hollow ring keeps its white fill forever
             style[f" .{css} > .elknode.selected .glyph-ring"] = {"stroke": selected}
@@ -269,13 +276,14 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         style[f" .{badge}"] = {"fill": "#333333", "stroke": "none"}
         style[f" .elklabel.{badge}.selected"] = {"fill": selected}
     # the package folder tab (spec printed p.24): a fixed-size icon label
-    # riding the box's top-left, in the package palette; selection
-    # recolors the outline like the box border
-    style[" .package-tab"] = {
-        "fill": _NODE_STYLES["sysml-package"]["fill"],
-        "stroke": _NODE_STYLES["sysml-package"]["stroke"],
-    }
-    style[" .elklabel.package-tab.selected"] = {"stroke": selected}
+    # riding the box's top-left.  The tab renders as <use> shadow content,
+    # where the theme's `.elklabel` rule (label-color fill, stroke-width 0)
+    # beats any class-based fill/stroke we could put on the <use> -- so the
+    # symbol geometry carries the package palette as EXPLICIT attributes
+    # (like the endpoint symbols) with the outline in currentColor; these
+    # rules bind currentColor so selection recolors the tab WITH the box.
+    style[" .package-tab"] = {"color": _NODE_STYLES["sysml-package"]["stroke"]}
+    style[" .elklabel.package-tab.selected"] = {"color": selected}
     # AFTER the per-kind rules: same specificity, so source order decides
     style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
     style.update(
@@ -390,7 +398,10 @@ _ROOT_LAYOUT = {
     "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
     "elk.layered.nodePlacement.favorStraightEdges": "true",
     "elk.spacing.edgeNode": "14",
-    "elk.layered.spacing.edgeNodeBetweenLayers": "16",
+    # edge channels keep at least an endpoint glyph's reach from the nodes
+    # they enter, so no orthogonal bend ever falls under an arrowhead
+    # (render._EDGE_END_CLEARANCE; restated per hierarchy level in _finish)
+    "elk.layered.spacing.edgeNodeBetweenLayers": f"{_EDGE_END_CLEARANCE:g}",
     "elk.spacing.edgeLabel": "4",
     # center edge labels along the route (default MEDIAN_LAYER can put
     # them at a segment end, half under the target node)
@@ -554,6 +565,30 @@ def _anchor(node: Node, key: str) -> Node | Port:
     return node
 
 
+def _add_center_anchor(node: Node) -> Node:
+    """Anchor EVERY spoke at the junction dot's CENTER: two invisible
+    fixed-side ports (in = WEST, out = EAST) whose ``elk.port.anchor``
+    pulls the attachment point to the glyph's midpoint, so the fan
+    visually radiates from the dot itself -- the spec's n-ary figures
+    (printed pp.19, 66) draw all lines meeting AT the dot, and border
+    attachment scattered them across the dot's boundary.  ELK still
+    routes clients in one side and suppliers out the other (a single
+    center port made outgoing spokes detour back around the dot); the
+    dot's fill covers the meeting point."""
+
+    node.layoutOptions.update(_ANCHOR_LAYOUT)
+    half = (node.width or 0) / 2
+    for side, key, anchor in (("WEST", "in", half), ("EAST", "out", -half)):
+        port = Port(
+            width=0,
+            height=0,
+            layoutOptions={"elk.port.side": side, "elk.port.anchor": f"({anchor:g},0)"},
+            properties=PortProperties(key=key),
+        )
+        node.add_port(port, key=key)
+    return node
+
+
 def _glyph_node(
     element: M.Element | None,
     text: str | None,
@@ -599,7 +634,8 @@ def _bullseye_svg() -> str:
     return (
         f'<circle class="glyph-ring" cx="{c:g}" cy="{c:g}" r="{ring:g}" '
         f'fill="#ffffff" stroke="#333333" stroke-width="1.2"/>'
-        f'<circle class="glyph-core" cx="{c:g}" cy="{c:g}" r="{core:g}" fill="#333333"/>'
+        f'<circle class="glyph-core" cx="{c:g}" cy="{c:g}" r="{core:g}" '
+        f'fill="#333333" stroke="none"/>'
     )
 
 
@@ -910,11 +946,21 @@ def _circle_plus(identifier: str) -> EndpointSymbol:
 
 
 def _badge_symbol(identifier: str, form: str) -> Symbol:
+    """An accept/send badge (filled top-left tag).  Explicit paints ride
+    the geometry (like the tab and endpoint symbols): the badge is <use>
+    shadow content, where the theme's ``.elklabel`` fill would otherwise
+    leak in; the ``.accept-badge``/``.send-badge`` rules still drive the
+    selection recolor (CSS beats presentation attributes)."""
+
+    points = " ".join(
+        f"{'M' if index == 0 else 'L'} {px:g},{py:g}"
+        for index, (px, py) in enumerate(_badge_points(form, _BADGE_WIDTH, _BADGE_HEIGHT))
+    )
     return Symbol(
         identifier=identifier,
         element=Node(
             properties=NodeProperties(
-                shape=Path.from_list(_badge_points(form, _BADGE_WIDTH, _BADGE_HEIGHT), closed=True)
+                shape=SVG(use=f'<path d="{points} Z" fill="#333333" stroke="none"/>')
             )
         ),
         width=_BADGE_WIDTH,
@@ -968,19 +1014,26 @@ def _proxy_symbol(identifier: str) -> Symbol:
 
 def _tab_symbol(identifier: str) -> Symbol:
     """The package folder tab (spec printed p.24): a small closed
-    rectangle riding the box's top-left, styled by the ``.package-tab``
-    rule (package palette)."""
+    rectangle riding the box's top-left -- ONE continuous folder
+    silhouette, so the tab carries the package palette itself.
 
+    Explicit paints are required (like the endpoint symbols): the tab is
+    <use> shadow content, and the theme's ``.elklabel`` rule (label-color
+    fill, stroke-width 0) would otherwise paint it as a borderless gray
+    block.  The body takes the package fill directly; the outline is
+    currentColor, bound to the package stroke by the ``.package-tab``
+    rule -- and to the selection color when selected -- so the tab always
+    recolors WITH the box border."""
+
+    style = _NODE_STYLES["sysml-package"]
+    svg = (
+        f'<path d="M 0,0 L {_TAB_WIDTH:g},0 L {_TAB_WIDTH:g},{_TAB_HEIGHT:g} '
+        f'L 0,{_TAB_HEIGHT:g} Z" fill="{style["fill"]}" stroke="currentColor" '
+        f'stroke-width="1"/>'
+    )
     return Symbol(
         identifier=identifier,
-        element=Node(
-            properties=NodeProperties(
-                shape=Path.from_list(
-                    [(0, 0), (_TAB_WIDTH, 0), (_TAB_WIDTH, _TAB_HEIGHT), (0, _TAB_HEIGHT)],
-                    closed=True,
-                )
-            )
-        ),
+        element=Node(properties=NodeProperties(shape=SVG(use=svg))),
         width=_TAB_WIDTH,
         height=_TAB_HEIGHT,
     )
@@ -1047,6 +1100,18 @@ def _finish(
         root.layoutOptions["elk.direction"] = direction
     if layout:
         root.layoutOptions.update(layout)
+    # ELK does NOT inherit layered spacing through INCLUDE_CHILDREN
+    # hierarchy levels: a compound node's contents are spaced by ITS
+    # layoutOptions or the elkjs defaults (edge channels then land 10px
+    # from the node border -- inside every arrowhead's footprint, so the
+    # shaft visibly entered the triangle's side and shaft adornments
+    # floated off the turned line).  Restate the endpoint-glyph clearance
+    # per level; pack grids keep their deliberately tighter values.
+    for node in _walk_nodes(root):
+        if node is not root and node.children:
+            node.layoutOptions.setdefault(
+                "elk.layered.spacing.edgeNodeBetweenLayers", f"{_EDGE_END_CLEARANCE:g}"
+            )
     result = ipyelk.from_element(root)
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
@@ -1638,15 +1703,16 @@ class _StructureBuilder:
         if text and element.types:
             text = f"{text} : {element.types[0]}"
         junction = _glyph_node(element, text, "sysml-connjunction", _JUNCTION_SIZE, _JUNCTION_SIZE)
+        _add_center_anchor(junction)
         owner_node = self.nodes.get(id(element.owner)) if element.owner is not None else None
         (owner_node or root).children.append(junction)
         first, *rest = zip(ends, endpoints, strict=True)
-        edge = _edge(first[1], junction, "sysml-edge-connect")
+        edge = _edge(first[1], _anchor(junction, "in"), "sysml-edge-connect")
         if first[0].multiplicity is not None:
             _add_end_multiplicity(edge, first[0].multiplicity, "TAIL")
         root.edges.append(edge)
         for end, endpoint in rest:
-            edge = _edge(junction, endpoint, "sysml-edge-connect")
+            edge = _edge(_anchor(junction, "out"), endpoint, "sysml-edge-connect")
             if end.multiplicity is not None:
                 _add_end_multiplicity(edge, end.multiplicity, "HEAD")
             root.edges.append(edge)
@@ -1827,14 +1893,15 @@ class _StructureBuilder:
             root.edges.append(_edge(clients[0], suppliers[0], "sysml-edge-dependency", text=label))
             return
         junction = _glyph_node(dep, label, "sysml-junction", _JUNCTION_SIZE, _JUNCTION_SIZE)
+        _add_center_anchor(junction)
         # lay the dot out inside the namespace that owns the dependency
         # (falling back to the diagram root)
         owner_node = self.nodes.get(id(dep.owner)) if dep.owner is not None else None
         (owner_node or root).children.append(junction)
         for client in clients:
-            root.edges.append(_edge(client, junction, "sysml-edge-depclient"))
+            root.edges.append(_edge(client, _anchor(junction, "in"), "sysml-edge-depclient"))
         for supplier in suppliers:
-            root.edges.append(_edge(junction, supplier, "sysml-edge-dependency"))
+            root.edges.append(_edge(_anchor(junction, "out"), supplier, "sysml-edge-dependency"))
 
     def _add_alias_edge(self, root: Node, owner: M.Element, alias: M.Alias) -> None:
         """Membership (unowned/alias member, errata E18 official v2 form):
@@ -2432,17 +2499,56 @@ def _action_step_node(element: M.Element, title: str) -> Node:
         )
     if isinstance(element, (M.AcceptAction, M.SendAction)):
         form = "accept" if isinstance(element, M.AcceptAction) else "send"
-        node = _node(element, title, f"sysml-step sysml-step-{form}", form)
-        badge = Label(text="")
-        badge.properties = LabelProperties(
-            cssClasses=f"sysml-badge sysml-badge-{form}",
-            shape=Icon(use=f"{form}-badge", width=_BADGE_WIDTH, height=_BADGE_HEIGHT),
-        )
-        badge.layoutOptions = {"nodeLabels.placement": "H_LEFT V_TOP INSIDE"}
-        node.labels.insert(0, badge)
-        return node
+        return _badged_step_box(_node(element, title, f"sysml-step sysml-step-{form}", form), form)
     kind = getattr(element, "kind", None) or type(element).__name__.replace("Action", "")
     return _node(element, title, "sysml-step", str(kind))
+
+
+def _badged_step_box(node: Node, form: str) -> Node:
+    """Pin the accept/send box geometry -- identically in BOTH pipelines.
+
+    ELK's inside-label placer put the H_LEFT V_TOP badge at the very
+    corner, protruding past the rounded corner arc (sysml-step rx), and
+    centered the «accept»/«send» keyword row over the node width -- the
+    top-left and top-center label cells share the top strip, so the row
+    overlapped the badge.  So no label is left to ELK here: the badge sits
+    at the corner inset (clear of the corner radius), the text rows start
+    below the badge strip and center against the fixed box width -- the
+    exact geometry the headless renderer draws (labels with empty
+    placement sets are left untouched by ELK; the box size is pinned via
+    MINIMUM_SIZE).  Fonts are pinned by the stylesheet (text.elklabel
+    !important), so the _measure pre-sizing is faithful in the browser,
+    like every pre-sized edge label and attribute row."""
+
+    measured = [
+        (label, *_measure(label.text or "", label.properties.cssClasses or ""))
+        for label in node.labels
+    ]
+    # the box wraps the widest row with the usual 8px margins, but never
+    # drops under the browser minimum (_NODE_LAYOUT elk.nodeSize.minimum)
+    width = max(max(w for _, w, _ in measured) + 16.0, 60.0)
+    cursor = _BADGE_STRIP
+    for label, w, h in measured:
+        shape = label.properties.get_shape()
+        shape.width, shape.height = w, h  # pre-sized: skips the browser sizer
+        label.x, label.y = (width - w) / 2, cursor
+        label.layoutOptions = {"nodeLabels.placement": ""}  # pinned
+        cursor += h
+    height = max(cursor + 5.0, 44.0)
+    badge = Label(text="")
+    badge.properties = LabelProperties(
+        cssClasses=f"sysml-badge sysml-badge-{form}",
+        shape=Icon(use=f"{form}-badge", width=_BADGE_WIDTH, height=_BADGE_HEIGHT),
+    )
+    badge.x, badge.y = _BADGE_INSET_X, _BADGE_INSET_Y
+    badge.layoutOptions = {"nodeLabels.placement": ""}
+    node.labels.insert(0, badge)
+    node.width, node.height = width, height
+    node.layoutOptions = {
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": f"({width:g}, {height:g})",
+    }
+    return node
 
 
 def _statement_title(member: M.Element) -> str:

@@ -1,5 +1,6 @@
 """Headless SVG/PNG rendering tests (node + vendored elkjs)."""
 
+import math
 import shutil
 
 import pytest
@@ -955,7 +956,19 @@ class TestTranche3Svg:
             f'width="{render._TAB_WIDTH:.1f}" height="{render._TAB_HEIGHT:.1f}" '
             f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
         )
-        assert tab in svg  # flush with the box's top-left corner
+        # flush with the box's top-left corner (tab bottom ON the box top,
+        # left edges aligned) AND in the package palette -- one continuous
+        # folder silhouette, never a default-gray rectangle
+        assert tab in svg
+        # a NESTED package restates the label spacing for its level, so
+        # its tab stays flush too
+        nested = longeron.loads("package Outer { package Inner { part def A; } }")
+        svg = render.to_svg(diagrams.structure_diagram(nested))
+        for name in ("Outer", "Outer::Inner"):
+            px, py, _w, _h = _rect_geometry(svg, name)
+            assert f'<rect x="{px:.1f}" y="{py - render._TAB_HEIGHT:.1f}" ' in svg, (
+                name
+            )  # tab bottom edge exactly on the box top edge
 
     def test_definitions_draw_square_corners(self):
         model = longeron.loads("package P { part def A; part a : A; }")
@@ -1005,6 +1018,200 @@ class TestTranche3Svg:
             options = node.get("layoutOptions", {})
             assert "elk.portConstraints" not in options
             assert "elk.portLabels.placement" not in options
+
+
+def _origins(graph):
+    """Absolute origin of every node (elkjs emits child/edge coordinates
+    relative to their parent/container)."""
+
+    origins = {}
+
+    def index(node, ox=0.0, oy=0.0):
+        x, y = ox + node.get("x", 0), oy + node.get("y", 0)
+        origins[str(node.get("id"))] = (x, y)
+        for child in node.get("children", []):
+            index(child, x, y)
+
+    index(graph)
+    return origins
+
+
+def _walk_json(node):
+    yield node
+    for child in node.get("children", []):
+        yield from _walk_json(child)
+
+
+class TestGalleryNits:
+    """Geometric proofs for the notation-gallery review fixes (nits 1-5):
+    junction convergence, badge insets, and arrowhead-reach clearance."""
+
+    def _junction_endpoint_distances(self, widget, junction_id):
+        """Distances of every junction-spoke endpoint from the dot center."""
+
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        origins = _origins(graph)
+        node = next(n for n in _walk_json(graph) if n["id"] == junction_id)
+        ox, oy = origins[junction_id]
+        cx, cy = ox + node["width"] / 2, oy + node["height"] / 2
+        distances = []
+        for owner in _walk_json(graph):
+            for edge in owner.get("edges", []):
+                props = edge.get("properties", {})
+                for tag, key in (("startPoint", "sourceNode"), ("endPoint", "targetNode")):
+                    if props.get(key) != junction_id:
+                        continue
+                    eox, eoy = origins.get(str(edge.get("container")), origins[owner["id"]])
+                    for section in edge.get("sections", []):
+                        point = section[tag]
+                        distances.append(math.hypot(eox + point["x"] - cx, eoy + point["y"] - cy))
+        return distances
+
+    def test_junction_spokes_converge_at_the_dot_center(self):
+        """Nit 2: edges left/entered the junction dot at scattered boundary
+        points -- lines visibly not meeting.  Every spoke endpoint now sits
+        AT the dot's center (within its radius, in fact exactly on it), so
+        the fan radiates from the dot like the spec crops (printed pp.19,
+        66); replay identity stays node-qualified."""
+
+        radius = render._JUNCTION_SIZE / 2
+        nary = longeron.loads("""
+            package P {
+                part def ConnectionDef1;
+                part part1; part part2; part part3;
+                connection connection1 : ConnectionDef1
+                    connect (part1, part2, part3);
+            }
+        """)
+        widget = diagrams.structure_diagram(nary)
+        distances = self._junction_endpoint_distances(widget, "P::connection1")
+        assert len(distances) == 3
+        assert all(d <= radius for d in distances)
+        assert all(d < 0.01 for d in distances)  # exactly the center
+        # the 3-client / 2-supplier n-ary dependency specimen
+        deps = longeron.loads("""
+            package P {
+                part a; part b; part c; part s; part t;
+                dependency Multi from a, b, c to s, t;
+            }
+        """)
+        widget = diagrams.structure_diagram(deps)
+        distances = self._junction_endpoint_distances(widget, "P::Multi")
+        assert len(distances) == 5
+        assert all(d < 0.01 for d in distances)
+        # data-edge keys keep the replay contract (node ids, never ports)
+        svg = render.to_svg(widget)
+        assert 'data-edge="P::a-&gt;P::Multi"' in svg
+        assert 'data-edge="P::Multi-&gt;P::t"' in svg
+
+    def test_badge_boxes_pin_identical_geometry_in_both_pipelines(self):
+        """Nit 3: in the browser, ELK put the badge at the raw corner
+        (outside the rounded-corner arc) and centered the keyword row over
+        it.  The accept/send box is now fully pinned: the ELK JSON labels
+        carry exactly the coordinates diagrams computed (which the browser
+        receives verbatim -- pinned labels are left untouched by elkjs),
+        the badge clears the corner radius, and the keyword row starts
+        below the badge strip."""
+
+        model = longeron.loads("""
+            package P {
+                item def Go;
+                action def Chat {
+                    action rx accept go : Go;
+                    action tx send new Go() via ch;
+                    first start then rx;
+                    first rx then tx;
+                    first tx then done;
+                }
+            }
+        """)
+        widget = diagrams.action_diagram(model.find("P::Chat"))
+        elements = {n.id: n for n in _walk_children(widget.source.value) if n.id}
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        rx_corner_radius = 6.0  # sysml-step rx (render._NODE_STYLES)
+        for name in ("P::Chat::rx", "P::Chat::tx"):
+            node = next(n for n in _walk_json(graph) if n["id"] == name)
+            badge, stereotype, title = node["labels"]
+            # badge bbox inside the node bbox minus the corner radius
+            assert badge["x"] >= rx_corner_radius
+            assert badge["x"] + badge["width"] <= node["width"] - 0  # inside
+            assert badge["y"] >= 0 and badge["y"] + badge["height"] <= node["height"]
+            # ... and clear of the corner arc: its top-left corner lies
+            # inside the arc circle centered (rx, rx)
+            dx = badge["x"] - rx_corner_radius
+            dy = badge["y"] - rx_corner_radius
+            assert badge["x"] >= rx_corner_radius or math.hypot(dx, dy) <= rx_corner_radius
+            # no overlap with the keyword/stereotype row
+            assert stereotype["y"] >= badge["y"] + badge["height"]
+            assert title["y"] >= stereotype["y"] + stereotype["height"]
+            # the geometry in the ELK JSON is EXACTLY what the element tree
+            # ships to the browser (pinned labels, fixed box)
+            element = elements[name]
+            assert (node["width"], node["height"]) == (element.width, element.height)
+            for entry, label in zip(node["labels"], element.labels, strict=True):
+                assert (entry["x"], entry["y"]) == (label.x, label.y)
+                assert label.layoutOptions == {"nodeLabels.placement": ""}
+
+    def test_no_bend_falls_within_an_arrowheads_reach(self):
+        """Nit 5: inside compound nodes elkjs spaced edge channels 10px
+        from the node border (layered spacing does not inherit through
+        INCLUDE_CHILDREN), so the last bend sat under the 10px triangle:
+        the shaft entered the head's side and the colon dots floated off
+        the turned line.  With the clearance restated per level, every
+        hollow-family edge keeps a straight final run at least as long as
+        its head's reach (the gallery's annotated-Pump model is the
+        repro)."""
+
+        model = longeron.loads("""
+            package Annotated {
+                metadata def Safety;
+                part def Pump { attribute pressure : Real; }
+                @Safety about Pump;
+                comment about Pump /* Centrifugal, oil-free. */
+                part pump : Pump { doc /* The unit under review. */ }
+            }
+        """)
+        widget = diagrams.structure_diagram(model, annotations=True)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        checked = 0
+        for owner in _walk_json(graph):
+            for edge in owner.get("edges", []):
+                css = edge.get("properties", {}).get("cssClasses", "")
+                end = render._edge_end(css)
+                if not end.startswith("hollow"):
+                    continue
+                reach = render._HEAD_LENGTH + render._ADORN_TAIL[end]
+                assert render._EDGE_END_CLEARANCE >= reach  # the guarantee
+                for section in edge.get("sections", []):
+                    points = [
+                        section["startPoint"],
+                        *section.get("bendPoints", []),
+                        section["endPoint"],
+                    ]
+                    if len(points) < 3:
+                        continue  # straight edges cannot bend under the head
+                    last = math.hypot(
+                        points[-1]["x"] - points[-2]["x"],
+                        points[-1]["y"] - points[-2]["y"],
+                    )
+                    assert last >= reach, (css, last, reach)
+                    checked += 1
+        assert checked  # the repro really produced a bent hollow-family edge
+
+    def test_done_core_draws_pure_fill_headless(self):
+        """Nit 4 (headless side): the bullseye core is explicit
+        stroke=none, so no SVG consumer can inherit an outline onto it."""
+
+        model = longeron.loads("""
+            package P {
+                action def Flow { action a; first start then a; first a then done; }
+            }
+        """)
+        svg = render.to_svg(diagrams.action_diagram(model.find("P::Flow")))
+        groups = [g.split("</g>")[0] for g in svg.split("<g data-qname=")[1:]]
+        bullseye = next(g for g in groups if g.count("<circle") == 2)
+        core = bullseye.split("<circle")[2]
+        assert 'stroke="none"' in core
 
 
 class TestPng:

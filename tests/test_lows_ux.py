@@ -270,10 +270,14 @@ class TestPaletteSingleSource:
             derived = diagrams.SYSML_STYLE[f" .{css} .elkport.selected"]
             assert derived["fill"] == selected
             assert derived["stroke-width"] == pinned
-        # the package folder tab derives from the package palette
+        # the package folder tab: explicit paints ride the symbol geometry
+        # (<use> shadow content -- the theme's .elklabel rule would
+        # otherwise win), with the outline in currentColor BOUND to the
+        # package stroke here, so selection recolors the tab with the box
         tab = diagrams.SYSML_STYLE[" .package-tab"]
-        assert tab["fill"] == render._NODE_STYLES["sysml-package"]["fill"]
-        assert tab["stroke"] == render._NODE_STYLES["sysml-package"]["stroke"]
+        assert tab == {"color": render._NODE_STYLES["sysml-package"]["stroke"]}
+        selected_tab = diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]
+        assert selected_tab == {"color": selected}
 
     def test_label_kinds_keep_their_measured_font_sizes_in_the_browser(self):
         """Item 12: the blanket 11px !important label rule (needed against
@@ -291,6 +295,27 @@ class TestPaletteSingleSource:
             assert derived["fill"] == style["fill"]
             selected = diagrams.SYSML_STYLE[f" text.elklabel.{css}.selected"]
             assert selected["fill"] == "var(--jp-elk-color-selected)"
+
+    def test_edge_end_clearance_covers_every_glyph_reach(self):
+        """Nit 5 single-source: the layout clearance both pipelines restate
+        per hierarchy level must cover the longest endpoint glyph, so no
+        orthogonal bend can ever fall under a head (or leave shaft
+        adornments floating off a turned line)."""
+
+        from longeron import render
+
+        worst_head = render._HEAD_LENGTH + max(render._ADORN_TAIL.values())
+        assert render._EDGE_END_CLEARANCE >= worst_head
+        assert render._EDGE_END_CLEARANCE >= render._DIAMOND_LENGTH
+        assert render._EDGE_END_CLEARANCE >= render._PIN_SIZE + render._FLOW_HEAD_LENGTH
+        assert render._EDGE_END_CLEARANCE >= 2 * render._CIRCLE_RADIUS
+        assert render._EDGE_END_CLEARANCE >= render._V_LENGTH
+        pytest.importorskip("ipyelk")
+        from longeron import diagrams
+
+        assert diagrams._ROOT_LAYOUT["elk.layered.spacing.edgeNodeBetweenLayers"] == (
+            f"{render._EDGE_END_CLEARANCE:g}"
+        )
 
     def test_replay_css_marker_reference_matches_fired_stroke(self):
         from longeron import render, replay

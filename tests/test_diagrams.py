@@ -391,6 +391,46 @@ class TestStructure:
         }
         assert diagrams.SYSML_STYLE[" .sysml-junction > .elknode"] == {"stroke-width": "1.2"}
 
+    def test_junction_spokes_anchor_at_the_dot_center(self):
+        """Junction dots get the control-node convergence treatment (t2
+        item 10), pulled to the CENTER: two invisible fixed-side ports
+        whose elk.port.anchor offsets move both attachment points to the
+        glyph's midpoint, so every spoke -- client or supplier -- visually
+        radiates from the dot (spec printed pp.19, 66).  Border attachment
+        scattered the lines across the dot's boundary."""
+
+        from longeron.render import _JUNCTION_SIZE
+
+        model = longeron.loads("""
+            package P {
+                part a;
+                part b;
+                part s;
+                dependency Multi from a, b to s;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        junction = next(
+            n for n in _walk(root) if "sysml-junction" in (n.properties.cssClasses or "")
+        )
+        assert junction.layoutOptions["elk.portConstraints"] == "FIXED_SIDE"
+        half = _JUNCTION_SIZE / 2
+        anchors = {p.properties.key: p for p in junction.ports}
+        assert anchors["in"].layoutOptions == {
+            "elk.port.side": "WEST",
+            "elk.port.anchor": f"({half:g},0)",
+        }
+        assert anchors["out"].layoutOptions == {
+            "elk.port.side": "EAST",
+            "elk.port.anchor": f"({-half:g},0)",
+        }
+        # clients converge on the in anchor, suppliers fan out of the out
+        for edge in root.edges:
+            if "sysml-edge-depclient" in edge.properties.cssClasses:
+                assert edge.target is anchors["in"]
+            elif "sysml-edge-dependency" in edge.properties.cssClasses:
+                assert edge.source is anchors["out"]
+
     def test_alias_edge_carries_the_hollow_circle(self):
         model = longeron.loads("""
             package Lib { part def Target; }
@@ -549,6 +589,32 @@ class TestStructure:
             if "sysml-packing" in e.properties.cssClasses:
                 assert id(e.source) not in connected
                 assert id(e.target) not in connected
+
+    def test_endpoint_clearance_restated_per_hierarchy_level(self, drone_model):
+        """ELK does not inherit layered spacing through INCLUDE_CHILDREN
+        levels: inside a compound node the edge channels fall back to the
+        elkjs 10px default -- within every arrowhead's footprint, so the
+        last bend sat under the head (maintainer repro: the shaft entered
+        the triangle's side, colon dots floated off the turned line).
+        _finish restates render._EDGE_END_CLEARANCE on every container in
+        every view; pack grids keep their deliberately tighter value."""
+
+        from longeron.render import _EDGE_END_CLEARANCE
+
+        clearance = f"{_EDGE_END_CLEARANCE:g}"
+        key = "elk.layered.spacing.edgeNodeBetweenLayers"
+        for build in (
+            lambda: diagrams.structure_diagram(drone_model),
+            lambda: diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
+            lambda: diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
+        ):
+            root = build().source.value
+            assert root.layoutOptions[key] == clearance
+            for node in _walk(root):
+                if node is root or not node.children:
+                    continue
+                expected = "4" if "elk.hierarchyHandling" in node.layoutOptions else clearance
+                assert node.layoutOptions[key] == expected  # grids stay tight
 
 
 _PORTED = """
@@ -739,13 +805,20 @@ class TestConnectorNotation:
         # label beside the dot, name : Type (spec printed p.66)
         assert junction.labels[0].text == "connection1 : ConnectionDef1"
         assert junction.id == "P::connection1"
+        # spokes anchor on the dot's invisible center ports, so all three
+        # lines radiate from the junction itself (t2 item 10 treatment,
+        # pulled to the CENTER: the spec draws the lines meeting AT the dot)
+        anchors = list(junction.ports)
+        assert [p.properties.key for p in anchors] == ["in", "out"]
         spokes = [
             e
             for e in root.edges
             if "sysml-edge-connect" in e.properties.cssClasses
-            and (e.source is junction or e.target is junction)
+            and any(e.source is p or e.target is p for p in anchors)
         ]
-        others = {(e.source if e.target is junction else e.target).id for e in spokes}
+        others = {
+            (e.source if any(e.target is p for p in anchors) else e.target).id for e in spokes
+        }
         assert len(spokes) == 3
         assert others == {"P::part1", "P::part2", "P::part3"}
 
@@ -823,6 +896,29 @@ class TestPackageTabAndAnnotations:
         # placed OUTSIDE at the top-left, flush (label-node spacing 0)
         assert tab.layoutOptions["nodeLabels.placement"] == "H_LEFT V_TOP OUTSIDE"
         assert package.layoutOptions["elk.spacing.labelNode"] == "0"
+
+    def test_tab_symbol_carries_the_package_palette(self):
+        """Maintainer browser repro: the tab rendered as a borderless gray
+        block.  The tab is <use> shadow content, where the theme's
+        .elklabel rule (label-color fill, stroke-width 0) wins over any
+        class-based fill/stroke -- so the symbol geometry itself carries
+        the package fill and a currentColor outline as EXPLICIT attributes
+        (one continuous folder silhouette, tab styled like the box), and
+        .package-tab binds currentColor to the package stroke; selection
+        recolors the tab WITH the box."""
+
+        from longeron import render
+
+        style = render._NODE_STYLES["sysml-package"]
+        symbol = diagrams._symbols().library["package-tab"]
+        use = symbol.element.properties.shape.use
+        assert f'fill="{style["fill"]}"' in use  # the package body fill
+        assert 'stroke="currentColor"' in use  # outline follows .package-tab
+        assert 'stroke-width="1"' in use  # never the .elklabel 0-width
+        assert diagrams.SYSML_STYLE[" .package-tab"] == {"color": style["stroke"]}
+        assert diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"] == {
+            "color": "var(--jp-elk-color-selected)"
+        }
 
     def test_annotations_default_off(self, drone_model):
         root = diagrams.structure_diagram(drone_model).source.value
@@ -1053,6 +1149,8 @@ class TestActions:
         with a small filled top-left badge (notched banner for accept,
         pointed tag for send) -- not whole-node pentagons."""
 
+        from longeron import render
+
         model = longeron.loads("""
             package P {
                 item def Go;
@@ -1075,13 +1173,34 @@ class TestActions:
             assert f"sysml-badge-{form}" in badge.properties.cssClasses
             shape = badge.properties.shape
             assert type(shape).__name__ == "Icon" and shape.use == f"{form}-badge"
-            assert badge.layoutOptions["nodeLabels.placement"] == "H_LEFT V_TOP INSIDE"
+            # the badge is PINNED (empty placement = ELK leaves it): inset
+            # clear of the box's rounded corner (rx=6), never at the raw
+            # corner where ELK's inside placer put it (maintainer repro:
+            # the badge protruded past the corner arc)
+            assert badge.layoutOptions["nodeLabels.placement"] == ""
+            assert (badge.x, badge.y) == (render._BADGE_INSET_X, render._BADGE_INSET_Y)
+            assert badge.x >= 6  # the sysml-step corner radius
             stereotype = node.labels[1]
             assert stereotype.text == f"\u00ab{form}\u00bb"
+            # the keyword row starts BELOW the badge strip -- it may never
+            # cover the badge (both pipelines share this pinned geometry)
+            assert stereotype.layoutOptions["nodeLabels.placement"] == ""
+            assert stereotype.y == render._BADGE_STRIP
+            assert stereotype.y >= badge.y + render._BADGE_HEIGHT
+            # text rows are pre-sized and the box size is fixed, so the
+            # browser cannot re-center anything over the badge
+            assert stereotype.properties.shape.width
+            assert node.width >= 60 and node.height >= 44
+            assert node.layoutOptions["elk.nodeSize.constraints"] == "MINIMUM_SIZE"
         # both badge symbols are registered and filled via the stylesheet
         assert "accept-badge" in widget.symbols.library
         assert "send-badge" in widget.symbols.library
         assert diagrams.SYSML_STYLE[" .accept-badge"]["fill"] == "#333333"
+        # ... and the geometry carries the fill explicitly too, so the
+        # theme's .elklabel label-color can never leak into the <use>
+        for form in ("accept", "send"):
+            use = widget.symbols.library[f"{form}-badge"].element.properties.shape.use
+            assert 'fill="#333333"' in use and 'stroke="none"' in use
 
     def test_terminate_renders_as_circle_x(self):
         model = longeron.loads("""
@@ -1103,6 +1222,35 @@ class TestActions:
         shape = terminates[0].properties.shape
         assert type(shape).__name__ == "SVG"
         assert "glyph-x" in shape.use  # the inscribed X
+
+    def test_done_core_is_pure_fill(self):
+        """Maintainer browser repro: the done bullseye's filled center dot
+        drew a gray outline -- the circle carried no stroke of its own, so
+        it inherited the theme's .elknode stroke.  The core is pure fill
+        in BOTH pipelines (explicit stroke=none on the geometry AND in the
+        derived stylesheet); the terminate X and the start dot already
+        paint their strokes explicitly."""
+
+        from longeron import render
+
+        core = diagrams._bullseye_svg().split('class="glyph-core"')[1].split("/>")[0]
+        assert 'stroke="none"' in core
+        final = render._NODE_STYLES["sysml-final"]
+        assert diagrams.SYSML_STYLE[" .sysml-final .glyph-core"] == {
+            "fill": final["fill"],
+            "stroke": "none",
+        }
+        # selection still flips the core fill with the ring stroke (rule 3)
+        selected = diagrams.SYSML_STYLE[" .sysml-final > .elknode.selected .glyph-core"]
+        assert selected == {"fill": "var(--jp-elk-color-selected)"}
+        # terminate: ring and X strokes are explicit (never inherited)
+        term = diagrams._terminate_svg()
+        ring = term.split('class="glyph-ring"')[1].split("/>")[0]
+        x_glyph = term.split('class="glyph-x"')[1].split("/>")[0]
+        assert 'stroke="#333333"' in ring and 'stroke="#333333"' in x_glyph
+        # the start dot is a plain rect: fill and stroke share one color
+        marker = render._NODE_STYLES["sysml-marker"]
+        assert marker["fill"] == marker["stroke"]
 
     def test_successions_render_dashed(self):
         """Spec errata E12: action-flow successions are DASHED with open-V

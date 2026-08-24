@@ -268,6 +268,15 @@ _BADGE_WIDTH, _BADGE_HEIGHT = 18.0, 12.0
 _BADGE_NOTCH = 5.0  # accept: triangular notch depth cut into the LEFT edge
 _BADGE_POINT = 5.0  # send: pointed RIGHT edge depth
 
+#: badge inset from the box's top-left corner: x clears the step box's
+#: rounded corner (sysml-step rx = 6 -- the badge polygon must never
+#: protrude past the corner arc) and the text rows start below the badge
+#: strip so the «accept»/«send» keyword row is never covered.  BOTH
+#: pipelines pin this same geometry (diagrams._badged_step_box pins the
+#: labels for the browser; _to_elk_json passes pinned labels through).
+_BADGE_INSET_X, _BADGE_INSET_Y = 6.0, 4.0
+_BADGE_STRIP = _BADGE_INSET_Y + _BADGE_HEIGHT + 2.0  # first text row y
+
 #: flow-connection pins (errata E16): small squares straddling the border
 _PIN_SIZE = 8.0
 _PIN_RX = 1.5
@@ -300,6 +309,19 @@ _CIRCLE_RADIUS = 5.0
 
 #: n-ary dependency junction dot (drawn as a tiny glyph node)
 _JUNCTION_SIZE = 8.0
+
+#: minimum straight run an orthogonally routed edge keeps before entering
+#: a node, so no bend can fall within an endpoint glyph's footprint (the
+#: shaft must stay collinear under the head or it visibly enters the
+#: triangle's SIDE, and shaft adornments float off the turned line).  The
+#: longest reach is the dcolon-adorned specialization head:
+#: _HEAD_LENGTH + _ADORN_TAIL["hollow-dcolon"] = 21.2; 24 adds margin and
+#: also covers every start glyph (diamonds, pins, circles).  ELK does NOT
+#: inherit spacing options through INCLUDE_CHILDREN hierarchy levels, so
+#: diagrams._finish restates this as elk.layered.spacing.edgeNodeBetweenLayers
+#: on every compound node (elkjs otherwise falls back to its 10px default
+#: inside containers -- the last bend then sits inside the 10px head).
+_EDGE_END_CLEARANCE = 24.0
 
 
 def _badge_points(form: str, width: float, height: float) -> list[tuple[float, float]]:
@@ -845,14 +867,15 @@ def _to_elk_json(root: Any) -> dict:
                     entry["x"], entry["y"] = 0.0, -height
                 labels.append(entry)
                 continue  # rides the border; never advances the text stack
-            if "sysml-badge" in label_css:
-                # the badge pins to the box's top-left corner; the text
-                # stack starts below it (spec: badge in the top-left,
-                # keyword/name to its right at spec zoom -- stacking keeps
-                # the headless geometry overlap-free)
-                entry["x"], entry["y"] = 6.0, 4.0
-                cursor = max(cursor, 4.0 + height + 2.0)
-            elif is_marker:  # keep the dot small; hang the label below it
+            if label.x is not None and label.y is not None:
+                # pinned labels (the accept/send badge and its text rows):
+                # the geometry is computed ONCE in diagrams._badged_step_box
+                # and serves both pipelines verbatim -- badge inset clear of
+                # the rounded corner, text rows below the badge strip
+                entry["x"], entry["y"] = float(label.x), float(label.y)
+                labels.append(entry)
+                continue
+            if is_marker:  # keep the dot small; hang the label below it
                 entry["x"] = ((node.width or 14) - width) / 2
                 entry["y"] = (node.height or 14) + 2 + index * height
             elif has_children:
@@ -1096,7 +1119,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{ring:.1f}" fill="#ffffff" '
                     f'stroke="{style["stroke"]}" stroke-width="1.2"/>'
                     f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{core:.1f}" '
-                    f'fill="{style["fill"]}"/></g>'
+                    f'fill="{style["fill"]}" stroke="none"/></g>'
                 )
             elif shape == "circle-x":
                 cx, cy = x + width / 2, y + height / 2
