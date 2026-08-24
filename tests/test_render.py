@@ -1496,3 +1496,192 @@ class TestPng:
         data = target.read_bytes()
         assert data[:8] == b"\x89PNG\r\n\x1a\n"
         assert len(data) > 5000
+
+
+# ---------------------------------------------------------------------------
+# browser-pipeline fixpoint: convert + layout must converge in ONE pass
+# ---------------------------------------------------------------------------
+#
+# A faithful headless re-enactment of the ipyelk BROWSER cycle: kernel-side
+# pipes (ValidationPipe, VisibilityPipe) run for real; the two browser pipes
+# are emulated exactly the way the frontend performs them -- the tree crosses
+# the widget transport (to_json/from_elk_json) both ways, label measuring
+# mutates the JSON like measure_text.ts, and layout runs the REAL vendored
+# elkjs (the same engine the elklayout worker wraps).  The regression this
+# guards: the notation gallery's flow-pin diagram looped forever because a
+# routing-tool flow reached the layout stage with unstamped (null) ids.
+
+
+class TestBrowserPipelineFixpoint:
+    @staticmethod
+    def _measure_labels(data):
+        """measure_text.ts: size every label without a pre-sized shape."""
+
+        for label in data.get("labels") or []:
+            shape = (label.get("properties") or {}).get("shape") or {}
+            if not shape.get("width") or not shape.get("height"):
+                css = (label.get("properties") or {}).get("cssClasses", "")
+                width, height = render._measure(label.get("text") or " ", css)
+                label["width"], label["height"] = width, height
+        for key in ("children", "ports", "edges", "labels"):
+            for sub in data.get(key) or []:
+                TestBrowserPipelineFixpoint._measure_labels(sub)
+
+    @classmethod
+    def _run_cycle(cls, widget):
+        """One Pipeline.run + Diagram.refresh.update_view; names of pipes run."""
+
+        import asyncio
+        import copy
+        import json as json_module
+
+        from ipyelk.elements.serialization import from_elk_json, to_json
+        from ipyelk.pipes import BrowserTextSizer, ElkJS
+        from ipyelk.pipes.base import PipeStatus
+
+        def collect_properties(node, props):
+            props[node.get("id")] = node.pop("properties", None)
+            for key in ("children", "ports", "labels", "edges"):
+                for sub in node.get(key) or []:
+                    collect_properties(sub, props)
+
+        def apply_properties(node, props):
+            node["properties"] = props.get(node.get("id"))
+            for key in ("children", "ports", "labels", "edges"):
+                for sub in node.get(key) or []:
+                    apply_properties(sub, props)
+
+        async def run():
+            pipeline = widget.pipe
+            pipeline.check_dirty()
+            ran = []
+            for pipe in pipeline.pipes:
+                if pipe.status.dirty():
+                    ran.append(type(pipe).__name__)
+                    if isinstance(pipe, BrowserTextSizer):
+                        data = to_json(pipe.inlet.value, pipe.inlet)
+                        cls._measure_labels(data)
+                        pipe.outlet.value = from_elk_json(
+                            json_module.loads(json_module.dumps(data)), None
+                        )
+                        pipe.outlet.persist()
+                    elif isinstance(pipe, ElkJS):
+                        data = to_json(pipe.inlet.value, pipe.inlet)
+                        graph = copy.deepcopy(data)
+                        props: dict = {}
+                        collect_properties(graph, props)
+                        result = render.layout(graph)  # the REAL elkjs
+                        apply_properties(result, props)
+                        pipe.outlet.value = from_elk_json(
+                            json_module.loads(json_module.dumps(result)), None
+                        )
+                        pipe.outlet.persist()
+                    else:
+                        await pipe.run()
+                else:
+                    pipe.outlet.value = pipe.inlet.value
+                pipe.status_update(PipeStatus.finished())
+            # Diagram.refresh -> update_view (the browser's settle step)
+            laid_out = pipeline.outlet.value
+            widget.view.source.value = laid_out
+            pipeline.inlet.value = laid_out
+            pipeline.inlet.flow = ()
+            return ran
+
+        return asyncio.run(run())
+
+    @staticmethod
+    def _geometry(widget):
+        import json as json_module
+
+        from ipyelk.elements.serialization import to_json
+
+        return json_module.dumps(to_json(widget.source.value, None), sort_keys=True)
+
+    def _settled(self, widget):
+        """After a settle NOTHING may be dirty: flow is spent, pipes clean."""
+
+        assert widget.source.flow == ()
+        assert widget.pipe.check_dirty() is False
+
+    _FLOW_PIN_FORM = """
+    package Flows {
+        item def Item1;
+        action def A { in x : Item1; out y : Item1; }
+        action action1 : A;
+        action action2 : A;
+        flow of Item1 from action1.y to action2.x;
+    }
+    """
+
+    _DRAWN_PORTS = """
+    package Ports {
+        item def Item1;
+        port def Pin { in item x : Item1; }
+        port def Pout { out item y : Item1; }
+        part part0 {
+            part part1 { port po : Pout; }
+            part part2 { port pi : Pin; port pc : ~Pout; }
+            interface if1 connect part1.po to part2.pc;
+        }
+    }
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [_FLOW_PIN_FORM, _DRAWN_PORTS],
+        ids=["flow-pins", "drawn-ports"],
+    )
+    def test_relayout_is_a_fixpoint(self, source):
+        """Convert + layout twice: byte-equal geometry, no dirty marks.
+
+        The second pass re-enters the layout stage exactly like a
+        routing-tool refresh (the layout-options flow, which skips the
+        id-stamping Validation/Visibility pipes) -- the tree must already
+        be transport-complete and the geometry must not change.
+        """
+
+        widget = diagrams.structure_diagram(longeron.loads(source))
+        assert self._run_cycle(widget) == [
+            "ValidationPipe",
+            "BrowserTextSizer",
+            "VisibilityPipe",
+            "ElkJS",
+        ]
+        first = self._geometry(widget)
+        widget.source.flow = ("node.layoutOptions",)  # a routing-style refresh
+        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._geometry(widget) == first  # byte-equal: a true fixpoint
+        self._settled(widget)
+
+    def test_routing_toggle_round_trip_restores_the_layout(self):
+        """Cycle the routing tool through all styles and back: the final
+        orthogonal geometry is byte-equal to the original one (stale
+        polyline bendPoints must not survive -- apply_routing drops
+        computed sections), and clicking mid-flight merges with, never
+        clobbers, the pending 'new' flow."""
+
+        from longeron.toolbar import EdgeRoutingTool
+
+        widget = diagrams.structure_diagram(longeron.loads(self._FLOW_PIN_FORM))
+        tool = widget.get_tool(EdgeRoutingTool)
+
+        # the maintainer's loop: a click while the initial flow is pending
+        assert widget.source.flow == ("new",)
+        tool.ui.click()  # -> POLYLINE
+        assert widget.source.flow == ("new", "node.layoutOptions")
+        self._run_cycle(widget)  # validation DID run: ids stamped, layout ok
+        polyline = self._geometry(widget)
+
+        tool.routing = "orthogonal"
+        assert self._run_cycle(widget) == ["ElkJS"]
+        orthogonal = self._geometry(widget)
+        assert orthogonal != polyline  # routing really changed the routes
+
+        tool.ui.click()  # -> POLYLINE again
+        self._run_cycle(widget)
+        assert self._geometry(widget) == polyline
+        tool.routing = "orthogonal"
+        self._run_cycle(widget)
+        assert self._geometry(widget) == orthogonal  # full round trip
+        self._settled(widget)

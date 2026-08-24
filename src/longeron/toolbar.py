@@ -44,6 +44,8 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
         command="pip install -e vendor/ipyelk",
     ) from _err
 
+from .render import _SYNTH_ID_PREFIX
+
 __all__ = [
     "ROUTING_STYLES",
     "SEARCH_ACTIVE_CSS",
@@ -140,6 +142,12 @@ def apply_routing(root: Any, routing: str) -> str:
     a container's edges with the CONTAINER's option, so a root-only value
     leaves every nested edge orthogonal) -- restated per level, exactly
     like the edge-node clearance in :func:`longeron.diagrams._finish`.
+
+    Any already-computed edge routes are dropped: a routing change makes
+    them stale, and elkjs writes new routes INTO the old section objects
+    without clearing leftover keys (an orthogonal re-route of a polyline
+    section keeps the polyline ``bendPoints``), so re-laying out a laid-out
+    tree would not be idempotent otherwise.
     """
 
     style = str(routing).strip().upper()
@@ -149,6 +157,8 @@ def apply_routing(root: Any, routing: str) -> str:
     for node in _iter_nodes(root):
         if node is root or node.children:
             node.layoutOptions["elk.edgeRouting"] = style
+    for edge in _iter_edges(root):
+        edge.sections = None
     return style
 
 
@@ -167,8 +177,8 @@ def _collect_entries(root: Any) -> tuple[_SearchEntry, ...]:
     entries = []
     for node in _iter_nodes(root):
         node_id = node.id
-        if not node_id:
-            continue
+        if not node_id or str(node_id).startswith(_SYNTH_ID_PREFIX):
+            continue  # markers/packing groups: synthetic transport ids only
         title = ""
         for label in node.labels:
             if label.text and not (label.properties.cssClasses or "").strip():
@@ -444,8 +454,14 @@ class EdgeRoutingTool(Tool):
         self._update_ui()
         if seen and self.tee is not None:
             # the collapse tool's refresh path: mark the inlet dirty, then
-            # run the pipeline (Diagram wires on_done to Diagram.refresh)
-            self.tee.inlet.flow = self.reports
+            # run the pipeline (Diagram wires on_done to Diagram.refresh).
+            # MERGE with the pending flow instead of replacing it: clicking
+            # while the initial ``("new",)`` flow is still unconsumed (the
+            # first layout is a browser roundtrip) must not clobber it --
+            # "new" is what wakes ipyelk's ValidationPipe, and a pipeline
+            # that loses it can re-run forever without ever recovering
+            tee_inlet = self.tee.inlet
+            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
             if callable(self.on_done):
                 self.on_done()
 

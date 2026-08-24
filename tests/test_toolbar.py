@@ -9,6 +9,7 @@ from ipyelk.tools import PipelineProgressBar, ToggleCollapsedTool
 
 import longeron
 from longeron import diagrams, toolbar
+from longeron.render import _SYNTH_ID_PREFIX
 from longeron.toolbar import (
     ROUTING_STYLES,
     SEARCH_ACTIVE_CSS,
@@ -208,8 +209,44 @@ class TestEdgeRouting:
         for node in _iter_nodes(root):
             if node.children:
                 assert node.layoutOptions["elk.edgeRouting"] == "POLYLINE"
-        assert widget.pipe.inlet.flow == ("node.layoutOptions",)
+        assert "node.layoutOptions" in widget.pipe.inlet.flow
         assert refreshes == [True]
+
+    def test_click_merges_with_the_pending_flow(self, widget):
+        """Clicking must MERGE its flow with whatever is pending, never
+        replace it: the initial ``("new",)`` flow is what wakes ipyelk's
+        ValidationPipe (the null-id fixer).  Replacing it while the first
+        browser layout was still in flight skipped validation forever --
+        the raw tree reached the elkjs worker, whose import failed on
+        every retry (JsonImportException) and starved the notebook."""
+
+        assert widget.source.flow == ("new",)  # unconsumed initial flow
+        tool = self._tool(widget)
+        tool.ui.click()
+        assert widget.pipe.inlet.flow == ("new", "node.layoutOptions")
+        tool.ui.click()  # merging again adds nothing (ordered de-dupe)
+        assert widget.pipe.inlet.flow == ("new", "node.layoutOptions")
+
+    def test_routing_change_drops_stale_routes(self, widget):
+        """A routing change invalidates every computed route: elkjs writes
+        new routes INTO old section objects without clearing leftover keys
+        (an orthogonal re-route keeps stale polyline bendPoints), so
+        apply_routing drops sections to keep re-layouts idempotent."""
+
+        from ipyelk.elements.elements import EdgeSection
+        from ipyelk.elements.shapes import Point
+
+        root = widget.source.value
+        edge = next(_iter_edges(root))
+        edge.sections = [
+            EdgeSection(
+                startPoint=Point(x=0, y=0),
+                endPoint=Point(x=10, y=0),
+                bendPoints=[Point(x=5, y=5)],
+            )
+        ]
+        self._tool(widget).ui.click()
+        assert all(edge.sections is None for edge in _iter_edges(root))
 
     def test_trait_can_be_set_directly(self, widget):
         tool = self._tool(widget)
@@ -313,8 +350,8 @@ class TestHighlightApplication:
         search = _search(widget)
         search.query = "battery"
         for node in _iter_nodes(widget.source.value):
-            if not node.id:
-                continue
+            if not node.id or str(node.id).startswith(_SYNTH_ID_PREFIX):
+                continue  # transport-only ids: never searched, never marked
             classes = _classes(node)
             expected = SEARCH_HIT_CSS if node.id in search.hit_ids else SEARCH_DIM_CSS
             other = SEARCH_DIM_CSS if expected == SEARCH_HIT_CSS else SEARCH_HIT_CSS

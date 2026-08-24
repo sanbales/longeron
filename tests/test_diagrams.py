@@ -1473,3 +1473,162 @@ def test_headless_schedule_run_is_safe():
 
     widget = ipyelk.from_element(root)  # would raise RuntimeError unpatched
     assert widget.source.value is not None
+
+
+# ---------------------------------------------------------------------------
+# browser-transport ids: NOTHING longeron builds may serialize with id null
+# ---------------------------------------------------------------------------
+#
+# The ipyelk browser transport ships ``element.id`` verbatim; ``"id": null``
+# kills the elkjs worker (JsonImportException: Id must be a string or an
+# integer: 'null') and -- because a failed layout never clears the dirty
+# flow -- the pipeline retries forever, starving the notebook.  ipyelk only
+# repairs null ids on pipeline flows that wake ValidationPipe ("new") or
+# VisibilityPipe (hidden/"layout"); the routing tool's layout-options flow
+# wakes neither, so every tree must be transport-ready from birth
+# (diagrams._assign_ids).
+
+
+def _null_transport_ids(data, path="root"):
+    """Every element in serialized transport JSON whose id is null, plus
+    edge endpoints that failed to resolve to an id."""
+
+    hits = []
+    if isinstance(data, dict):
+        if "id" in data and data["id"] is None:
+            hits.append(path)
+        for key in ("sources", "targets"):
+            if None in (data.get(key) or []):
+                hits.append(f"{path}.{key}")
+        for key in ("children", "ports", "edges", "labels", "sections"):
+            for index, sub in enumerate(data.get(key) or []):
+                hits += _null_transport_ids(sub, f"{path}.{key}[{index}]")
+    return hits
+
+
+def _transport_json(widget):
+    from ipyelk.elements.serialization import to_json
+
+    return to_json(widget.source.value, widget.source)
+
+
+_PROXY_AND_JUNCTION = """
+package Proxies {
+    part def P;
+    part part1 {
+        part part2 { part part4 : P; }
+    }
+    part part3 : P;
+    connect part1.part2.part4 to part3;
+    dependency part1 to part3;
+}
+"""
+
+_FLOW_PIN_FORM = """
+package Flows {
+    item def Item1;
+    action def A { in x : Item1; out y : Item1; }
+    action action1 : A;
+    action action2 : A;
+    flow of Item1 from action1.y to action2.x;
+}
+"""
+
+_DRAWN_PORTS = """
+package Ports {
+    item def Item1;
+    port def Pin { in item x : Item1; }
+    port def Pout { out item y : Item1; }
+    part part0 {
+        part part1 { port po : Pout; }
+        part part2 { port pi : Pin; port pc : ~Pout; }
+        interface if1 connect part1.po to part2.pc;
+    }
+}
+"""
+
+_ANNOTATED = """
+package Notes {
+    part def Widget;
+    comment about Widget /* a note with a dog-ear */
+}
+"""
+
+
+class TestBrowserTransportIds:
+    """Regression tripwire for the notation-gallery layout loop."""
+
+    @pytest.mark.parametrize(
+        ("source", "build"),
+        [
+            (_FLOW_PIN_FORM, lambda m: diagrams.structure_diagram(m)),
+            (_DRAWN_PORTS, lambda m: diagrams.structure_diagram(m)),
+            (_PROXY_AND_JUNCTION, lambda m: diagrams.structure_diagram(m)),
+            (_ANNOTATED, lambda m: diagrams.structure_diagram(m, annotations=True)),
+            (
+                _TYPED_SUBMACHINE,
+                lambda m: diagrams.state_diagram(m.find("P::Outer")),
+            ),
+        ],
+        ids=["flow-pins", "drawn-ports", "proxy-junction", "notes", "states"],
+    )
+    def test_construction_sites_ship_with_ids(self, source, build):
+        widget = build(longeron.loads(source))
+        assert _null_transport_ids(_transport_json(widget)) == []
+
+    def test_action_lanes_ship_with_ids(self, drone_model):
+        widget = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
+        assert _null_transport_ids(_transport_json(widget)) == []
+
+    def test_assign_ids_is_idempotent_and_stable(self):
+        first = diagrams.structure_diagram(longeron.loads(_FLOW_PIN_FORM))
+        again = diagrams.structure_diagram(longeron.loads(_FLOW_PIN_FORM))
+        snapshot = _transport_json(first)
+        diagrams._assign_ids(first.source.value)  # re-stamping: a no-op
+        assert _transport_json(first) == snapshot
+        assert _transport_json(again) == snapshot  # deterministic per build
+
+    def test_synthetic_ids_stay_out_of_qualified_name_consumers(self, drone_model):
+        from longeron.render import _SYNTH_ID_PREFIX, _svg_title, _to_elk_json
+        from longeron.toolbar import DiagramSearch
+
+        widget = diagrams.structure_diagram(drone_model)
+        root = widget.source.value
+        assert str(root.id).startswith(_SYNTH_ID_PREFIX)  # the root IS stamped
+        # exported titles are recovered from model qnames, never synthetics
+        assert _SYNTH_ID_PREFIX not in (_svg_title(widget, root) or "")
+        # the headless ELK JSON keeps its compact generated ids
+        assert _SYNTH_ID_PREFIX not in str(_to_elk_json(root))
+        # the search index carries model-backed nodes only
+        search = widget.get_tool(DiagramSearch)
+        assert all(not entry.node_id.startswith(_SYNTH_ID_PREFIX) for entry in search._entries)
+        assert search.total_count > 0
+
+    def test_every_gallery_model_ships_with_ids(self):
+        """Execute EVERY code cell of the notation gallery in-process and
+        assert no constructed widget serializes a null id anywhere -- the
+        tripwire covers every construction site the gallery exercises
+        (drawn ports, proxy dots, junctions, notes, lanes, states, the
+        routing tool's clicks in section 9, ...)."""
+
+        import json
+        from pathlib import Path
+
+        from ipyelk import Diagram
+
+        path = Path(__file__).resolve().parent.parent / "notebooks" / "11_notation_gallery.ipynb"
+        cells = json.loads(path.read_text("utf-8"))["cells"]
+        namespace: dict = {}
+        for index, cell in enumerate(cells):
+            if cell["cell_type"] != "code":
+                continue
+            code = "".join(cell["source"])
+            try:
+                exec(compile(code, f"gallery-cell-{index}", "exec"), namespace)
+            except Exception as err:  # pragma: no cover - debugging aid
+                pytest.fail(f"gallery cell {index} failed: {err}")
+        widgets = {name: value for name, value in namespace.items() if isinstance(value, Diagram)}
+        assert len(widgets) >= 20  # the gallery builds one widget per section
+        for name, widget in sorted(widgets.items()):
+            nulls = _null_transport_ids(_transport_json(widget))
+            assert nulls == [], f"gallery widget {name!r} ships null ids: {nulls[:5]}"

@@ -128,6 +128,7 @@ from .render import (
     _PORT_RX,
     _PORT_SIZE,
     _PROXY_SIZE,
+    _SYNTH_ID_PREFIX,
     _TAB_HEIGHT,
     _TAB_WIDTH,
     _TICK_HALF,
@@ -1097,6 +1098,46 @@ def _symbols() -> SymbolSpec:
     )
 
 
+def _assign_ids(root: Node) -> None:
+    """Stamp a stable synthetic id on every element without one.
+
+    The ipyelk browser transport serializes ``element.id`` verbatim: an
+    unset id reaches the elkjs layout worker as ``"id": null`` and the
+    import dies with ``JsonImportException: Id must be a string or an
+    integer: 'null'`` -- over and over, because a failed layout never
+    clears the pipeline's dirty flow.  ipyelk only repairs null ids on
+    flows that wake ValidationPipe (``new``) or VisibilityPipe (hidden /
+    ``layout``); the routing tool's layout-options flow wakes neither, so
+    the tree must be transport-ready from birth.  The headless renderer
+    is immune (it generates its own ids) -- this is for the browser.
+
+    Model-backed elements keep their qualified names.  Everything else
+    (labels, edges, markers, invisible anchor ports, the root) gets a
+    deterministic DFS-position id under :data:`_SYNTH_ID_PREFIX`, which
+    the qualified-name consumers (SVG ``data-qname``/title recovery,
+    toolbar search, ``on_select`` resolution) all skip.  Idempotent:
+    re-running on a stamped tree changes nothing, and positions are
+    stable because every element is counted whether stamped or not.
+    """
+
+    counter = itertools.count()
+
+    def visit(element: Any) -> None:
+        position = next(counter)
+        if element.id is None:
+            element.id = f"{_SYNTH_ID_PREFIX}{position}"
+        for label in element.labels or []:
+            visit(label)
+        for port in getattr(element, "ports", None) or []:
+            visit(port)
+        for child in getattr(element, "children", None) or []:
+            visit(child)
+        for edge in getattr(element, "edges", None) or []:
+            visit(edge)
+
+    visit(root)
+
+
 def _finish(
     root: Node,
     style: dict | None = None,
@@ -1126,6 +1167,9 @@ def _finish(
     # hierarchy level for the same INCLUDE_CHILDREN reason; the toolbar's
     # EdgeRoutingTool re-applies it live through the same helper
     apply_routing(root, routing)
+    # every element ships to the browser with a REAL id (null ids kill the
+    # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
+    _assign_ids(root)
     result = ipyelk.from_element(root)
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)

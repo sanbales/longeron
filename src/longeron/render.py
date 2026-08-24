@@ -31,6 +31,16 @@ from .errors import SysMLError
 
 _ELK_JS = Path(__file__).parent / "_js" / "elk.bundled.js"
 
+#: prefix of the SYNTHETIC element ids :func:`longeron.diagrams._assign_ids`
+#: stamps on every element the builders leave unnamed (labels, edges,
+#: markers, anchor ports, the root).  The ipyelk browser transport
+#: serializes ``element.id`` verbatim -- ``None`` reaches the elkjs worker
+#: as ``"id": null`` and the layout dies with a JsonImportException -- so
+#: every element must carry a REAL id.  Anything longeron treats as a
+#: model qualified name (SVG ``data-qname``, the exported title, the
+#: toolbar search index) recognizes the prefix and skips these ids.
+_SYNTH_ID_PREFIX = "__lgn__:"
+
 _NODE_SCRIPT = """
 const ELK = require(process.argv[2]);
 const fs = require('fs');
@@ -828,7 +838,10 @@ def _to_elk_json(root: Any) -> dict:
     generated: dict[int, str] = {}
 
     def node_id(node: Any) -> str:
-        if node.id:
+        # synthetic transport ids (stamped for the BROWSER pipeline, see
+        # _SYNTH_ID_PREFIX) stay out of the headless ELK JSON: the compact
+        # _n# ids keep it byte-identical to the pre-stamping output
+        if node.id and not str(node.id).startswith(_SYNTH_ID_PREFIX):
             return str(node.id)
         return generated.setdefault(id(node), f"_n{next(counter)}")
 
@@ -1433,9 +1446,14 @@ def _svg_title(source: Any, root: Any) -> str | None:
         return getattr(source, "source_name", None) or "model"
     if isinstance(source, M.Element):
         return source.qualified_name or source.label
-    if getattr(root, "id", None):
-        return str(root.id)
-    ids = [str(child.id) for child in getattr(root, "children", []) or [] if child.id]
+    root_id = getattr(root, "id", None)
+    if root_id and not str(root_id).startswith(_SYNTH_ID_PREFIX):
+        return str(root_id)
+    ids = [
+        str(child.id)
+        for child in getattr(root, "children", []) or []
+        if child.id and not str(child.id).startswith(_SYNTH_ID_PREFIX)
+    ]
     if not ids:
         return None
     if len(ids) == 1:
