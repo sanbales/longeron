@@ -90,4 +90,5 @@ Deeper design rationale for major subsystems:
 
 design/m0-interpretations
 design/ocl-stance
+design/openmbee-integration
 ```
