@@ -849,8 +849,10 @@ class TestTranche3Svg:
         )
 
     def test_direction_arrows_and_conjugated_labels(self, ported_svg):
-        # 'out' arrow inside po's square; conjugated 'in' flips to out on pc
-        assert ported_svg.count(f'<path d="{render._port_arrow_d("out")}"') == 2
+        # 'out' arrows inside po's and pc's squares (conjugated 'in' flips
+        # to out on pc), drawn for the EAST border they ride: the arrow
+        # points OUT of the node from that side
+        assert ported_svg.count(f'<path d="{render._port_arrow_d("out", side="EAST")}"') == 2
         # conjugation stays textual: ~ in the label, square unshaded
         assert ">pc : ~Pin</text>" in ported_svg
         assert ">po : Pout</text>" in ported_svg
@@ -1212,6 +1214,275 @@ class TestGalleryNits:
         bullseye = next(g for g in groups if g.count("<circle") == 2)
         core = bullseye.split("<circle")[2]
         assert 'stroke="none"' in core
+
+
+def _edges_json(node):
+    for owner in _walk_json(node):
+        yield from owner.get("edges", [])
+
+
+_GALLERY_PROXIES = """
+package Proxies {
+    part def Part2 { part part4; }
+    part def Part3 { part part5; }
+    part part1 {
+        part part2 : Part2;
+        part part3 : Part3;
+        connect part2.part4 to part3.part5;
+    }
+}
+"""
+
+_GALLERY_PORTFLOW = """
+package PortFlows {
+    item def Item1;
+    port def Pout { out item y : Item1; }
+    part part0 {
+        part part1 { port po : Pout; }
+        part part2 { port pc : ~Pout; }
+        flow of item1 : Item1 from part1.po to part2.pc;
+    }
+}
+"""
+
+
+class TestGalleryNits2:
+    """Geometric proofs for the round-2 notation-gallery review fixes:
+    port/proxy labels INSIDE their boxes, side-relative direction arrows,
+    the spec-faithful port-attached flow figure, the note crease, and
+    marker survival on non-orthogonal edge routing."""
+
+    def _label_boxes_inside(self, source: str, owner_id: str) -> None:
+        """Every drawn-port label of ``owner_id`` sits fully INSIDE the
+        owner's bbox after a real elkjs layout."""
+
+        graph = render.layout(
+            render._to_elk_json(diagrams.structure_diagram(longeron.loads(source)).source.value)
+        )
+        owner = next(n for n in _walk_json(graph) if n["id"] == owner_id)
+        checked = 0
+        for port in owner.get("ports", []):
+            if not port.get("properties", {}).get("cssClasses"):
+                continue
+            for label in port.get("labels", []):
+                lx = port["x"] + label["x"]
+                ly = port["y"] + label["y"]
+                assert 0 <= lx and lx + label["width"] <= owner["width"], (owner_id, label)
+                assert 0 <= ly and ly + label["height"] <= owner["height"], (owner_id, label)
+                checked += 1
+        assert checked
+
+    def test_proxy_labels_sit_inside_the_part_boxes(self):
+        """Nit 1: the residual-path labels (.part4/.part5) render INSIDE
+        the containing part boxes, adjacent to the proxy dot -- exactly
+        where spec-p98-proxy-connection.png writes them."""
+
+        self._label_boxes_inside(_GALLERY_PROXIES, "Proxies::part1::part2")
+        self._label_boxes_inside(_GALLERY_PROXIES, "Proxies::part1::part3")
+
+    def test_port_labels_sit_inside_the_part_boxes(self):
+        """Nit 3 companion: ``name : Type`` port labels live inside the
+        part bodies (spec pp.75/77 figures), leaving the flow line's strip
+        to the payload labels."""
+
+        self._label_boxes_inside(_GALLERY_PORTFLOW, "PortFlows::part0::part1")
+        self._label_boxes_inside(_GALLERY_PORTFLOW, "PortFlows::part0::part2")
+
+    def test_port_flow_matches_the_spec_figure(self):
+        """Nit 3 (spec-p108 / Table 14 flow row): the flow line runs port
+        square to port square, STRAIGHT between the facing borders, with
+        the item label riding the line near each end and the filled head
+        AT the target port square (no source pin marker)."""
+
+        widget = diagrams.structure_diagram(longeron.loads(_GALLERY_PORTFLOW))
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        flow = next(
+            e for e in _edges_json(graph) if "sysml-edge-portflow" in e["properties"]["cssClasses"]
+        )
+        # square-to-square: the endpoints are the port ids
+        assert flow["sources"] == ["PortFlows::part0::part1::po"]
+        assert flow["targets"] == ["PortFlows::part0::part2::pc"]
+        # straight between the facing borders: one section, no bends
+        (section,) = flow["sections"]
+        assert not section.get("bendPoints")
+        assert section["startPoint"]["y"] == pytest.approx(section["endPoint"]["y"], abs=0.5)
+        # payload labels near BOTH ends, Table-14 text
+        assert [label["text"] for label in flow["labels"]] == [
+            "item1 : Item1",
+            "item1 : Item1",
+        ]
+        svg = render.to_svg(widget)
+        group = svg.split('data-edge="PortFlows::part0::part1-&gt;PortFlows::part0::part2"')[1]
+        group = group.split("</g>")[0]
+        assert 'marker-end="url(#arrow-filled-555555)"' in group
+        assert "marker-start" not in group  # the drawn square IS the pin
+
+    def test_conjugated_receiving_port_arrow_points_into_the_node(self):
+        """Nit 4: ``pc : ~Pout`` receives the flow, so its square draws
+        the IN arrow -- pointing INTO part2 from the WEST border it rides
+        (spec p.77's own example receives on the conjugated end)."""
+
+        widget = diagrams.structure_diagram(longeron.loads(_GALLERY_PORTFLOW))
+        root = widget.source.value
+
+        def find(node_id):
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                if node.id == node_id:
+                    return node
+                stack.extend(node.children)
+            raise AssertionError(node_id)
+
+        pc = next(p for p in find("PortFlows::part0::part2").ports if p.id.endswith("::pc"))
+        assert "sysml-port-in" in pc.properties.cssClasses
+        assert pc.layoutOptions["elk.port.side"] == "WEST"
+        assert pc.properties.shape.use == "port-in-west"
+        svg = render.to_svg(widget)
+        assert f'<path d="{render._port_arrow_d("in", side="WEST")}"' in svg
+
+    def test_in_arrow_points_at_the_interior_from_every_side(self):
+        """Nit 4 (side-relative glyphs): the headless renderer derives the
+        arrow orientation from the border the port actually LANDED on --
+        an in-port square drawn on the east/north/south border still
+        points INTO the node, never absolutely +x."""
+
+        size = render._PORT_SIZE
+        graph = {
+            "id": "root",
+            "width": 200.0,
+            "height": 200.0,
+            "children": [
+                {
+                    "id": "box",
+                    "x": 50.0,
+                    "y": 50.0,
+                    "width": 100.0,
+                    "height": 100.0,
+                    "properties": {"cssClasses": "sysml-usage"},
+                    "ports": [
+                        {
+                            "id": f"p-{side}",
+                            "x": px,
+                            "y": py,
+                            "width": size,
+                            "height": size,
+                            "properties": {"cssClasses": "sysml-port sysml-port-in"},
+                        }
+                        for side, px, py in (
+                            ("west", -size / 2, 45.0),
+                            ("east", 100.0 - size / 2, 45.0),
+                            ("north", 45.0, -size / 2),
+                            ("south", 45.0, 100.0 - size / 2),
+                        )
+                    ],
+                }
+            ],
+        }
+        svg = render._svg_from_layout(graph)
+        for side in ("WEST", "EAST", "NORTH", "SOUTH"):
+            assert f'<path d="{render._port_arrow_d("in", size, side)}"' in svg
+        # and the four orientations really differ pairwise
+        arrows = {
+            render._port_arrow_d("in", size, side) for side in ("WEST", "EAST", "NORTH", "SOUTH")
+        }
+        assert len(arrows) == 4
+
+    def test_sided_arrow_geometry(self):
+        """The parametric glyph: 'in' tips toward the interior, 'out' away,
+        'inout' both ways; W/E draw horizontal shafts, N/S vertical."""
+
+        def head_x(d):  # x of the arrow tip (the middle point of the barbs)
+            return float(d.split(" L ")[1].split(",")[0])
+
+        legacy_in = render._port_arrow_d("in")
+        assert render._port_arrow_d("in", side="WEST") == legacy_in  # unchanged default
+        assert head_x(render._port_arrow_d("in", side="WEST")) > head_x(
+            render._port_arrow_d("in", side="EAST")
+        )
+        assert render._port_arrow_d("out", side="EAST") == render._port_arrow_d(
+            "in", side="WEST"
+        )  # both point +x: in through a west border, out through an east one
+        vertical = render._port_arrow_d("in", side="NORTH")
+        assert vertical != legacy_in and "M 5,2.5 L 5,7.5" in vertical  # vertical shaft
+        inout = render._port_arrow_d("inout", side="EAST")
+        assert inout.count(" M ") == 2  # shaft + two heads
+
+    def test_polyline_routing_keeps_the_markers(self):
+        """Nit 2 proof (headless): the gallery's specialization model laid
+        out with POLYLINE routing produces genuinely diagonal edges whose
+        hollow-triangle markers stay attached -- SVG markers auto-orient
+        (orient="auto-start-reverse"), so the head aligns with the
+        diagonal shaft instead of a lost orthogonal stub."""
+
+        model = longeron.loads("""
+            package Specializations {
+                part def Machine;
+                part def Vehicle :> Machine;
+                part def Car :> Machine;
+                part def Truck :> Machine;
+                part car1 : Car;
+            }
+        """)
+        widget = diagrams.structure_diagram(model, routing="polyline")
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        diagonal = 0
+        for edge in _edges_json(graph):
+            if "sysml-packing" in edge["properties"]["cssClasses"]:
+                continue
+            for section in edge.get("sections", []):
+                points = [
+                    section["startPoint"],
+                    *section.get("bendPoints", []),
+                    section["endPoint"],
+                ]
+                first, last = points[-2], points[-1]
+                if abs(first["x"] - last["x"]) > 1 and abs(first["y"] - last["y"]) > 1:
+                    diagonal += 1
+        assert diagonal  # polyline really produced non-orthogonal entries
+        svg = render._svg_from_layout(graph)
+        blue = render._EDGE_STYLES["sysml-edge-specializes"]["stroke"]
+        marker_id = render._marker_id("hollow", blue)
+        assert f'marker-end="url(#{marker_id})"' in svg
+        defs = svg.split("</defs>")[0]
+        marker = defs.split(f'id="{marker_id}"')[1].split("</marker>")[0]
+        assert 'orient="auto-start-reverse"' in marker  # rotates with the shaft
+
+    def test_note_crease_drawn_headless(self):
+        """Nit 5 (headless side): the note draws the folded-corner
+        pentagon PLUS the crease 'L' (fold line down, then out to the
+        right edge), stroked like the outline."""
+
+        import re
+
+        model = longeron.loads("""
+            package P {
+                part def Part1;
+                comment about Part1 /* The annotated element is Part1. */
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model, annotations=True))
+        note_style = render._NODE_STYLES["sysml-note"]
+        group = next(  # the note's <g>: polygon in the note palette
+            part.split("</g>")[0]
+            for part in svg.split("<g data-qname=")[1:]
+            if f'fill="{note_style["fill"]}" stroke="{note_style["stroke"]}"' in part
+        )
+        polygon = re.search(r'<polygon points="([^"]+)"', group)
+        assert polygon is not None
+        corners = [tuple(map(float, pair.split(","))) for pair in polygon.group(1).split()]
+        assert len(corners) == 5  # the cut corner
+        crease = re.search(
+            r'<path d="M ([\d.]+) ([\d.]+) L ([\d.]+) ([\d.]+) L ([\d.]+) ([\d.]+)" '
+            rf'fill="none" stroke="{note_style["stroke"]}"',
+            group,
+        )
+        assert crease is not None
+        x1, y1, x2, y2, x3, y3 = (float(v) for v in crease.groups())
+        # the 'L': down the fold from the top edge, then right to the cut
+        assert (x1, y1) == corners[1]  # starts at the fold's top corner
+        assert x2 == x1 and y2 > y1  # first stroke straight down
+        assert (x3, y3) == corners[2] and y3 == y2  # second stroke to the edge
 
 
 class TestPng:

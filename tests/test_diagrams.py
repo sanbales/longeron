@@ -617,6 +617,45 @@ class TestStructure:
                 assert node.layoutOptions[key] == expected  # grids stay tight
 
 
+class TestEdgeRoutingKwarg:
+    """``routing=`` on every view constructor: the ELK edge routing style
+    for headless renders (the toolbar button cycles the same option
+    live).  Restated per hierarchy level -- ELK does not inherit it
+    through INCLUDE_CHILDREN, exactly like the layer clearance."""
+
+    def test_default_is_orthogonal_on_every_level(self, drone_model):
+        for build in (
+            lambda: diagrams.structure_diagram(drone_model),
+            lambda: diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
+            lambda: diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
+        ):
+            root = build().source.value
+            assert root.layoutOptions["elk.edgeRouting"] == "ORTHOGONAL"
+            for node in _walk(root):
+                if node.children:
+                    assert node.layoutOptions["elk.edgeRouting"] == "ORTHOGONAL"
+
+    def test_routing_kwarg_lands_on_every_level(self, drone_model):
+        for build in (
+            lambda: diagrams.structure_diagram(drone_model, routing="polyline"),
+            lambda: diagrams.state_diagram(
+                drone_model.find("Drone::FlightStates"), routing="POLYLINE"
+            ),
+            lambda: diagrams.action_diagram(
+                drone_model.find("Drone::PlanBattery"), routing="Polyline"
+            ),
+        ):
+            root = build().source.value
+            assert root.layoutOptions["elk.edgeRouting"] == "POLYLINE"
+            for node in _walk(root):
+                if node.children:
+                    assert node.layoutOptions["elk.edgeRouting"] == "POLYLINE"
+
+    def test_unknown_routing_rejected(self, drone_model):
+        with pytest.raises(ValueError, match="routing must be one of"):
+            diagrams.structure_diagram(drone_model, routing="bezier")
+
+
 _PORTED = """
 package P {
     item def Item1;
@@ -632,7 +671,7 @@ package P {
     }
     part part0 {
         part part1 : Part1 { port po : Pout; port p4 : Plain; }
-        part part2 : Part2 { port pc : ~Pin; port pio : Pio; }
+        part part2 : Part2 { port pc : ~Pin; port pio : Pio; port pd : ~Pout; }
         interface if1 connect part1.po to part2.pc;
         connection connection2 : ConnectionDef2 connect part1 to part2;
         flow of Item1 from part1.po to part2.pc;
@@ -660,36 +699,48 @@ class TestPortNotation:
         # the square straddles the border
         assert po.layoutOptions["elk.port.borderOffset"] == "-5"
         assert "sysml-port" in po.properties.cssClasses
-        # name : Type label, pre-sized, placed OUTSIDE by ELK
+        # name : Type label, pre-sized, placed INSIDE the box by ELK
+        # (the spec's part figures write port labels within the body)
         assert po.labels[0].text == "po : Pout"
         assert po.labels[0].properties.get_shape().width > 0
-        assert part1.layoutOptions["elk.portLabels.placement"] == "OUTSIDE"
+        assert part1.layoutOptions["elk.portLabels.placement"] == "INSIDE"
+        # the box grows around its inside port labels
+        assert "PORT_LABELS" in part1.layoutOptions["nodeSize.constraints"]
 
     def test_direction_arrows_derive_from_the_port_definition(self, root):
         """The spec's arrows (printed p.59): the port DEF's directed
         features agree on in/out; mixed draws the double arrow; sides pin
-        so the arrow geometry reads correctly (in = WEST, out = EAST)."""
+        (in = WEST, out = EAST) and the SYMBOL is the one oriented for
+        that side, so the drawn arrow reads relative to the node interior
+        (an in-arrow points INTO the node from whatever border)."""
 
         part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
         ports = {port.id: port for port in part1.ports}
         po = ports["P::part0::part1::po"]
-        assert po.properties.shape.use == "port-out"
+        assert po.properties.shape.use == "port-out-east"
         assert po.layoutOptions["elk.port.side"] == "EAST"
         assert part1.layoutOptions["elk.portConstraints"] == "FIXED_SIDE"
         part2 = next(n for n in _walk(root) if n.id == "P::part0::part2")
         pio = {port.id: port for port in part2.ports}["P::part0::part2::pio"]
-        assert pio.properties.shape.use == "port-inout"
+        assert pio.properties.shape.use == "port-inout-east"
 
     def test_conjugated_ports_stay_textual_and_flip_direction(self, root):
         """Verified against the spec figures (printed pp.75-77): conjugated
         squares draw UNSHADED -- the ~ lives in the type text only -- and
-        the direction flips (7.12.3: conjugation reverses in/out)."""
+        the direction flips BOTH ways (7.12.3: conjugation reverses
+        in/out; the spec's own p.77 example receives a flow on a ``~Pa``
+        port whose original feature is ``out``)."""
 
         part2 = next(n for n in _walk(root) if n.id == "P::part0::part2")
         pc = {port.id: port for port in part2.ports}["P::part0::part2::pc"]
         assert pc.labels[0].text == "pc : ~Pin"
         assert pc.properties.cssClasses == "sysml-port sysml-port-out"  # in, flipped
-        assert pc.properties.shape.use == "port-out"
+        assert pc.properties.shape.use == "port-out-east"  # arrow leaves the node
+        pd = {port.id: port for port in part2.ports}["P::part0::part2::pd"]
+        assert pd.labels[0].text == "pd : ~Pout"
+        assert pd.properties.cssClasses == "sysml-port sysml-port-in"  # out, flipped
+        assert pd.properties.shape.use == "port-in-west"  # arrow enters the node
+        assert pd.layoutOptions["elk.port.side"] == "WEST"
 
     def test_plain_squares_draw_no_arrow(self, root):
         part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
@@ -738,11 +789,27 @@ class TestPortNotation:
 
     def test_port_symbols_are_registered(self):
         library = diagrams._symbols().library
-        for identifier in ("port-in", "port-out", "port-inout", "port-proxy", "package-tab"):
+        # one directed square per (direction, border side): the arrow is
+        # drawn relative to the node interior, never absolutely
+        for direction in ("in", "out", "inout"):
+            for side in ("west", "east", "north", "south"):
+                assert f"port-{direction}-{side}" in library
+        for identifier in ("port-proxy", "package-tab"):
             assert identifier in library
         # square + currentColor arrow, so the stylesheet drives selection
-        use = library["port-in"].element.properties.shape.use
+        use = library["port-in-west"].element.properties.shape.use
         assert "<rect" in use and 'stroke="currentColor"' in use
+        # in-arrows point INTO the node: +x from the west border, -x from
+        # the east one (the two symbols differ exactly there)
+        from longeron.render import _port_arrow_d
+
+        assert (
+            _port_arrow_d("in", side="WEST") in library["port-in-west"].element.properties.shape.use
+        )
+        assert (
+            _port_arrow_d("in", side="EAST") in library["port-in-east"].element.properties.shape.use
+        )
+        assert _port_arrow_d("in", side="WEST") != _port_arrow_d("in", side="EAST")
 
     def test_portless_nodes_stay_on_the_pre_port_path(self, drone_model):
         """Layout-stability guard: only nodes that actually own drawn
@@ -845,6 +912,10 @@ class TestConnectorNotation:
         assert len(proxies) == 1
         assert proxies[0].labels[0].text == ".part4"
         assert proxies[0].properties.shape.use == "port-proxy"
+        # the residual-path label reads INSIDE the part box, adjacent to
+        # the dot (spec p.67 figure), and the box grows around it
+        assert part2.layoutOptions["elk.portLabels.placement"] == "INSIDE"
+        assert "PORT_LABELS" in part2.layoutOptions["nodeSize.constraints"]
         connect = [e for e in root.edges if "sysml-edge-connect" in e.properties.cssClasses]
         assert len(connect) == 1
         assert connect[0].source is proxies[0]
@@ -937,10 +1008,45 @@ class TestPackageTabAndAnnotations:
         note = next(n for n in _walk(root) if "sysml-note" in n.properties.cssClasses)
         assert note.labels[0].text == "\u00abcomment\u00bb"
         assert note.labels[1].text == "The annotated element is Part1."
-        assert note.properties.shape.type == "node:comment"
         anchors = [e for e in root.edges if "sysml-edge-anchor" in e.properties.cssClasses]
         assert [(e.source is note, e.target.id) for e in anchors] == [(True, "P::Part1")]
         assert anchors[0].properties.shape is None  # NO endpoint glyph
+
+    def test_note_carries_the_folded_corner_crease(self):
+        """The UML/SysML note silhouette (spec printed pp.20-21): the
+        cut-off corner PLUS the two short crease lines outlining the fold
+        triangle.  The vendored ipyelk Comment view draws only the plain
+        5-sided polygon, so the note pins its geometry and ships the
+        outline + crease as one explicit path -- the SAME path family the
+        headless renderer draws (render._note_path_d)."""
+
+        from longeron.render import _note_path_d
+
+        model = longeron.loads("""
+            package P {
+                part def Part1;
+                comment about Part1 /* The annotated element is Part1. */
+            }
+        """)
+        root = diagrams.structure_diagram(model, annotations=True).source.value
+        note = next(n for n in _walk(root) if "sysml-note" in n.properties.cssClasses)
+        assert note.properties.shape.type == "node:path"
+        assert note.width and note.height
+        d = note.properties.shape.use
+        assert d == _note_path_d(note.width, note.height)
+        # the crease 'L': down the fold line, then out to the right edge,
+        # stroked with the note outline (one path, one stroke)
+        fold = min(10.0, note.width / 3, note.height / 3)
+        crease = (
+            f"M {note.width - fold:g},0 L {note.width - fold:g},{fold:g} L {note.width:g},{fold:g}"
+        )
+        assert d.endswith(crease)
+        assert d.count("Z") == 1  # outline closed; crease lines open
+        # labels pinned + pre-sized so both pipelines share the geometry
+        assert all(label.x is not None and label.y is not None for label in note.labels)
+        # the derived stylesheet strokes the path like the old polygon
+        note_style = diagrams.SYSML_STYLE[" .sysml-note > path"]
+        assert note_style["stroke"] == "#888888" and note_style["fill"] == "#ffffff"
 
     def test_notes_are_siblings_of_their_target(self):
         """A doc note annotates its owner but must never nest INSIDE it

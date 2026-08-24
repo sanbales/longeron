@@ -79,8 +79,8 @@ class TestPaletteSingleSource:
                 derived = diagrams.SYSML_STYLE[f" .{css} > polygon"]
                 assert derived["fill"] == attrs["fill"]
                 assert derived["stroke"] == attrs["stroke"]
-            elif shape == "note":  # comment/doc notes: folded-corner polygon
-                derived = diagrams.SYSML_STYLE[f" .{css} > polygon"]
+            elif shape == "note":  # comment/doc notes: folded-corner path + crease
+                derived = diagrams.SYSML_STYLE[f" .{css} > path"]
                 assert derived["fill"] == attrs["fill"]
                 assert derived["stroke"] == attrs["stroke"]
             else:  # bullseye / circle-x: circle ring + inner glyph

@@ -47,7 +47,10 @@ environments install it automatically).  Three views, one dispatcher:
 * :func:`diagram` -- picks a view based on the element's kind.
 
 Every view ships a compact toolbar (:mod:`longeron.toolbar`): icon-only
-Fit / Center / Toggle-Collapse buttons plus a live search box that
+Fit / Center / Toggle-Collapse buttons, an edge-routing button that
+cycles orthogonal / polyline / splines re-layouts (also available as the
+``routing=`` kwarg on every view constructor for headless renders), plus
+a live search box that
 highlights matching elements without touching the selection; pass
 ``toolbar=False`` to keep ipyelk's stock text buttons.
 
@@ -78,7 +81,6 @@ try:
     )
     from ipyelk.elements.elements import ElementMetadata
     from ipyelk.elements.shapes import SVG, Diamond, Icon, Path, Point, PortShape
-    from ipyelk.elements.shapes import Comment as CommentShape
     from ipyelk.elements.symbol import EndpointSymbol, Symbol, SymbolSpec
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
@@ -121,7 +123,6 @@ from .render import (
     _JUNCTION_SIZE,
     _LABEL_STYLES,
     _NODE_STYLES,
-    _NOTE_FOLD,
     _PIN_RX,
     _PIN_SIZE,
     _PORT_RX,
@@ -136,9 +137,10 @@ from .render import (
     _edge_end,
     _edge_start,
     _measure,
+    _note_path_d,
     _port_arrow_d,
 )
-from .toolbar import upgrade_toolbar
+from .toolbar import apply_routing, upgrade_toolbar
 
 __all__ = [
     "SYSML_STYLE",
@@ -180,8 +182,8 @@ def _sysml_style() -> dict[str, dict[str, str]]:
                 "stroke": attrs["stroke"],
                 "stroke-width": "1.2",
             }
-        elif shape == "note":  # comment/doc note: folded-corner polygon
-            style[f" .{css} > polygon"] = {
+        elif shape == "note":  # comment/doc note: folded-corner path + crease
+            style[f" .{css} > path"] = {
                 "fill": attrs["fill"],
                 "stroke": attrs["stroke"],
                 "stroke-width": "1.2",
@@ -968,18 +970,21 @@ def _badge_symbol(identifier: str, form: str) -> Symbol:
     )
 
 
-def _port_symbol(identifier: str, direction: str) -> Symbol:
+def _port_symbol(identifier: str, direction: str, side: str) -> Symbol:
     """A directed port square (spec Ports, printed p.59): the 10x10 square
-    with the direction arrow drawn INSIDE.  The square rect carries no
-    paints, so it inherits the ``.elkport`` fill (white; the selection
+    with the direction arrow drawn INSIDE.  One symbol per (direction,
+    side): the arrow orients relative to the NODE INTERIOR -- an ``in``
+    arrow points INTO the owning node on whatever border the port sits
+    (render._port_arrow_d), never absolutely +x.  The square rect carries
+    no paints, so it inherits the ``.elkport`` fill (white; the selection
     color when selected) and the owning node kind's stroke; the arrow is
     self-painted currentColor (bound per §2.0 rule 4)."""
 
     svg = (
         f'<rect x="0" y="0" width="{_PORT_SIZE:g}" height="{_PORT_SIZE:g}" '
         f'rx="{_PORT_RX:g}"/>'
-        f'<path d="{_port_arrow_d(direction)}" fill="none" stroke="currentColor" '
-        f'stroke-width="1.2"/>'
+        f'<path d="{_port_arrow_d(direction, _PORT_SIZE, side)}" fill="none" '
+        f'stroke="currentColor" stroke-width="1.2"/>'
     )
     return Symbol(
         identifier=identifier,
@@ -1055,8 +1060,10 @@ def _symbols() -> SymbolSpec:
     the notched portion-membership ball, ``alias-circle`` the hollow
     unowned-membership circle, ``owned-circle-plus`` the true circled plus
     at the owned-membership owning end.  ``flow-arrow`` is the filled V
-    for flows attached to drawn port squares; ``port-in`` / ``port-out`` /
-    ``port-inout`` draw the boundary port square with its direction arrow,
+    for flows attached to drawn port squares; ``port-in-west`` /
+    ``port-out-east`` / ``port-inout-north`` / ... draw the boundary port
+    square with its direction arrow oriented for the border side it rides
+    (in = INTO the node, out = OUT of it, from whichever side),
     ``port-proxy`` the filled proxy-connection dot, and ``package-tab``
     the folder tab riding package boxes.  ``accept-badge`` / ``send-badge``
     are the
@@ -1080,9 +1087,11 @@ def _symbols() -> SymbolSpec:
         _circle_plus("owned-circle-plus"),
         _badge_symbol("accept-badge", "accept"),
         _badge_symbol("send-badge", "send"),
-        _port_symbol("port-in", "in"),
-        _port_symbol("port-out", "out"),
-        _port_symbol("port-inout", "inout"),
+        *(
+            _port_symbol(f"port-{direction}-{side.lower()}", direction, side)
+            for direction in ("in", "out", "inout")
+            for side in ("WEST", "EAST", "NORTH", "SOUTH")
+        ),
         _proxy_symbol("port-proxy"),
         _tab_symbol("package-tab"),
     )
@@ -1094,6 +1103,7 @@ def _finish(
     direction: str | None = None,
     toolbar: bool = True,
     layout: dict[str, str] | None = None,
+    routing: str = "orthogonal",
 ) -> Any:
     root.layoutOptions = dict(_ROOT_LAYOUT)
     if direction:
@@ -1112,6 +1122,10 @@ def _finish(
             node.layoutOptions.setdefault(
                 "elk.layered.spacing.edgeNodeBetweenLayers", f"{_EDGE_END_CLEARANCE:g}"
             )
+    # edge routing (orthogonal / polyline / splines): restated per
+    # hierarchy level for the same INCLUDE_CHILDREN reason; the toolbar's
+    # EdgeRoutingTool re-applies it live through the same helper
+    apply_routing(root, routing)
     result = ipyelk.from_element(root)
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
@@ -1135,6 +1149,7 @@ def structure_diagram(
     membership: str = "nested",
     annotations: bool = False,
     toolbar: bool = True,
+    routing: str = "orthogonal",
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
 
@@ -1160,7 +1175,9 @@ def structure_diagram(
 
     Port usages owned by a drawn definition/usage box render as the
     spec's boundary squares (10x10, straddling the border, ``name :
-    Type`` label outside, direction arrow inside when the port
+    Type`` label INSIDE the box next to the square -- where the spec's
+    part figures write it -- direction arrow inside the square when the
+    port
     definition's directed features agree on one); interface / connection
     / binding / flow ends then attach square-to-square, and connector
     ends naming UNDRAWN nested features draw the spec's proxy dot on the
@@ -1176,6 +1193,10 @@ def structure_diagram(
 
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
+
+    ``routing`` picks the ELK edge routing style -- ``"orthogonal"`` (the
+    default), ``"polyline"`` or ``"splines"`` -- for headless renders and
+    the initial widget; the toolbar's routing button cycles it live.
     """
 
     if membership not in ("nested", "edges"):
@@ -1193,7 +1214,7 @@ def structure_diagram(
     # package tabs ride flush with the box top (outside icon labels; the
     # spacing option applies per hierarchy level, so the package nodes
     # restate it for their nested packages)
-    return _finish(root, toolbar=toolbar, layout={"elk.spacing.labelNode": "0"})
+    return _finish(root, toolbar=toolbar, layout={"elk.spacing.labelNode": "0"}, routing=routing)
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -1454,7 +1475,8 @@ class _StructureBuilder:
     def _add_boundary_port(self, owner: Node, element: M.Usage, prefix: str = "") -> None:
         """Draw a port usage as the spec's small square ON the owning
         node's border (plan P1/P2/P3): 10x10, straddling the border via a
-        negative border offset, ``name : Type`` label placed OUTSIDE by
+        negative border offset, ``name : Type`` label placed INSIDE the
+        box by
         ELK, direction arrow inside the square, conjugation textual
         (``~T`` in the label -- the spec's figures draw conjugated squares
         unshaded, printed p.76).  Nested ports flatten onto the same
@@ -1468,8 +1490,9 @@ class _StructureBuilder:
             layoutOptions={"elk.port.borderOffset": f"{-_PORT_SIZE / 2:g}"},
             properties=PortProperties(cssClasses=css),
         )
-        if direction:
-            port.properties.shape = PortShape(use=f"port-{direction}")
+        # the direction arrow's SYMBOL is side-dependent (it orients
+        # relative to the node interior), so _finalize_ports assigns it
+        # together with the pinned side
         if element.qualified_name:
             port.id = element.qualified_name
         text = prefix + _usage_title(element)
@@ -1485,21 +1508,32 @@ class _StructureBuilder:
 
     def _finalize_ports(self, node: Node) -> None:
         """Opt the node into ELK port handling -- ONLY nodes that own drawn
-        ports leave the pre-port layout path.  Direction arrows need known
-        orientations, so any directed square pins every side (in = WEST,
-        everything else EAST, matching the arrows' +x geometry); nodes
-        with only plain squares keep FREE constraints for ELK's routing."""
+        ports leave the pre-port layout path.  Port labels place INSIDE
+        the owning box, adjacent to the square (the spec's part figures --
+        printed pp.59/75/77 -- all write ``name : Type`` within the part
+        body), and the box sizes around them (PORT_LABELS).  Direction
+        arrows need known orientations, so any directed square pins every
+        side (in = WEST, everything else EAST) and takes the symbol
+        oriented for that side -- the arrow points INTO/OUT OF the node
+        from whatever border it rides; nodes with only plain squares keep
+        FREE constraints for ELK's routing."""
 
         drawn = [port for port in node.ports if port.properties.cssClasses]
         if not drawn:
             return
-        node.layoutOptions["elk.portLabels.placement"] = "OUTSIDE"
+        node.layoutOptions["elk.portLabels.placement"] = "INSIDE"
+        node.layoutOptions["nodeSize.constraints"] = "NODE_LABELS PORTS PORT_LABELS MINIMUM_SIZE"
         if any(" sysml-port-" in f" {port.properties.cssClasses}" for port in drawn):
             node.layoutOptions["elk.portConstraints"] = "FIXED_SIDE"
             for port in drawn:
                 css = port.properties.cssClasses or ""
-                side = "WEST" if "sysml-port-in" in css and "inout" not in css else "EAST"
+                direction = next(
+                    (d for d in ("inout", "in", "out") if f"sysml-port-{d}" in css), None
+                )
+                side = "WEST" if direction == "in" else "EAST"
                 port.layoutOptions["elk.port.side"] = side
+                if direction:
+                    port.properties.shape = PortShape(use=f"port-{direction}-{side.lower()}")
 
     # -- relationship edges -------------------------------------------------
 
@@ -1801,8 +1835,10 @@ class _StructureBuilder:
     def _add_proxy_port(self, owner: Node, residual: list[str]) -> Port:
         """The proxy-connection dot (spec printed p.67): a small FILLED
         ball ON the border of the shallowest drawn ancestor, labeled with
-        the residual path (``.part4``).  Deduplicated per (node, path), so
-        several connectors to one nested feature share a dot."""
+        the residual path (``.part4``) INSIDE the box, adjacent to the dot
+        -- exactly where the spec figure writes it.  Deduplicated per
+        (node, path), so several connectors to one nested feature share a
+        dot."""
 
         text = "." + ".".join(residual)
         key = (id(owner), text)
@@ -1824,7 +1860,8 @@ class _StructureBuilder:
         shape.width, shape.height = _measure(text)
         port.labels = [label]
         owner.add_port(port)
-        owner.layoutOptions.setdefault("elk.portLabels.placement", "OUTSIDE")
+        owner.layoutOptions["elk.portLabels.placement"] = "INSIDE"
+        owner.layoutOptions["nodeSize.constraints"] = "NODE_LABELS PORTS PORT_LABELS MINIMUM_SIZE"
         self._proxies[key] = port
         return port
 
@@ -1992,9 +2029,17 @@ class _StructureBuilder:
         keyword: str,
         targets: Sequence[Node | Port],
     ) -> None:
-        """One note box (folded corner, «comment»/«doc» keyword, body
-        capped for the canvas) anchored to each target by a dashed line
-        with NO endpoint glyph."""
+        """One note box -- the UML/SysML note silhouette: the top-right
+        corner cut off PLUS the two short crease lines outlining the fold
+        triangle (the dog-ear, spec printed pp.20-21) -- with the
+        «comment»/«doc» keyword and the body capped for the canvas,
+        anchored to each target by a dashed line with NO endpoint glyph.
+
+        The geometry is pinned ONCE (pre-measured labels, fixed size, the
+        exact leaf layout the headless renderer computes) and the outline
+        + crease ride an explicit ``Path`` shape: the vendored ipyelk
+        ``Comment`` view draws only the plain 5-sided polygon -- no
+        crease -- so both pipelines share render._note_path_d instead."""
 
         body = element.text.splitlines()[0].strip() if element.text else ""
         if len(body) > 40:
@@ -2002,11 +2047,32 @@ class _StructureBuilder:
         labels = [_label(f"\u00ab{keyword}\u00bb", "sysml-stereotype")]
         if body:
             labels.append(_label(body, "sysml-attribute"))
+        measured = [
+            (label, *_measure(label.text or "", label.properties.cssClasses or ""))
+            for label in labels
+        ]
+        max_width = max(width for _, width, _ in measured)
+        width = max(max_width + 16.0, 40.0)
+        cursor = 5.0
+        for label, label_width, label_height in measured:
+            shape = label.properties.get_shape()
+            shape.width, shape.height = label_width, label_height
+            is_row = "sysml-attribute" in (label.properties.cssClasses or "")
+            label.x = 8.0 if is_row else 8.0 + (max_width - label_width) / 2
+            label.y = cursor
+            label.layoutOptions = {"nodeLabels.placement": ""}  # pinned
+            cursor += label_height
+        height = cursor + 5.0  # notes hug their text
         note = Node(
+            width=width,
+            height=height,
             labels=labels,
-            layoutOptions=dict(_NODE_LAYOUT),
+            layoutOptions={
+                "elk.nodeSize.constraints": "MINIMUM_SIZE",
+                "elk.nodeSize.minimum": f"({width:g}, {height:g})",
+            },
             properties=NodeProperties(
-                cssClasses="sysml-note", shape=CommentShape(use=str(int(_NOTE_FOLD)))
+                cssClasses="sysml-note", shape=Path(use=_note_path_d(width, height))
             ),
         )
         if element.qualified_name:
@@ -2135,6 +2201,7 @@ def state_diagram(
     *,
     submachine_depth: int | None = None,
     toolbar: bool = True,
+    routing: str = "orthogonal",
 ) -> Any:
     """A hierarchical state machine: states, entry markers, transitions.
 
@@ -2148,7 +2215,8 @@ def state_diagram(
     ``submachine_depth`` bounds how many *typing hops* to expand:
     ``None`` (the default) is unlimited, ``0`` draws typed states as
     plain leaves (the pre-0.8 behavior).  Plain nested states are always
-    shown.  ``toolbar=False`` keeps ipyelk's stock toolbar.
+    shown.  ``toolbar=False`` keeps ipyelk's stock toolbar; ``routing``
+    picks the edge routing style (orthogonal / polyline / splines).
 
     Expanded substate ids are instance-qualified
     (``…::swapSource::swap::evaluating``) so they stay unique per
@@ -2165,7 +2233,7 @@ def state_diagram(
     resolver = Interpreter(model).resolver
     base = machine.qualified_name or machine.label
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
-    return _finish(root, toolbar=toolbar)
+    return _finish(root, toolbar=toolbar, routing=routing)
 
 
 def _transition_text(transition: M.TransitionUsage) -> str | None:
@@ -2306,6 +2374,7 @@ def action_diagram(
     *,
     lanes: Mapping[str, Sequence[str]] | bool | None = None,
     toolbar: bool = True,
+    routing: str = "orthogonal",
 ) -> Any:
     """The succession control-flow graph the interpreter executes.
 
@@ -2327,7 +2396,8 @@ def action_diagram(
     left-to-right via ELK layer partitioning -- an honest approximation of
     the spec's full-height, shared-boundary lanes.  Steps in no lane stay
     outside (like the spec's start/done markers).  ``toolbar=False`` keeps
-    ipyelk's stock toolbar.
+    ipyelk's stock toolbar; ``routing`` picks the edge routing style
+    (orthogonal / polyline / splines).
     """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -2409,7 +2479,7 @@ def action_diagram(
     if lanes:
         layout = _apply_lanes(root, lanes, steps, elements)
 
-    return _finish(root, direction="RIGHT", toolbar=toolbar, layout=layout)
+    return _finish(root, direction="RIGHT", toolbar=toolbar, layout=layout, routing=routing)
 
 
 def _lane_groups(

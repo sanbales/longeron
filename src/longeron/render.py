@@ -353,8 +353,7 @@ def _note_points(
     width: float, height: float, fold: float = _NOTE_FOLD
 ) -> list[tuple[float, float]]:
     """Corner points of a comment/doc note box: the top-right corner is
-    cut off (the folded corner, spec printed pp.20-21).  The SAME polygon
-    the vendored ipyelk ``Comment`` node shape draws in the browser."""
+    cut off (the folded corner, spec printed pp.20-21)."""
 
     fold = min(fold, width / 3, height / 3)
     return [
@@ -366,25 +365,55 @@ def _note_points(
     ]
 
 
-def _port_arrow_d(direction: str, size: float = _PORT_SIZE) -> str:
+def _note_path_d(width: float, height: float) -> str:
+    """The note silhouette as ONE path: the folded-corner pentagon plus
+    the crease 'L' outlining the fold triangle (the UML/SysML dog-ear).
+    The browser pipeline draws this path verbatim (the vendored ipyelk
+    ``Comment`` view knows only the plain 5-sided polygon -- no crease);
+    the headless renderer draws the same two pieces in ``draw_node``."""
+
+    pts = _note_points(width, height)
+    fold = width - pts[1][0]
+    outline = " L ".join(f"{px:g},{py:g}" for px, py in pts)
+    return f"M {outline} Z M {width - fold:g},0 L {width - fold:g},{fold:g} L {width:g},{fold:g}"
+
+
+def _port_arrow_d(direction: str, size: float = _PORT_SIZE, side: str = "WEST") -> str:
     """Path ``d`` for the direction arrow INSIDE a port square (spec Ports
     figures, printed p.59), in the square's local space.
 
-    Directed squares pin their sides (in = WEST, out/inout = EAST), so the
-    arrow always points +x: across the border INTO the node for ``in``,
-    OUT through the border for ``out``; ``inout`` adds the second head.
-    Both pipelines draw this same geometry (browser symbols wrap it in
-    currentColor strokes; headless paints the owning node's stroke).
+    The arrow reads relative to the NODE INTERIOR, never absolutely: for
+    a square riding the given border ``side``, ``in`` points across the
+    border INTO the node, ``out`` points OUT through it, and ``inout``
+    adds the second head (spec-p90: p1's in-arrow points at the node
+    body, p2's out-arrow away from it).  Both pipelines draw this same
+    geometry: the browser registers one symbol per (direction, side)
+    (:func:`longeron.diagrams._port_symbol`), the headless renderer
+    derives the side from the laid-out port position -- so the arrow
+    stays correct on whatever border the port ends up on.
     """
 
     lo, hi, mid = 0.25 * size, 0.75 * size, size / 2
     head = 0.22 * size
+    horizontal = side in ("WEST", "EAST")
+    inward = 1.0 if side in ("WEST", "NORTH") else -1.0
+    # the inout double-head is side-symmetric; single heads point along
+    # (in) or against (out) the interior direction
+    forward = 1.0 if direction == "inout" else (inward if direction == "in" else -inward)
+
+    def pt(along: float, across: float) -> str:
+        x, y = (along, across) if horizontal else (across, along)
+        return f"{x:g},{y:g}"
+
+    tip, tail = (hi, lo) if forward > 0 else (lo, hi)
+    back = tip - forward * head
     d = (
-        f"M {lo:g},{mid:g} L {hi:g},{mid:g} "
-        f"M {hi - head:g},{mid - head:g} L {hi:g},{mid:g} L {hi - head:g},{mid + head:g}"
+        f"M {pt(tail, mid)} L {pt(tip, mid)} "
+        f"M {pt(back, mid - head)} L {pt(tip, mid)} L {pt(back, mid + head)}"
     )
     if direction == "inout":
-        d += f" M {lo + head:g},{mid - head:g} L {lo:g},{mid:g} L {lo + head:g},{mid + head:g}"
+        barb = tail + forward * head
+        d += f" M {pt(barb, mid - head)} L {pt(tail, mid)} L {pt(barb, mid + head)}"
     return d
 
 
@@ -826,6 +855,14 @@ def _to_elk_json(root: Any) -> dict:
         css = node.properties.cssClasses or ""
         is_marker = any(name in css for name in _GLYPH_NODE_CLASSES)
         has_children = bool(node.children)
+        # nodes with DRAWN ports (css-bearing squares/proxy dots) are sized
+        # by ELK like containers: their port labels place INSIDE the box
+        # (spec Ports figures), so the box must grow around them
+        # (PORT_LABELS) -- a snug pre-sized leaf cannot know that width
+        drawn_ports = any(
+            (port.properties.cssClasses or "") for port in getattr(node, "ports", None) or []
+        )
+        elk_sized = has_children or drawn_ports
 
         # place labels manually: a snug vertical stack (the browser pipeline
         # measures real glyphs; headless we control the geometry ourselves)
@@ -861,7 +898,7 @@ def _to_elk_json(root: Any) -> dict:
                 # reserves the space above the box; fixed-size leaves pin
                 # it manually, flush with the top-left corner (ELK leaves
                 # constraint-free leaf labels untouched)
-                if has_children:
+                if elk_sized:
                     entry["layoutOptions"] = dict(label.layoutOptions or {})
                 else:
                     entry["x"], entry["y"] = 0.0, -height
@@ -878,9 +915,10 @@ def _to_elk_json(root: Any) -> dict:
             if is_marker:  # keep the dot small; hang the label below it
                 entry["x"] = ((node.width or 14) - width) / 2
                 entry["y"] = (node.height or 14) + 2 + index * height
-            elif has_children:
-                # containers: leave x/y to ELK, which centers the title
-                # against the FINAL box (children decide the width).
+            elif elk_sized:
+                # containers (and ported boxes): leave x/y to ELK, which
+                # centers the title against the FINAL box (children and
+                # inside port labels decide the width).
                 # Compartment rows get full-width boxes so their centered
                 # left edges align; the SVG writer left-anchors their text
                 # (V2: attribute compartments read left-aligned)
@@ -948,13 +986,19 @@ def _to_elk_json(root: Any) -> dict:
         if is_marker or node.width:
             data["width"] = node.width or 14
             data["height"] = node.height or 14
-        elif has_children:
+        elif elk_sized:
             # reserve the label block, then let ELK size around the children
             # and center the title labels; a minimum width keeps wide labels
-            # inside the box
+            # inside the box.  Ported boxes additionally grow around their
+            # INSIDE port labels (PORT_LABELS; spec Ports figures write the
+            # ``name : Type`` labels within the part body)
             data["layoutOptions"]["elk.nodeLabels.placement"] = "H_CENTER V_TOP INSIDE"
             data["layoutOptions"]["elk.padding"] = "[top=8,left=12,bottom=12,right=12]"
-            data["layoutOptions"]["elk.nodeSize.constraints"] = "NODE_LABELS MINIMUM_SIZE"
+            data["layoutOptions"]["elk.nodeSize.constraints"] = (
+                "NODE_LABELS PORTS PORT_LABELS MINIMUM_SIZE"
+                if drawn_ports
+                else "NODE_LABELS MINIMUM_SIZE"
+            )
             data["layoutOptions"]["elk.nodeSize.minimum"] = (
                 f"({max_width + 20:.0f},{cursor + 20:.0f})"
             )
@@ -1161,7 +1205,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'fill="{style["fill"]}" stroke="{style["stroke"]}"{dash_attr}/>'
                 )
             for port in node.get("ports", []):
-                draw_port(port, x, y, style["stroke"])
+                draw_port(port, x, y, style["stroke"], width, height)
         for label in node.get("labels", []):
             draw_label(label, x, y)
         for child in node.get("children", []):
@@ -1175,12 +1219,15 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             return origins.get(str(container), default)
         return default
 
-    def draw_port(port: dict, ox: float, oy: float, stroke: str) -> None:
+    def draw_port(
+        port: dict, ox: float, oy: float, stroke: str, owner_w: float, owner_h: float
+    ) -> None:
         """A boundary port (spec Ports, printed p.59): the square straddling
         the owner's border in the owner's stroke color, the direction arrow
-        inside it, the proxy dot (printed p.67) as a filled ball, and the
-        ELK-placed outside labels.  Invisible convergence anchors (no css)
-        are never drawn."""
+        inside it -- oriented relative to the node interior, from the side
+        the port was actually laid out on -- the proxy dot (printed p.67)
+        as a filled ball, and the ELK-placed labels (INSIDE the owner).
+        Invisible convergence anchors (no css) are never drawn."""
 
         css = port.get("properties", {}).get("cssClasses", "")
         if not css:
@@ -1201,7 +1248,18 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             ]
             for direction in ("inout", "in", "out"):  # inout first: substrings
                 if f"sysml-port-{direction}" in css:
-                    d = _port_arrow_d(direction, pw)
+                    # which border the port landed on decides the arrow's
+                    # orientation (in = INTO the node from THAT side)
+                    cx = port.get("x", 0) + pw / 2
+                    cy = port.get("y", 0) + ph / 2
+                    reach = {
+                        "WEST": abs(cx),
+                        "EAST": abs(owner_w - cx),
+                        "NORTH": abs(cy),
+                        "SOUTH": abs(owner_h - cy),
+                    }
+                    side = min(reach, key=reach.__getitem__)
+                    d = _port_arrow_d(direction, pw, side)
                     bits.append(
                         f'<path d="{d}" transform="translate({x:.1f},{y:.1f})" '
                         f'fill="none" stroke="{stroke}" stroke-width="1.2"/>'

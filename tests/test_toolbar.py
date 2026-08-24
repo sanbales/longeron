@@ -10,13 +10,16 @@ from ipyelk.tools import PipelineProgressBar, ToggleCollapsedTool
 import longeron
 from longeron import diagrams, toolbar
 from longeron.toolbar import (
+    ROUTING_STYLES,
     SEARCH_ACTIVE_CSS,
     SEARCH_DIM_CSS,
     SEARCH_HIT_CSS,
     TOOLBAR_STYLE,
     DiagramSearch,
+    EdgeRoutingTool,
     _iter_edges,
     _iter_nodes,
+    apply_routing,
 )
 
 _TYPED_SUBMACHINE = """
@@ -82,8 +85,18 @@ class TestComposition:
 
     def test_single_row_order(self, widget):
         kinds = [type(child).__name__ for child in widget.toolbar.children]
-        # styled-widget css carrier, 3 icon buttons, search box, progress, close
-        assert kinds == ["HTML", "Button", "Button", "Button", "HBox", "FloatProgress", "Button"]
+        # styled-widget css carrier, 3 icon buttons + the routing button,
+        # search box, progress, close
+        assert kinds == [
+            "HTML",
+            "Button",
+            "Button",
+            "Button",
+            "Button",
+            "HBox",
+            "FloatProgress",
+            "Button",
+        ]
 
     def test_every_control_has_a_tooltip(self, widget):
         search = _search(widget)
@@ -92,6 +105,7 @@ class TestComposition:
             widget.view.fit_tool.ui,
             widget.view.center_tool.ui,
             widget.get_tool(ToggleCollapsedTool).ui,
+            widget.get_tool(EdgeRoutingTool).ui,
             box,
             count,
             clear,
@@ -120,11 +134,13 @@ class TestComposition:
         ]
         for built in widgets:
             assert any(isinstance(tool, DiagramSearch) for tool in built.tools)
+            assert any(isinstance(tool, EdgeRoutingTool) for tool in built.tools)
             assert built.view.fit_tool.ui.icon == "expand"
 
     def test_classic_escape_hatch(self, drone_model):
         classic = diagrams.structure_diagram(drone_model, toolbar=False)
         assert not any(isinstance(tool, DiagramSearch) for tool in classic.tools)
+        assert not any(isinstance(tool, EdgeRoutingTool) for tool in classic.tools)
         assert classic.view.fit_tool.ui.description == "Fit"  # the stock button
         assert not any(key in classic.style for key in TOOLBAR_STYLE)
         state = diagrams.state_diagram(drone_model.find("Drone::FlightStates"), toolbar=False)
@@ -145,6 +161,85 @@ class TestComposition:
         assert f" .{SEARCH_DIM_CSS} > rect" in widget.style
         # the base style is untouched by the merge
         assert widget.style[" .sysml-edge-typed > .elkarrow"]["fill"] == "#ffffff"
+
+
+class TestEdgeRouting:
+    """The routing button: cycles ORTHOGONAL -> POLYLINE -> SPLINES and
+    re-lays the diagram out through the pipeline; the style persists per
+    widget on the tool's trait and lands on every hierarchy level."""
+
+    def _tool(self, widget) -> EdgeRoutingTool:
+        return widget.get_tool(EdgeRoutingTool)
+
+    def test_defaults_to_orthogonal(self, widget):
+        tool = self._tool(widget)
+        assert tool.routing == "ORTHOGONAL"
+        assert widget.source.value.layoutOptions["elk.edgeRouting"] == "ORTHOGONAL"
+
+    def test_compact_button(self, widget):
+        tool = self._tool(widget)
+        assert isinstance(tool.ui, W.Button)
+        assert tool.ui.description == ""  # icon-only, like the stock trio
+        assert tool.ui.icon == "share-alt"
+        assert tool.ui.layout.width == "30px"
+        assert "orthogonal" in tool.ui.tooltip and "polyline" in tool.ui.tooltip
+
+    def test_click_cycles_through_all_styles_and_wraps(self, widget):
+        tool = self._tool(widget)
+        seen = []
+        for _ in ROUTING_STYLES:
+            tool.ui.click()
+            seen.append(tool.routing)
+        assert seen == ["POLYLINE", "SPLINES", "ORTHOGONAL"]  # full cycle
+
+    def test_cycling_relays_out_through_the_pipeline(self, widget):
+        """The collapse tool's refresh contract: the style lands on the
+        source tree (root AND every compound node -- ELK does not inherit
+        it through INCLUDE_CHILDREN), the pipe inlet is marked dirty with
+        the layout-options flow, and on_done (Diagram.refresh) runs."""
+
+        tool = self._tool(widget)
+        refreshes = []
+        tool.on_done = lambda: refreshes.append(True)
+        tool.ui.click()
+        assert tool.routing == "POLYLINE"
+        root = widget.source.value
+        assert root.layoutOptions["elk.edgeRouting"] == "POLYLINE"
+        for node in _iter_nodes(root):
+            if node.children:
+                assert node.layoutOptions["elk.edgeRouting"] == "POLYLINE"
+        assert widget.pipe.inlet.flow == ("node.layoutOptions",)
+        assert refreshes == [True]
+
+    def test_trait_can_be_set_directly(self, widget):
+        tool = self._tool(widget)
+        tool.routing = "splines"  # any case; normalized
+        assert tool.routing == "SPLINES"
+        assert widget.source.value.layoutOptions["elk.edgeRouting"] == "SPLINES"
+
+    def test_unknown_style_rejected(self, widget):
+        import traitlets
+
+        tool = self._tool(widget)
+        with pytest.raises(traitlets.TraitError, match="routing must be one of"):
+            tool.routing = "bezier"
+        assert tool.routing == "ORTHOGONAL"  # unchanged
+
+    def test_choice_persists_per_widget(self, drone_model):
+        first = diagrams.structure_diagram(drone_model)
+        second = diagrams.structure_diagram(drone_model)
+        self._tool(first).routing = "polyline"
+        assert self._tool(first).routing == "POLYLINE"
+        assert self._tool(second).routing == "ORTHOGONAL"  # untouched widget
+
+    def test_constructor_kwarg_seeds_the_trait(self, drone_model):
+        built = diagrams.structure_diagram(drone_model, routing="splines")
+        assert self._tool(built).routing == "SPLINES"
+        assert built.source.value.layoutOptions["elk.edgeRouting"] == "SPLINES"
+
+    def test_apply_routing_helper_validates(self, widget):
+        with pytest.raises(ValueError, match="routing must be one of"):
+            apply_routing(widget.source.value, "bezier")
 
 
 class TestSearchMatching:

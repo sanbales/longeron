@@ -8,6 +8,10 @@ buttons).  It reworks ipyelk's hover-revealed toolbar in place:
   become icon-only buttons with tooltips (the underlying
   :class:`~ipyelk.tools.Tool` instances are reused, so behavior is
   exactly ipyelk's);
+* an :class:`EdgeRoutingTool` button CYCLES the diagram's ELK edge
+  routing style -- ORTHOGONAL (the default) -> POLYLINE -> SPLINES --
+  and re-lays the live diagram out through the pipeline; the active
+  style persists per widget on the tool's ``routing`` trait;
 * a :class:`DiagramSearch` tool is registered: typing in its text box
   live-highlights every diagram node whose *title* or *qualified name*
   contains the query (case-insensitive), shows a ``matches/total``
@@ -29,6 +33,7 @@ try:
     import ipywidgets as W
     import traitlets as T
     from ipyelk.exceptions import NotFoundError
+    from ipyelk.pipes import flows as F
     from ipyelk.tools import PipelineProgressBar, ToggleCollapsedTool, Tool
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
@@ -40,14 +45,22 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     ) from _err
 
 __all__ = [
+    "ROUTING_STYLES",
     "SEARCH_ACTIVE_CSS",
     "SEARCH_DIM_CSS",
     "SEARCH_HIT_COLOR",
     "SEARCH_HIT_CSS",
     "TOOLBAR_STYLE",
     "DiagramSearch",
+    "EdgeRoutingTool",
+    "apply_routing",
     "upgrade_toolbar",
 ]
+
+#: the ELK layered edge routing styles the routing button cycles through
+#: (spec figures mix straight and orthogonal connectors; SPLINES rounds
+#: the corners): ORTHOGONAL is elkjs layered's default and longeron's
+ROUTING_STYLES = ("ORTHOGONAL", "POLYLINE", "SPLINES")
 
 #: cssClasses fragment marking a search match (node box + its labels)
 SEARCH_HIT_CSS = "sysml-search-hit"
@@ -116,6 +129,27 @@ def _iter_edges(node: Any):
     yield from node.edges
     for child in node.children:
         yield from _iter_edges(child)
+
+
+def apply_routing(root: Any, routing: str) -> str:
+    """Set ``elk.edgeRouting`` on a diagram source tree; returns the
+    normalized style name.
+
+    The option goes on the root AND on every compound node: ELK does not
+    inherit it through ``INCLUDE_CHILDREN`` hierarchy levels (elkjs routes
+    a container's edges with the CONTAINER's option, so a root-only value
+    leaves every nested edge orthogonal) -- restated per level, exactly
+    like the edge-node clearance in :func:`longeron.diagrams._finish`.
+    """
+
+    style = str(routing).strip().upper()
+    if style not in ROUTING_STYLES:
+        choices = ", ".join(name.lower() for name in ROUTING_STYLES)
+        raise ValueError(f"routing must be one of {choices}; not {routing!r}")
+    for node in _iter_nodes(root):
+        if node is root or node.children:
+            node.layoutOptions["elk.edgeRouting"] = style
+    return style
 
 
 def _collect_entries(root: Any) -> tuple[_SearchEntry, ...]:
@@ -350,15 +384,101 @@ def _iconify(button: Any, icon: str, tooltip: str) -> None:
         setattr(button.layout, key, value)
 
 
+class EdgeRoutingTool(Tool):
+    """Cycle the diagram's ELK edge routing style and re-lay it out.
+
+    SysML tools (and the spec's own figures) mix straight and orthogonal
+    connectors; ELK layered supports both plus splines.  The button
+    cycles ORTHOGONAL -> POLYLINE -> SPLINES -> ... and the choice
+    persists per widget on the :attr:`routing` trait (default ORTHOGONAL,
+    initialized from the diagram root's ``elk.edgeRouting`` so the
+    ``routing=`` constructor kwarg carries through).  Setting the trait
+    directly works too: either way the style lands on the root and every
+    compound node (:func:`apply_routing`), the pipeline inlet is marked
+    dirty with the layout-options flow, and the diagram refreshes through
+    the SAME pipeline the other tools use -- a true re-layout, not a
+    re-render.  Endpoint glyphs survive non-orthogonal paths in both
+    pipelines: the browser rotates symbols to the endpoint segment's
+    angle, the headless markers orient with ``auto-start-reverse``.
+    """
+
+    routing = T.Unicode(ROUTING_STYLES[0], help="active elk.edgeRouting style")
+
+    def __init__(self, diagram: Any, **kwargs: Any) -> None:
+        self._diagram = diagram
+        self._btn: Any = None
+        root = diagram.source.value
+        if root is not None:
+            kwargs.setdefault(
+                "routing", (root.layoutOptions or {}).get("elk.edgeRouting", ROUTING_STYLES[0])
+            )
+        super().__init__(**kwargs)
+        self.reports = (F.Node.layout_options,)
+        self.ui = self._build_ui()
+
+    async def run(self) -> None:  # Tool protocol; the button sets the trait
+        pass
+
+    @T.validate("routing")
+    def _normalize_routing(self, proposal: Any) -> str:
+        style = str(proposal["value"]).strip().upper()
+        if style not in ROUTING_STYLES:
+            choices = ", ".join(name.lower() for name in ROUTING_STYLES)
+            raise T.TraitError(f"routing must be one of {choices}; not {proposal['value']!r}")
+        return style
+
+    @T.observe("routing")
+    def _on_routing(self, change: Any = None) -> None:
+        self.apply()
+
+    def apply(self) -> None:
+        """Push the active style onto the diagram's trees and re-lay out."""
+
+        seen: set[int] = set()
+        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
+        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+            if tree is None or id(tree) in seen:
+                continue
+            seen.add(id(tree))
+            apply_routing(tree, self.routing)
+        self._update_ui()
+        if seen and self.tee is not None:
+            # the collapse tool's refresh path: mark the inlet dirty, then
+            # run the pipeline (Diagram wires on_done to Diagram.refresh)
+            self.tee.inlet.flow = self.reports
+            if callable(self.on_done):
+                self.on_done()
+
+    def _cycle(self, *_: Any) -> None:
+        index = ROUTING_STYLES.index(self.routing)
+        self.routing = ROUTING_STYLES[(index + 1) % len(ROUTING_STYLES)]
+
+    def _build_ui(self) -> Any:
+        self._btn = W.Button(icon="share-alt", layout=dict(_BUTTON_LAYOUT))
+        self._btn.on_click(self._cycle)
+        self._update_ui()
+        return self._btn
+
+    def _update_ui(self) -> None:
+        if self._btn is None:
+            return
+        upcoming = ROUTING_STYLES[(ROUTING_STYLES.index(self.routing) + 1) % len(ROUTING_STYLES)]
+        self._btn.tooltip = (
+            f"Edge routing: {self.routing.lower()} "
+            f"(click to re-route the edges as {upcoming.lower()})"
+        )
+
+
 def upgrade_toolbar(diagram: Any) -> Any:
     """Swap the stock ipyelk toolbar contents for the compact longeron one.
 
     Idempotent, and composed entirely from the outside: the existing
     Fit/Center/Toggle-Collapsed tools keep their behavior but lose the
-    text labels (icon + tooltip instead), a :class:`DiagramSearch` tool
-    is registered, and :data:`TOOLBAR_STYLE` is merged into the widget's
-    scoped stylesheet (search-hit/dim rules + keeping the toolbar pinned
-    while it is being used).
+    text labels (icon + tooltip instead), an :class:`EdgeRoutingTool`
+    (cycles orthogonal/polyline/splines edge routing) and a
+    :class:`DiagramSearch` tool are registered, and :data:`TOOLBAR_STYLE`
+    is merged into the widget's scoped stylesheet (search-hit/dim rules +
+    keeping the toolbar pinned while it is being used).
     """
 
     if any(isinstance(tool, DiagramSearch) for tool in diagram.tools):
@@ -392,5 +512,6 @@ def upgrade_toolbar(diagram: Any) -> Any:
         progress.bar.layout.width = "80px"
     diagram.toolbar.close_btn.tooltip = "Close"
     diagram.style = {**diagram.style, **TOOLBAR_STYLE}
+    diagram.register_tool(EdgeRoutingTool(diagram))
     diagram.register_tool(DiagramSearch(diagram))
     return diagram
