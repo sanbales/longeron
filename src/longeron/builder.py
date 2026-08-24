@@ -1082,8 +1082,27 @@ class _Builder:
         if ctx is None:
             return {}
         if ctx.endUsagePrefix() is not None:
-            return {"is_end": True}
+            return self._end_prefix_flags(ctx.endUsagePrefix())
         return self._basic_usage_prefix_flags(ctx.basicUsagePrefix())
+
+    def _end_prefix_flags(self, ctx) -> dict:
+        """``end [1..1] part sourceEnd : Part1;`` -- the end's cross-feature
+        multiplicity (the spec draws it at the def-level connector end,
+        printed p.65) used to be dropped; it lands on the end usage unless
+        the usage declares its own."""
+
+        flags: dict = {"is_end": True}
+        cross = ctx.ownedCrossFeatureMember()
+        if cross is not None:
+            decl = cross.ownedCrossFeature().usageDeclaration()
+            fsp = decl.featureSpecializationPart() if decl is not None else None
+            mp = fsp.multiplicityPart() if fsp is not None else None
+            owned = mp.ownedMultiplicity() if mp is not None else None
+            if owned is not None:
+                mult = M.Multiplicity()
+                self._fill_multiplicity_range(mult, owned.multiplicityRange())
+                flags["multiplicity"] = mult
+        return flags
 
     def _metadata_keywords(self, ctx) -> list[str]:
         if ctx is None or not hasattr(ctx, "usageExtensionKeyword"):
@@ -1114,7 +1133,7 @@ class _Builder:
 
     def _ref_or_end_flags(self, ctx) -> dict:
         if ctx.endUsagePrefix() is not None:
-            return {"is_end": True}
+            return self._end_prefix_flags(ctx.endUsagePrefix())
         return self._ref_prefix_flags(ctx.refPrefix())
 
     # -- usage declaration / completion --------------------------------------------

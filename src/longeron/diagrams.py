@@ -11,18 +11,29 @@ environments install it automatically).  Three views, one dispatcher:
   (colon dots = typing, bar tick = redefinition, double colon dots =
   reference subsetting); composite/referential membership draws a
   filled/hollow diamond at the whole end with end multiplicities.
-  Connector-family notation: flow connections run pin-to-pin (small
-  border squares, filled arrowhead at the target pin, payload labels at
-  both ends), binding connectors ride an ``=`` glyph, dependencies draw
+  Connector-family notation: port usages render as small squares ON the
+  owning box's border (direction arrows inside, ``~T`` conjugation
+  textual), interface / connection / binding / flow ends attach
+  square-to-square, connector ends naming undrawn nested features draw
+  the spec's proxy dot on the shallowest drawn ancestor, connections
+  typed by a definition with directed (source/target) ends grow an
+  open-V head, 3+-end connects meet at a filled junction dot, flow
+  connections run pin-to-pin (filled arrowhead at the target),
+  binding connectors ride an ``=`` glyph, anonymous allocations draw
+  the «allocate» keyword arrow (named ones the «allocation» box),
+  dependencies draw
   dashed open-V client->supplier (n-ary via a filled junction dot),
   satisfies draw the «satisfy» keyword edge or -- for named satisfy
   usages -- the reference-subsetting head into the «requirement» box;
   aliases draw a hollow circle at the referencing end, portion usages
   (timeslice/snapshot) a filled notched ball at their individual, and
   actors/stakeholders render as «actor»/«stakeholder» keyword boxes.
+  Packages carry the spec's folder tab.
   ``membership="edges"`` swaps package nesting for the spec's ALTERNATIVE
   owned-membership presentation: members as sibling nodes, solid edges
   with a circle-plus at the owning namespace end.
+  ``annotations=True`` adds comment/doc notes with dashed anchor lines
+  and «@Type» metadata adornments.
 * :func:`state_diagram` -- hierarchical states, entry markers, transitions
   labeled ``trigger [guard] / effect``; state usages typed by a state def
   expand into the definition's submachine (``submachine_depth`` bounds the
@@ -66,7 +77,8 @@ try:
         PortProperties,
     )
     from ipyelk.elements.elements import ElementMetadata
-    from ipyelk.elements.shapes import SVG, Diamond, Icon, Path, Point
+    from ipyelk.elements.shapes import SVG, Diamond, Icon, Path, Point, PortShape
+    from ipyelk.elements.shapes import Comment as CommentShape
     from ipyelk.elements.symbol import EndpointSymbol, Symbol, SymbolSpec
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
@@ -105,8 +117,14 @@ from .render import (
     _JUNCTION_SIZE,
     _LABEL_STYLES,
     _NODE_STYLES,
+    _NOTE_FOLD,
     _PIN_RX,
     _PIN_SIZE,
+    _PORT_RX,
+    _PORT_SIZE,
+    _PROXY_SIZE,
+    _TAB_HEIGHT,
+    _TAB_WIDTH,
     _TICK_HALF,
     _V_HALF,
     _V_LENGTH,
@@ -114,6 +132,7 @@ from .render import (
     _edge_end,
     _edge_start,
     _measure,
+    _port_arrow_d,
 )
 from .toolbar import upgrade_toolbar
 
@@ -157,6 +176,12 @@ def _sysml_style() -> dict[str, dict[str, str]]:
                 "stroke": attrs["stroke"],
                 "stroke-width": "1.2",
             }
+        elif shape == "note":  # comment/doc note: folded-corner polygon
+            style[f" .{css} > polygon"] = {
+                "fill": attrs["fill"],
+                "stroke": attrs["stroke"],
+                "stroke-width": "1.2",
+            }
         elif shape == "bullseye":  # done/final: filled dot in an empty circle
             style[f" .{css} .glyph-ring"] = {
                 "fill": "#ffffff",
@@ -186,9 +211,15 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     # nodes pin their stroke width in every state (the theme bumps selected
     # nodes to width 3 -- a 6px bar becomes a blob).  Lane boundaries pin
     # too: selection recolors the dashed border, never fattens it.
-    for css in ("sysml-ctrl-bar", "sysml-junction"):
+    for css in ("sysml-ctrl-bar", "sysml-junction", "sysml-connjunction"):
         style[f" .{css} > .elknode.selected"] = {"fill": selected, "stroke": selected}
-    for css in ("sysml-marker", "sysml-ctrl-bar", "sysml-ctrl-diamond", "sysml-junction"):
+    for css in (
+        "sysml-marker",
+        "sysml-ctrl-bar",
+        "sysml-ctrl-diamond",
+        "sysml-junction",
+        "sysml-connjunction",
+    ):
         style[f" .{css} > .elknode"] = {"stroke-width": "1.2"}
     style[" .sysml-lane > .elknode"] = {"stroke-width": "1.2"}
     style[" .sysml-lane > .elknode.selected"] = {"stroke-width": "1.2"}
@@ -214,6 +245,10 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             # the outline takes the edge color -- derived from the same
             # table the headless markers use (V3)
             arrow_style["fill"] = "#ffffff"
+        if end_form == "filled":
+            # port-attached flow arrowheads: FILLED family, the fill is
+            # bound to the edge stroke (selection flips both, rule 3)
+            arrow_style["fill"] = edge_style["stroke"]
         if start_form == "filled-diamond":
             # composite membership: the diamond fill is BOUND to the edge
             # stroke (selection flips both, rule 3)
@@ -225,7 +260,7 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             # they follow the stroke color (selection contract rule 3)
             arrow_style["fill"] = "#ffffff"
         style[f" .{css} > .elkarrow"] = arrow_style
-        if start_form == "filled-diamond":
+        if start_form == "filled-diamond" or end_form == "filled":
             style[f" .elkedge.{css}.selected > .elkarrow"] = {"fill": selected}
     # accept/send action badges: filled tags riding as icon labels; the
     # theme's .elklabel.selected rule cannot reach through our id-scoped
@@ -233,6 +268,14 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     for badge in ("accept-badge", "send-badge"):
         style[f" .{badge}"] = {"fill": "#333333", "stroke": "none"}
         style[f" .elklabel.{badge}.selected"] = {"fill": selected}
+    # the package folder tab (spec printed p.24): a fixed-size icon label
+    # riding the box's top-left, in the package palette; selection
+    # recolors the outline like the box border
+    style[" .package-tab"] = {
+        "fill": _NODE_STYLES["sysml-package"]["fill"],
+        "stroke": _NODE_STYLES["sysml-package"]["stroke"],
+    }
+    style[" .elklabel.package-tab.selected"] = {"stroke": selected}
     # AFTER the per-kind rules: same specificity, so source order decides
     style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
     style.update(
@@ -302,14 +345,28 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     # body, border in the OWNING node kind's stroke color, stroke width
     # pinned in every state; selection recolors the FILL (§2.0 rule 4),
     # hover never fattens.  Single-sourced from _NODE_STYLES.
-    style[" .elkport"] = {"fill": "#ffffff", "stroke-width": "var(--jp-elk-stroke-width)"}
+    style[" .elkport"] = {
+        "fill": "#ffffff",
+        "stroke-width": "var(--jp-elk-stroke-width)",
+        "rx": "2",
+    }
     style[" .elkport.selected"] = {
         "fill": selected,
         "stroke-width": "var(--jp-elk-stroke-width)",
+        # direction arrows (self-painted currentColor inside the square)
+        # recolor to white against the selection fill (§2.0 rule 4)
+        "color": "#ffffff",
     }
     style[" .elkport.mouseover"] = {"stroke-width": "var(--jp-elk-stroke-width)"}
+    # the proxy dot is FILLED (currentColor body): selection follows the
+    # selection color instead of dropping to white (rule 3, filled family)
+    style[" .elkport.port-proxy.selected"] = {"color": selected}
     for css, node_style in _NODE_STYLES.items():
-        style[f" .{css} .elkport"] = {"stroke": node_style["stroke"]}
+        style[f" .{css} .elkport"] = {
+            "stroke": node_style["stroke"],
+            # currentColor for the direction arrow / proxy dot geometry
+            "color": node_style["stroke"],
+        }
         style[f" .{css} .elkport.selected"] = {
             "fill": selected,
             "stroke": selected,
@@ -394,6 +451,17 @@ def _walk_nodes(node: Node):
     yield node
     for child in node.children:
         yield from _walk_nodes(child)
+
+
+def _endpoint_node(endpoint: Node | Port) -> Node:
+    """The owning NODE of an edge endpoint (a Port anchors the edge, but
+    identity and packing stay with its parent node)."""
+
+    if isinstance(endpoint, Node):
+        return endpoint
+    parent = endpoint.get_parent()
+    assert isinstance(parent, Node)  # ports always ride nodes
+    return parent
 
 
 def _mult_bracket_text(mult: M.Multiplicity) -> str | None:
@@ -579,6 +647,7 @@ _END_SYMBOLS = {
     "hollow-tick": "generalization-tick",
     "hollow-dcolon": "generalization-dcolon",
     "open": "arrow",
+    "filled": "flow-arrow",
     "pin-arrow": "flow-target-pin",
     "ball-notch": "portion-ball",
 }
@@ -712,6 +781,25 @@ def _open_v(identifier: str) -> EndpointSymbol:
     )
 
 
+def _filled_v(identifier: str) -> EndpointSymbol:
+    """The FILLED flow arrowhead for port-attached flows (spec printed
+    p.77): same slender V geometry, closed; the stylesheet binds its fill
+    to the edge stroke (filled family, §2.0 rule 3)."""
+
+    return EndpointSymbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=Path.from_list(
+                    [(_V_LENGTH, -_V_HALF), (0, 0), (_V_LENGTH, _V_HALF)], closed=True
+                )
+            )
+        ),
+        symbol_offset=Point(x=-1, y=0),
+        path_offset=Point(x=-_V_LENGTH - 1, y=0),
+    )
+
+
 def _pin_svg(with_arrow: bool) -> str:
     """Raw SVG for the flow pins, in endpoint-symbol space (line end at the
     origin = the node border, +x back along the edge).  The square
@@ -834,6 +922,70 @@ def _badge_symbol(identifier: str, form: str) -> Symbol:
     )
 
 
+def _port_symbol(identifier: str, direction: str) -> Symbol:
+    """A directed port square (spec Ports, printed p.59): the 10x10 square
+    with the direction arrow drawn INSIDE.  The square rect carries no
+    paints, so it inherits the ``.elkport`` fill (white; the selection
+    color when selected) and the owning node kind's stroke; the arrow is
+    self-painted currentColor (bound per §2.0 rule 4)."""
+
+    svg = (
+        f'<rect x="0" y="0" width="{_PORT_SIZE:g}" height="{_PORT_SIZE:g}" '
+        f'rx="{_PORT_RX:g}"/>'
+        f'<path d="{_port_arrow_d(direction)}" fill="none" stroke="currentColor" '
+        f'stroke-width="1.2"/>'
+    )
+    return Symbol(
+        identifier=identifier,
+        element=Node(properties=NodeProperties(shape=SVG(use=svg))),
+        width=_PORT_SIZE,
+        height=_PORT_SIZE,
+    )
+
+
+def _proxy_symbol(identifier: str) -> Symbol:
+    """The proxy connector-end dot (spec printed p.67): a small FILLED
+    ball riding the border of the shallowest drawn ancestor; currentColor
+    body follows the owning node kind's stroke."""
+
+    r = _PROXY_SIZE / 2
+    return Symbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=SVG(
+                    use=(
+                        f'<circle cx="{r:g}" cy="{r:g}" r="{r - 0.5:g}" '
+                        f'fill="currentColor" stroke="none"/>'
+                    )
+                )
+            )
+        ),
+        width=_PROXY_SIZE,
+        height=_PROXY_SIZE,
+    )
+
+
+def _tab_symbol(identifier: str) -> Symbol:
+    """The package folder tab (spec printed p.24): a small closed
+    rectangle riding the box's top-left, styled by the ``.package-tab``
+    rule (package palette)."""
+
+    return Symbol(
+        identifier=identifier,
+        element=Node(
+            properties=NodeProperties(
+                shape=Path.from_list(
+                    [(0, 0), (_TAB_WIDTH, 0), (_TAB_WIDTH, _TAB_HEIGHT), (0, _TAB_HEIGHT)],
+                    closed=True,
+                )
+            )
+        ),
+        width=_TAB_WIDTH,
+        height=_TAB_HEIGHT,
+    )
+
+
 def _symbols() -> SymbolSpec:
     """Edge-end and badge symbols per the SysML v2 graphical notation.
 
@@ -849,7 +1001,11 @@ def _symbols() -> SymbolSpec:
     target pin carries the filled direction arrowhead), ``portion-ball``
     the notched portion-membership ball, ``alias-circle`` the hollow
     unowned-membership circle, ``owned-circle-plus`` the true circled plus
-    at the owned-membership owning end.  ``accept-badge`` / ``send-badge``
+    at the owned-membership owning end.  ``flow-arrow`` is the filled V
+    for flows attached to drawn port squares; ``port-in`` / ``port-out`` /
+    ``port-inout`` draw the boundary port square with its direction arrow,
+    ``port-proxy`` the filled proxy-connection dot, and ``package-tab``
+    the folder tab riding package boxes.  ``accept-badge`` / ``send-badge``
     are the
     filled top-left action-box tags.  All heads share the slender 2:1
     proportions of the headless markers (single-sourced in render.py).
@@ -858,6 +1014,7 @@ def _symbols() -> SymbolSpec:
     return SymbolSpec().add(
         _closed_triangle("generalization"),
         _open_v("arrow"),
+        _filled_v("flow-arrow"),
         _adorned_triangle("generalization-colon", "colon"),
         _adorned_triangle("generalization-tick", "tick"),
         _adorned_triangle("generalization-dcolon", "dcolon"),
@@ -870,6 +1027,11 @@ def _symbols() -> SymbolSpec:
         _circle_plus("owned-circle-plus"),
         _badge_symbol("accept-badge", "accept"),
         _badge_symbol("send-badge", "send"),
+        _port_symbol("port-in", "in"),
+        _port_symbol("port-out", "out"),
+        _port_symbol("port-inout", "inout"),
+        _proxy_symbol("port-proxy"),
+        _tab_symbol("package-tab"),
     )
 
 
@@ -906,6 +1068,7 @@ def structure_diagram(
     show_relationships: bool = True,
     composition: str = "defs",
     membership: str = "nested",
+    annotations: bool = False,
     toolbar: bool = True,
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
@@ -930,6 +1093,22 @@ def structure_diagram(
     Membership edges are containment presentation, not relationship
     edges, so ``show_relationships=False`` keeps them.
 
+    Port usages owned by a drawn definition/usage box render as the
+    spec's boundary squares (10x10, straddling the border, ``name :
+    Type`` label outside, direction arrow inside when the port
+    definition's directed features agree on one); interface / connection
+    / binding / flow ends then attach square-to-square, and connector
+    ends naming UNDRAWN nested features draw the spec's proxy dot on the
+    shallowest drawn ancestor (printed p.67).  Only nodes that own drawn
+    ports opt into ELK port handling -- everything else keeps the exact
+    pre-port layout path.
+
+    ``annotations=True`` (default off, to keep existing diagrams
+    uncluttered) additionally draws comment/documentation notes -- the
+    folded-corner box with a dashed anchor line (no endpoint glyph) to
+    each annotated element (spec printed pp.20-21) -- and «@Type» /
+    «#keyword» metadata adornments on annotated nodes.
+
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
     """
@@ -942,9 +1121,14 @@ def structure_diagram(
     root = builder.build()
     if show_relationships:
         builder.add_relationship_edges(root)
+    if annotations:
+        builder.add_annotations(root)
     builder.pack_components(root)
     _size_compartment_rows(root)
-    return _finish(root, toolbar=toolbar)
+    # package tabs ride flush with the box top (outside icon labels; the
+    # spacing option applies per hierarchy level, so the package nodes
+    # restate it for their nested packages)
+    return _finish(root, toolbar=toolbar, layout={"elk.spacing.labelNode": "0"})
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -1019,6 +1203,11 @@ class _StructureBuilder:
         self.model = owner if isinstance(owner, M.Model) else M.Model()
         self.interp = Interpreter(self.model)
         self.nodes: dict[int, Node] = {}
+        # boundary port squares by model element id (spec Ports): connector
+        # ends resolve to these before nodes
+        self.ports: dict[int, Port] = {}
+        # proxy connector-end dots, deduplicated per (owner node, residual)
+        self._proxies: dict[tuple[int, str], Port] = {}
         # membership="edges": members unnested into diagram-root siblings,
         # and the (owning package node, member node) pairs to connect
         self._unnested: list[Node] = []
@@ -1045,6 +1234,7 @@ class _StructureBuilder:
     def _visit(self, element: M.Element) -> Node | None:
         if isinstance(element, M.Package):
             node = _node(element, element.label, "sysml-package", "package")
+            self._add_package_tab(node)
             for member in element.members:
                 child = self._visit(member)
                 if child is None:
@@ -1080,10 +1270,14 @@ class _StructureBuilder:
             # (spec printed p.133 draws requirement USAGES as boxes)
             "requirement",
             "satisfy",
+            # named allocations draw the spec's «allocation» box form
+            # (printed p.79); anonymous `allocate a to b` draws the
+            # «allocate» keyword edge instead
+            "allocation",
         ):
-            if element.kind == "satisfy" and not element.name:
-                # the anonymous shorthand (`satisfy R by sys;`) draws as a
-                # «satisfy» keyword edge, not a box (spec printed p.133)
+            if element.kind in ("satisfy", "allocation") and not element.name:
+                # the anonymous shorthands (`satisfy R by sys;`,
+                # `allocate a to b;`) draw as keyword edges, not boxes
                 return None
             stereotype = _KIND_STEREOTYPES.get(element.kind, element.kind)
             node = _node(element, _usage_title(element), "sysml-usage", stereotype)
@@ -1099,6 +1293,11 @@ class _StructureBuilder:
                 child = self._visit(member)
                 if child is not None:
                     node.children.append(child)
+                continue
+            if member.kind == "port":
+                # boundary squares straddling this box's border (spec
+                # Ports, printed p.59) -- never nested child boxes
+                self._add_boundary_port(node, member)
                 continue
             if member.kind == "attribute" and self.show_attributes:
                 text = _usage_title(member)
@@ -1129,6 +1328,113 @@ class _StructureBuilder:
                 child = self._visit(member)
                 if child is not None:
                     node.children.append(child)
+        self._finalize_ports(node)
+
+    def _add_package_tab(self, node: Node) -> None:
+        """The package folder tab (spec printed p.24): a fixed-size icon
+        label pinned OUTSIDE at the top-left, flush with the box top (ELK
+        reserves the space, so nothing overlaps in either pipeline).  The
+        single-space text keeps ELK's label placement engaged (it skips
+        empty labels); nothing renders it."""
+
+        tab = Label(text=" ")
+        tab.properties = LabelProperties(
+            cssClasses="sysml-tab",
+            shape=Icon(use="package-tab", width=_TAB_WIDTH, height=_TAB_HEIGHT),
+        )
+        tab.layoutOptions = {"nodeLabels.placement": "H_LEFT V_TOP OUTSIDE"}
+        node.labels.insert(0, tab)
+        # label-node spacing applies per hierarchy level: restate it for
+        # packages nested inside this one
+        node.layoutOptions["elk.spacing.labelNode"] = "0"
+
+    def _port_direction(self, element: M.Usage) -> str | None:
+        """The arrow drawn inside a port square (spec printed p.59).
+
+        The language has no direction syntax on ports themselves; the
+        spec's figures derive the arrow from the port DEFINITION's
+        directed features: all ``in`` draws the inward arrow, all ``out``
+        the outward one, anything mixed or ``inout`` the double-headed
+        form, none draws a plain square.  Conjugated ports (``~T``) flip
+        in/out (spec 7.12.3: conjugation reverses directed features).
+        """
+
+        if not element.types:
+            return None
+        type_name = element.types[0]
+        conjugated = type_name.startswith("~")
+        try:
+            found = self.interp.resolver.resolve(type_name.lstrip("~"), element.owner or self.model)
+        except Exception:
+            return None
+        if not isinstance(found, M.Definition):
+            return None
+        directions = {
+            member.direction
+            for member in found.members
+            if isinstance(member, M.Usage) and member.direction in ("in", "out", "inout")
+        }
+        if not directions:
+            return None
+        if directions == {"in"}:
+            direction = "in"
+        elif directions == {"out"}:
+            direction = "out"
+        else:
+            direction = "inout"
+        if conjugated and direction != "inout":
+            direction = "in" if direction == "out" else "out"
+        return direction
+
+    def _add_boundary_port(self, owner: Node, element: M.Usage, prefix: str = "") -> None:
+        """Draw a port usage as the spec's small square ON the owning
+        node's border (plan P1/P2/P3): 10x10, straddling the border via a
+        negative border offset, ``name : Type`` label placed OUTSIDE by
+        ELK, direction arrow inside the square, conjugation textual
+        (``~T`` in the label -- the spec's figures draw conjugated squares
+        unshaded, printed p.76).  Nested ports flatten onto the same
+        border with dotted labels (plan P5's documented fallback)."""
+
+        direction = self._port_direction(element)
+        css = "sysml-port" + (f" sysml-port-{direction}" if direction else "")
+        port = Port(
+            width=_PORT_SIZE,
+            height=_PORT_SIZE,
+            layoutOptions={"elk.port.borderOffset": f"{-_PORT_SIZE / 2:g}"},
+            properties=PortProperties(cssClasses=css),
+        )
+        if direction:
+            port.properties.shape = PortShape(use=f"port-{direction}")
+        if element.qualified_name:
+            port.id = element.qualified_name
+        text = prefix + _usage_title(element)
+        label = _label(text)
+        shape = label.properties.get_shape()
+        shape.width, shape.height = _measure(text)
+        port.labels = [label]
+        owner.add_port(port)
+        self.ports[id(element)] = port
+        for member in element.members:
+            if isinstance(member, M.Usage) and member.kind == "port":
+                self._add_boundary_port(owner, member, prefix=f"{prefix}{element.label}.")
+
+    def _finalize_ports(self, node: Node) -> None:
+        """Opt the node into ELK port handling -- ONLY nodes that own drawn
+        ports leave the pre-port layout path.  Direction arrows need known
+        orientations, so any directed square pins every side (in = WEST,
+        everything else EAST, matching the arrows' +x geometry); nodes
+        with only plain squares keep FREE constraints for ELK's routing."""
+
+        drawn = [port for port in node.ports if port.properties.cssClasses]
+        if not drawn:
+            return
+        node.layoutOptions["elk.portLabels.placement"] = "OUTSIDE"
+        if any(" sysml-port-" in f" {port.properties.cssClasses}" for port in drawn):
+            node.layoutOptions["elk.portConstraints"] = "FIXED_SIDE"
+            for port in drawn:
+                css = port.properties.cssClasses or ""
+                side = "WEST" if "sysml-port-in" in css and "inout" not in css else "EAST"
+                port.layoutOptions["elk.port.side"] = side
 
     # -- relationship edges -------------------------------------------------
 
@@ -1184,16 +1490,17 @@ class _StructureBuilder:
                         target = self._resolve_feature_node(name, element)
                         if target is not None:
                             root.edges.append(_edge(node, target, css))
-            if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage, M.AllocationUsage)):
-                self._connect_ends(root, element)
         # relationship members owned by anything we visited: connections,
-        # bindings, flows, dependencies, anonymous satisfies, aliases
+        # bindings, interfaces, allocations, flows, dependencies, anonymous
+        # satisfies, aliases
         for element in list(self.nodes_elements()):
             for member in element.members if isinstance(element, M.Namespace) else []:
                 if id(member) in self.nodes:
                     continue
-                if isinstance(member, (M.ConnectionUsage, M.BindingConnector)):
+                if isinstance(member, (M.ConnectionUsage, M.BindingConnector, M.InterfaceUsage)):
                     self._connect_ends(root, member)
+                elif isinstance(member, M.AllocationUsage):
+                    self._add_allocate_edges(root, member)
                 elif isinstance(member, M.FlowUsage) and member.kind == "flow":
                     self._add_flow_edge(root, member)
                 elif isinstance(member, M.SatisfyUsage):
@@ -1248,58 +1555,230 @@ class _StructureBuilder:
         )
         binding = isinstance(element, M.BindingConnector)
         css = "sysml-edge-binding" if binding else "sysml-edge-connect"
-        resolved = [self._resolve_node(end.target, element) for end in ends]
-        if len(resolved) >= 2 and all(n is not None for n in resolved):
-            label = element.label if element.name else None
-            for (end_a, source), (end_b, target) in itertools.pairwise(
-                zip(ends, resolved, strict=True)
-            ):
-                edge = _edge(source, target, css, text=label)
-                if binding:
-                    # the '=' glyph rides the solid line mid-span (errata
-                    # E15) -- a centered, pre-sized label like any other
-                    _add_center_label(edge, "=")
-                # cross multiplicities render near the ends they constrain
-                if end_a.multiplicity is not None:
-                    _add_end_multiplicity(edge, end_a.multiplicity, "TAIL")
-                if end_b.multiplicity is not None:
-                    _add_end_multiplicity(edge, end_b.multiplicity, "HEAD")
-                root.edges.append(edge)
+        # ends resolve to boundary PORT squares when drawn (interfaces run
+        # square-to-square, spec printed p.75); ends naming UNDRAWN nested
+        # features draw the proxy dot on the shallowest drawn ancestor
+        # (spec printed p.67)
+        endpoints: list[Node | Port] = []
+        for end in ends:
+            anchor, residual = self._resolve_end_anchor(end.target, element)
+            if anchor is None:
+                return  # an unresolvable end draws nothing (as before)
+            if residual and isinstance(anchor, Node):
+                anchor = self._add_proxy_port(anchor, residual)
+            endpoints.append(anchor)
+        if len(endpoints) < 2:
+            return
+        label = element.label if element.name else None
+        if not binding and len(endpoints) >= 3:
+            # `connect (a, b, c)`: the spec's n-ary junction form
+            self._add_nary_connection(root, element, ends, endpoints)
+            return
+        if not binding and self._connection_direction(element):
+            # 'connection (with direction indication)' (spec printed
+            # p.66): open-V head at the target end, name : Type label
+            css = "sysml-edge-directed"
+            if element.name and element.types:
+                label = f"{element.label} : {element.types[0]}"
+        for (end_a, source), (end_b, target) in itertools.pairwise(
+            zip(ends, endpoints, strict=True)
+        ):
+            edge = _edge(source, target, css, text=label)
+            if binding:
+                # the '=' glyph rides the solid line mid-span (errata
+                # E15) -- a centered, pre-sized label like any other
+                _add_center_label(edge, "=")
+            # cross multiplicities render near the ends they constrain
+            if end_a.multiplicity is not None:
+                _add_end_multiplicity(edge, end_a.multiplicity, "TAIL")
+            if end_b.multiplicity is not None:
+                _add_end_multiplicity(edge, end_b.multiplicity, "HEAD")
+            root.edges.append(edge)
 
-    def _resolve_deepest_node(self, name: str, context: M.Element) -> Node | None:
-        """Resolve a dotted feature path to the DEEPEST drawn node along it.
+    def _connection_direction(self, element: M.Usage) -> bool:
+        """True when the connection's DEFINITION declares directed ends.
 
-        Flow ends name pins (``a1.y``) whose terminal feature is usually a
-        compartment row, not a node: the edge then anchors on the owning
-        action/part box -- the honest approximation of a border pin.
+        The spec's 'connection (with direction indication)' (printed p.66)
+        has textual notation identical to the undirected form -- the only
+        model signal is the definition's end NAMES (``sourceEnd`` /
+        ``targetEnd`` in the spec's own example; ``source``/``target``
+        accepted too).  Connector ends bind to definition ends in
+        declaration order, so the arrow rides the second (target) end.
+        """
+
+        if not getattr(element, "types", None):
+            return False
+        try:
+            found = self.interp.resolver.resolve(
+                element.types[0].lstrip("~"), element.owner or self.model
+            )
+        except Exception:
+            return False
+        if not isinstance(found, M.Definition):
+            return False
+        def_ends = [m for m in found.members if isinstance(m, M.Usage) and m.is_end]
+        if len(def_ends) != 2:
+            return False
+        names = [(m.name or "").lower() for m in def_ends]
+        return names[0].startswith("source") and names[1].startswith("target")
+
+    def _add_nary_connection(
+        self,
+        root: Node,
+        element: M.Usage,
+        ends: Sequence[M.ConnectorEnd],
+        endpoints: Sequence[Node | Port],
+    ) -> None:
+        """``connect (a, b, c)`` -- the spec's n-ary form (printed p.66): a
+        small filled junction dot where the end lines meet, the connection
+        label beside it, end multiplicities near the ends they constrain
+        (reusing the n-ary dependency machinery, connector-family gray)."""
+
+        text = element.label if element.name else None
+        if text and element.types:
+            text = f"{text} : {element.types[0]}"
+        junction = _glyph_node(element, text, "sysml-connjunction", _JUNCTION_SIZE, _JUNCTION_SIZE)
+        owner_node = self.nodes.get(id(element.owner)) if element.owner is not None else None
+        (owner_node or root).children.append(junction)
+        first, *rest = zip(ends, endpoints, strict=True)
+        edge = _edge(first[1], junction, "sysml-edge-connect")
+        if first[0].multiplicity is not None:
+            _add_end_multiplicity(edge, first[0].multiplicity, "TAIL")
+        root.edges.append(edge)
+        for end, endpoint in rest:
+            edge = _edge(junction, endpoint, "sysml-edge-connect")
+            if end.multiplicity is not None:
+                _add_end_multiplicity(edge, end.multiplicity, "HEAD")
+            root.edges.append(edge)
+
+    def _add_allocate_edges(self, root: Node, alloc: M.AllocationUsage) -> None:
+        """Anonymous ``allocate a to b`` (spec printed p.79): a solid line
+        with an open-V arrow and the «allocate» keyword, source to target,
+        in the dependency/requirement family hue.  Named allocation usages
+        draw as «allocation» boxes instead (the spec's node form) -- they
+        are in ``self.nodes`` and never reach this method."""
+
+        if alloc.name:
+            return
+        endpoints = []
+        for end in alloc.ends:
+            anchor, _residual = self._resolve_end_anchor(end.target, alloc)
+            if anchor is None:
+                return
+            endpoints.append(anchor)
+        for source, target in itertools.pairwise(endpoints):
+            root.edges.append(
+                _edge(
+                    source,
+                    target,
+                    "sysml-edge-allocate",
+                    text="\u00aballocate\u00bb",
+                    text_css="sysml-stereotype",
+                )
+            )
+
+    def _lookup(self, element: M.Element) -> Node | Port | None:
+        """The drawn thing for a model element: its boundary port square
+        when it has one, else its node."""
+
+        return self.ports.get(id(element)) or self.nodes.get(id(element))
+
+    def _contains(self, anchor: Node | Port, candidate: Node | Port) -> bool:
+        """Whether ``candidate`` is drawn at or under the node that hosts
+        ``anchor`` -- the test that keeps connector ends from wandering
+        into definition boxes (`connect part2.part4 ...` must NOT anchor
+        on Part2's member box; it draws the proxy dot instead)."""
+
+        base = anchor if isinstance(anchor, Node) else anchor.get_parent()
+        if not isinstance(base, Node):
+            return False
+        if isinstance(candidate, Port):
+            owner = candidate.get_parent()
+            return any(owner is node for node in _walk_nodes(base))
+        return candidate is not base and any(candidate is node for node in _walk_nodes(base))
+
+    def _resolve_end_anchor(
+        self, name: str, context: M.Element
+    ) -> tuple[Node | Port | None, list[str]]:
+        """Resolve a dotted connector-end path to its drawn endpoint.
+
+        Walks the path segment by segment, descending only through things
+        actually DRAWN inside the current anchor (nested boxes, boundary
+        ports).  Returns the deepest such endpoint plus the residual
+        segments that could not be descended -- a non-empty residual is
+        the proxy-connection case (spec printed p.67).
         """
 
         parts = name.split(".")
         try:
             found = self.interp.resolver.resolve(parts[0], context.owner or self.model)
         except Exception:
-            return None
-        node = self.nodes.get(id(found))
-        for part in parts[1:]:
+            return None, []
+        anchor = self._lookup(found)
+        residual: list[str] = []
+        for index, part in enumerate(parts[1:], start=1):
             try:
                 found = self.interp.resolver.resolve(part, found)
             except Exception:
+                residual.extend(parts[index:])
                 break
-            node = self.nodes.get(id(found)) or node
-        return node
+            candidate = self._lookup(found)
+            if anchor is None:
+                if candidate is not None:
+                    anchor = candidate
+            elif candidate is not None and not residual and self._contains(anchor, candidate):
+                anchor = candidate
+            else:
+                residual.append(part)
+        return anchor, residual
+
+    def _add_proxy_port(self, owner: Node, residual: list[str]) -> Port:
+        """The proxy-connection dot (spec printed p.67): a small FILLED
+        ball ON the border of the shallowest drawn ancestor, labeled with
+        the residual path (``.part4``).  Deduplicated per (node, path), so
+        several connectors to one nested feature share a dot."""
+
+        text = "." + ".".join(residual)
+        key = (id(owner), text)
+        existing = self._proxies.get(key)
+        if existing is not None:
+            return existing
+        port = Port(
+            width=_PROXY_SIZE,
+            height=_PROXY_SIZE,
+            layoutOptions={"elk.port.borderOffset": f"{-_PROXY_SIZE / 2:g}"},
+            properties=PortProperties(
+                cssClasses="sysml-port-proxy", shape=PortShape(use="port-proxy")
+            ),
+        )
+        if owner.layoutOptions.get("elk.portConstraints") == "FIXED_SIDE":
+            port.layoutOptions["elk.port.side"] = "EAST"
+        label = _label(text)
+        shape = label.properties.get_shape()
+        shape.width, shape.height = _measure(text)
+        port.labels = [label]
+        owner.add_port(port)
+        owner.layoutOptions.setdefault("elk.portLabels.placement", "OUTSIDE")
+        self._proxies[key] = port
+        return port
 
     def _add_flow_edge(self, root: Node, flow: M.FlowUsage) -> None:
         """A flow connection (errata E16/M1): solid line from a small square
         source-output pin to a small square target-input pin, small FILLED
-        arrowhead at the target pin, payload item labels near each end."""
+        arrowhead at the target pin, payload item labels near each end.
+        Ends resolving to DRAWN boundary ports attach to the square itself
+        (the port IS the pin, spec printed p.77) and the edge drops the
+        marker pins, keeping only the filled arrowhead."""
 
         if not flow.source or not flow.target_end:
             return
-        source = self._resolve_deepest_node(flow.source, flow)
-        target = self._resolve_deepest_node(flow.target_end, flow)
+        source, _sres = self._resolve_end_anchor(flow.source, flow)
+        target, _tres = self._resolve_end_anchor(flow.target_end, flow)
         if source is None or target is None or source is target:
             return
-        edge = _edge(source, target, "sysml-edge-flow", text=flow.name or None)
+        ported = isinstance(source, Port) or isinstance(target, Port)
+        css = "sysml-edge-portflow" if ported else "sysml-edge-flow"
+        edge = _edge(source, target, css, text=flow.name or None)
         if flow.payload:  # payload item labels near BOTH ends (spec p.81)
             _add_end_label(edge, flow.payload, "TAIL")
             _add_end_label(edge, flow.payload, "HEAD")
@@ -1380,6 +1859,96 @@ class _StructureBuilder:
             return
         root.edges.append(_edge(owner_node, target, "sysml-edge-alias", text=alias.name))
 
+    # -- annotations (opt-in) --------------------------------------------------
+
+    def add_annotations(self, root: Node) -> None:
+        """The annotation layer (``annotations=True``): comment and
+        documentation elements as folded-corner note boxes with a DASHED
+        anchor line -- no endpoint glyph -- to each annotated element
+        (spec printed pp.20-21), plus «@Type» / «#keyword» metadata
+        adornments on annotated nodes (spec Metadata, printed p.157).
+
+        Notes are placed as SIBLINGS of their (first) anchor target --
+        never inside it -- so anchor edges stay ordinary sibling edges
+        (an edge into one's own ancestor is the case ELK's layered
+        algorithm mishandles)."""
+
+        parents: dict[int, Node] = {}
+        for node in _walk_nodes(root):
+            for child in node.children:
+                parents[id(child)] = node
+        for element in list(self.nodes_elements()):
+            owner_node = self.nodes[id(element)]
+            if element.metadata:  # '#keyword' prefix metadata
+                for keyword in reversed(element.metadata):
+                    owner_node.labels.insert(
+                        0, _label(f"\u00ab#{keyword}\u00bb", "sysml-stereotype")
+                    )
+            if not isinstance(element, M.Namespace):
+                continue
+            for member in element.members:
+                if isinstance(member, M.Comment):
+                    targets = [
+                        target
+                        for name in member.about
+                        if (target := self._lookup_annotated(name, member)) is not None
+                    ]
+                    self._add_note(root, parents, member, "comment", targets or [owner_node])
+                elif isinstance(member, M.Documentation):
+                    # documentation annotates its owning element
+                    self._add_note(root, parents, member, "doc", [owner_node])
+                elif isinstance(member, M.MetadataUsage) and member.typed_by:
+                    targets = [
+                        target
+                        for name in member.about
+                        if isinstance((target := self._lookup_annotated(name, member)), Node)
+                    ] or [owner_node]
+                    for target in targets:
+                        target.labels.insert(
+                            0, _label(f"\u00ab@{member.typed_by}\u00bb", "sysml-stereotype")
+                        )
+
+    def _lookup_annotated(self, name: str, context: M.Element) -> Node | Port | None:
+        try:
+            found = self.interp.resolver.resolve(name.split(".")[0], context.owner or self.model)
+            for part in name.split(".")[1:]:
+                found = self.interp.resolver.resolve(part, found)
+        except Exception:
+            return None
+        return self._lookup(found)
+
+    def _add_note(
+        self,
+        root: Node,
+        parents: dict[int, Node],
+        element: M.Comment | M.Documentation,
+        keyword: str,
+        targets: Sequence[Node | Port],
+    ) -> None:
+        """One note box (folded corner, «comment»/«doc» keyword, body
+        capped for the canvas) anchored to each target by a dashed line
+        with NO endpoint glyph."""
+
+        body = element.text.splitlines()[0].strip() if element.text else ""
+        if len(body) > 40:
+            body = body[:39] + "\u2026"
+        labels = [_label(f"\u00ab{keyword}\u00bb", "sysml-stereotype")]
+        if body:
+            labels.append(_label(body, "sysml-attribute"))
+        note = Node(
+            labels=labels,
+            layoutOptions=dict(_NODE_LAYOUT),
+            properties=NodeProperties(
+                cssClasses="sysml-note", shape=CommentShape(use=str(int(_NOTE_FOLD)))
+            ),
+        )
+        if element.qualified_name:
+            note.id = element.qualified_name
+        host = parents.get(id(_endpoint_node(targets[0])), root)
+        host.children.append(note)
+        for target in targets:
+            root.edges.append(_edge(note, target, "sysml-edge-anchor"))
+
     # -- component packing ----------------------------------------------------
 
     def pack_components(self, root: Node) -> None:
@@ -1396,8 +1965,10 @@ class _StructureBuilder:
 
         touched: set[int] = set()
         for edge in root.edges:
-            touched.add(id(edge.source))
-            touched.add(id(edge.target))
+            # port-anchored edges (interfaces, proxies, flows-to-ports)
+            # connect their OWNING nodes for packing purposes
+            touched.add(id(_endpoint_node(edge.source)))
+            touched.add(id(_endpoint_node(edge.target)))
 
         def is_loose(node: Node) -> bool:
             if id(node) in touched:

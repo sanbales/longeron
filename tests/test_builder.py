@@ -330,3 +330,30 @@ def test_actor_and_stakeholder_usages():
     assert driver.kind == "actor" and driver.types == ["Person"]
     owner = model.find("P::Comfort::owner")
     assert owner.kind == "stakeholder" and owner.types == ["Person"]
+
+
+def test_connection_def_directed_ends_survive_in_order():
+    """The diagram contract for 'connection (with direction indication)'
+    (spec printed pp.65-66): the textual notation carries NO direction
+    syntax -- the only model signal is the definition's end usages, whose
+    names, order, multiplicities and is_end flags must survive."""
+
+    model = longeron.loads("""
+        package P {
+            part def Part1;
+            part def Part2;
+            connection def ConnectionDef2 {
+                end [1..1] part sourceEnd : Part1;
+                end [1..*] part targetEnd : Part2;
+            }
+        }
+    """)
+    definition = model.find("P::ConnectionDef2")
+    assert isinstance(definition, M.Definition) and definition.kind == "connection"
+    ends = [m for m in definition.members if isinstance(m, M.Usage) and m.is_end]
+    assert [(e.name, e.types[0]) for e in ends] == [
+        ("sourceEnd", "Part1"),
+        ("targetEnd", "Part2"),
+    ]
+    assert ends[0].multiplicity.upper.to_text() == "1"
+    assert ends[1].multiplicity.upper.to_text() == "*"

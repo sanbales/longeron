@@ -79,6 +79,10 @@ class TestPaletteSingleSource:
                 derived = diagrams.SYSML_STYLE[f" .{css} > polygon"]
                 assert derived["fill"] == attrs["fill"]
                 assert derived["stroke"] == attrs["stroke"]
+            elif shape == "note":  # comment/doc notes: folded-corner polygon
+                derived = diagrams.SYSML_STYLE[f" .{css} > polygon"]
+                assert derived["fill"] == attrs["fill"]
+                assert derived["stroke"] == attrs["stroke"]
             else:  # bullseye / circle-x: circle ring + inner glyph
                 assert shape in ("bullseye", "circle-x")
                 ring = diagrams.SYSML_STYLE[f" .{css} .glyph-ring"]
@@ -103,6 +107,12 @@ class TestPaletteSingleSource:
                 if end_form != "hollow":
                     # adorned heads: filled dots/tick draw with currentColor
                     assert derived["color"] == style["stroke"]
+            if end_form == "filled":
+                # port-attached flow arrowheads: FILLED family, fill bound
+                # to the stroke, selection flips both (contract rule 3)
+                assert derived["fill"] == style["stroke"]
+                selected_arrow = diagrams.SYSML_STYLE[f" .elkedge.{css}.selected > .elkarrow"]
+                assert selected_arrow["fill"] == selected
             if start_form == "filled-diamond":
                 # filled family: fill is BOUND to the stroke, and selection
                 # flips both together (contract rule 3)
@@ -140,6 +150,7 @@ class TestPaletteSingleSource:
             "open",
             "none",
             "pin-arrow",  # flow target-input pin + filled arrowhead (E16)
+            "filled",  # filled arrowhead alone: flows attached to drawn ports
             "ball-notch",  # portion-membership ball at the whole end
         }
         assert set(render._EDGE_STARTS) <= set(render._EDGE_STYLES)
@@ -227,6 +238,8 @@ class TestPaletteSingleSource:
         assert "shape" not in render._NODE_STYLES["sysml-ctrl-bar"]  # a rect
         # the n-ary dependency junction is a filled dot in the family hue
         assert render._NODE_STYLES["sysml-junction"]["fill"] == "#a85c78"
+        # the n-ary CONNECTION junction stays in the connector-family gray
+        assert render._NODE_STYLES["sysml-connjunction"]["fill"] == "#555555"
         # swim lanes carry a dashed boundary in BOTH pipelines (the style
         # table's dasharray reaches the headless rect and the browser CSS)
         assert render._NODE_STYLES["sysml-lane"]["stroke-dasharray"] == "4 3"
@@ -244,12 +257,23 @@ class TestPaletteSingleSource:
         assert diagrams.SYSML_STYLE[" .elkport"]["fill"] == "#ffffff"
         assert diagrams.SYSML_STYLE[" .elkport"]["stroke-width"] == pinned
         assert diagrams.SYSML_STYLE[" .elkport.selected"]["stroke-width"] == pinned
+        # direction arrows (currentColor geometry inside the square)
+        # recolor to white against the selection fill; the FILLED proxy
+        # dot follows the selection color instead (rule 3)
+        assert diagrams.SYSML_STYLE[" .elkport.selected"]["color"] == "#ffffff"
+        assert diagrams.SYSML_STYLE[" .elkport.port-proxy.selected"]["color"] == selected
         assert diagrams.SYSML_STYLE[" .elkport.mouseover"]["stroke-width"] == pinned
         for css, style in render._NODE_STYLES.items():
             assert diagrams.SYSML_STYLE[f" .{css} .elkport"]["stroke"] == style["stroke"]
+            # currentColor binds the direction glyph to the node stroke
+            assert diagrams.SYSML_STYLE[f" .{css} .elkport"]["color"] == style["stroke"]
             derived = diagrams.SYSML_STYLE[f" .{css} .elkport.selected"]
             assert derived["fill"] == selected
             assert derived["stroke-width"] == pinned
+        # the package folder tab derives from the package palette
+        tab = diagrams.SYSML_STYLE[" .package-tab"]
+        assert tab["fill"] == render._NODE_STYLES["sysml-package"]["fill"]
+        assert tab["stroke"] == render._NODE_STYLES["sysml-package"]["stroke"]
 
     def test_label_kinds_keep_their_measured_font_sizes_in_the_browser(self):
         """Item 12: the blanket 11px !important label rule (needed against

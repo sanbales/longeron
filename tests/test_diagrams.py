@@ -551,6 +551,336 @@ class TestStructure:
                 assert id(e.target) not in connected
 
 
+_PORTED = """
+package P {
+    item def Item1;
+    part def Part1;
+    part def Part2;
+    port def Pin { in item x : Item1; }
+    port def Pout { out item y : Item1; }
+    port def Pio { in item a : Item1; out item b : Item1; }
+    port def Plain;
+    connection def ConnectionDef2 {
+        end [1..1] part sourceEnd : Part1;
+        end [1..*] part targetEnd : Part2;
+    }
+    part part0 {
+        part part1 : Part1 { port po : Pout; port p4 : Plain; }
+        part part2 : Part2 { port pc : ~Pin; port pio : Pio; }
+        interface if1 connect part1.po to part2.pc;
+        connection connection2 : ConnectionDef2 connect part1 to part2;
+        flow of Item1 from part1.po to part2.pc;
+    }
+}
+"""
+
+
+class TestPortNotation:
+    """Phase 2: port usages render as boundary squares (spec Ports,
+    printed p.59), direction arrows inside, conjugation textual, and the
+    connector family attaches square-to-square."""
+
+    @pytest.fixture(scope="class")
+    def root(self):
+        return diagrams.structure_diagram(longeron.loads(_PORTED)).source.value
+
+    def test_port_usages_become_boundary_squares(self, root):
+        part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
+        # never nested child boxes
+        assert not any((child.id or "").endswith("::po") for child in part1.children)
+        ports = {port.id: port for port in part1.ports}
+        po = ports["P::part0::part1::po"]
+        assert (po.width, po.height) == (10, 10)
+        # the square straddles the border
+        assert po.layoutOptions["elk.port.borderOffset"] == "-5"
+        assert "sysml-port" in po.properties.cssClasses
+        # name : Type label, pre-sized, placed OUTSIDE by ELK
+        assert po.labels[0].text == "po : Pout"
+        assert po.labels[0].properties.get_shape().width > 0
+        assert part1.layoutOptions["elk.portLabels.placement"] == "OUTSIDE"
+
+    def test_direction_arrows_derive_from_the_port_definition(self, root):
+        """The spec's arrows (printed p.59): the port DEF's directed
+        features agree on in/out; mixed draws the double arrow; sides pin
+        so the arrow geometry reads correctly (in = WEST, out = EAST)."""
+
+        part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
+        ports = {port.id: port for port in part1.ports}
+        po = ports["P::part0::part1::po"]
+        assert po.properties.shape.use == "port-out"
+        assert po.layoutOptions["elk.port.side"] == "EAST"
+        assert part1.layoutOptions["elk.portConstraints"] == "FIXED_SIDE"
+        part2 = next(n for n in _walk(root) if n.id == "P::part0::part2")
+        pio = {port.id: port for port in part2.ports}["P::part0::part2::pio"]
+        assert pio.properties.shape.use == "port-inout"
+
+    def test_conjugated_ports_stay_textual_and_flip_direction(self, root):
+        """Verified against the spec figures (printed pp.75-77): conjugated
+        squares draw UNSHADED -- the ~ lives in the type text only -- and
+        the direction flips (7.12.3: conjugation reverses in/out)."""
+
+        part2 = next(n for n in _walk(root) if n.id == "P::part0::part2")
+        pc = {port.id: port for port in part2.ports}["P::part0::part2::pc"]
+        assert pc.labels[0].text == "pc : ~Pin"
+        assert pc.properties.cssClasses == "sysml-port sysml-port-out"  # in, flipped
+        assert pc.properties.shape.use == "port-out"
+
+    def test_plain_squares_draw_no_arrow(self, root):
+        part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
+        p4 = {port.id: port for port in part1.ports}["P::part0::part1::p4"]
+        assert p4.properties.cssClasses == "sysml-port"
+        assert p4.properties.shape is None
+
+    def test_undirected_ports_keep_free_constraints(self):
+        model = longeron.loads(
+            "package P { port def Q; part a { port p : Q; } part b { port q : Q; } }"
+        )
+        root = diagrams.structure_diagram(model).source.value
+        for name in ("P::a", "P::b"):
+            node = next(n for n in _walk(root) if n.id == name)
+            assert "elk.portConstraints" not in node.layoutOptions
+            assert all("elk.port.side" not in p.layoutOptions for p in node.ports)
+
+    def test_interface_and_flow_edges_attach_port_to_port(self, root):
+        connect = [
+            e
+            for e in root.edges
+            if "sysml-edge-connect" in e.properties.cssClasses
+            and getattr(e.source, "id", None) == "P::part0::part1::po"
+        ]
+        assert connect and connect[0].target.id == "P::part0::part2::pc"
+        assert connect[0].labels[0].text == "if1"
+        flows = [e for e in root.edges if "sysml-edge-portflow" in e.properties.cssClasses]
+        assert [(e.source.id, e.target.id) for e in flows] == [
+            ("P::part0::part1::po", "P::part0::part2::pc")
+        ]
+        # port-attached flows keep only the FILLED arrowhead (the drawn
+        # square already is the pin, spec printed p.77)
+        assert flows[0].properties.shape.end == "flow-arrow"
+        assert flows[0].properties.shape.start is None
+
+    def test_boundary_ports_draw_no_typing_edges(self, root):
+        port_ids = {
+            "P::part0::part1::po",
+            "P::part0::part1::p4",
+            "P::part0::part2::pc",
+            "P::part0::part2::pio",
+        }
+        for edge in root.edges:
+            if "sysml-edge-typed" in edge.properties.cssClasses:
+                assert getattr(edge.source, "id", None) not in port_ids
+
+    def test_port_symbols_are_registered(self):
+        library = diagrams._symbols().library
+        for identifier in ("port-in", "port-out", "port-inout", "port-proxy", "package-tab"):
+            assert identifier in library
+        # square + currentColor arrow, so the stylesheet drives selection
+        use = library["port-in"].element.properties.shape.use
+        assert "<rect" in use and 'stroke="currentColor"' in use
+
+    def test_portless_nodes_stay_on_the_pre_port_path(self, drone_model):
+        """Layout-stability guard: only nodes that actually own drawn
+        ports opt into ELK port handling; everything else keeps the exact
+        pre-port layout inputs (no ports array, no port options)."""
+
+        root = diagrams.structure_diagram(drone_model).source.value
+        for node in _walk(root):
+            assert node.ports == []
+            assert "elk.portConstraints" not in node.layoutOptions
+            assert "elk.portLabels.placement" not in node.layoutOptions
+
+
+class TestConnectorNotation:
+    """Tranche-3 connector family: direction indication, n-ary junctions,
+    proxy dots, allocations (spec printed pp.66-67, 79)."""
+
+    def test_directed_connection_draws_open_head_and_typed_label(self):
+        root = diagrams.structure_diagram(longeron.loads(_PORTED)).source.value
+        directed = [e for e in root.edges if "sysml-edge-directed" in e.properties.cssClasses]
+        assert [(e.source.id, e.target.id) for e in directed] == [
+            ("P::part0::part1", "P::part0::part2")
+        ]
+        assert directed[0].properties.shape.end == "arrow"
+        assert directed[0].labels[0].text == "connection2 : ConnectionDef2"
+
+    def test_plain_connections_stay_headless(self):
+        model = longeron.loads("package P { part a; part b; connect a to b; }")
+        root = diagrams.structure_diagram(model).source.value
+        connect = [e for e in root.edges if "sysml-edge-connect" in e.properties.cssClasses]
+        assert len(connect) == 1
+        assert connect[0].properties.shape is None  # no endpoint glyphs
+
+    def test_direction_needs_source_target_end_names(self):
+        """The spec's only direction signal is the definition's end names
+        (printed pp.65-66) -- ordinary end names draw the undirected form."""
+
+        model = longeron.loads("""
+            package P {
+                part def A; part def B;
+                connection def C1 { end a1 : A; end b1 : B; }
+                part a : A; part b : B;
+                connection c : C1 connect a to b;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        assert not any("sysml-edge-directed" in e.properties.cssClasses for e in root.edges)
+
+    def test_nary_connection_draws_the_junction_dot(self):
+        model = longeron.loads("""
+            package P {
+                part def ConnectionDef1;
+                part part1; part part2; part part3;
+                connection connection1 : ConnectionDef1
+                    connect (part1, part2, part3);
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        junction = next(n for n in _walk(root) if "sysml-connjunction" in n.properties.cssClasses)
+        # label beside the dot, name : Type (spec printed p.66)
+        assert junction.labels[0].text == "connection1 : ConnectionDef1"
+        assert junction.id == "P::connection1"
+        spokes = [
+            e
+            for e in root.edges
+            if "sysml-edge-connect" in e.properties.cssClasses
+            and (e.source is junction or e.target is junction)
+        ]
+        others = {(e.source if e.target is junction else e.target).id for e in spokes}
+        assert len(spokes) == 3
+        assert others == {"P::part1", "P::part2", "P::part3"}
+
+    def test_proxy_connection_dots_on_the_drawn_ancestor(self):
+        """spec printed p.67: connector ends naming UNDRAWN nested parts
+        draw a filled ball on the shallowest drawn ancestor's border,
+        labeled with the residual path -- never an edge into the
+        definition's member box."""
+
+        model = longeron.loads("""
+            package P {
+                part def Part2 { part part4; }
+                part def Part3 { part part5; }
+                part part1 {
+                    part part2 : Part2;
+                    part part3 : Part3;
+                    connect part2.part4 to part3.part5;
+                }
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        part2 = next(n for n in _walk(root) if n.id == "P::part1::part2")
+        proxies = [p for p in part2.ports if "sysml-port-proxy" in p.properties.cssClasses]
+        assert len(proxies) == 1
+        assert proxies[0].labels[0].text == ".part4"
+        assert proxies[0].properties.shape.use == "port-proxy"
+        connect = [e for e in root.edges if "sysml-edge-connect" in e.properties.cssClasses]
+        assert len(connect) == 1
+        assert connect[0].source is proxies[0]
+        part3 = next(n for n in _walk(root) if n.id == "P::part1::part3")
+        assert connect[0].target in part3.ports
+
+    def test_anonymous_allocate_draws_the_keyword_edge(self):
+        model = longeron.loads("""
+            package P {
+                part part1; part part2;
+                allocate part1 to part2;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        allocate = [e for e in root.edges if "sysml-edge-allocate" in e.properties.cssClasses]
+        assert [(e.source.id, e.target.id) for e in allocate] == [("P::part1", "P::part2")]
+        assert allocate[0].properties.shape.end == "arrow"
+        assert allocate[0].labels[0].text == "\u00aballocate\u00bb"
+
+    def test_named_allocations_draw_the_box_form(self):
+        model = longeron.loads("""
+            package P {
+                allocation def AllocationDef1;
+                part part1; part part2;
+                allocation allocation1 : AllocationDef1
+                    allocate part1 to part2;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        box = next(n for n in _walk(root) if n.id == "P::allocation1")
+        assert box.labels[0].text == "\u00aballocation\u00bb"
+        assert box.labels[1].text == "allocation1 : AllocationDef1"
+        defbox = next(n for n in _walk(root) if n.id == "P::AllocationDef1")
+        assert defbox.labels[0].text == "\u00aballocation def\u00bb"
+        # the box form replaces the keyword edge (like named satisfies)
+        assert not any("sysml-edge-allocate" in e.properties.cssClasses for e in root.edges)
+
+
+class TestPackageTabAndAnnotations:
+    """Phase 5: the package folder tab (spec printed p.24) and the opt-in
+    annotation layer (notes + metadata adornments, printed pp.20-21, 157)."""
+
+    def test_packages_carry_the_tab_icon_label(self, drone_model):
+        root = diagrams.structure_diagram(drone_model).source.value
+        package = next(n for n in _walk(root) if "sysml-package" in n.properties.cssClasses)
+        tab = package.labels[0]
+        assert "sysml-tab" in tab.properties.cssClasses
+        assert tab.properties.shape.use == "package-tab"
+        # placed OUTSIDE at the top-left, flush (label-node spacing 0)
+        assert tab.layoutOptions["nodeLabels.placement"] == "H_LEFT V_TOP OUTSIDE"
+        assert package.layoutOptions["elk.spacing.labelNode"] == "0"
+
+    def test_annotations_default_off(self, drone_model):
+        root = diagrams.structure_diagram(drone_model).source.value
+        assert not any("sysml-note" in n.properties.cssClasses for n in _walk(root))
+
+    def test_notes_and_anchors(self):
+        model = longeron.loads("""
+            package P {
+                part def Part1 {
+                    attribute attribute1 : Real;
+                }
+                comment about Part1 /* The annotated element is Part1. */
+            }
+        """)
+        root = diagrams.structure_diagram(model, annotations=True).source.value
+        note = next(n for n in _walk(root) if "sysml-note" in n.properties.cssClasses)
+        assert note.labels[0].text == "\u00abcomment\u00bb"
+        assert note.labels[1].text == "The annotated element is Part1."
+        assert note.properties.shape.type == "node:comment"
+        anchors = [e for e in root.edges if "sysml-edge-anchor" in e.properties.cssClasses]
+        assert [(e.source is note, e.target.id) for e in anchors] == [(True, "P::Part1")]
+        assert anchors[0].properties.shape is None  # NO endpoint glyph
+
+    def test_notes_are_siblings_of_their_target(self):
+        """A doc note annotates its owner but must never nest INSIDE it
+        (an anchor into one's own ancestor is the layout hazard)."""
+
+        model = longeron.loads("""
+            package P {
+                part part0 {
+                    doc /* The assembly under test. */
+                }
+            }
+        """)
+        root = diagrams.structure_diagram(model, annotations=True).source.value
+        package = next(n for n in _walk(root) if n.id == "P")
+        note = next(n for n in _walk(root) if "sysml-note" in n.properties.cssClasses)
+        assert note in package.children  # sibling of part0, not inside it
+        anchors = [e for e in root.edges if "sysml-edge-anchor" in e.properties.cssClasses]
+        assert anchors[0].target.id == "P::part0"
+
+    def test_metadata_adornments(self):
+        model = longeron.loads("""
+            package P {
+                metadata def Safety;
+                part def Pump;
+                @Safety about Pump;
+            }
+        """)
+        root = diagrams.structure_diagram(model, annotations=True).source.value
+        pump = next(n for n in _walk(root) if n.id == "P::Pump")
+        assert pump.labels[0].text == "\u00ab@Safety\u00bb"
+        # ... and stays off by default
+        root = diagrams.structure_diagram(model).source.value
+        pump = next(n for n in _walk(root) if n.id == "P::Pump")
+        assert pump.labels[0].text == "\u00abpart def\u00bb"
+
+
 class TestStates:
     def test_builds_with_marker_and_transitions(self, drone_model):
         machine = drone_model.find("Drone::FlightStates")

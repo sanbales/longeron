@@ -790,6 +790,223 @@ class TestSvg:
         assert "&lt;b&gt;&amp;" in svg
 
 
+_PORTED = """
+package P {
+    item def Item1;
+    part def Part1;
+    part def Part2;
+    port def Pin { in item x : Item1; }
+    port def Pout { out item y : Item1; }
+    connection def ConnectionDef2 {
+        end [1..1] part sourceEnd : Part1;
+        end [1..*] part targetEnd : Part2;
+    }
+    part part0 {
+        part part1 : Part1 { port po : Pout; }
+        part part2 : Part2 { port pc : ~Pin; }
+        interface if1 connect part1.po to part2.pc;
+        connection connection2 : ConnectionDef2 connect part1 to part2;
+        flow of Item1 from part1.po to part2.pc;
+    }
+}
+"""
+
+
+def _rect_geometry(svg: str, qname: str) -> tuple[float, float, float, float]:
+    import re
+
+    match = re.search(
+        rf'<rect data-qname="{re.escape(qname)}" x="([\d.]+)" y="([\d.]+)" '
+        rf'width="([\d.]+)" height="([\d.]+)"',
+        svg,
+    )
+    assert match is not None, f"no rect for {qname}"
+    return tuple(float(g) for g in match.groups())  # type: ignore[return-value]
+
+
+class TestTranche3Svg:
+    """Boundary ports + the remaining connector/annotation notation
+    (spec Ports printed p.59; Connections pp.66-67; Allocations p.79;
+    Packages p.24; Comments pp.20-21) -- headless pipeline."""
+
+    @pytest.fixture(scope="class")
+    def ported_svg(self):
+        return render.to_svg(diagrams.structure_diagram(longeron.loads(_PORTED)))
+
+    def test_port_squares_straddle_the_owner_border(self, ported_svg):
+        """Geometry per the spec figures: the square's center sits ON the
+        owning node's border (out ports pin EAST here)."""
+
+        px, py, pw, ph = _rect_geometry(ported_svg, "P::part0::part1::po")
+        ox, oy, ow, oh = _rect_geometry(ported_svg, "P::part0::part1")
+        assert pw == ph == 10.0
+        assert px + pw / 2 == pytest.approx(ox + ow, abs=0.5)  # ON the east border
+        assert oy <= py + ph / 2 <= oy + oh  # riding the border, not a corner
+        # the owner's stroke colors the square; the body stays white
+        assert f'fill="#ffffff" stroke="{render._NODE_STYLES["sysml-usage"]["stroke"]}"' in (
+            ported_svg.split('data-qname="P::part0::part1::po"')[1].split("/>")[0] + "/>"
+        )
+
+    def test_direction_arrows_and_conjugated_labels(self, ported_svg):
+        # 'out' arrow inside po's square; conjugated 'in' flips to out on pc
+        assert ported_svg.count(f'<path d="{render._port_arrow_d("out")}"') == 2
+        # conjugation stays textual: ~ in the label, square unshaded
+        assert ">pc : ~Pin</text>" in ported_svg
+        assert ">po : Pout</text>" in ported_svg
+
+    def test_interface_edges_run_port_to_port(self, ported_svg):
+        graph = render._to_elk_json(
+            diagrams.structure_diagram(longeron.loads(_PORTED)).source.value
+        )
+
+        def edges(node):
+            yield from node.get("edges", [])
+            for child in node.get("children", []):
+                yield from edges(child)
+
+        interface = [
+            e for e in edges(graph) if "sysml-edge-connect" in e["properties"]["cssClasses"]
+        ]
+        assert [(e["sources"], e["targets"]) for e in interface] == [
+            (["P::part0::part1::po"], ["P::part0::part2::pc"])
+        ]
+        # identity stays with the owning nodes (the replay contract)
+        assert interface[0]["properties"]["sourceNode"] == "P::part0::part1"
+
+    def test_port_attached_flows_keep_only_the_filled_head(self, ported_svg):
+        flow = ported_svg.split('marker-end="url(#arrow-filled-555555)"')
+        assert len(flow) == 2  # exactly one port-attached flow edge
+        group = flow[0].rsplit("<g ", 1)[1]
+        assert "marker-start" not in group  # the drawn square IS the pin
+        defs = ported_svg.split("</defs>")[0]
+        filled = defs.split('id="arrow-filled-555555"')[1].split("</marker>")[0]
+        assert 'fill="#555555"' in filled and 'stroke="none"' in filled
+
+    def test_directed_connection_draws_open_head_and_label(self, ported_svg):
+        # the directed connect, the interface and the flow all share the
+        # owning-node data-edge key: find the group carrying the label
+        groups = [
+            part.split("</g>")[0]
+            for part in ported_svg.split("<g data-edge=")[1:]
+            if "connection2 : ConnectionDef2" in part.split("</g>")[0]
+        ]
+        assert len(groups) == 1
+        assert 'marker-end="url(#arrow-555555)"' in groups[0]
+        assert "dasharray" not in groups[0]  # a solid connector line
+
+    def test_nary_connection_junction_dot(self):
+        model = longeron.loads("""
+            package P {
+                part def ConnectionDef1;
+                part part1; part part2; part part3;
+                connection connection1 : ConnectionDef1
+                    connect (part1, part2, part3);
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        _x, _y, w, h = _rect_geometry(svg, "P::connection1")
+        assert (w, h) == (render._JUNCTION_SIZE, render._JUNCTION_SIZE)
+        junction = svg.split('data-qname="P::connection1"')[1].split("/>")[0]
+        assert 'fill="#555555"' in junction  # the filled connector-gray dot
+        assert "connection1 : ConnectionDef1" in svg  # label beside the dot
+        spokes = [part for part in svg.split("<g data-edge=") if "P::connection1" in part[:70]]
+        assert len(spokes) == 3
+
+    def test_proxy_connection_dots(self):
+        model = longeron.loads("""
+            package P {
+                part def Part2 { part part4; }
+                part def Part3 { part part5; }
+                part part1 {
+                    part part2 : Part2;
+                    part part3 : Part3;
+                    connect part2.part4 to part3.part5;
+                }
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        # two filled balls in the owning usage green, residual-path labels
+        usage_stroke = render._NODE_STYLES["sysml-usage"]["stroke"]
+        assert svg.count(f'fill="{usage_stroke}" stroke="none"/>') == 2
+        assert ">.part4</text>" in svg and ">.part5</text>" in svg
+        # the connector runs dot-to-dot; identity stays with the nodes
+        assert 'data-edge="P::part1::part2-&gt;P::part1::part3"' in svg
+
+    def test_allocate_keyword_edge(self):
+        model = longeron.loads("""
+            package P {
+                part part1; part part2;
+                allocate part1 to part2;
+            }
+        """)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        group = svg.split('data-edge="P::part1-&gt;P::part2"')[1].split("</g>")[0]
+        assert 'marker-end="url(#arrow-a85c78)"' in group
+        assert "\u00aballocate\u00bb" in group
+        assert "dasharray" not in group  # solid keyword-arrow family line
+
+    def test_package_tab(self):
+        model = longeron.loads("package Package1 { part def A; }")
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        px, py, _w, _h = _rect_geometry(svg, "Package1")
+        style = render._NODE_STYLES["sysml-package"]
+        tab = (
+            f'<rect x="{px:.1f}" y="{py - render._TAB_HEIGHT:.1f}" '
+            f'width="{render._TAB_WIDTH:.1f}" height="{render._TAB_HEIGHT:.1f}" '
+            f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
+        )
+        assert tab in svg  # flush with the box's top-left corner
+
+    def test_definitions_draw_square_corners(self):
+        model = longeron.loads("package P { part def A; part a : A; }")
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        definition = svg.split('data-qname="P::A"')[1].split("/>")[0]
+        assert 'rx="0"' in definition
+        usage = svg.split('data-qname="P::a"')[1].split("/>")[0]
+        assert 'rx="4"' in usage
+
+    def test_notes_and_anchors_opt_in(self):
+        model = longeron.loads("""
+            package P {
+                part def Part1;
+                comment about Part1 /* The annotated element is Part1. */
+            }
+        """)
+        plain = render.to_svg(diagrams.structure_diagram(model))
+        assert "\u00abcomment\u00bb" not in plain  # default OFF
+        svg = render.to_svg(diagrams.structure_diagram(model, annotations=True))
+        assert "\u00abcomment\u00bb" in svg
+        assert "The annotated element is Part1." in svg
+        # folded corner: the note polygon + its crease
+        note_style = render._NODE_STYLES["sysml-note"]
+        assert f'fill="{note_style["fill"]}" stroke="{note_style["stroke"]}"' in svg
+        anchors = [
+            part.split("</g>")[0]
+            for part in svg.split("<g data-edge=")[1:]
+            if 'stroke-dasharray="4 2"' in part.split("</g>")[0]
+        ]
+        assert len(anchors) == 1 and "P::Part1" in anchors[0]
+        assert "marker" not in anchors[0]  # anchors carry NO endpoint glyph
+
+    def test_portless_diagrams_take_the_pre_port_path(self, drone_model):
+        """Layout-stability proof: a model without ports/annotations feeds
+        elkjs an input with zero port artifacts -- nothing about the port
+        machinery can perturb it."""
+
+        graph = render._to_elk_json(diagrams.structure_diagram(drone_model).source.value)
+
+        def walk(node):
+            yield node
+            for child in node.get("children", []):
+                yield from walk(child)
+
+        for node in walk(graph):
+            assert "ports" not in node
+            options = node.get("layoutOptions", {})
+            assert "elk.portConstraints" not in options
+            assert "elk.portLabels.placement" not in options
+
+
 class TestPng:
     def test_png(self, drone_model, tmp_path):
         try:

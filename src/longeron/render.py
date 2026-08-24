@@ -53,7 +53,9 @@ new ELK().layout(graph).then(
 #: ``circle-x`` (terminate).
 _NODE_STYLES: dict[str, dict[str, str]] = {
     "sysml-package": {"fill": "#fbfbfb", "stroke": "#b0b0b0", "rx": "0"},
-    "sysml-definition": {"fill": "#eef4fb", "stroke": "#4878a8", "rx": "4"},
+    # definitions draw SQUARE corners, usages rounded (spec Definition &
+    # Usage convention; plan row N2, confirmed by the printed p.65 figures)
+    "sysml-definition": {"fill": "#eef4fb", "stroke": "#4878a8", "rx": "0"},
     "sysml-usage": {"fill": "#f4faee", "stroke": "#6a9a48", "rx": "4"},
     "sysml-state": {"fill": "#fdf6e3", "stroke": "#b58900", "rx": "12"},
     "sysml-step": {"fill": "#f2eefb", "stroke": "#6c56a8", "rx": "6"},
@@ -68,6 +70,12 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
     # the n-ary dependency junction dot (spec errata E8): a small filled
     # circle in the dependency family hue, dashed links radiating from it
     "sysml-junction": {"fill": "#a85c78", "stroke": "#a85c78", "rx": "4"},
+    # the n-ary CONNECTION junction dot (spec printed p.66): the filled
+    # ball where a 3+-end `connect` meets, in the connector family gray
+    "sysml-connjunction": {"fill": "#555555", "stroke": "#555555", "rx": "4"},
+    # comment / documentation notes (spec printed pp.20-21): the folded-
+    # corner box, drawn only at annotations=True
+    "sysml-note": {"fill": "#ffffff", "stroke": "#888888", "shape": "note"},
     # "Perform Actions Swimlanes" (spec printed p.90, BNF pp.231-232):
     # dashed-boundary «performer» lane containers in the action view
     "sysml-lane": {"fill": "#ffffff", "stroke": "#888888", "rx": "8", "stroke-dasharray": "4 3"},
@@ -81,6 +89,7 @@ _GLYPH_NODE_CLASSES = (
     "sysml-final",
     "sysml-terminate",
     "sysml-junction",
+    "sysml-connjunction",
 )
 
 _EDGE_STYLES: dict[str, dict[str, str]] = {
@@ -95,9 +104,17 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-member": {"stroke": "#555555"},
     "sysml-edge-refmember": {"stroke": "#555555"},
     "sysml-edge-connect": {"stroke": "#555555"},
+    # 'connection (with direction indication)' (spec printed p.66): the
+    # connector line grows an open-V head at the target end when the
+    # connection DEFINITION declares directed (sourceEnd/targetEnd) ends
+    "sysml-edge-directed": {"stroke": "#555555"},
     # flow connections (errata E16/M1): solid connector-family line between
     # the border pins, small filled arrowhead at the target pin
     "sysml-edge-flow": {"stroke": "#555555"},
+    # flows whose ends resolve to DRAWN port squares (spec printed p.77):
+    # the port is the pin, so the line runs square-to-square with only the
+    # small filled arrowhead at the target port
+    "sysml-edge-portflow": {"stroke": "#555555"},
     # binding connectors (errata E15): plain solid line, '=' rides mid-span
     "sysml-edge-binding": {"stroke": "#555555"},
     # membership circles (errata E18): owned member -- solid line, TRUE
@@ -115,6 +132,12 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
     "sysml-edge-dependency": {"stroke": "#a85c78", "stroke-dasharray": "4 2"},
     "sysml-edge-depclient": {"stroke": "#a85c78", "stroke-dasharray": "4 2"},
     "sysml-edge-satisfies": {"stroke": "#a85c78"},
+    # anonymous `allocate a to b` (spec printed p.79): solid line, open-V
+    # arrow source->target, «allocate» keyword -- the keyword-arrow family
+    "sysml-edge-allocate": {"stroke": "#a85c78"},
+    # comment/doc anchors (spec printed pp.20-21): dashed, NO endpoint
+    # glyph, neutral note gray (annotations=True only)
+    "sysml-edge-anchor": {"stroke": "#888888", "stroke-dasharray": "4 2"},
     "sysml-edge-transition": {"stroke": "#b58900"},
     # action-flow successions are DASHED with open-V arrows (spec figures
     # printed pp.90-92); state-view transitions stay solid
@@ -135,14 +158,17 @@ _EDGE_STYLES: dict[str, dict[str, str]] = {
 #:   redefinition ``:>>``
 #: * ``hollow-dcolon`` -- two columns of two filled dots (double colon):
 #:   reference subsetting ``::>``
-#: * ``open`` -- two-stroke V: transitions, successions, dependency and
-#:   satisfy keyword edges.
+#: * ``open`` -- two-stroke V: transitions, successions, dependency,
+#:   satisfy and allocate keyword edges, and directed connections.
 #: * ``pin-arrow`` -- flow connections (errata E16): a small square
 #:   target-input pin straddling the border with a small FILLED arrowhead
 #:   tight against it.
+#: * ``filled`` -- flows attached to DRAWN port squares: the filled
+#:   arrowhead alone (the port already is the pin; spec printed p.77).
 #: * ``ball-notch`` -- portion membership: a filled ball with an open-V
 #:   notch on the line side, at the whole-occurrence end.
-#: * ``none`` -- connectors (connect/interface/binding) and the membership
+#: * ``none`` -- connectors (connect/interface/binding), comment anchors,
+#:   and the membership
 #:   edges (whose glyphs -- diamonds and membership circles -- ride the
 #:   START end) carry no head.
 _EDGE_ENDS: dict[str, str] = {
@@ -154,7 +180,9 @@ _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-member": "none",
     "sysml-edge-refmember": "none",
     "sysml-edge-connect": "none",
+    "sysml-edge-directed": "open",
     "sysml-edge-flow": "pin-arrow",
+    "sysml-edge-portflow": "filled",
     "sysml-edge-binding": "none",
     "sysml-edge-owned": "none",
     "sysml-edge-alias": "none",
@@ -162,6 +190,8 @@ _EDGE_ENDS: dict[str, str] = {
     "sysml-edge-dependency": "open",
     "sysml-edge-depclient": "none",
     "sysml-edge-satisfies": "open",
+    "sysml-edge-allocate": "open",
+    "sysml-edge-anchor": "none",
     "sysml-edge-transition": "open",
     "sysml-edge-succession": "open",
 }
@@ -242,6 +272,23 @@ _BADGE_POINT = 5.0  # send: pointed RIGHT edge depth
 _PIN_SIZE = 8.0
 _PIN_RX = 1.5
 
+#: interconnection port squares (spec Ports, printed p.59): drawn ON the
+#: owning node's border (elk.port.borderOffset straddles it); the arrow
+#: inside a directed square uses the same box
+_PORT_SIZE = 10.0
+_PORT_RX = 2.0
+
+#: proxy connector ends (spec printed p.67): a filled ball on the border
+#: of the shallowest drawn ancestor, '.residual' path as its label
+_PROXY_SIZE = 8.0
+
+#: comment/doc note boxes: folded top-right corner depth
+_NOTE_FOLD = 10.0
+
+#: package tab (spec printed p.24): the folder tab riding the top-left of
+#: the package box, flush with its top edge
+_TAB_WIDTH, _TAB_HEIGHT = 30.0, 8.0
+
 #: portion-membership ball (filled, open-V notch on the line side)
 _BALL_RADIUS = 5.5
 _BALL_MOUTH_DEG = 40.0  # notch half-angle
@@ -278,6 +325,45 @@ def _badge_points(form: str, width: float, height: float) -> list[tuple[float, f
         (width - _BADGE_POINT, height),
         (0, height),
     ]
+
+
+def _note_points(
+    width: float, height: float, fold: float = _NOTE_FOLD
+) -> list[tuple[float, float]]:
+    """Corner points of a comment/doc note box: the top-right corner is
+    cut off (the folded corner, spec printed pp.20-21).  The SAME polygon
+    the vendored ipyelk ``Comment`` node shape draws in the browser."""
+
+    fold = min(fold, width / 3, height / 3)
+    return [
+        (0, 0),
+        (width - fold, 0),
+        (width, fold),
+        (width, height),
+        (0, height),
+    ]
+
+
+def _port_arrow_d(direction: str, size: float = _PORT_SIZE) -> str:
+    """Path ``d`` for the direction arrow INSIDE a port square (spec Ports
+    figures, printed p.59), in the square's local space.
+
+    Directed squares pin their sides (in = WEST, out/inout = EAST), so the
+    arrow always points +x: across the border INTO the node for ``in``,
+    OUT through the border for ``out``; ``inout`` adds the second head.
+    Both pipelines draw this same geometry (browser symbols wrap it in
+    currentColor strokes; headless paints the owning node's stroke).
+    """
+
+    lo, hi, mid = 0.25 * size, 0.75 * size, size / 2
+    head = 0.22 * size
+    d = (
+        f"M {lo:g},{mid:g} L {hi:g},{mid:g} "
+        f"M {hi - head:g},{mid - head:g} L {hi:g},{mid:g} L {hi - head:g},{mid + head:g}"
+    )
+    if direction == "inout":
+        d += f" M {lo + head:g},{mid - head:g} L {lo:g},{mid:g} L {lo + head:g},{mid + head:g}"
+    return d
 
 
 def _arrow_id(stroke: str) -> str:
@@ -411,6 +497,22 @@ def _pin_arrow_marker(stroke: str) -> str:
     )
 
 
+def _filled_v_marker(stroke: str) -> str:
+    """The filled flow arrowhead for port-attached flows (spec printed
+    p.77): the drawn port square already is the pin, so the marker is the
+    small filled triangle alone, tight against the square."""
+
+    v_l, v_h = _V_LENGTH, _V_HALF
+    return (
+        f'<marker id="{_marker_id("filled", stroke)}" viewBox="0 0 {v_l + 1:g} {2 * v_h + 2:g}" '
+        f'refX="{v_l:g}" refY="{v_h + 1:g}" markerWidth="{v_l + 1:g}" '
+        f'markerHeight="{2 * v_h + 2:g}" markerUnits="userSpaceOnUse" '
+        f'orient="auto-start-reverse">'
+        f'<path d="M 0 1 L {v_l:g} {v_h + 1:g} L 0 {2 * v_h + 1:g} z" '
+        f'fill="{stroke}" stroke="none"/></marker>'
+    )
+
+
 def _ball_marker(stroke: str) -> str:
     """Portion membership (errata new row): a FILLED ball with an open-V
     notch on the line side, at the whole-occurrence end.  The notch vertex
@@ -506,7 +608,11 @@ def _arrow_defs() -> str:
             {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == form}
         )
         markers += [_hollow_marker(form, stroke) for stroke in strokes]
-    end_factories = {"pin-arrow": _pin_arrow_marker, "ball-notch": _ball_marker}
+    end_factories = {
+        "pin-arrow": _pin_arrow_marker,
+        "ball-notch": _ball_marker,
+        "filled": _filled_v_marker,
+    }
     for form, factory in end_factories.items():
         strokes = sorted(
             {style["stroke"] for css, style in _EDGE_STYLES.items() if _EDGE_ENDS.get(css) == form}
@@ -708,13 +814,17 @@ def _to_elk_json(root: Any) -> dict:
             text = label.text or ""
             label_css = label.properties.cssClasses or ""
             shape = label.properties.shape
-            if "sysml-badge" in label_css and shape is not None and shape.width:
-                # accept/send badges: pre-sized glyph labels, no text
+            pre_sized = "sysml-badge" in label_css or "sysml-tab" in label_css
+            if pre_sized and shape is not None and shape.width:
+                # accept/send badges + the package tab: pre-sized glyph
+                # labels, no text
                 measured.append((text, label_css, float(shape.width), float(shape.height or 12)))
             else:
                 measured.append((text, label_css, *_measure(text, label_css)))
         max_width = max((m[2] for m in measured), default=0.0)
-        for index, (text, label_css, width, height) in enumerate(measured):
+        for index, ((text, label_css, width, height), label) in enumerate(
+            zip(measured, node.labels or [], strict=True)
+        ):
             is_attribute = "sysml-attribute" in label_css
             entry: dict[str, Any] = {
                 "id": f"{identifier}.l{index}",
@@ -723,6 +833,18 @@ def _to_elk_json(root: Any) -> dict:
                 "height": height,
                 "properties": {"cssClasses": label_css},
             }
+            if "sysml-tab" in label_css:
+                # the package folder tab (spec printed p.24): containers
+                # carry the OUTSIDE placement through to ELK, which
+                # reserves the space above the box; fixed-size leaves pin
+                # it manually, flush with the top-left corner (ELK leaves
+                # constraint-free leaf labels untouched)
+                if has_children:
+                    entry["layoutOptions"] = dict(label.layoutOptions or {})
+                else:
+                    entry["x"], entry["y"] = 0.0, -height
+                labels.append(entry)
+                continue  # rides the border; never advances the text stack
             if "sysml-badge" in label_css:
                 # the badge pins to the box's top-left corner; the text
                 # stack starts below it (spec: badge in the top-left,
@@ -763,18 +885,42 @@ def _to_elk_json(root: Any) -> dict:
             "labels": labels,
             "children": [convert(child) for child in node.children],
         }
-        ports = [
-            {
+        ports = []
+        for port in getattr(node, "ports", None) or []:
+            port_data: dict[str, Any] = {
                 "id": node_id(port),
                 "width": port.width or 0,
                 "height": port.height or 0,
                 "layoutOptions": dict(port.layoutOptions or {}),
             }
-            for port in getattr(node, "ports", None) or []
-        ]
+            # boundary port squares (interconnection ports, proxy dots)
+            # carry css + pre-sized labels; the invisible convergence
+            # anchors keep their bare three-key form (byte-identical ELK
+            # JSON for diagrams without drawn ports)
+            port_css = port.properties.cssClasses or ""
+            if port_css:
+                port_data["properties"] = {"cssClasses": port_css}
+            port_labels = []
+            for lindex, label in enumerate(port.labels or []):
+                text = label.text or ""
+                label_css = label.properties.cssClasses or ""
+                width, height = _measure(text, label_css)
+                port_labels.append(
+                    {
+                        "id": f"{node_id(port)}.l{lindex}",
+                        "text": text,
+                        "width": width,
+                        "height": height,
+                        "properties": {"cssClasses": label_css},
+                    }
+                )
+            if port_labels:
+                port_data["labels"] = port_labels
+            ports.append(port_data)
         if ports:
-            # invisible anchor points (e.g. the control-glyph convergence
-            # ports): emitted for elkjs, never drawn
+            # boundary squares and invisible anchor points (e.g. the
+            # control-glyph convergence ports): elkjs places them; only
+            # the css-bearing ones are drawn
             data["ports"] = ports
         if is_marker or node.width:
             data["width"] = node.width or 14
@@ -793,6 +939,8 @@ def _to_elk_json(root: Any) -> dict:
             # straighter: edges between equal-height siblings stay level)
             data["width"] = max(max_width + 16, 40.0)
             data["height"] = max(cursor + 5, 44.0)
+            if "sysml-note" in css:  # notes hug their text
+                data["height"] = cursor + 5.0
         edges = []
         for index, edge in enumerate(node.edges):
             edge_id = f"{identifier}.e{index}"
@@ -962,6 +1110,21 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'M {cx + k:.1f} {cy - k:.1f} L {cx - k:.1f} {cy + k:.1f}" '
                     f'fill="none" stroke="{style["stroke"]}" stroke-width="1.2"/></g>'
                 )
+            elif shape == "note":
+                # comment/doc note: rectangle with the top-right corner
+                # folded (same polygon the browser Comment shape draws),
+                # plus the fold crease
+                pts = _note_points(width, height)
+                fold = width - pts[1][0]
+                rendered = " ".join(f"{x + px:.1f},{y + py:.1f}" for px, py in pts)
+                parts.append(
+                    f"<g {qname}>"
+                    f'<polygon points="{rendered}" fill="{style["fill"]}" '
+                    f'stroke="{style["stroke"]}" stroke-width="1.2"/>'
+                    f'<path d="M {x + width - fold:.1f} {y:.1f} '
+                    f'L {x + width - fold:.1f} {y + fold:.1f} L {x + width:.1f} {y + fold:.1f}" '
+                    f'fill="none" stroke="{style["stroke"]}" stroke-width="1.2"/></g>'
+                )
             else:
                 dash_attr = ""
                 node_dash = style.get("stroke-dasharray")
@@ -974,6 +1137,8 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'height="{height:.1f}" rx="{style["rx"]}" '
                     f'fill="{style["fill"]}" stroke="{style["stroke"]}"{dash_attr}/>'
                 )
+            for port in node.get("ports", []):
+                draw_port(port, x, y, style["stroke"])
         for label in node.get("labels", []):
             draw_label(label, x, y)
         for child in node.get("children", []):
@@ -987,8 +1152,55 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             return origins.get(str(container), default)
         return default
 
+    def draw_port(port: dict, ox: float, oy: float, stroke: str) -> None:
+        """A boundary port (spec Ports, printed p.59): the square straddling
+        the owner's border in the owner's stroke color, the direction arrow
+        inside it, the proxy dot (printed p.67) as a filled ball, and the
+        ELK-placed outside labels.  Invisible convergence anchors (no css)
+        are never drawn."""
+
+        css = port.get("properties", {}).get("cssClasses", "")
+        if not css:
+            return
+        x, y = ox + port.get("x", 0), oy + port.get("y", 0)
+        pw, ph = port.get("width", _PORT_SIZE), port.get("height", _PORT_SIZE)
+        qname = f'data-qname="{_escape_attr(str(port.get("id")))}"'
+        if "sysml-port-proxy" in css:
+            parts.append(
+                f'<circle {qname} cx="{x + pw / 2:.1f}" cy="{y + ph / 2:.1f}" '
+                f'r="{pw / 2:.1f}" fill="{stroke}" stroke="none"/>'
+            )
+        else:
+            bits = [
+                f"<rect {qname} "
+                f'x="{x:.1f}" y="{y:.1f}" width="{pw:.1f}" height="{ph:.1f}" '
+                f'rx="{_PORT_RX:g}" fill="#ffffff" stroke="{stroke}" stroke-width="1.2"/>'
+            ]
+            for direction in ("inout", "in", "out"):  # inout first: substrings
+                if f"sysml-port-{direction}" in css:
+                    d = _port_arrow_d(direction, pw)
+                    bits.append(
+                        f'<path d="{d}" transform="translate({x:.1f},{y:.1f})" '
+                        f'fill="none" stroke="{stroke}" stroke-width="1.2"/>'
+                    )
+                    break
+            parts.append("".join(bits))
+        for label in port.get("labels", []):
+            draw_label(label, x, y)
+
     def draw_label(label: dict, ox: float, oy: float, on_edge: bool = False) -> None:
         css = label.get("properties", {}).get("cssClasses", "")
+        if "sysml-tab" in css:
+            # the package folder tab (spec printed p.24): a small rectangle
+            # riding the top-left, flush with the box's top border
+            bx, by = ox + label.get("x", 0), oy + label.get("y", 0)
+            style = _NODE_STYLES["sysml-package"]
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{by:.1f}" width="{label.get("width", _TAB_WIDTH):.1f}" '
+                f'height="{label.get("height", _TAB_HEIGHT):.1f}" '
+                f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
+            )
+            return
         if "sysml-badge" in css:
             # accept/send action badges: a small filled polygon at the box's
             # top-left corner (see _badge_points); no text
