@@ -613,7 +613,10 @@ class TestLayoutStrategies:
         assert ex.lab_panel is None
 
     def test_lab_without_ipylab_raises_the_house_error(self, drone_model, monkeypatch):
-        monkeypatch.delitem(sys.modules, "ipylab", raising=False)
+        # None in sys.modules makes 'import ipylab' raise ImportError even
+        # when the package is installed (the delitem form only forced a
+        # re-import, which succeeds in envs carrying the [explorer] extra)
+        monkeypatch.setitem(sys.modules, "ipylab", None)
         with pytest.raises(MissingExtraError) as err:
             explore(drone_model, layout="lab")
         assert 'pip install "longeron[explorer]"' in str(err.value)
