@@ -460,9 +460,11 @@ function render({ model, el }) {
     nodes.push([n.getAttribute("data-qname"), n]);
   });
   const groups = [];  // edge groups: data-edge key + accepted events
+  // NOTE: edge paths deliberately do NOT get vector-effect:
+  // non-scaling-stroke -- Chromium skips painting markers (arrowheads)
+  // on paths carrying it (crbug 528196 family). Strokes scale with
+  // zoom instead, which matches the userSpaceOnUse marker geometry.
   stage.querySelectorAll("[data-edge]").forEach((g) => {
-    g.querySelectorAll("path").forEach(
-      (p) => p.setAttribute("vector-effect", "non-scaling-stroke"));
     groups.push({
       el: g,
       key: g.getAttribute("data-edge"),

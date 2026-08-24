@@ -495,3 +495,13 @@ def test_replay_widget_missing_extra(monkeypatch, flat_interp):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(ImportError, match=r"longeron\[replay\]"):
         replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"])
+
+
+def test_edge_paths_never_get_non_scaling_stroke():
+    """Chromium does not paint markers (arrowheads) on paths with
+    vector-effect: non-scaling-stroke -- the replay widget's edge paths
+    must never carry it (nodes may; they have no markers)."""
+    from longeron import replay
+
+    edge_block = replay._ESM.split('querySelectorAll("[data-edge]")')[1].split("});")[0]
+    assert "non-scaling-stroke" not in edge_block
