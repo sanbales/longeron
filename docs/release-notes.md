@@ -1,5 +1,48 @@
 # Release notes
 
+## 0.9.0
+
+- **The notation program completes** (tranche 3 + polish): ports render
+  ON node borders with direction arrows derived from the port
+  definition (conjugates flip, stay textual per the spec); directed,
+  n-ary, and proxy connections; allocations draw at all (the old
+  dispatch branch was dead code); package folder tabs; def/usage
+  corner distinction; comment/doc notes with dashed anchors and
+  metadata adornments (`annotations=True`); actors draw the spec's
+  stick figure by default (`actor_style="box"` keeps the keyword box)
+- **A universal adornment contract**: tabs, badges, and ports are
+  built through one path and styled by one rule family, so selection
+  AND hover treat a node and its adornments as one shape -- and a
+  discovery test fails the suite if a future adornment skips the
+  contract; hovering a tab/label now highlights its owning node
+  (vendored patch 10)
+- **Tutorial 11, the notation gallery**: every implemented glyph
+  beside its spec figure with self-verifying asserts, plus the new
+  [notation coverage guide](guides/notation-coverage.md) stating
+  honestly what is drawn, approximated, and deferred
+- **Tutorial 12, the model explorer** (`longeron.explorer`): a
+  searchable, keyboard-navigable tree over the owning structure beside
+  a diagram pane with per-selection kinds (structure/state/action/
+  requirements), echo-free two-way selection, and JupyterLab shell
+  docking via the `[explorer]` extra (ipylab)
+- **Toolbar**: edge-routing toggle (orthogonal/polyline/splines),
+  layout-direction toggle (L-to-R / T-to-B), and diagrams now open
+  fitted and centered; endpoint symbols orient correctly along
+  polyline and spline routes (vendored patch 8, arc-length tangents)
+- **Browser-truth test tier**: playwright scenarios in CI (gallery
+  sweep, replay arrowheads, selection-safe search, explorer round
+  trip, and a layout-failure canary) with a labextension sync task
+  that ends the stale-served-bundle class of bug
+- **Failure semantics**: a failing browser layout now surfaces a
+  visible warning instead of retrying forever (vendored patch 9,
+  backported from the upstream ipyelk PR this work also feeds);
+  element ids are transport-ready from birth (the infinite-load
+  incident class is closed end to end)
+- Replay renders arrowheads in Chromium (vector-effect removed from
+  edge paths -- a bug as old as the widget); connector-end cross
+  multiplicities and end-prefix multiplicities now survive the builder
+- Design doc: [longeron and OpenMBEE integration paths](design/openmbee-integration.md)
+
 ## 0.8.0
 
 - **Spec-exact SysML v2 graphical notation**, grounded in the OMG 2.0

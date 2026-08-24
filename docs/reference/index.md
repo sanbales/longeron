@@ -28,6 +28,7 @@ objects are defined.
 | Page | Modules | What lives there |
 |---|---|---|
 | [Diagrams](diagrams.md) | `longeron.diagrams`, `longeron.toolbar` | interactive ELK diagrams (ipyelk) and their compact search toolbar |
+| [Model explorer](explorer.md) | `longeron.explorer` | the tree + diagram-pane explorer widget |
 | [Rendering](render.md) | `longeron.render` | headless SVG/PNG export (elkjs via node) |
 | [Replay](replay.md) | `longeron.replay` | animated simulation/action replays |
 
@@ -61,6 +62,7 @@ m0
 api-server
 cli
 diagrams
+explorer
 render
 replay
 analysis/index

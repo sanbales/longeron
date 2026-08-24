@@ -61,7 +61,7 @@ from .stdlib import add_standard_library, standard_library_model
 from .validation import Diagnostic, validate
 from .workspace import cache_dir, clear_cache, load, load_dir, load_file, load_many, merge_models
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "__version__",

@@ -11,6 +11,7 @@ the [API reference](../reference/index.md).
 | [API server & client](api-server.md) | serve a workspace over the OMG Systems Modeling API, or fetch/push models from one |
 | [Validation](validation.md) | lint a model and act on each diagnostic code |
 | [Grammar conformance](grammar.md) | know exactly where the parser follows, patches, or deviates from the OMG grammar |
+| [Notation coverage](notation-coverage.md) | know exactly which SysML v2 graphical notations the diagrams draw, and which they do not |
 | [Choosing an analysis](analysis.md) | pick between trade studies, MDAO sizing, SMT checks, and RDF/RAG queries |
 | [Development](contributing.md) | build, test, and contribute — including the notebook conventions |
 | [Migrating from sysml2](compat.md) | keep pre-0.3.0 code, commands, and caches working |
@@ -24,6 +25,7 @@ workspaces
 api-server
 validation
 grammar
+notation-coverage
 analysis
 contributing
 compat

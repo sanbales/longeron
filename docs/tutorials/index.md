@@ -42,6 +42,8 @@ extra.
 | {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |
 | {doc}`9. M0 interpretations <09_m0_interpretations>` | populations of identified individuals, Annex A sequences, roll-ups over actual instances, random sampling, occurrences from executions, the trade-study bridge |
 | {doc}`10. Diagrams meet CAD: M1 and M0 <10_diagram_3d_link>` | linked selection between a structure diagram and the 3D viewer, per-instance geometry keyed by M0 individual ids, the M1 -> M0 fan-out and the M0 -> M1 projection |
+| {doc}`11. The notation gallery <11_notation_gallery>` | every implemented SysML v2 glyph beside its spec figure -- specialization adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, actors -- with self-verifying asserts |
+| {doc}`12. The model explorer <12_model_explorer>` | tree navigation over the owning structure, per-selection diagram kinds, two-way selection linkage, JupyterLab docking |
 
 ```{toctree}
 :hidden:
@@ -57,4 +59,6 @@ extra.
 08_semantic_web_and_rag
 09_m0_interpretations
 10_diagram_3d_link
+11_notation_gallery
+12_model_explorer
 ```
