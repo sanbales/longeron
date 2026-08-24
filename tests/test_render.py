@@ -1685,3 +1685,143 @@ class TestBrowserPipelineFixpoint:
         self._run_cycle(widget)
         assert self._geometry(widget) == orthogonal  # full round trip
         self._settled(widget)
+
+
+_TANGENT_MEMBER = """
+package Parts {
+    part def Vehicle {
+        part eng : Engine;
+        ref part spare : Wheel;
+    }
+    part def Engine;
+    part def Wheel;
+}
+"""
+
+_TANGENT_SATISFY = """
+package Reqs { requirement requirement1; }
+package Sys {
+    part part1 {
+        satisfy requirement requirement2 references Reqs::requirement1;
+    }
+}
+"""
+
+
+def _section_points(edge):
+    points = []
+    for section in edge.get("sections", []):
+        for p in (
+            section["startPoint"],
+            *section.get("bendPoints", []),
+            section["endPoint"],
+        ):
+            points.append((p["x"], p["y"]))
+    return points
+
+
+def _routed(source: str, routing: str, css: str):
+    """Lay out a model headless and return the routed points of the first
+    edge whose cssClasses contain ``css``."""
+
+    widget = diagrams.structure_diagram(longeron.loads(source), routing=routing)
+    graph = render.layout(render._to_elk_json(widget.source.value))
+    edge = next(e for e in _edges_json(graph) if css in e["properties"]["cssClasses"])
+    return _section_points(edge)
+
+
+class TestBrowserEndpointTangents:
+    """Pinned reference for the vendored browser edge view's symbol
+    orientation (vendor/ipyelk js/sprotty/views/edge_views.tsx
+    routeEndAngle / coveredRoutePoints -- compiled into the shipped
+    labextension).  The headless renderer is immune (its SVG markers carry
+    orient="auto-start-reverse"), so these tests pin the TANGENT MATH the
+    browser now uses, against both synthetic routes and real elkjs section
+    data: maintainer repro A (polyline membership diamonds axis-aligned on
+    a stub shorter than the diamond) and repro B (spline end heads flipped
+    180 degrees into the target box by duplicated control points)."""
+
+    # --- the math itself, synthetic routes ---------------------------------
+
+    def test_straight_route_matches_the_naive_tangent(self):
+        route = [(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]
+        assert render._route_end_angle(route, "source", 12.0) == 0.0
+        assert render._route_end_angle(route, "target", 12.0) == pytest.approx(math.pi)
+
+    def test_orthogonal_clearance_keeps_the_old_angles(self):
+        # first/last straight run >= _EDGE_END_CLEARANCE > any symbol reach:
+        # the chord lies ON the terminal segment, so orthogonal rendering is
+        # pixel-identical to the pre-fix view
+        route = [(0.0, 0.0), (24.0, 0.0), (24.0, 40.0), (60.0, 40.0)]
+        assert render._route_end_angle(route, "source", 21.2) == 0.0
+        assert render._route_end_angle(route, "target", 21.2) == pytest.approx(math.pi)
+
+    def test_duplicated_spline_knots_no_longer_flip_the_head(self):
+        # repro B in miniature: elkjs SPLINES duplicates the terminal knot;
+        # the old view took atan2(0, 0) == 0 and drew the head rotated 0deg
+        # -- pointing INTO the target -- instead of pi (back along the edge)
+        route = [(0.0, 0.0), (43.0, 0.0), (86.0, 0.0), (86.0, 0.0), (86.0, 0.0)]
+        naive = math.atan2(0.0, 0.0)  # what the browser used to compute
+        assert naive == 0.0
+        assert render._route_end_angle(route, "target", 15.0) == pytest.approx(math.pi)
+
+    def test_polyline_stub_diamond_rides_the_chord(self):
+        # repro A in miniature: a 5px horizontal exit stub, then the real
+        # diagonal; the 12px diamond straddles the bend.  The old view
+        # oriented it along the stub (0deg, axis-aligned); the chord over
+        # the diamond's own footprint follows the visible shaft
+        route = [(0.0, 0.0), (5.0, 0.0), (26.8, -9.0)]
+        angle = render._route_end_angle(route, "source", 12.0)
+        assert angle != 0.0
+        assert math.degrees(angle) == pytest.approx(-13.2, abs=0.5)
+
+    def test_short_route_falls_back_to_the_farthest_point(self):
+        route = [(0.0, 0.0), (4.0, 3.0)]
+        angle = render._route_end_angle(route, "source", 24.0)
+        assert angle == pytest.approx(math.atan2(3.0, 4.0))
+
+    def test_fully_degenerate_route_yields_zero(self):
+        route = [(7.0, 7.0), (7.0, 7.0), (7.0, 7.0)]
+        assert render._route_end_angle(route, "source", 12.0) == 0.0
+        assert render._route_end_angle(route, "target", 12.0) == 0.0
+
+    def test_covered_points_span_the_symbol_footprint(self):
+        route = [(0.0, 0.0), (5.0, 0.0), (26.8, -9.0), (60.0, -9.0)]
+        # the 5px stub bend sits under a 12px diamond; the far bend does not
+        assert render._covered_route_points(route, "source", 12.0) == 1
+        assert render._covered_route_points(route, "source", 0.0) == 0
+        assert render._covered_route_points(route, "target", 12.0) == 0
+        # duplicated spline knots at the end all sit under the head
+        route = [(0.0, 0.0), (43.0, 0.0), (86.0, 0.0), (86.0, 0.0), (86.0, 0.0)]
+        assert render._covered_route_points(route, "target", 15.0) == 2
+
+    # --- real elkjs section data (the browser's input) ---------------------
+
+    def test_elkjs_spline_sections_carry_duplicated_control_points(self):
+        """Repro B pinned on real layout output: elkjs SPLINES emits bend
+        (control) points that DUPLICATE the section's terminal points, and
+        the reference tangent still points back along the edge while the
+        naive adjacent-segment tangent degenerates."""
+
+        points = _routed(_TANGENT_SATISFY, "splines", "sysml-edge-references")
+        assert points[-1] == points[-2]  # the degenerate chord really ships
+        naive = math.atan2(points[-2][1] - points[-1][1], points[-2][0] - points[-1][0])
+        assert naive == 0.0  # what flipped the satisfy head into the box
+        angle = render._route_end_angle(points, "target", render._HEAD_LENGTH + 1)
+        assert abs(math.degrees(angle)) == pytest.approx(180.0, abs=15.0)
+
+    def test_elkjs_polyline_stub_would_misorient_the_diamond(self):
+        """Repro A pinned on real layout output: under POLYLINE the section
+        leaves the whole's border with a stub shorter than the membership
+        diamond, so the naive start tangent is axis-aligned while the
+        reference chord follows the visible diagonal shaft."""
+
+        points = _routed(_TANGENT_MEMBER, "polyline", "sysml-edge-member")
+        stub = math.dist(points[0], points[1])
+        diamond = 12.0  # the composition rhomb's path_offset reach
+        assert stub < diamond  # the bend really falls inside the footprint
+        naive = math.atan2(points[1][1] - points[0][1], points[1][0] - points[0][0])
+        chord = render._route_end_angle(points, "source", diamond)
+        assert naive == pytest.approx(0.0, abs=math.radians(1.0))
+        assert abs(math.degrees(chord)) > 5.0  # rotates with the shaft
+        assert render._covered_route_points(points, "source", diamond) == 1

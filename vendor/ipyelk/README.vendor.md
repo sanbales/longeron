@@ -87,3 +87,30 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    the 18 static chunks (incl. the elkjs workers) came out byte-identical
    to the 2.1.1 wheel; only `elklayout`, `elkdisplay`, `elkexporter`,
    chunk `160` and `remoteEntry` changed.
+8. **Endpoint symbols follow the route under non-orthogonal edge routing**
+   (`js/sprotty/views/edge_views.tsx`; bundles rebuilt as in patch 7 --
+   same toolchain lineage, node 26.6.0 + jlpm from the longeron pixi env,
+   only the `elkdisplay` chunk, `remoteEntry` and the labextension
+   `package.json` `_build` pointer changed). Two maintainer-visible bugs,
+   one root cause -- the view derived every symbol angle from the single
+   adjacent route segment:
+   - elkjs SPLINES sections duplicate control points at the section
+     knots, so the terminal chord was zero-length and `atan2(0, 0) == 0`
+     rotated end heads 0deg instead of pi on right-to-left ends: satisfy
+     reference-subsetting heads rendered 180deg-flipped INSIDE the
+     requirement box. The path-offset line trim rotated the same way, so
+     the shaft overshot INTO the node beneath the flipped head.
+   - elk POLYLINE exits nodes with a short stub (measured 5px) before
+     the first real bend; a 12px membership diamond straddled the bend
+     and stayed axis-aligned while the visible shaft left diagonally
+     (the edge appeared to exit the diamond's SIDE).
+   New `routeEndAngle(route, end, reach)`: the tangent is the chord from
+   the route end to the point `reach` px along the route (`reach` = the
+   connector's `path_offset` length = the symbol's footprint), skipping
+   sub-`1e-3` chords; `coveredRoutePoints` additionally drops interior
+   bends that fall under a symbol's footprint so the trimmed shaft cannot
+   double back beneath it. Orthogonal routes are pixel-identical (their
+   terminal runs exceed every symbol's reach by construction -- longeron
+   keeps 24px of edge-node clearance). The math is pinned by a Python
+   reference implementation (`longeron.render._route_end_angle` /
+   `_covered_route_points`) tested against real elkjs section data.

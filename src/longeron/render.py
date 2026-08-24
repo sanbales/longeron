@@ -334,6 +334,89 @@ _JUNCTION_SIZE = 8.0
 _EDGE_END_CLEARANCE = 24.0
 
 
+# ---------------------------------------------------------------------------
+# endpoint-symbol tangents: pinned reference for the vendored browser view
+# ---------------------------------------------------------------------------
+
+#: mirror of ``MIN_TANGENT_LENGTH`` in the vendored browser edge view
+#: (vendor/ipyelk js/sprotty/views/edge_views.tsx).  Zero-length route
+#: chords make ``atan2(0, 0) == 0``: elkjs SPLINES sections duplicate
+#: control points at the section knots, so a naive "adjacent segment"
+#: tangent flips end symbols 180 degrees on any right-to-left end (the
+#: browser drew satisfy heads pointing INTO the requirement box).  Points
+#: closer together than this never serve as a tangent reference.
+_MIN_TANGENT_LENGTH = 1e-3
+
+
+def _route_end_angle(route: list[tuple[float, float]], end: str, reach: float) -> float:
+    """Angle (radians) of a route at one end, pointing from that end point
+    INTO the edge.
+
+    PINNED REFERENCE implementation of ``routeEndAngle`` in the vendored
+    browser edge view (vendor/ipyelk ``js/sprotty/views/edge_views.tsx``,
+    compiled into the shipped labextension): the two must stay identical,
+    and the tests exercise this copy against real elkjs section data.  The
+    headless SVG renderer itself needs no angles -- its markers auto-orient
+    (``orient="auto-start-reverse"``) -- so this function exists for the
+    contract, not for drawing.
+
+    Instead of the adjacent route segment -- which may be a zero-length
+    spline chord (:data:`_MIN_TANGENT_LENGTH`) or a stub shorter than the
+    symbol riding it (elk POLYLINE bends within a few px of the node: a
+    12px membership diamond then straddles the bend, drawn axis-aligned
+    while the visible shaft leaves diagonally) -- the tangent is the chord
+    from the end point to the route point ``reach`` px along the route.
+    Exact on straight and orthogonal ends (:data:`_EDGE_END_CLEARANCE`
+    keeps bends out of a symbol's footprint there), the symbol's average
+    direction otherwise.
+
+    ``end`` is ``"source"`` or ``"target"``; ``reach`` is the symbol's
+    footprint along the shaft (the length of its ipyelk ``path_offset``).
+    """
+
+    points = route if end == "source" else route[::-1]
+    origin = points[0]
+    distance = max(reach, _MIN_TANGENT_LENGTH)
+    travelled = 0.0
+    for i in range(1, len(points)):
+        segment = math.dist(points[i - 1], points[i])
+        if segment >= _MIN_TANGENT_LENGTH and travelled + segment >= distance:
+            t = min((distance - travelled) / segment, 1.0)
+            ref = (
+                points[i - 1][0] + (points[i][0] - points[i - 1][0]) * t,
+                points[i - 1][1] + (points[i][1] - points[i - 1][1]) * t,
+            )
+            return math.atan2(ref[1] - origin[1], ref[0] - origin[0])
+        travelled += segment
+    # route shorter than the reach: fall back to the farthest distinct point
+    for point in reversed(points[1:]):
+        if math.dist(origin, point) >= _MIN_TANGENT_LENGTH:
+            return math.atan2(point[1] - origin[1], point[0] - origin[0])
+    return 0.0
+
+
+def _covered_route_points(route: list[tuple[float, float]], end: str, reach: float) -> int:
+    """Number of interior route points within ``reach`` (arc length) of the
+    given route end.
+
+    PINNED REFERENCE of ``coveredRoutePoints`` in the vendored browser edge
+    view (see :func:`_route_end_angle`): the browser trims the shaft by the
+    end symbols' path offsets, so bends this close to an end would make the
+    drawn path double back beneath the symbol (elk polyline stubs, elkjs
+    spline knot duplicates); the view drops them from the path.
+    """
+
+    points = route if end == "source" else route[::-1]
+    travelled = 0.0
+    covered = 0
+    for i in range(1, len(points) - 1):
+        travelled += math.dist(points[i - 1], points[i])
+        if travelled >= reach:
+            break
+        covered += 1
+    return covered
+
+
 def _badge_points(form: str, width: float, height: float) -> list[tuple[float, float]]:
     """Corner points of the accept/send action badges (filled, top-left).
 

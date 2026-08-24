@@ -27,6 +27,7 @@ import {
 } from 'sprotty';
 
 import { ElkModelRenderer } from '../renderer';
+import { SElkConnectorSymbol } from '../json/symbols';
 import { ElkEdge, ElkJunction } from '../sprotty-model';
 
 import { CircularNodeView, validCanvasBounds } from './base';
@@ -45,6 +46,94 @@ export class JunctionView extends CircularNodeView {
   protected getRadius(node: ElkJunction): number {
     return 2;
   }
+}
+
+/**
+ * Zero-length route chords make `angleOfPoint` return 0 (atan2(0, 0)):
+ * elkjs SPLINES sections duplicate control points at the section knots, so
+ * the naive "adjacent segment" tangent flipped end symbols 180 degrees on
+ * any right-to-left end (the head rendered pointing INTO the target node).
+ * Points closer together than this are never used as a tangent reference.
+ */
+const MIN_TANGENT_LENGTH = 1e-3;
+
+/**
+ * Angle (radians) of the route at one of its ends, pointing from that end
+ * point INTO the edge.
+ *
+ * Instead of the adjacent route segment -- which may be a zero-length
+ * spline chord (see MIN_TANGENT_LENGTH) or a stub shorter than the symbol
+ * riding it (elk POLYLINE bends within a few px of the node: a 12px
+ * membership diamond then straddles the bend, drawn axis-aligned while the
+ * visible shaft leaves diagonally) -- the tangent is the chord from the
+ * end point to the route point `reach` px along the route. That is exact
+ * on straight and orthogonal ends (the layout keeps bends out of a
+ * symbol's footprint there) and the symbol's average direction otherwise.
+ */
+export function routeEndAngle(
+  route: Point[],
+  end: 'source' | 'target',
+  reach: number,
+): number {
+  const points = end === 'source' ? route : [...route].reverse();
+  const origin = points[0];
+  const distance = Math.max(reach, MIN_TANGENT_LENGTH);
+  let travelled = 0;
+  for (let i = 1; i < points.length; i++) {
+    const segment = Point.euclideanDistance(points[i - 1], points[i]);
+    if (segment >= MIN_TANGENT_LENGTH && travelled + segment >= distance) {
+      const t = Math.min((distance - travelled) / segment, 1);
+      const ref = {
+        x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+        y: points[i - 1].y + (points[i].y - points[i - 1].y) * t,
+      };
+      return angleOfPoint({ x: ref.x - origin.x, y: ref.y - origin.y });
+    }
+    travelled += segment;
+  }
+  // route shorter than the reach: fall back to the farthest distinct point
+  for (let i = points.length - 1; i > 0; i--) {
+    const p = points[i];
+    if (Point.euclideanDistance(origin, p) >= MIN_TANGENT_LENGTH) {
+      return angleOfPoint({ x: p.x - origin.x, y: p.y - origin.y });
+    }
+  }
+  return 0;
+}
+
+/**
+ * How far back along the shaft a connector symbol reaches: its
+ * `path_offset` pulls the line end from under the symbol body, so its
+ * length is exactly the footprint the symbol covers.
+ */
+export function symbolReach(connection?: SElkConnectorSymbol): number {
+  const offset = connection?.path_offset;
+  return offset ? Math.sqrt(offset.x * offset.x + offset.y * offset.y) : 0;
+}
+
+/**
+ * Number of interior route points within `reach` (arc length) of the given
+ * route end. The shaft is trimmed by the end symbols' path offsets, so
+ * bends this close to an end would make the drawn path double back beneath
+ * the symbol (elk polyline stubs, elkjs spline knot duplicates); the
+ * renderer drops them from the path.
+ */
+export function coveredRoutePoints(
+  route: Point[],
+  end: 'source' | 'target',
+  reach: number,
+): number {
+  const points = end === 'source' ? route : [...route].reverse();
+  let travelled = 0;
+  let covered = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    travelled += Point.euclideanDistance(points[i - 1], points[i]);
+    if (travelled >= reach) {
+      break;
+    }
+    covered += 1;
+  }
+  return covered;
 }
 
 @injectable()
@@ -106,20 +195,24 @@ export class ElkEdgeView extends PolylineEdgeView {
     segments: Point[],
     context: ElkModelRenderer,
   ): VNode {
-    const p1_s = segments[1];
-    const p2_s = segments[0];
-    let r = angleOfPoint({ x: p1_s.x - p2_s.x, y: p1_s.y - p2_s.y });
+    const startId = edge?.properties?.shape?.start;
+    const endId = edge?.properties?.shape?.end;
+    const startReach = symbolReach(context.getConnector(startId));
+    const endReach = symbolReach(context.getConnector(endId));
+    let r = routeEndAngle(segments, 'source', startReach);
+    let r2 = routeEndAngle(segments, 'target', endReach);
 
-    const p1_e = segments[segments.length - 2];
-    const p2_e = segments[segments.length - 1];
-    let r2 = angleOfPoint({ x: p1_e.x - p2_e.x, y: p1_e.y - p2_e.y });
+    let start = this.getPathOffset(startId, context, r);
+    let end = this.getPathOffset(endId, context, r2);
 
-    let start = this.getPathOffset(edge?.properties?.shape?.start, context, r);
-    let end = this.getPathOffset(edge?.properties?.shape?.end, context, r2);
+    // interior points beneath an end symbol would make the trimmed shaft
+    // double back under it -- skip them
+    const first = 1 + coveredRoutePoints(segments, 'source', startReach);
+    const last = segments.length - 2 - coveredRoutePoints(segments, 'target', endReach);
 
     const firstPoint = segments[0];
     let path = `M ${firstPoint.x - start.x},${firstPoint.y - start.y}`;
-    for (let i = 1; i < segments.length - 1; i++) {
+    for (let i = first; i <= last; i++) {
       const p = segments[i];
       path += ` L ${p.x},${p.y}`;
     }
@@ -173,9 +266,8 @@ export class ElkEdgeView extends PolylineEdgeView {
     let start = edge?.properties?.shape?.start;
     let end = edge?.properties?.shape?.end;
     if (start) {
-      const p1 = segments[1];
       const p2 = segments[0];
-      let r = angleOfPoint({ x: p1.x - p2.x, y: p1.y - p2.y });
+      let r = routeEndAngle(segments, 'source', symbolReach(context.getConnector(start)));
 
       correction = this.getAnchorOffset(start, context, r);
 
@@ -194,9 +286,8 @@ export class ElkEdgeView extends PolylineEdgeView {
       connectors.push(vnode);
     }
     if (end) {
-      const p1 = segments[segments.length - 2];
       const p2 = segments[segments.length - 1];
-      let r = angleOfPoint({ x: p1.x - p2.x, y: p1.y - p2.y });
+      let r = routeEndAngle(segments, 'target', symbolReach(context.getConnector(end)));
       correction = this.getAnchorOffset(end, context, r);
 
       let x = p2.x - correction.x;
