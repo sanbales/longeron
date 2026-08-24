@@ -11,15 +11,20 @@ import longeron
 from longeron import diagrams, toolbar
 from longeron.render import _SYNTH_ID_PREFIX
 from longeron.toolbar import (
+    DIRECTIONS,
+    FIT_PADDING,
     ROUTING_STYLES,
     SEARCH_ACTIVE_CSS,
     SEARCH_DIM_CSS,
     SEARCH_HIT_CSS,
     TOOLBAR_STYLE,
+    AutoFitTool,
     DiagramSearch,
+    DirectionTool,
     EdgeRoutingTool,
     _iter_edges,
     _iter_nodes,
+    apply_direction,
     apply_routing,
 )
 
@@ -86,10 +91,11 @@ class TestComposition:
 
     def test_single_row_order(self, widget):
         kinds = [type(child).__name__ for child in widget.toolbar.children]
-        # styled-widget css carrier, 3 icon buttons + the routing button,
-        # search box, progress, close
+        # styled-widget css carrier, 3 icon buttons + the routing and
+        # direction buttons, search box, progress, close
         assert kinds == [
             "HTML",
+            "Button",
             "Button",
             "Button",
             "Button",
@@ -107,6 +113,7 @@ class TestComposition:
             widget.view.center_tool.ui,
             widget.get_tool(ToggleCollapsedTool).ui,
             widget.get_tool(EdgeRoutingTool).ui,
+            widget.get_tool(DirectionTool).ui,
             box,
             count,
             clear,
@@ -136,12 +143,18 @@ class TestComposition:
         for built in widgets:
             assert any(isinstance(tool, DiagramSearch) for tool in built.tools)
             assert any(isinstance(tool, EdgeRoutingTool) for tool in built.tools)
+            assert any(isinstance(tool, DirectionTool) for tool in built.tools)
+            assert any(isinstance(tool, AutoFitTool) for tool in built.tools)
             assert built.view.fit_tool.ui.icon == "expand"
 
     def test_classic_escape_hatch(self, drone_model):
         classic = diagrams.structure_diagram(drone_model, toolbar=False)
         assert not any(isinstance(tool, DiagramSearch) for tool in classic.tools)
         assert not any(isinstance(tool, EdgeRoutingTool) for tool in classic.tools)
+        assert not any(isinstance(tool, DirectionTool) for tool in classic.tools)
+        # ... but the one-shot initial fit is not toolbar chrome: every
+        # widget starts centered and fitted, stock toolbar or not
+        assert any(isinstance(tool, AutoFitTool) for tool in classic.tools)
         assert classic.view.fit_tool.ui.description == "Fit"  # the stock button
         assert not any(key in classic.style for key in TOOLBAR_STYLE)
         state = diagrams.state_diagram(drone_model.find("Drone::FlightStates"), toolbar=False)
@@ -277,6 +290,208 @@ class TestEdgeRouting:
     def test_apply_routing_helper_validates(self, widget):
         with pytest.raises(ValueError, match="routing must be one of"):
             apply_routing(widget.source.value, "bezier")
+
+
+class TestDirectionToggle:
+    """The orientation button: toggles the layout flow RIGHT (left-to-
+    right) <-> DOWN (top-to-bottom) and re-lays the diagram out through
+    the pipeline; the direction persists per widget on the tool's trait
+    and lands on the ROOT only (elkjs carries elk.direction into nested
+    compounds under INCLUDE_CHILDREN -- unlike routing and spacing)."""
+
+    def _tool(self, widget) -> DirectionTool:
+        return widget.get_tool(DirectionTool)
+
+    def test_defaults_to_right(self, widget):
+        tool = self._tool(widget)
+        assert tool.direction == "RIGHT"
+        assert widget.source.value.layoutOptions["elk.direction"] == "RIGHT"
+
+    def test_compact_button_shows_the_active_flow(self, widget):
+        tool = self._tool(widget)
+        assert isinstance(tool.ui, W.Button)
+        assert tool.ui.description == ""  # icon-only, like the stock trio
+        assert tool.ui.icon == "long-arrow-right"
+        assert tool.ui.layout.width == "30px"
+        # the tooltip states the CURRENT flow and what a click does next
+        assert "left-to-right" in tool.ui.tooltip and "top-to-bottom" in tool.ui.tooltip
+        tool.direction = "down"
+        assert tool.ui.icon == "long-arrow-down"
+        assert tool.ui.tooltip.startswith("Layout direction: top-to-bottom")
+
+    def test_click_toggles_and_wraps(self, widget):
+        tool = self._tool(widget)
+        seen = []
+        for _ in DIRECTIONS:
+            tool.ui.click()
+            seen.append(tool.direction)
+        assert seen == ["DOWN", "RIGHT"]  # a full round trip
+
+    def test_toggling_relays_out_through_the_pipeline(self, widget):
+        """The routing tool's refresh contract: the direction lands on the
+        source tree, the pipe inlet is marked dirty with the layout-options
+        flow, and on_done (Diagram.refresh) runs."""
+
+        tool = self._tool(widget)
+        refreshes = []
+        tool.on_done = lambda: refreshes.append(True)
+        tool.ui.click()
+        assert tool.direction == "DOWN"
+        root = widget.source.value
+        assert root.layoutOptions["elk.direction"] == "DOWN"
+        assert "node.layoutOptions" in widget.pipe.inlet.flow
+        assert refreshes == [True]
+
+    def test_direction_is_root_only(self, widget):
+        """Pin the empirical INCLUDE_CHILDREN finding: elkjs carries
+        elk.direction into nested compounds from the root (verified
+        against real elkjs in test_render), so -- unlike edge routing --
+        the option is NEVER restated per hierarchy level, and the
+        SEPARATE_CHILDREN packing grids keep their own wide flow."""
+
+        self._tool(widget).direction = "down"
+        root = widget.source.value
+        assert root.layoutOptions["elk.direction"] == "DOWN"
+        for node in _iter_nodes(root):
+            if node is not root:
+                assert "elk.direction" not in node.layoutOptions
+
+    def test_click_merges_with_the_pending_flow(self, widget):
+        """Same contract as the routing tool: never clobber the pending
+        ``("new",)`` flow that wakes ipyelk's ValidationPipe."""
+
+        assert widget.source.flow == ("new",)  # unconsumed initial flow
+        tool = self._tool(widget)
+        tool.ui.click()
+        assert widget.pipe.inlet.flow == ("new", "node.layoutOptions")
+        tool.ui.click()  # merging again adds nothing (ordered de-dupe)
+        assert widget.pipe.inlet.flow == ("new", "node.layoutOptions")
+
+    def test_direction_change_drops_stale_routes(self, widget):
+        """A direction change invalidates every computed route, exactly
+        like a routing change (elkjs writes new routes INTO old section
+        objects without clearing leftover keys)."""
+
+        from ipyelk.elements.elements import EdgeSection
+        from ipyelk.elements.shapes import Point
+
+        root = widget.source.value
+        edge = next(_iter_edges(root))
+        edge.sections = [
+            EdgeSection(
+                startPoint=Point(x=0, y=0),
+                endPoint=Point(x=10, y=0),
+                bendPoints=[Point(x=5, y=5)],
+            )
+        ]
+        self._tool(widget).ui.click()
+        assert all(edge.sections is None for edge in _iter_edges(root))
+
+    def test_trait_can_be_set_directly(self, widget):
+        tool = self._tool(widget)
+        tool.direction = "down"  # any case; normalized
+        assert tool.direction == "DOWN"
+        assert widget.source.value.layoutOptions["elk.direction"] == "DOWN"
+
+    def test_unknown_direction_rejected(self, widget):
+        import traitlets
+
+        tool = self._tool(widget)
+        with pytest.raises(traitlets.TraitError, match="direction must be right or down"):
+            tool.direction = "diagonal"
+        assert tool.direction == "RIGHT"  # unchanged
+
+    def test_choice_persists_per_widget(self, drone_model):
+        first = diagrams.structure_diagram(drone_model)
+        second = diagrams.structure_diagram(drone_model)
+        self._tool(first).direction = "down"
+        assert self._tool(first).direction == "DOWN"
+        assert self._tool(second).direction == "RIGHT"  # untouched widget
+
+    def test_constructor_kwarg_seeds_the_trait(self, drone_model):
+        for built in (
+            diagrams.structure_diagram(drone_model, direction="down"),
+            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), direction="DOWN"),
+            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), direction="Down"),
+        ):
+            assert self._tool(built).direction == "DOWN"
+            assert built.source.value.layoutOptions["elk.direction"] == "DOWN"
+
+    def test_flip_queues_a_one_shot_refit_but_routing_does_not(self, widget):
+        """The flip inverts the aspect ratio, so ONE re-fit is queued for
+        the relayout about to land; routing/collapse refreshes keep the
+        user's viewport (the auto-fit stays spent)."""
+
+        fit = widget.get_tool(AutoFitTool)
+        fit.pending = False  # the initial fit has been consumed
+        widget.get_tool(EdgeRoutingTool).ui.click()
+        assert fit.pending is False  # routing keeps the viewport
+        self._tool(widget).ui.click()
+        assert fit.pending is True  # the flip re-centers once
+
+    def test_apply_direction_helper_validates(self, widget):
+        with pytest.raises(ValueError, match="direction must be right or down"):
+            apply_direction(widget.source.value, "diagonal")
+
+
+class TestAutoFit:
+    """The one-shot initial fit: the first layout arrival from the
+    browser answers with exactly one fit-to-screen request (small
+    padding, zoom capped at 1:1, no animation); later relayouts keep the
+    user's viewport unless a re-fit was explicitly queued."""
+
+    @staticmethod
+    def _capture(widget) -> list:
+        sent: list = []
+        widget.view.fit = lambda **kwargs: sent.append(kwargs)
+        return sent
+
+    def test_first_layout_arrival_fits_exactly_once(self, widget):
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        assert tool.pending and tool.fit_count == 0  # armed, not fired
+        widget.view.source.value = widget.source.value  # first layout lands
+        assert tool.fit_count == 1 and not tool.pending
+        assert sent == [{"animate": False, "max_zoom": 1.0, "padding": FIT_PADDING}]
+        # the margin keeps the diagram off the viewport limits
+        assert FIT_PADDING > 0
+
+    def test_subsequent_relayouts_keep_the_viewport(self, widget):
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        widget.view.source.value = widget.source.value
+        widget.view.source.value = None  # the browser clearing/replacing
+        widget.view.source.value = widget.source.value  # a relayout lands
+        assert tool.fit_count == 1 and len(sent) == 1  # once, ever
+
+    def test_request_refit_arms_exactly_one_more(self, widget):
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        widget.view.source.value = widget.source.value
+        tool.request_refit()
+        assert tool.pending
+        widget.view.source.value = None
+        widget.view.source.value = widget.source.value
+        widget.view.source.value = None
+        widget.view.source.value = widget.source.value
+        assert tool.fit_count == 2 and len(sent) == 2
+
+    def test_none_arrivals_never_consume_the_fit(self, widget):
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        widget.view.source.value = None
+        assert tool.pending and not sent  # still armed for the real tree
+
+    def test_headless_render_is_unaffected(self, drone_model, tmp_path):
+        """to_svg never constructs tools or sends fit requests -- the
+        headless path only reads the widget's source tree."""
+
+        from longeron import render
+
+        widget = diagrams.structure_diagram(drone_model)
+        sent = self._capture(widget)
+        render.to_svg(widget, tmp_path / "out.svg")
+        assert sent == []
 
 
 class TestSearchMatching:

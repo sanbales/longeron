@@ -52,7 +52,8 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `docs` | `sphinx-build -W -b html docs build/docs` (needs the `docs` extra; execution needs the `dev` extras plus node). |
 | `hooks` | point `core.hooksPath` at `scripts/git-hooks`. |
 | `notebooks` (pixi) / `scripts/run_notebooks.py` | execute every tutorial notebook, then strip outputs. |
-| `lab` (pixi) | JupyterLab in `notebooks/`, with the vendored ipyelk extension pre-registered. |
+| `sync-labextension` (pixi) | copy the vendored jupyter-elk labextension build into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
+| `lab` (pixi) | JupyterLab in `notebooks/`, with the vendored ipyelk extension pre-registered (depends on `sync-labextension`). |
 
 Ruff formats and lints the notebooks too (`extend-include = ["*.ipynb"]`
 in `pyproject.toml`), so `lint` gates notebook code cells exactly like
@@ -86,6 +87,17 @@ Some trees are outputs, not sources. Edit the source and regenerate:
 | `src/longeron/_gen/` | `grammars/*.g4` | `pixi run parsers` (or `make parsers`) |
 | `src/longeron/_stdlib/prebuilt.json` | `src/longeron/_stdlib/**/*.sysml` | `make stdlib` |
 | `vendor/ipyelk/` | upstream ipyelk 2.1.1 + local patches | edit in place; mark changes `LOCAL PATCH` and log them in `vendor/ipyelk/README.vendor.md` |
+
+One labextension footgun to know about: rebuilding the vendored
+TypeScript (`vendor/ipyelk/js/`) writes the bundles into
+`vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk`,
+but JupyterLab serves the **copy** that `pixi install` made under
+`.pixi/envs/*/share/jupyter/labextensions/` -- so a rebuilt bundle
+silently keeps serving the old code ("the fix didn't take").  `pixi run
+lab` now runs `sync-labextension` first (it prints a warning whenever a
+served copy was stale before syncing); after rebuilding the TS, restart
+lab through `pixi run lab` (or run `make sync-labextension`) and
+hard-refresh the browser.
 
 CI runs a grammar-regen job that fails when the committed parsers drift
 from the `.g4` sources, so never hand-edit `_gen/`.

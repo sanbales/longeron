@@ -1,4 +1,4 @@
-.PHONY: check test lint format typecheck parsers demo docs
+.PHONY: check test lint format typecheck parsers demo docs sync-labextension
 
 # Equivalent pixi tasks exist (pixi run check|test|parsers|...): same
 # commands in a locked env, with antlr+JDK provided by conda-forge.
@@ -41,3 +41,11 @@ docs:  ## build the documentation site (needs the [docs] extra; pixi: `pixi run 
 
 hooks:  ## enable the repo git hooks (auto-strips staged notebook outputs; blocks >5MB blobs)
 	git config core.hooksPath scripts/git-hooks
+
+sync-labextension:  ## sync the vendored jupyter-elk labextension build into every pixi env (JupyterLab serves the env COPY, not vendor/)
+	@src="vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"; \
+	for dst in .pixi/envs/*/share/jupyter/labextensions/@jupyrdf/jupyter-elk; do \
+		[ -d "$$dst" ] || continue; \
+		diff -rq "$$src" "$$dst" >/dev/null 2>&1 || echo "WARNING: $$dst was serving a STALE jupyter-elk build (differs from the vendor build); syncing"; \
+		rsync -a --delete "$$src/" "$$dst/"; \
+	done

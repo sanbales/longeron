@@ -270,9 +270,23 @@ notebooks = "python scripts/run_notebooks.py"
 hooks = "git config core.hooksPath scripts/git-hooks"
 # serve from the repo root so both notebooks/ (longeron tutorials) and
 # vendor/ipyelk/examples/ (ipyelk demos, incl. 07_Simulation) are browsable;
-# PYTHONHASHSEED pins kernel hashing so interactive runs are deterministic
-lab = { cmd = "jupyter lab notebooks/", env = { PYTHONHASHSEED = "0" } }
+# PYTHONHASHSEED pins kernel hashing so interactive runs are deterministic.
+# depends-on sync-labextension: JupyterLab serves the COPY of the vendored
+# jupyter-elk labextension that `pixi install` made inside each env, so a
+# rebuilt vendor bundle would otherwise keep serving stale code silently.
+lab = { cmd = "jupyter lab notebooks/", env = { PYTHONHASHSEED = "0" }, depends-on = [
+    "sync-labextension",
+] }
 check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
+
+[tool.pixi.tasks.sync-labextension]
+# rsync the vendored labextension BUILD (vendor/ipyelk/src/_d/...) over the
+# SERVED copies (.pixi/envs/*/share/jupyter/labextensions/...), warning
+# first when a served copy is stale -- the classic "rebuilt the TS but the
+# fix didn't take" footgun (the env copy is made once, at install time)
+cmd = """
+bash -euc 'src="vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"; for dst in .pixi/envs/*/share/jupyter/labextensions/@jupyrdf/jupyter-elk; do [ -d "$dst" ] || continue; diff -rq "$src" "$dst" >/dev/null 2>&1 || echo "WARNING: $dst was serving a STALE jupyter-elk build (differs from the vendor build); syncing" >&2; rsync -a --delete "$src/" "$dst/"; done'
+"""
 
 [tool.pixi.tasks.parsers]
 cmd = "python scripts/generate_parsers.py"

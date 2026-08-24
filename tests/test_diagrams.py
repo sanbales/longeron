@@ -656,6 +656,46 @@ class TestEdgeRoutingKwarg:
             diagrams.structure_diagram(drone_model, routing="bezier")
 
 
+class TestDirectionKwarg:
+    """``direction=`` on every view constructor: the layout flow for
+    headless renders (the toolbar button toggles the same option live).
+    ROOT-ONLY, unlike ``routing=``: elkjs carries ``elk.direction`` into
+    nested compounds under INCLUDE_CHILDREN (pinned against real elkjs in
+    test_render), and the SEPARATE_CHILDREN packing grids deliberately
+    keep their own wide flow."""
+
+    def _builds(self, drone_model, **kwargs):
+        return (
+            diagrams.structure_diagram(drone_model, **kwargs),
+            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), **kwargs),
+            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), **kwargs),
+        )
+
+    def test_default_is_right_on_the_root_only(self, drone_model):
+        for built in self._builds(drone_model):
+            root = built.source.value
+            assert root.layoutOptions["elk.direction"] == "RIGHT"
+            for node in _walk(root):
+                if node is not root:
+                    assert "elk.direction" not in node.layoutOptions
+
+    def test_direction_kwarg_lands_on_the_root_only(self, drone_model):
+        for built in self._builds(drone_model, direction="down"):
+            root = built.source.value
+            assert root.layoutOptions["elk.direction"] == "DOWN"
+            for node in _walk(root):
+                if node is not root:
+                    assert "elk.direction" not in node.layoutOptions
+
+    def test_dispatcher_forwards_direction(self, drone_model):
+        built = diagrams.diagram(drone_model, direction="Down")
+        assert built.source.value.layoutOptions["elk.direction"] == "DOWN"
+
+    def test_unknown_direction_rejected(self, drone_model):
+        with pytest.raises(ValueError, match="direction must be right or down"):
+            diagrams.structure_diagram(drone_model, direction="diagonal")
+
+
 _PORTED = """
 package P {
     item def Item1;
@@ -986,10 +1026,35 @@ class TestPackageTabAndAnnotations:
         assert f'fill="{style["fill"]}"' in use  # the package body fill
         assert 'stroke="currentColor"' in use  # outline follows .package-tab
         assert 'stroke-width="1"' in use  # never the .elklabel 0-width
-        assert diagrams.SYSML_STYLE[" .package-tab"] == {"color": style["stroke"]}
-        assert diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"] == {
-            "color": "var(--jp-elk-color-selected)"
-        }
+        assert diagrams.SYSML_STYLE[" .package-tab"]["color"] == style["stroke"]
+        assert (
+            diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]["color"]
+            == "var(--jp-elk-color-selected)"
+        )
+
+    def test_tab_outline_thickens_with_selection_like_the_rect(self):
+        """Round-3 maintainer nit: selecting a package bolded the box
+        outline but not the tab -- the folder must thicken as ONE
+        silhouette.  stroke-width cannot reach the <use> shadow geometry
+        from CSS (the tab's own attribute wins over anything inherited
+        from the <use>), so the geometry binds it through a CSS CUSTOM
+        PROPERTY -- which DOES inherit into use-shadow content -- via an
+        inline var() style, and the derived stylesheet retargets it: the
+        theme's base width normally, the theme's SELECTED width when the
+        node is selected (sprotty's select tool decorates every child
+        vnode, the tab's <use> included, with the node's .selected)."""
+
+        symbol = diagrams._symbols().library["package-tab"]
+        use = symbol.element.properties.shape.use
+        # the inline style consumes the inherited custom property, with
+        # the base weight as fallback (renderers without the scoped rules)
+        assert 'style="stroke-width: var(--lgn-tab-stroke-width, 1)"' in use
+        base = diagrams.SYSML_STYLE[" .package-tab"]
+        selected = diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]
+        # bound to the SAME theme variables the .elknode rect uses, so
+        # box and tab can never thicken apart
+        assert base["--lgn-tab-stroke-width"] == "var(--jp-elk-stroke-width)"
+        assert selected["--lgn-tab-stroke-width"] == "var(--jp-elk-stroke-width-selected)"
 
     def test_annotations_default_off(self, drone_model):
         root = diagrams.structure_diagram(drone_model).source.value
@@ -1298,15 +1363,21 @@ class TestActions:
             assert stereotype.properties.shape.width
             assert node.width >= 60 and node.height >= 44
             assert node.layoutOptions["elk.nodeSize.constraints"] == "MINIMUM_SIZE"
-        # both badge symbols are registered and filled via the stylesheet
+        # both badge symbols are registered; the badge body paints in
+        # currentColor (CSS cannot select INTO the <use> shadow, and an
+        # explicit fill attribute there would beat any rule on the <use>),
+        # so the stylesheet's `color` binding -- which DOES inherit into
+        # the shadow -- drives dark ink normally and the selection color
+        # when the owning box is selected (filled family, rule 3)
         assert "accept-badge" in widget.symbols.library
         assert "send-badge" in widget.symbols.library
-        assert diagrams.SYSML_STYLE[" .accept-badge"]["fill"] == "#333333"
-        # ... and the geometry carries the fill explicitly too, so the
-        # theme's .elklabel label-color can never leak into the <use>
         for form in ("accept", "send"):
+            assert diagrams.SYSML_STYLE[f" .{form}-badge"] == {"color": "#333333"}
+            assert diagrams.SYSML_STYLE[f" .elklabel.{form}-badge.selected"] == {
+                "color": "var(--jp-elk-color-selected)"
+            }
             use = widget.symbols.library[f"{form}-badge"].element.properties.shape.use
-            assert 'fill="#333333"' in use and 'stroke="none"' in use
+            assert 'fill="currentColor"' in use and 'stroke="none"' in use
 
     def test_terminate_renders_as_circle_x(self):
         model = longeron.loads("""

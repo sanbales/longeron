@@ -49,10 +49,16 @@ environments install it automatically).  Three views, one dispatcher:
 Every view ships a compact toolbar (:mod:`longeron.toolbar`): icon-only
 Fit / Center / Toggle-Collapse buttons, an edge-routing button that
 cycles orthogonal / polyline / splines re-layouts (also available as the
-``routing=`` kwarg on every view constructor for headless renders), plus
+``routing=`` kwarg on every view constructor for headless renders), an
+orientation button that toggles the layout flow left-to-right /
+top-to-bottom (the ``direction=`` kwarg seeds it), plus
 a live search box that
 highlights matching elements without touching the selection; pass
-``toolbar=False`` to keep ipyelk's stock text buttons.
+``toolbar=False`` to keep ipyelk's stock text buttons.  Every widget
+(with or without the compact toolbar) fits-and-centers itself ONCE when
+its first layout arrives -- a small margin, never zoomed past 1:1 --
+and later relayouts keep the user's viewport
+(:class:`longeron.toolbar.AutoFitTool`).
 
 Node ids are qualified names, so browser-side selections map back to model
 elements: use :func:`on_select` to react to clicks.
@@ -141,7 +147,7 @@ from .render import (
     _note_path_d,
     _port_arrow_d,
 )
-from .toolbar import apply_routing, upgrade_toolbar
+from .toolbar import AutoFitTool, apply_direction, apply_routing, upgrade_toolbar
 
 __all__ = [
     "SYSML_STYLE",
@@ -272,12 +278,18 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         style[f" .{css} > .elkarrow"] = arrow_style
         if start_form == "filled-diamond" or end_form == "filled":
             style[f" .elkedge.{css}.selected > .elkarrow"] = {"fill": selected}
-    # accept/send action badges: filled tags riding as icon labels; the
-    # theme's .elklabel.selected rule cannot reach through our id-scoped
-    # fill, so selection is restated here (filled family follows selection)
+    # accept/send action badges: filled tags riding as icon labels.  The
+    # badge geometry is <use> shadow content whose body is painted in
+    # currentColor (CSS cannot select INTO a use-shadow, and an explicit
+    # fill attribute there would beat any rule on the <use>): these rules
+    # bind `color` -- which DOES inherit into the shadow -- so the badge
+    # is dark ink normally and follows the selection color when its box
+    # is selected (filled family, selection contract rule 3; the badge
+    # has no outline, so there is no width to bump -- consistent with the
+    # box, whose rect alone thickens).
     for badge in ("accept-badge", "send-badge"):
-        style[f" .{badge}"] = {"fill": "#333333", "stroke": "none"}
-        style[f" .elklabel.{badge}.selected"] = {"fill": selected}
+        style[f" .{badge}"] = {"color": "#333333"}
+        style[f" .elklabel.{badge}.selected"] = {"color": selected}
     # the package folder tab (spec printed p.24): a fixed-size icon label
     # riding the box's top-left.  The tab renders as <use> shadow content,
     # where the theme's `.elklabel` rule (label-color fill, stroke-width 0)
@@ -285,8 +297,21 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     # symbol geometry carries the package palette as EXPLICIT attributes
     # (like the endpoint symbols) with the outline in currentColor; these
     # rules bind currentColor so selection recolors the tab WITH the box.
-    style[" .package-tab"] = {"color": _NODE_STYLES["sysml-package"]["stroke"]}
-    style[" .elklabel.package-tab.selected"] = {"color": selected}
+    # The outline WIDTH must follow selection too (the theme bumps the
+    # selected rect from --jp-elk-stroke-width to
+    # --jp-elk-stroke-width-selected, and box + tab must thicken as ONE
+    # folder silhouette).  stroke-width itself cannot reach the shadow
+    # geometry (the tab's own attribute would win), so the geometry binds
+    # it via a CSS CUSTOM PROPERTY -- custom properties inherit into
+    # use-shadow content -- which these rules retarget per state.
+    style[" .package-tab"] = {
+        "color": _NODE_STYLES["sysml-package"]["stroke"],
+        "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width)",
+    }
+    style[" .elklabel.package-tab.selected"] = {
+        "color": selected,
+        "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width-selected)",
+    }
     # AFTER the per-kind rules: same specificity, so source order decides
     style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
     style.update(
@@ -949,11 +974,13 @@ def _circle_plus(identifier: str) -> EndpointSymbol:
 
 
 def _badge_symbol(identifier: str, form: str) -> Symbol:
-    """An accept/send badge (filled top-left tag).  Explicit paints ride
-    the geometry (like the tab and endpoint symbols): the badge is <use>
-    shadow content, where the theme's ``.elklabel`` fill would otherwise
-    leak in; the ``.accept-badge``/``.send-badge`` rules still drive the
-    selection recolor (CSS beats presentation attributes)."""
+    """An accept/send badge (filled top-left tag).  The badge is <use>
+    shadow content, so its body paints in currentColor (like the tab and
+    endpoint symbols): CSS cannot select INTO the shadow, and an explicit
+    fill attribute on the path would beat any rule on the <use> -- the
+    ``.accept-badge``/``.send-badge`` rules bind `color` (which inherits
+    into the shadow) to dark ink, and to the selection color when the
+    owning box is selected (filled family, rule 3)."""
 
     points = " ".join(
         f"{'M' if index == 0 else 'L'} {px:g},{py:g}"
@@ -963,7 +990,7 @@ def _badge_symbol(identifier: str, form: str) -> Symbol:
         identifier=identifier,
         element=Node(
             properties=NodeProperties(
-                shape=SVG(use=f'<path d="{points} Z" fill="#333333" stroke="none"/>')
+                shape=SVG(use=f'<path d="{points} Z" fill="currentColor" stroke="none"/>')
             )
         ),
         width=_BADGE_WIDTH,
@@ -1029,13 +1056,19 @@ def _tab_symbol(identifier: str) -> Symbol:
     block.  The body takes the package fill directly; the outline is
     currentColor, bound to the package stroke by the ``.package-tab``
     rule -- and to the selection color when selected -- so the tab always
-    recolors WITH the box border."""
+    recolors WITH the box border.  The outline WIDTH binds through the
+    ``--lgn-tab-stroke-width`` custom property (an inline ``var()``
+    style: custom properties inherit into use-shadow content, where a
+    plain stroke-width attribute would win over anything on the <use>),
+    so selecting the package thickens tab and rect together -- one
+    silhouette in every state; the ``1`` fallback keeps the base weight
+    wherever the scoped rules do not reach."""
 
     style = _NODE_STYLES["sysml-package"]
     svg = (
         f'<path d="M 0,0 L {_TAB_WIDTH:g},0 L {_TAB_WIDTH:g},{_TAB_HEIGHT:g} '
         f'L 0,{_TAB_HEIGHT:g} Z" fill="{style["fill"]}" stroke="currentColor" '
-        f'stroke-width="1"/>'
+        f'stroke-width="1" style="stroke-width: var(--lgn-tab-stroke-width, 1)"/>'
     )
     return Symbol(
         identifier=identifier,
@@ -1141,14 +1174,12 @@ def _assign_ids(root: Node) -> None:
 def _finish(
     root: Node,
     style: dict | None = None,
-    direction: str | None = None,
+    direction: str = "RIGHT",
     toolbar: bool = True,
     layout: dict[str, str] | None = None,
     routing: str = "orthogonal",
 ) -> Any:
     root.layoutOptions = dict(_ROOT_LAYOUT)
-    if direction:
-        root.layoutOptions["elk.direction"] = direction
     if layout:
         root.layoutOptions.update(layout)
     # ELK does NOT inherit layered spacing through INCLUDE_CHILDREN
@@ -1167,6 +1198,11 @@ def _finish(
     # hierarchy level for the same INCLUDE_CHILDREN reason; the toolbar's
     # EdgeRoutingTool re-applies it live through the same helper
     apply_routing(root, routing)
+    # layout flow (RIGHT = left-to-right, DOWN = top-to-bottom): ROOT-ONLY
+    # -- elkjs carries elk.direction into nested compounds under
+    # INCLUDE_CHILDREN (unlike the spacing/routing options above); the
+    # toolbar's DirectionTool re-applies it live through the same helper
+    apply_direction(root, direction)
     # every element ships to the browser with a REAL id (null ids kill the
     # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
     _assign_ids(root)
@@ -1174,6 +1210,10 @@ def _finish(
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
     result.layout.min_height = "400px"
+    # EVERY widget fits-and-centers itself once, when its first layout
+    # arrives (later relayouts keep the user's viewport); registered
+    # before the toolbar upgrade so the DirectionTool can queue re-fits
+    result.register_tool(AutoFitTool(result))
     if toolbar:  # compact icon toolbar + search (longeron.toolbar)
         upgrade_toolbar(result)
     return result
@@ -1194,6 +1234,7 @@ def structure_diagram(
     annotations: bool = False,
     toolbar: bool = True,
     routing: str = "orthogonal",
+    direction: str = "right",
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
 
@@ -1241,6 +1282,9 @@ def structure_diagram(
     ``routing`` picks the ELK edge routing style -- ``"orthogonal"`` (the
     default), ``"polyline"`` or ``"splines"`` -- for headless renders and
     the initial widget; the toolbar's routing button cycles it live.
+    ``direction`` picks the layout flow -- ``"right"`` (left-to-right,
+    the default) or ``"down"`` (top-to-bottom); the toolbar's orientation
+    button toggles it live.
     """
 
     if membership not in ("nested", "edges"):
@@ -1258,7 +1302,13 @@ def structure_diagram(
     # package tabs ride flush with the box top (outside icon labels; the
     # spacing option applies per hierarchy level, so the package nodes
     # restate it for their nested packages)
-    return _finish(root, toolbar=toolbar, layout={"elk.spacing.labelNode": "0"}, routing=routing)
+    return _finish(
+        root,
+        toolbar=toolbar,
+        layout={"elk.spacing.labelNode": "0"},
+        routing=routing,
+        direction=direction,
+    )
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -2246,6 +2296,7 @@ def state_diagram(
     submachine_depth: int | None = None,
     toolbar: bool = True,
     routing: str = "orthogonal",
+    direction: str = "right",
 ) -> Any:
     """A hierarchical state machine: states, entry markers, transitions.
 
@@ -2260,7 +2311,8 @@ def state_diagram(
     ``None`` (the default) is unlimited, ``0`` draws typed states as
     plain leaves (the pre-0.8 behavior).  Plain nested states are always
     shown.  ``toolbar=False`` keeps ipyelk's stock toolbar; ``routing``
-    picks the edge routing style (orthogonal / polyline / splines).
+    picks the edge routing style (orthogonal / polyline / splines);
+    ``direction`` the layout flow (``"right"`` or ``"down"``).
 
     Expanded substate ids are instance-qualified
     (``…::swapSource::swap::evaluating``) so they stay unique per
@@ -2277,7 +2329,7 @@ def state_diagram(
     resolver = Interpreter(model).resolver
     base = machine.qualified_name or machine.label
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
-    return _finish(root, toolbar=toolbar, routing=routing)
+    return _finish(root, toolbar=toolbar, routing=routing, direction=direction)
 
 
 def _transition_text(transition: M.TransitionUsage) -> str | None:
@@ -2419,6 +2471,7 @@ def action_diagram(
     lanes: Mapping[str, Sequence[str]] | bool | None = None,
     toolbar: bool = True,
     routing: str = "orthogonal",
+    direction: str = "right",
 ) -> Any:
     """The succession control-flow graph the interpreter executes.
 
@@ -2441,7 +2494,8 @@ def action_diagram(
     the spec's full-height, shared-boundary lanes.  Steps in no lane stay
     outside (like the spec's start/done markers).  ``toolbar=False`` keeps
     ipyelk's stock toolbar; ``routing`` picks the edge routing style
-    (orthogonal / polyline / splines).
+    (orthogonal / polyline / splines); ``direction`` the layout flow
+    (``"right"``, the flow-reading default, or ``"down"``).
     """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -2523,7 +2577,7 @@ def action_diagram(
     if lanes:
         layout = _apply_lanes(root, lanes, steps, elements)
 
-    return _finish(root, direction="RIGHT", toolbar=toolbar, layout=layout, routing=routing)
+    return _finish(root, direction=direction, toolbar=toolbar, layout=layout, routing=routing)
 
 
 def _lane_groups(

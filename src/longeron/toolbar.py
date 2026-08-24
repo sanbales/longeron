@@ -12,6 +12,16 @@ buttons).  It reworks ipyelk's hover-revealed toolbar in place:
   routing style -- ORTHOGONAL (the default) -> POLYLINE -> SPLINES --
   and re-lays the live diagram out through the pipeline; the active
   style persists per widget on the tool's ``routing`` trait;
+* a :class:`DirectionTool` button toggles the layout flow -- RIGHT
+  (left-to-right, the default) <-> DOWN (top-to-bottom) -- through the
+  same refresh path; the active direction persists per widget on the
+  tool's ``direction`` trait (seeded by the ``direction=`` constructor
+  kwarg), and the flip queues a one-shot re-fit so the new aspect ratio
+  lands centered instead of keeping a viewport framed for the old one;
+* an (invisible) :class:`AutoFitTool` fits-and-centers the diagram
+  exactly once, when its FIRST layout arrives from the browser, with a
+  small padding and never zooming past 1:1 -- later relayouts
+  (collapse, routing) keep the user's viewport;
 * a :class:`DiagramSearch` tool is registered: typing in its text box
   live-highlights every diagram node whose *title* or *qualified name*
   contains the query (case-insensitive), shows a ``matches/total``
@@ -47,14 +57,19 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
 from .render import _SYNTH_ID_PREFIX
 
 __all__ = [
+    "DIRECTIONS",
+    "FIT_PADDING",
     "ROUTING_STYLES",
     "SEARCH_ACTIVE_CSS",
     "SEARCH_DIM_CSS",
     "SEARCH_HIT_COLOR",
     "SEARCH_HIT_CSS",
     "TOOLBAR_STYLE",
+    "AutoFitTool",
     "DiagramSearch",
+    "DirectionTool",
     "EdgeRoutingTool",
+    "apply_direction",
     "apply_routing",
     "upgrade_toolbar",
 ]
@@ -63,6 +78,20 @@ __all__ = [
 #: (spec figures mix straight and orthogonal connectors; SPLINES rounds
 #: the corners): ORTHOGONAL is elkjs layered's default and longeron's
 ROUTING_STYLES = ("ORTHOGONAL", "POLYLINE", "SPLINES")
+
+#: the layout flow directions the orientation button toggles between
+#: (``elk.direction``): RIGHT is elkjs layered's default and longeron's
+DIRECTIONS = ("RIGHT", "DOWN")
+
+#: human phrasing for the direction tooltips (current state + next click)
+_DIRECTION_WORDS = {"RIGHT": "left-to-right", "DOWN": "top-to-bottom"}
+
+#: FontAwesome-4 icons showing the ACTIVE flow direction on the button
+_DIRECTION_ICONS = {"RIGHT": "long-arrow-right", "DOWN": "long-arrow-down"}
+
+#: viewport padding (px) of the one-shot initial fit: the diagram never
+#: touches the viewport limits
+FIT_PADDING = 24.0
 
 #: cssClasses fragment marking a search match (node box + its labels)
 SEARCH_HIT_CSS = "sysml-search-hit"
@@ -160,6 +189,34 @@ def apply_routing(root: Any, routing: str) -> str:
     for edge in _iter_edges(root):
         edge.sections = None
     return style
+
+
+def apply_direction(root: Any, direction: str) -> str:
+    """Set ``elk.direction`` on a diagram source tree; returns the
+    normalized direction name.
+
+    ROOT-ONLY, unlike :func:`apply_routing`: elkjs DOES carry the layout
+    direction into nested compounds under ``INCLUDE_CHILDREN`` (verified
+    empirically -- a root-only ``DOWN`` stacks nested children vertically,
+    and restating the option per level changes nothing), while the
+    ``SEPARATE_CHILDREN`` packing grids keep their own default flow (they
+    stay wide either way, which is what the pack-aspect chains assume).
+
+    Already-computed edge routes are dropped for the same reason
+    :func:`apply_routing` drops them: a direction change makes them stale,
+    and elkjs writes new routes INTO old section objects without clearing
+    leftover keys, so re-laying out a laid-out tree would not be
+    idempotent otherwise.
+    """
+
+    name = str(direction).strip().upper()
+    if name not in DIRECTIONS:
+        choices = " or ".join(word.lower() for word in DIRECTIONS)
+        raise ValueError(f"direction must be {choices}; not {direction!r}")
+    root.layoutOptions["elk.direction"] = name
+    for edge in _iter_edges(root):
+        edge.sections = None
+    return name
 
 
 def _collect_entries(root: Any) -> tuple[_SearchEntry, ...]:
@@ -485,13 +542,163 @@ class EdgeRoutingTool(Tool):
         )
 
 
+class AutoFitTool(Tool):
+    """Fit-and-center the diagram exactly once, when its FIRST layout
+    arrives from the browser.
+
+    Diagrams used to first paint at 1:1 anchored top-left, so anything
+    larger than the viewport started half off-screen until the user
+    clicked Fit.  This tool watches the viewer's post-layout source tree
+    (``view.source.value`` -- set by the browser-side elkjs pipe, i.e.
+    exactly when the first layout settles) and answers the first arrival
+    with one ``FitToScreenAction`` request: :attr:`padding` px of margin,
+    zoom capped at :attr:`max_zoom` (small diagrams center at natural
+    size instead of blowing up), no animation (a snap, not a glide).
+
+    It fires ONCE: collapse/routing relayouts keep the user's viewport.
+    :meth:`request_refit` queues exactly one more fit for the NEXT layout
+    arrival -- the direction toggle uses it, because a viewport framed
+    for a left-to-right layout reads wrong on the top-to-bottom flip.
+
+    Headless renders never construct tools, so they are unaffected.  The
+    fit request is a widget message: if a frontend view does not exist
+    yet when the first layout lands (a slow display), the message is
+    dropped and the diagram simply renders as before -- a graceful
+    degradation, never an error.
+    """
+
+    padding = T.Float(FIT_PADDING, help="viewport margin (px) around the fitted diagram")
+    max_zoom = T.Float(1.0, help="never zoom in past this to fit (1.0 = natural size)")
+    pending = T.Bool(True, help="whether the next layout arrival triggers a fit")
+    fit_count = T.Int(0, help="how many fit requests this tool has sent")
+
+    def __init__(self, diagram: Any, **kwargs: Any) -> None:
+        self._diagram = diagram
+        super().__init__(**kwargs)
+        # the browser-side elkjs pipe writes the laid-out tree onto the
+        # viewer's source; its kernel-side sync is the 'first layout
+        # settled' signal (the same event DiagramSearch re-applies on)
+        diagram.view.source.observe(self._on_view_tree, "value")
+
+    async def run(self) -> None:  # Tool protocol; the tool is event-driven
+        pass
+
+    def request_refit(self) -> None:
+        """Queue exactly one more fit, for the next layout arrival."""
+
+        self.pending = True
+
+    def _on_view_tree(self, change: Any) -> None:
+        if change["new"] is None or not self.pending:
+            return
+        self.pending = False
+        self.fit_count += 1
+        try:
+            self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
+        except Exception:  # never break the render pipeline's callback
+            self.log.exception("auto-fit request failed")
+
+
+class DirectionTool(Tool):
+    """Toggle the diagram's layout flow and re-lay it out.
+
+    The button toggles ``elk.direction`` RIGHT (left-to-right, the
+    default) <-> DOWN (top-to-bottom) and the choice persists per widget
+    on the :attr:`direction` trait (initialized from the diagram root's
+    ``elk.direction``, so the ``direction=`` constructor kwarg carries
+    through).  Setting the trait directly works too: either way the
+    option lands on the ROOT only (:func:`apply_direction` -- unlike edge
+    routing, elkjs carries the direction into nested compounds under
+    ``INCLUDE_CHILDREN``), the pipeline inlet is marked dirty with the
+    layout-options flow, and the diagram refreshes through the SAME
+    pipeline the routing tool uses.  The flip also queues a ONE-SHOT
+    re-fit (:class:`AutoFitTool`): the aspect ratio inverts, so keeping a
+    viewport framed for the old flow reads worse than re-centering once.
+    """
+
+    direction = T.Unicode(DIRECTIONS[0], help="active elk.direction flow")
+
+    def __init__(self, diagram: Any, **kwargs: Any) -> None:
+        self._diagram = diagram
+        self._btn: Any = None
+        root = diagram.source.value
+        if root is not None:
+            kwargs.setdefault(
+                "direction", (root.layoutOptions or {}).get("elk.direction", DIRECTIONS[0])
+            )
+        super().__init__(**kwargs)
+        self.reports = (F.Node.layout_options,)
+        self.ui = self._build_ui()
+
+    async def run(self) -> None:  # Tool protocol; the button sets the trait
+        pass
+
+    @T.validate("direction")
+    def _normalize_direction(self, proposal: Any) -> str:
+        name = str(proposal["value"]).strip().upper()
+        if name not in DIRECTIONS:
+            choices = " or ".join(word.lower() for word in DIRECTIONS)
+            raise T.TraitError(f"direction must be {choices}; not {proposal['value']!r}")
+        return name
+
+    @T.observe("direction")
+    def _on_direction(self, change: Any = None) -> None:
+        self.apply()
+
+    def apply(self) -> None:
+        """Push the active direction onto the diagram's trees and re-lay out."""
+
+        seen: set[int] = set()
+        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
+        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+            if tree is None or id(tree) in seen:
+                continue
+            seen.add(id(tree))
+            apply_direction(tree, self.direction)
+        self._update_ui()
+        if seen and self.tee is not None:
+            # a flip inverts the aspect ratio: queue ONE re-fit for the
+            # relayout about to land (collapse/routing changes never do)
+            for tool in getattr(self._diagram, "tools", ()):
+                if isinstance(tool, AutoFitTool):
+                    tool.request_refit()
+            # the routing tool's refresh path: mark the inlet dirty and
+            # MERGE with the pending flow (see EdgeRoutingTool.apply)
+            tee_inlet = self.tee.inlet
+            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
+            if callable(self.on_done):
+                self.on_done()
+
+    def _toggle(self, *_: Any) -> None:
+        index = DIRECTIONS.index(self.direction)
+        self.direction = DIRECTIONS[(index + 1) % len(DIRECTIONS)]
+
+    def _build_ui(self) -> Any:
+        self._btn = W.Button(icon=_DIRECTION_ICONS[self.direction], layout=dict(_BUTTON_LAYOUT))
+        self._btn.on_click(self._toggle)
+        self._update_ui()
+        return self._btn
+
+    def _update_ui(self) -> None:
+        if self._btn is None:
+            return
+        upcoming = DIRECTIONS[(DIRECTIONS.index(self.direction) + 1) % len(DIRECTIONS)]
+        self._btn.icon = _DIRECTION_ICONS[self.direction]
+        self._btn.tooltip = (
+            f"Layout direction: {_DIRECTION_WORDS[self.direction]} "
+            f"(click to re-lay out {_DIRECTION_WORDS[upcoming]})"
+        )
+
+
 def upgrade_toolbar(diagram: Any) -> Any:
     """Swap the stock ipyelk toolbar contents for the compact longeron one.
 
     Idempotent, and composed entirely from the outside: the existing
     Fit/Center/Toggle-Collapsed tools keep their behavior but lose the
     text labels (icon + tooltip instead), an :class:`EdgeRoutingTool`
-    (cycles orthogonal/polyline/splines edge routing) and a
+    (cycles orthogonal/polyline/splines edge routing), a
+    :class:`DirectionTool` (toggles left-to-right/top-to-bottom flow) and
+    a
     :class:`DiagramSearch` tool are registered, and :data:`TOOLBAR_STYLE`
     is merged into the widget's scoped stylesheet (search-hit/dim rules +
     keeping the toolbar pinned while it is being used).
@@ -529,5 +736,6 @@ def upgrade_toolbar(diagram: Any) -> Any:
     diagram.toolbar.close_btn.tooltip = "Close"
     diagram.style = {**diagram.style, **TOOLBAR_STYLE}
     diagram.register_tool(EdgeRoutingTool(diagram))
+    diagram.register_tool(DirectionTool(diagram))
     diagram.register_tool(DiagramSearch(diagram))
     return diagram

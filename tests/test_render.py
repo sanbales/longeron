@@ -1485,6 +1485,95 @@ class TestGalleryNits2:
         assert (x3, y3) == corners[2] and y3 == y2  # second stroke to the edge
 
 
+_DIRECTION_CHAIN = """
+package Chain {
+    part def A;
+    part def B :> A;
+    part def C :> B;
+}
+"""
+
+_DIRECTION_NESTED = """
+package Outer {
+    part def A;
+    part def B :> A;
+    package Inner {
+        part def X;
+        part def Y :> X;
+        part def Z :> Y;
+    }
+}
+"""
+
+_DIRECTION_LOOSE = """
+package Loose {
+    part def A; part def B; part def C;
+    part def D; part def E; part def F;
+}
+"""
+
+
+class TestGalleryNits3:
+    """Round-3 gallery review: the layout-direction toggle, pinned against
+    the REAL vendored elkjs (the browser worker wraps the same engine)."""
+
+    @staticmethod
+    def _positions(source: str, **kwargs):
+        widget = diagrams.structure_diagram(longeron.loads(source), **kwargs)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        return {
+            node["id"]: (node.get("x", 0.0), node.get("y", 0.0))
+            for node in _walk_json(graph)
+            if node.get("id") and not str(node["id"]).startswith("__lgn__")
+        }
+
+    def test_direction_flips_the_flow(self):
+        """The same chain lays out left-to-right by default and
+        top-to-bottom under direction='down' -- the headless evidence for
+        the toolbar toggle (nits3-direction-*.png)."""
+
+        chain = ("Chain::C", "Chain::B", "Chain::A")  # specialization order
+        right = self._positions(_DIRECTION_CHAIN)
+        xs, ys = zip(*(right[name] for name in chain), strict=True)
+        assert xs[0] < xs[1] < xs[2]  # layers march right ...
+        assert max(ys) - min(ys) < 1.0  # ... on one horizontal rank
+        down = self._positions(_DIRECTION_CHAIN, direction="down")
+        xs, ys = zip(*(down[name] for name in chain), strict=True)
+        assert ys[0] < ys[1] < ys[2]  # layers march down ...
+        assert max(xs) - min(xs) < 1.0  # ... in one vertical column
+
+    def test_root_only_direction_reaches_nested_compounds(self):
+        """The INCLUDE_CHILDREN empirical pin: elk.direction set on the
+        ROOT alone (diagrams never restate it per level -- see
+        TestDirectionToggle.test_direction_is_root_only) flows into
+        nested compounds, unlike the spacing/edgeRouting options that
+        needed per-level restating."""
+
+        down = self._positions(_DIRECTION_NESTED, direction="down")
+        inner = [down[f"Outer::Inner::{name}"] for name in ("Z", "Y", "X")]
+        xs, ys = zip(*inner, strict=True)
+        assert ys[0] < ys[1] < ys[2]  # the NESTED chain stacks vertically
+        assert max(xs) - min(xs) < 1.0
+
+    def test_pack_grids_keep_their_wide_flow_under_down(self):
+        """The SEPARATE_CHILDREN packing grids run their own sub-layout:
+        a package of disconnected members packs into the same wide grid
+        whichever way the diagram flows (the pack-aspect chains assume
+        rows, and elkjs leaves isolated sub-layouts at their default
+        direction)."""
+
+        def grid(kwargs):
+            widget = diagrams.structure_diagram(longeron.loads(_DIRECTION_LOOSE), **kwargs)
+            graph = render.layout(render._to_elk_json(widget.source.value))
+            package = next(n for n in _walk_json(graph) if n.get("id") == "Loose")
+            return {
+                child["id"]: (child.get("x", 0.0), child.get("y", 0.0))
+                for child in package.get("children", [])
+            }
+
+        assert grid({}) == grid({"direction": "down"})
+
+
 class TestPng:
     def test_png(self, drone_model, tmp_path):
         try:
@@ -1686,6 +1775,112 @@ class TestBrowserPipelineFixpoint:
         assert self._geometry(widget) == orthogonal  # full round trip
         self._settled(widget)
 
+    def test_direction_toggle_round_trip_restores_the_layout(self):
+        """Toggle the direction tool DOWN and back: the final left-to-right
+        geometry is byte-equal to the original one (stale sections must
+        not survive -- apply_direction drops computed routes), the DOWN
+        pass really flowed top-to-bottom, and a click while the initial
+        'new' flow is pending merges with it like the routing tool."""
+
+        from longeron.toolbar import DirectionTool
+
+        widget = diagrams.structure_diagram(longeron.loads(self._FLOW_PIN_FORM))
+        tool = widget.get_tool(DirectionTool)
+
+        assert widget.source.flow == ("new",)
+        tool.ui.click()  # -> DOWN, while the initial flow is pending
+        assert widget.source.flow == ("new", "node.layoutOptions")
+        self._run_cycle(widget)  # validation DID run: ids stamped, layout ok
+        down = self._geometry(widget)
+
+        tool.ui.click()  # -> RIGHT
+        assert self._run_cycle(widget) == ["ElkJS"]
+        right = self._geometry(widget)
+        assert right != down  # the flow really flipped
+
+        tool.ui.click()  # -> DOWN again
+        self._run_cycle(widget)
+        assert self._geometry(widget) == down
+        tool.ui.click()  # -> RIGHT again
+        self._run_cycle(widget)
+        assert self._geometry(widget) == right  # full round trip
+        self._settled(widget)
+
+    _W3B_DIRECTED = """
+    package Directed {
+        part def Part1;
+        part def Part2;
+        connection def ConnectionDef2 {
+            end [1..1] part sourceEnd : Part1;
+            end [1..*] part targetEnd : Part2;
+        }
+        part part1 : Part1;
+        part part2 : Part2;
+        connection connection2 : ConnectionDef2 connect part1 to part2;
+    }
+    """
+
+    @pytest.mark.parametrize("routing", ["orthogonal", "polyline", "splines"])
+    def test_w3b_directed_connection_routes_are_never_degenerate(self, routing):
+        """Gallery section 3b pinned end to end (maintainer stall triage,
+        item 6): the EXACT w3b model through the browser-faithful cycle
+        (transport + browser-style label sizes + REAL elkjs), then the
+        pinned reference math -- the same formulas the served bundle
+        compiles -- over every routed edge.  Every angle finite, every
+        renderLine trim drawable, the directed edge really carrying the
+        end-only open-V (candidate c: symbol on end, none on start).  The
+        live stall did NOT reproduce here or in a real Chromium run of
+        the full gallery; this test keeps the code side pinned so any
+        future degeneracy fails loudly in CI instead of silently in a
+        browser tab."""
+
+        import math
+
+        widget = diagrams.structure_diagram(longeron.loads(self._W3B_DIRECTED), routing=routing)
+        self._run_cycle(widget)
+        reaches = {}
+        for name, sym in widget.symbols.library.items():
+            offset = getattr(sym, "path_offset", None)
+            if offset is not None:
+                reaches[name] = math.hypot(offset.x or 0, offset.y or 0)
+
+        def iter_edges(node):
+            yield from node.edges
+            for child in node.children:
+                yield from iter_edges(child)
+
+        directed = None
+        for edge in iter_edges(widget.source.value):
+            css = edge.properties.cssClasses or ""
+            if "sysml-packing" in css:
+                continue
+            points = []
+            for section in edge.sections or []:
+                points.append((section.startPoint.x, section.startPoint.y))
+                points.extend((b.x, b.y) for b in section.bendPoints or [])
+                points.append((section.endPoint.x, section.endPoint.y))
+            assert points, f"unrouted edge: {css}"
+            shape = edge.properties.shape
+            start = getattr(shape, "start", None) if shape else None
+            end = getattr(shape, "end", None) if shape else None
+            if "sysml-edge-directed" in css:
+                directed = (start, end, points)
+            start_reach = reaches.get(start, 0.0)
+            end_reach = reaches.get(end, 0.0)
+            r = render._route_end_angle(points, "source", start_reach)
+            r2 = render._route_end_angle(points, "target", end_reach)
+            assert math.isfinite(r) and math.isfinite(r2)
+            covered_s = render._covered_route_points(points, "source", start_reach)
+            covered_t = render._covered_route_points(points, "target", end_reach)
+            # the renderLine trim window is a valid (possibly empty) slice
+            first, last = 1 + covered_s, len(points) - 2 - covered_t
+            assert first >= 1 and last <= len(points) - 2
+        assert directed is not None, "the directed connection edge must draw"
+        start, end, points = directed
+        assert start is None and end == "arrow"  # candidate (c)'s combination
+        assert len(points) >= 2
+        self._settled(widget)
+
 
 _TANGENT_MEMBER = """
 package Parts {
@@ -1775,10 +1970,103 @@ class TestBrowserEndpointTangents:
         assert angle != 0.0
         assert math.degrees(angle) == pytest.approx(-13.2, abs=0.5)
 
+    def test_start_diamond_tangent_is_the_exact_arc_length_chord(self):
+        """Round-3 re-verification of the maintainer's polyline START-
+        diamond case (with the served-bundle staleness explained, the
+        CODE is re-pinned): for a 5px stub followed by a diagonal, the
+        START tangent is the chord to the point at arc-length reach --
+        analytically ON the diagonal segment -- so the diamond leans with
+        the visible shaft, never with the axis-aligned stub (what any
+        stale pre-15624b3 bundle would draw)."""
+
+        stub, reach = 5.0, 12.0  # the composition rhomb's path_offset reach
+        route = [(0.0, 0.0), (stub, 0.0), (26.8, -9.0)]
+        # the reference point sits (reach - stub) along the diagonal
+        t = (reach - stub) / math.dist(route[1], route[2])
+        ref = (stub + (26.8 - stub) * t, -9.0 * t)
+        expected = math.atan2(ref[1], ref[0])
+        angle = render._route_end_angle(route, "source", reach)
+        assert angle == pytest.approx(expected)
+        # strictly BETWEEN the stub's direction and the diagonal's: the
+        # diamond rotates toward the shaft, clamped by its own footprint
+        diagonal = math.atan2(-9.0, 26.8 - stub)
+        assert min(0.0, diagonal) < angle < max(0.0, diagonal)
+        assert angle != 0.0  # never the stub
+        # and the stub's interior bend is dropped from the trimmed shaft
+        assert render._covered_route_points(route, "source", reach) == 1
+
     def test_short_route_falls_back_to_the_farthest_point(self):
         route = [(0.0, 0.0), (4.0, 3.0)]
         angle = render._route_end_angle(route, "source", 24.0)
         assert angle == pytest.approx(math.atan2(3.0, 4.0))
+
+    def test_two_point_route_with_oversized_reach_stays_finite(self):
+        """Maintainer stall triage (item 6, candidate b): a straight
+        2-point route shorter than the symbol reach (short edge, big head
+        + label) must fall back to the farthest distinct point -- finite
+        angles both ends, nothing covered, no NaN anywhere."""
+
+        route = [(0.0, 0.0), (10.0, 0.0)]  # total length 10 < reach 15
+        for end, expected in (("source", 0.0), ("target", math.pi)):
+            angle = render._route_end_angle(route, end, 15.0)
+            assert math.isfinite(angle)
+            assert angle == pytest.approx(expected)
+            assert render._covered_route_points(route, end, 15.0) == 0
+
+    def test_identical_endpoint_route_yields_zero_not_nan(self):
+        """Item 6 candidate (b) continued: a route whose points all
+        coincide (elkjs can emit fully-degenerate stubs) must yield the
+        0.0 sentinel -- never NaN (atan2 of a zero chord), never an
+        unterminated scan (both reference loops are bounded)."""
+
+        route = [(5.0, 5.0), (5.0, 5.0)]
+        for end in ("source", "target"):
+            assert render._route_end_angle(route, end, 12.0) == 0.0
+            assert render._covered_route_points(route, end, 12.0) == 0
+
+    @pytest.mark.parametrize(
+        ("route", "start_reach", "end_reach"),
+        [
+            # w3b's directed connection: straight 2-point route, open-V
+            # arrow at the END only (candidate c: symbol on end, none on
+            # start)
+            ([(92.5, 237.0), (363.1, 237.0)], 0.0, 1.0),
+            # 2-point route shorter than both reaches
+            ([(0.0, 0.0), (8.0, 0.0)], 12.0, 15.0),
+            # every interior point beneath the end symbol (candidate a:
+            # covered removes ALL interior points -- the trim must keep a
+            # drawable start->end chord, never an empty path)
+            ([(0.0, 0.0), (86.0, 0.0), (86.0, 0.0), (86.0, 0.0)], 0.0, 15.0),
+            # overlapping footprints on a short 3-point route
+            ([(0.0, 0.0), (5.0, 0.0), (9.0, 3.0)], 12.0, 12.0),
+            # fully-degenerate route
+            ([(7.0, 7.0), (7.0, 7.0), (7.0, 7.0)], 12.0, 12.0),
+        ],
+    )
+    def test_render_line_trim_never_degenerates(self, route, start_reach, end_reach):
+        """Python mirror of the browser renderLine trim (vendor/ipyelk
+        edge_views.tsx): ``first = 1 + covered(source)``, ``last = n - 2 -
+        covered(target)``, path = start' + interior[first..last] + end'.
+        For every degenerate-route vector from the item-6 triage the trim
+        must keep at least the two endpoint anchors (a drawable chord) and
+        every computed angle must be finite -- the sprotty view can then
+        never throw or emit NaN coordinates on these inputs."""
+
+        r = render._route_end_angle(route, "source", start_reach)
+        r2 = render._route_end_angle(route, "target", end_reach)
+        assert math.isfinite(r) and math.isfinite(r2)
+        cs = render._covered_route_points(route, "source", start_reach)
+        ct = render._covered_route_points(route, "target", end_reach)
+        first, last = 1 + cs, len(route) - 2 - ct
+        trimmed = [route[0], *route[first : last + 1], route[-1]]
+        assert len(trimmed) >= 2  # the M + final L always survive
+        # each end counts covered interior points INDEPENDENTLY: on a
+        # short route one bend may sit under BOTH footprints and be
+        # counted twice -- the trim window then simply collapses
+        # (first > last: empty interior slice), degrading to the bare
+        # start->end chord instead of anything negative or throwing
+        assert first >= 1 and last <= len(route) - 2
+        assert all(math.isfinite(c) for point in trimmed for c in point)
 
     def test_fully_degenerate_route_yields_zero(self):
         route = [(7.0, 7.0), (7.0, 7.0), (7.0, 7.0)]

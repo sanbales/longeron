@@ -3,6 +3,8 @@ V3 (single-source palette)."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import longeron
@@ -273,11 +275,20 @@ class TestPaletteSingleSource:
         # the package folder tab: explicit paints ride the symbol geometry
         # (<use> shadow content -- the theme's .elklabel rule would
         # otherwise win), with the outline in currentColor BOUND to the
-        # package stroke here, so selection recolors the tab with the box
+        # package stroke here, so selection recolors the tab with the box;
+        # the outline WIDTH binds through a custom property (which inherits
+        # into the shadow) to the SAME theme width variables as the rect,
+        # so selecting thickens tab and box as one folder silhouette
         tab = diagrams.SYSML_STYLE[" .package-tab"]
-        assert tab == {"color": render._NODE_STYLES["sysml-package"]["stroke"]}
+        assert tab == {
+            "color": render._NODE_STYLES["sysml-package"]["stroke"],
+            "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width)",
+        }
         selected_tab = diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]
-        assert selected_tab == {"color": selected}
+        assert selected_tab == {
+            "color": selected,
+            "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width-selected)",
+        }
 
     def test_label_kinds_keep_their_measured_font_sizes_in_the_browser(self):
         """Item 12: the blanket 11px !important label rule (needed against
@@ -329,6 +340,48 @@ class TestPaletteSingleSource:
         from longeron import render, replay
 
         assert render._NODE_STYLES["sysml-usage"]["stroke"] in replay._CSS
+
+
+class TestLabextensionServingSync:
+    """The 'rebuilt the TS but the fix didn't take' footgun: JupyterLab
+    serves the COPY of the vendored jupyter-elk labextension that pixi
+    made inside each env at install time, not vendor/ipyelk itself.  The
+    `sync-labextension` task (a `lab` dependency, mirrored in the
+    Makefile) rsyncs the vendor build over every served copy, warning
+    when one was stale."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+    VENDOR = ROOT / "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"
+
+    def test_pixi_lab_depends_on_the_sync_task(self):
+        import tomllib
+
+        with open(self.ROOT / "pyproject.toml", "rb") as handle:
+            tasks = tomllib.load(handle)["tool"]["pixi"]["tasks"]
+        sync = tasks["sync-labextension"]["cmd"]
+        # vendor build -> every served env copy, loudly when one was stale
+        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in sync
+        assert ".pixi/envs/*/share/jupyter/labextensions" in sync
+        assert "rsync" in sync and "--delete" in sync
+        assert "STALE" in sync  # the warning that makes the footgun visible
+        assert "sync-labextension" in tasks["lab"]["depends-on"]
+
+    def test_makefile_mirrors_the_task(self):
+        makefile = (self.ROOT / "Makefile").read_text(encoding="utf-8")
+        assert "sync-labextension:" in makefile
+        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in makefile
+        assert "rsync" in makefile and "STALE" in makefile
+
+    def test_vendor_build_carries_the_tangent_fix(self):
+        """Item-5 re-verification: the SHIPPED vendored bundle (the one
+        the sync task serves) really contains the compiled arc-length
+        tangent fix -- routeEndAngle/coveredRoutePoints survive in the
+        elkdisplay chunk's source map names."""
+
+        maps = sorted(self.VENDOR.glob("static/elkdisplay.*.js.map"))
+        assert maps, "the vendored labextension build is missing"
+        text = maps[-1].read_text(encoding="utf-8")
+        assert "routeEndAngle" in text and "coveredRoutePoints" in text
 
 
 class TestClientValidateStrictImports:
