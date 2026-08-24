@@ -1,6 +1,7 @@
 """Headless SVG/PNG rendering tests (node + vendored elkjs)."""
 
 import math
+import re
 import shutil
 
 import pytest
@@ -467,9 +468,14 @@ class TestSvg:
         )[0]
         assert 'fill="#555555"' in ball and " A " in ball  # filled, notched
 
-    def test_actor_and_stakeholder_keyword_boxes(self):
-        """Actors/stakeholders (errata N17): the keyword-box form -- a
-        rounded usage box with «actor»/«stakeholder» -- not invisible."""
+    def test_actor_figure_default_with_box_fallback(self):
+        """Actors draw the spec's stick FIGURE by default (BNF printed
+        p.244; crop gt-actor.png): head circle + limbs line art in the
+        usage stroke with the name BELOW the figure, no «actor» keyword
+        row (the figure IS the stereotype).  ``actor_style="box"`` keeps
+        the errata-N17 keyword-box alternative; stakeholders stay
+        «stakeholder» boxes in both styles (the spec reserves the figure
+        for actors)."""
 
         model = longeron.loads("""
             package P {
@@ -484,12 +490,25 @@ class TestSvg:
             }
         """)
         svg = render.to_svg(diagrams.structure_diagram(model))
-        assert "\u00abactor\u00bb" in svg
+        assert "\u00abactor\u00bb" not in svg
         assert "\u00abstakeholder\u00bb" in svg
-        assert 'data-qname="P::Deliver::driver"' in svg
-        # the actor's typing edge draws like any usage->def typing
+        figure = svg.split('<g data-qname="P::Deliver::driver">')[1].split("</g>")[0]
+        # geometry single-sourced with the browser symbol (_actor_geometry)
+        _cx, _cy, r, limbs = render._actor_geometry()
+        assert f'r="{r:.1f}"' in figure and f'd="{limbs}"' in figure
+        assert figure.count('stroke="#6a9a48"') == 2  # head + limbs, usage green
+        # the name reads BELOW the figure -- the glyph-node label path
+        top = float(re.search(r'transform="translate\([\d.]+,([\d.]+)\)"', figure).group(1))
+        name = re.search(r'<text [^>]*y="([\d.]+)"[^>]*>driver : Person</text>', svg)
+        assert name is not None
+        assert float(name.group(1)) > top + render._ACTOR_HEIGHT
+        # the actor's typing edge still draws like any usage->def typing
         typed = svg.split('data-edge="P::Deliver::driver-&gt;P::Person"')[1].split("</g>")[0]
         assert "hollow-colon" in typed
+        # the keyword-box alternative (errata N17) stays a kwarg away
+        boxed = render.to_svg(diagrams.structure_diagram(model, actor_style="box"))
+        assert "\u00abactor\u00bb" in boxed
+        assert '<rect data-qname="P::Deliver::driver"' in boxed
 
     def test_swimlanes_draw_dashed_performer_lanes(self):
         """Perform Actions Swimlanes (spec printed p.90): lanes=... adds

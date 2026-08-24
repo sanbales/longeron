@@ -89,6 +89,11 @@ _NODE_STYLES: dict[str, dict[str, str]] = {
     # "Perform Actions Swimlanes" (spec printed p.90, BNF pp.231-232):
     # dashed-boundary «performer» lane containers in the action view
     "sysml-lane": {"fill": "#ffffff", "stroke": "#888888", "rx": "8", "stroke-dasharray": "4 3"},
+    # actor usages in the spec's FIGURE form (BNF printed p.244; crop
+    # gt-actor.png): the stick figure is line art in the usage-family
+    # green -- an actor IS a usage -- with the name below; the «actor»
+    # keyword box stays available via structure_diagram(actor_style="box")
+    "sysml-actor": {"fill": "#ffffff", "stroke": "#6a9a48", "shape": "actor"},
 }
 
 #: fixed-size glyph nodes: no title box, labels hang below the glyph
@@ -100,6 +105,7 @@ _GLYPH_NODE_CLASSES = (
     "sysml-terminate",
     "sysml-junction",
     "sysml-connjunction",
+    "sysml-actor",
 )
 
 _EDGE_STYLES: dict[str, dict[str, str]] = {
@@ -308,6 +314,11 @@ _NOTE_FOLD = 10.0
 #: the package box, flush with its top edge
 _TAB_WIDTH, _TAB_HEIGHT = 30.0, 8.0
 
+#: actor stick figure (spec BNF printed p.244; crop gt-actor.png):
+#: bounding box of the figure itself (the name label hangs below);
+#: proportions measured off the spec crop -- width:height = 0.45
+_ACTOR_WIDTH, _ACTOR_HEIGHT = 18.0, 40.0
+
 #: portion-membership ball (filled, open-V notch on the line side)
 _BALL_RADIUS = 5.5
 _BALL_MOUTH_DEG = 40.0  # notch half-angle
@@ -469,6 +480,35 @@ def _note_path_d(width: float, height: float) -> str:
     fold = width - pts[1][0]
     outline = " L ".join(f"{px:g},{py:g}" for px, py in pts)
     return f"M {outline} Z M {width - fold:g},0 L {width - fold:g},{fold:g} L {width:g},{fold:g}"
+
+
+def _actor_geometry(
+    width: float = _ACTOR_WIDTH, height: float = _ACTOR_HEIGHT
+) -> tuple[float, float, float, str]:
+    """The actor stick figure (spec BNF printed p.244; crop gt-actor.png):
+    head-circle parameters ``(cx, cy, r)`` plus the limbs path ``d`` (body,
+    arms, legs), in the figure's local space.
+
+    Proportions are measured off the spec crop: head center at 12.5% of
+    the height with an 11.4% radius, arms crossing at 34%, crotch at
+    68%, arms and leg tips spanning the full width.  Single source for
+    BOTH pipelines: the browser symbol body
+    (:func:`longeron.diagrams._actor_svg`) and the headless ``actor``
+    shape branch draw exactly this geometry.
+    """
+
+    cx = width / 2
+    cy = 0.125 * height
+    r = 0.114 * height
+    shoulders = cy + r  # the body hangs straight off the head
+    arms = 0.34 * height
+    crotch = 0.68 * height
+    limbs = (
+        f"M {cx:g},{shoulders:g} L {cx:g},{crotch:g} "
+        f"M 0,{arms:g} L {width:g},{arms:g} "
+        f"M 0,{height:g} L {cx:g},{crotch:g} L {width:g},{height:g}"
+    )
+    return cx, cy, r, limbs
 
 
 def _port_arrow_d(direction: str, size: float = _PORT_SIZE, side: str = "WEST") -> str:
@@ -1272,6 +1312,20 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                     f'<path d="M {cx - k:.1f} {cy - k:.1f} L {cx + k:.1f} {cy + k:.1f} '
                     f'M {cx + k:.1f} {cy - k:.1f} L {cx - k:.1f} {cy + k:.1f}" '
                     f'fill="none" stroke="{style["stroke"]}" stroke-width="1.2"/></g>'
+                )
+            elif shape == "actor":
+                # actor stick figure (spec BNF printed p.244; crop
+                # gt-actor.png): unfilled head circle + line-art limbs, in
+                # the usage-family stroke; the name label hangs below (the
+                # glyph-node label path).  Geometry single-sourced with the
+                # browser symbol via _actor_geometry.
+                cx, cy, r, limbs = _actor_geometry(width, height)
+                parts.append(
+                    f"<g {qname}>"
+                    f'<circle cx="{x + cx:.1f}" cy="{y + cy:.1f}" r="{r:.1f}" '
+                    f'fill="{style["fill"]}" stroke="{style["stroke"]}"/>'
+                    f'<path d="{limbs}" transform="translate({x:.1f},{y:.1f})" '
+                    f'fill="none" stroke="{style["stroke"]}"/></g>'
                 )
             elif shape == "note":
                 # comment/doc note: rectangle with the top-right corner

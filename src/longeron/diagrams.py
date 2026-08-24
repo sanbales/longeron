@@ -27,7 +27,9 @@ environments install it automatically).  Three views, one dispatcher:
   usages -- the reference-subsetting head into the «requirement» box;
   aliases draw a hollow circle at the referencing end, portion usages
   (timeslice/snapshot) a filled notched ball at their individual, and
-  actors/stakeholders render as «actor»/«stakeholder» keyword boxes.
+  actors render as the spec's stick figure (name below; the
+  ``actor_style="box"`` kwarg keeps the «actor» keyword-box alternative)
+  while stakeholders render as «stakeholder» keyword boxes.
   Packages carry the spec's folder tab.
   ``membership="edges"`` swaps package nesting for the spec's ALTERNATIVE
   owned-membership presentation: members as sibling nodes, solid edges
@@ -100,6 +102,8 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
 from . import model as M
 from .interpreter import Interpreter, _succession_plan
 from .render import (
+    _ACTOR_HEIGHT,
+    _ACTOR_WIDTH,
     _ADORN_GAP,
     _BADGE_HEIGHT,
     _BADGE_INSET_X,
@@ -140,6 +144,7 @@ from .render import (
     _TICK_HALF,
     _V_HALF,
     _V_LENGTH,
+    _actor_geometry,
     _badge_points,
     _edge_end,
     _edge_start,
@@ -166,6 +171,31 @@ _KIND_STEREOTYPES = {
     "satisfy": "satisfy requirement",
 }
 
+#: the node-attached ADORNMENT contract (hover/selection parity, §2.0).
+#:
+#: Every glyph that rides a node -- the package folder tab, the accept/
+#: send action badges, boundary port squares, proxy dots, and any future
+#: adornment -- is constructed through ONE helper (:func:`_adornment_label`
+#: / :func:`_adornment_port`), which stamps the ``sysml-adornment`` marker
+#: class, and is styled by ONE derived rule family (see ``_sysml_style``)
+#: keyed on that class, so the node and its adornments behave as a single
+#: shape in every interactive state BY CONSTRUCTION.  A new adornment
+#: added without the helper fails the contract test
+#: (tests/test_diagrams.py) immediately.
+#:
+#: This table registers each ICON-LABEL adornment's symbol class with its
+#: two per-kind parameters: the FAMILY (``hollow`` glyphs carry an outline
+#: whose geometry binds the ``--lgn-adorn-stroke-width`` bridge, so their
+#: weight follows the box rect through every state; ``filled`` bodies
+#: have no outline -- they recolor only, consistent with the box, whose
+#: rect alone thickens) and the RESTING ink.  State colors/widths all
+#: come from the theme variables -- never restated per kind.
+_ADORNMENTS: dict[str, tuple[str, str]] = {
+    "package-tab": ("hollow", _NODE_STYLES["sysml-package"]["stroke"]),
+    "accept-badge": ("filled", "#333333"),
+    "send-badge": ("filled", "#333333"),
+}
+
 
 def _sysml_style() -> dict[str, dict[str, str]]:
     """Build the browser stylesheet from the shared palette.
@@ -178,6 +208,8 @@ def _sysml_style() -> dict[str, dict[str, str]]:
 
     style: dict[str, dict[str, str]] = {" rect": {"transition": "all 0.2s"}}
     selected = "var(--jp-elk-color-selected)"
+    hover = "var(--jp-elk-stroke-hover)"
+    hover_selected = "var(--jp-elk-stroke-hover-selected)"
     for css, node_style in _NODE_STYLES.items():
         attrs = {key: value for key, value in node_style.items() if key != "shape"}
         shape = node_style.get("shape")
@@ -278,40 +310,42 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         style[f" .{css} > .elkarrow"] = arrow_style
         if start_form == "filled-diamond" or end_form == "filled":
             style[f" .elkedge.{css}.selected > .elkarrow"] = {"fill": selected}
-    # accept/send action badges: filled tags riding as icon labels.  The
-    # badge geometry is <use> shadow content whose body is painted in
-    # currentColor (CSS cannot select INTO a use-shadow, and an explicit
-    # fill attribute there would beat any rule on the <use>): these rules
-    # bind `color` -- which DOES inherit into the shadow -- so the badge
-    # is dark ink normally and follows the selection color when its box
-    # is selected (filled family, selection contract rule 3; the badge
-    # has no outline, so there is no width to bump -- consistent with the
-    # box, whose rect alone thickens).
-    for badge in ("accept-badge", "send-badge"):
-        style[f" .{badge}"] = {"color": "#333333"}
-        style[f" .elklabel.{badge}.selected"] = {"color": selected}
-    # the package folder tab (spec printed p.24): a fixed-size icon label
-    # riding the box's top-left.  The tab renders as <use> shadow content,
-    # where the theme's `.elklabel` rule (label-color fill, stroke-width 0)
-    # beats any class-based fill/stroke we could put on the <use> -- so the
-    # symbol geometry carries the package palette as EXPLICIT attributes
-    # (like the endpoint symbols) with the outline in currentColor; these
-    # rules bind currentColor so selection recolors the tab WITH the box.
-    # The outline WIDTH must follow selection too (the theme bumps the
-    # selected rect from --jp-elk-stroke-width to
-    # --jp-elk-stroke-width-selected, and box + tab must thicken as ONE
-    # folder silhouette).  stroke-width itself cannot reach the shadow
-    # geometry (the tab's own attribute would win), so the geometry binds
-    # it via a CSS CUSTOM PROPERTY -- custom properties inherit into
-    # use-shadow content -- which these rules retarget per state.
-    style[" .package-tab"] = {
-        "color": _NODE_STYLES["sysml-package"]["stroke"],
-        "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width)",
-    }
-    style[" .elklabel.package-tab.selected"] = {
+    # -- the node-attached adornment contract (single rule family) --------
+    # Adornment geometry is <use> shadow content: CSS cannot select INTO a
+    # use-shadow, and explicit attributes there beat any rule on the <use>
+    # -- so paints bridge through the two channels that DO inherit into
+    # the shadow: currentColor (bound via `color`) and the
+    # --lgn-adorn-stroke-width custom property (hollow-family outlines
+    # bind it inline; filled bodies have no width to bump).  The states
+    # mirror the theme's rect rules on the SAME variables, so box and
+    # adornments can never move apart:
+    # * rest -- per-kind ink (the _ADORNMENTS table), base width;
+    # * node selected -- the select tool's decorate() stamps .selected on
+    #   every child vnode, the tab/badge <use> included: selection color,
+    #   selected width;
+    # * node hovered -- hover feedback lands ONLY on the node's own rect
+    #   (.elknode.mouseover; labels are never decorated), but the rect is
+    #   the elkchildren group's PRECEDING SIBLING, so the ~ combinator
+    #   reaches the adornments (direct children of .elkchildren) with the
+    #   hover color and width -- without any decoration at all;
+    # * hovered while selected -- hover-selected color, hover width,
+    #   exactly like the rect.
+    style[" .sysml-adornment"] = {"--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width)"}
+    style[" .elklabel.sysml-adornment.selected"] = {
         "color": selected,
-        "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width-selected)",
+        "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-selected)",
     }
+    style[" .elknode.mouseover ~ .elkchildren > .sysml-adornment"] = {
+        "color": hover,
+        "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-hover)",
+    }
+    style[" .elknode.selected.mouseover ~ .elkchildren > .sysml-adornment"] = {
+        "color": hover_selected,
+        "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-hover)",
+    }
+    # the resting ink is the ONE per-kind parameter (see _ADORNMENTS)
+    for adorn_css, (_family, rest_color) in _ADORNMENTS.items():
+        style[f" .{adorn_css}"] = {"color": rest_color}
     # AFTER the per-kind rules: same specificity, so source order decides
     style[" .sysml-edge-guarded > path"] = {"stroke-dasharray": _GUARDED_DASHARRAY}
     style.update(
@@ -407,6 +441,55 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             "fill": selected,
             "stroke": selected,
             "stroke-width": "var(--jp-elk-stroke-width)",
+        }
+    # ports join the adornment contract for NODE states (the square
+    # straddles the border: one silhouette with the box).  Port elements
+    # carry the sysml-adornment marker (single construction site,
+    # _adornment_port) and, unlike labels, sprotty never stamps the node's
+    # .selected on them (ports are selectable in their own right) -- so
+    # BOTH selection and hover reach them through the sibling combinator.
+    # Node states recolor the square's border and its self-painted
+    # currentColor geometry (direction arrows, proxy dots); the width
+    # stays PINNED in every state (the port contract above), and a port
+    # selected in its OWN right keeps the fill-flip (§2.0 rule 4) -- its
+    # arrow stays white against the filled body.
+    for state, state_color in (
+        ("selected", selected),
+        ("mouseover", hover),
+        ("selected.mouseover", hover_selected),
+    ):
+        style[f" .elknode.{state} ~ .elkchildren > .sysml-adornment .elkport"] = {
+            "stroke": state_color,
+            "color": state_color,
+        }
+        style[f" .elknode.{state} ~ .elkchildren > .sysml-adornment .elkport.selected"] = {
+            "color": "#ffffff",
+        }
+    # actor stick figures (spec BNF printed p.244; crop gt-actor.png): the
+    # figure is the node BODY -- real DOM inside the mark <g
+    # class="elknode">, not use-shadow content -- so plain descendant
+    # rules bind it to the SAME theme variables as the box family: the
+    # silhouette recolors and thickens with selection and hover exactly
+    # like a rect (the name label below follows the ordinary label
+    # contract).  Hover overriding selection, and hover-while-selected
+    # overriding both, mirrors the theme's rect cascade (source order for
+    # the equal-specificity selected/mouseover pair, specificity for the
+    # combined state).
+    actor_palette = _NODE_STYLES["sysml-actor"]
+    style[" .sysml-actor .glyph-actor"] = {
+        "fill": "none",
+        "stroke": actor_palette["stroke"],
+        "stroke-width": "var(--jp-elk-stroke-width)",
+    }
+    style[" .sysml-actor .glyph-actor-head"] = {"fill": actor_palette["fill"]}
+    for state, state_color, state_width in (
+        ("selected", selected, "var(--jp-elk-stroke-width-selected)"),
+        ("mouseover", hover, "var(--jp-elk-stroke-width-hover)"),
+        ("selected.mouseover", hover_selected, "var(--jp-elk-stroke-width-hover)"),
+    ):
+        style[f" .sysml-actor > .elknode.{state} .glyph-actor"] = {
+            "stroke": state_color,
+            "stroke-width": state_width,
         }
     return style
 
@@ -624,13 +707,16 @@ def _glyph_node(
     width: float,
     height: float,
     shape: Any | None = None,
+    label_css: str = "sysml-stereotype",
 ) -> Node:
     """A fixed-size notation glyph (marker dot, control bar/rhombus,
-    bullseye, terminate circle): no title box, the label hangs below."""
+    bullseye, terminate circle, actor figure): no title box, the label
+    hangs below (``label_css`` picks its typography -- markers annotate
+    in the stereotype face, the actor's NAME reads in the title face)."""
 
     labels = []
     if text:
-        label = _label(text, "sysml-stereotype")
+        label = _label(text, label_css)
         # ipyelk's Loader.apply_layout_defaults injects an INSIDE placement
         # onto every label without layoutOptions, and the per-LABEL value
         # overrides the node-level option -- so the outside placement must
@@ -682,11 +768,94 @@ def _terminate_svg() -> str:
     )
 
 
+def _actor_svg() -> str:
+    """The actor stick figure (spec BNF printed p.244; crop gt-actor.png):
+    unfilled head circle + line-art body/arms/legs, geometry single-sourced
+    with the headless renderer via :func:`longeron.render._actor_geometry`.
+
+    The figure is the node BODY (an SVG-shape node, real DOM inside the
+    ``<g class="elknode">`` mark -- NOT use-shadow content), so the
+    ``glyph-actor`` classes let the derived stylesheet drive the paints
+    directly: the silhouette recolors and thickens with selection and
+    hover on the SAME theme variables as the box rects.  The attributes
+    here are only the standalone-viewing fallback (any CSS rule beats
+    presentation attributes)."""
+
+    stroke = _NODE_STYLES["sysml-actor"]["stroke"]
+    cx, cy, r, limbs = _actor_geometry()
+    return (
+        f'<circle class="glyph-actor glyph-actor-head" cx="{cx:g}" cy="{cy:g}" r="{r:g}" '
+        f'fill="#ffffff" stroke="{stroke}"/>'
+        f'<path class="glyph-actor" d="{limbs}" fill="none" stroke="{stroke}"/>'
+    )
+
+
+def _actor_figure_node(element: M.Usage) -> Node:
+    """An actor usage in the spec's FIGURE form (BNF printed p.244): the
+    stick figure with the name below it -- the «actor» stereotype is
+    omitted because the figure IS the stereotype.  Compartments are a box
+    presentation; ``structure_diagram(actor_style="box")`` keeps the
+    keyword-box alternative for actors that need them."""
+
+    return _glyph_node(
+        element,
+        _usage_title(element),
+        "sysml-actor",
+        _ACTOR_WIDTH,
+        _ACTOR_HEIGHT,
+        shape=SVG(use=_actor_svg()),
+        label_css="",
+    )
+
+
 def _label(text: str, css: str = "") -> Label:
     label = Label(text=text)
     if css:
         label.properties = LabelProperties(cssClasses=css)
     return label
+
+
+def _adornment_label(css: str, use: str, width: float, height: float, text: str = "") -> Label:
+    """The SINGLE construction site for node-attached ICON adornments (the
+    package folder tab, accept/send badges, and any future glyph riding a
+    node): stamps the ``sysml-adornment`` contract marker alongside the
+    kind-specific class, so the derived stylesheet's one adornment rule
+    family (see ``_sysml_style``) reaches every adornment -- node + glyphs
+    behave as ONE shape for selection and hover by construction.  The
+    contract test (tests/test_diagrams.py) fails any icon label that
+    bypasses this helper."""
+
+    label = Label(text=text)
+    label.properties = LabelProperties(
+        cssClasses=f"sysml-adornment {css}",
+        shape=Icon(use=use, width=width, height=height),
+    )
+    return label
+
+
+def _adornment_port(
+    css: str,
+    *,
+    width: float,
+    height: float,
+    layout_options: dict[str, str] | None = None,
+    shape: PortShape | None = None,
+) -> Port:
+    """The SINGLE construction site for DRAWN ports (boundary squares,
+    proxy dots): stamps the ``sysml-adornment`` contract marker so the
+    node-state rules (selection/hover recolor) reach the square exactly
+    like every other adornment.  Invisible convergence anchors carry no
+    cssClasses and stay outside the contract (they never draw)."""
+
+    properties = PortProperties(cssClasses=f"sysml-adornment {css}")
+    if shape is not None:
+        properties.shape = shape
+    return Port(
+        width=width,
+        height=height,
+        layoutOptions=layout_options or {},
+        properties=properties,
+    )
 
 
 def _node(element: M.Element | None, title: str, css: str, stereotype: str | None = None) -> Node:
@@ -1054,21 +1223,22 @@ def _tab_symbol(identifier: str) -> Symbol:
     <use> shadow content, and the theme's ``.elklabel`` rule (label-color
     fill, stroke-width 0) would otherwise paint it as a borderless gray
     block.  The body takes the package fill directly; the outline is
-    currentColor, bound to the package stroke by the ``.package-tab``
-    rule -- and to the selection color when selected -- so the tab always
-    recolors WITH the box border.  The outline WIDTH binds through the
-    ``--lgn-tab-stroke-width`` custom property (an inline ``var()``
-    style: custom properties inherit into use-shadow content, where a
-    plain stroke-width attribute would win over anything on the <use>),
-    so selecting the package thickens tab and rect together -- one
-    silhouette in every state; the ``1`` fallback keeps the base weight
-    wherever the scoped rules do not reach."""
+    currentColor, bound to the package stroke by the adornment contract's
+    resting rule -- and to the selection/hover colors per state -- so the
+    tab always recolors WITH the box border.  The outline WIDTH binds
+    through the ``--lgn-adorn-stroke-width`` custom property (an inline
+    ``var()`` style: custom properties inherit into use-shadow content,
+    where a plain stroke-width attribute would win over anything on the
+    <use>) -- the HOLLOW-family half of the adornment contract (see
+    ``_ADORNMENTS``) -- so the package thickens tab and rect together,
+    one silhouette in every state; the ``1`` fallback keeps the base
+    weight wherever the scoped rules do not reach."""
 
     style = _NODE_STYLES["sysml-package"]
     svg = (
         f'<path d="M 0,0 L {_TAB_WIDTH:g},0 L {_TAB_WIDTH:g},{_TAB_HEIGHT:g} '
         f'L 0,{_TAB_HEIGHT:g} Z" fill="{style["fill"]}" stroke="currentColor" '
-        f'stroke-width="1" style="stroke-width: var(--lgn-tab-stroke-width, 1)"/>'
+        f'stroke-width="1" style="stroke-width: var(--lgn-adorn-stroke-width, 1)"/>'
     )
     return Symbol(
         identifier=identifier,
@@ -1232,6 +1402,7 @@ def structure_diagram(
     composition: str = "defs",
     membership: str = "nested",
     annotations: bool = False,
+    actor_style: str = "figure",
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
@@ -1276,6 +1447,14 @@ def structure_diagram(
     each annotated element (spec printed pp.20-21) -- and «@Type» /
     «#keyword» metadata adornments on annotated nodes.
 
+    ``actor_style="figure"`` (the default) draws actor usages as the
+    spec's stick figure (BNF printed p.244) -- head, body, arms, legs in
+    the usage palette, name below the figure, no «actor» stereotype (the
+    figure IS the stereotype); ``actor_style="box"`` keeps the «actor»
+    keyword-box alternative (errata N17), which also shows compartments.
+    Stakeholders always draw the «stakeholder» box -- the spec reserves
+    the figure for actors.
+
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
 
@@ -1289,8 +1468,14 @@ def structure_diagram(
 
     if membership not in ("nested", "edges"):
         raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
+    if actor_style not in ("figure", "box"):
+        raise ValueError(f"actor_style must be 'figure' or 'box', not {actor_style!r}")
     builder = _StructureBuilder(
-        element, show_attributes, composition=composition, membership=membership
+        element,
+        show_attributes,
+        composition=composition,
+        membership=membership,
+        actor_style=actor_style,
     )
     root = builder.build()
     if show_relationships:
@@ -1372,11 +1557,13 @@ class _StructureBuilder:
         show_attributes: bool,
         composition: str = "defs",
         membership: str = "nested",
+        actor_style: str = "figure",
     ):
         self.element = element
         self.show_attributes = show_attributes
         self.composition = composition
         self.membership = membership
+        self.actor_style = actor_style
         owner: M.Element = element
         while owner.owner is not None:
             owner = owner.owner
@@ -1430,6 +1617,19 @@ class _StructureBuilder:
                 stereotype = f"individual {stereotype}".strip()
             node = _node(element, element.label, "sysml-definition", f"{stereotype} def".strip())
             self._fill_features(node, element)
+        elif (
+            isinstance(element, M.Usage)
+            and element.kind == "actor"
+            and self.actor_style == "figure"
+        ):
+            # the spec's stick-figure actor (BNF printed p.244; crop
+            # gt-actor.png), the DEFAULT presentation: name below the
+            # figure, «actor» stereotype omitted (the figure IS the
+            # stereotype).  actor_style="box" keeps the keyword-box
+            # alternative (errata N17) -- the branch below.  Stakeholders
+            # always draw the box (the spec reserves the figure for
+            # actors).
+            node = _actor_figure_node(element)
         elif isinstance(element, M.Usage) and element.kind in (
             "part",
             "item",
@@ -1517,11 +1717,7 @@ class _StructureBuilder:
         single-space text keeps ELK's label placement engaged (it skips
         empty labels); nothing renders it."""
 
-        tab = Label(text=" ")
-        tab.properties = LabelProperties(
-            cssClasses="sysml-tab",
-            shape=Icon(use="package-tab", width=_TAB_WIDTH, height=_TAB_HEIGHT),
-        )
+        tab = _adornment_label("sysml-tab", "package-tab", _TAB_WIDTH, _TAB_HEIGHT, text=" ")
         tab.layoutOptions = {"nodeLabels.placement": "H_LEFT V_TOP OUTSIDE"}
         node.labels.insert(0, tab)
         # label-node spacing applies per hierarchy level: restate it for
@@ -1578,11 +1774,11 @@ class _StructureBuilder:
 
         direction = self._port_direction(element)
         css = "sysml-port" + (f" sysml-port-{direction}" if direction else "")
-        port = Port(
+        port = _adornment_port(
+            css,
             width=_PORT_SIZE,
             height=_PORT_SIZE,
-            layoutOptions={"elk.port.borderOffset": f"{-_PORT_SIZE / 2:g}"},
-            properties=PortProperties(cssClasses=css),
+            layout_options={"elk.port.borderOffset": f"{-_PORT_SIZE / 2:g}"},
         )
         # the direction arrow's SYMBOL is side-dependent (it orients
         # relative to the node interior), so _finalize_ports assigns it
@@ -1939,13 +2135,12 @@ class _StructureBuilder:
         existing = self._proxies.get(key)
         if existing is not None:
             return existing
-        port = Port(
+        port = _adornment_port(
+            "sysml-port-proxy",
             width=_PROXY_SIZE,
             height=_PROXY_SIZE,
-            layoutOptions={"elk.port.borderOffset": f"{-_PROXY_SIZE / 2:g}"},
-            properties=PortProperties(
-                cssClasses="sysml-port-proxy", shape=PortShape(use="port-proxy")
-            ),
+            layout_options={"elk.port.borderOffset": f"{-_PROXY_SIZE / 2:g}"},
+            shape=PortShape(use="port-proxy"),
         )
         if owner.layoutOptions.get("elk.portConstraints") == "FIXED_SIDE":
             port.layoutOptions["elk.port.side"] = "EAST"
@@ -2703,10 +2898,8 @@ def _badged_step_box(node: Node, form: str) -> Node:
         label.layoutOptions = {"nodeLabels.placement": ""}  # pinned
         cursor += h
     height = max(cursor + 5.0, 44.0)
-    badge = Label(text="")
-    badge.properties = LabelProperties(
-        cssClasses=f"sysml-badge sysml-badge-{form}",
-        shape=Icon(use=f"{form}-badge", width=_BADGE_WIDTH, height=_BADGE_HEIGHT),
+    badge = _adornment_label(
+        f"sysml-badge sysml-badge-{form}", f"{form}-badge", _BADGE_WIDTH, _BADGE_HEIGHT
     )
     badge.x, badge.y = _BADGE_INSET_X, _BADGE_INSET_Y
     badge.layoutOptions = {"nodeLabels.placement": ""}

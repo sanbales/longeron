@@ -85,6 +85,16 @@ class TestPaletteSingleSource:
                 derived = diagrams.SYSML_STYLE[f" .{css} > path"]
                 assert derived["fill"] == attrs["fill"]
                 assert derived["stroke"] == attrs["stroke"]
+            elif shape == "actor":  # stick figure: head circle + limbs path
+                figure = diagrams.SYSML_STYLE[f" .{css} .glyph-actor"]
+                assert figure["stroke"] == attrs["stroke"]
+                head = diagrams.SYSML_STYLE[f" .{css} .glyph-actor-head"]
+                assert head["fill"] == attrs["fill"]
+                # the figure is the node BODY: selection recolors AND
+                # thickens it on the same theme variables as the rects
+                state = diagrams.SYSML_STYLE[f" .{css} > .elknode.selected .glyph-actor"]
+                assert state["stroke"] == selected
+                assert state["stroke-width"] == "var(--jp-elk-stroke-width-selected)"
             else:  # bullseye / circle-x: circle ring + inner glyph
                 assert shape in ("bullseye", "circle-x")
                 ring = diagrams.SYSML_STYLE[f" .{css} .glyph-ring"]
@@ -276,18 +286,20 @@ class TestPaletteSingleSource:
         # (<use> shadow content -- the theme's .elklabel rule would
         # otherwise win), with the outline in currentColor BOUND to the
         # package stroke here, so selection recolors the tab with the box;
-        # the outline WIDTH binds through a custom property (which inherits
-        # into the shadow) to the SAME theme width variables as the rect,
-        # so selecting thickens tab and box as one folder silhouette
-        tab = diagrams.SYSML_STYLE[" .package-tab"]
-        assert tab == {
+        # the outline WIDTH binds through the adornment contract's custom
+        # property (which inherits into the shadow) to the SAME theme
+        # width variables as the rect, so the folder thickens as one
+        # silhouette in every state (see test_diagrams's adornment tests)
+        assert diagrams.SYSML_STYLE[" .package-tab"] == {
             "color": render._NODE_STYLES["sysml-package"]["stroke"],
-            "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width)",
         }
-        selected_tab = diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]
-        assert selected_tab == {
+        assert diagrams.SYSML_STYLE[" .sysml-adornment"] == {
+            "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width)",
+        }
+        selected_adorn = diagrams.SYSML_STYLE[" .elklabel.sysml-adornment.selected"]
+        assert selected_adorn == {
             "color": selected,
-            "--lgn-tab-stroke-width": "var(--jp-elk-stroke-width-selected)",
+            "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-selected)",
         }
 
     def test_label_kinds_keep_their_measured_font_sizes_in_the_browser(self):
@@ -382,6 +394,33 @@ class TestLabextensionServingSync:
         assert maps, "the vendored labextension build is missing"
         text = maps[-1].read_text(encoding="utf-8")
         assert "routeEndAngle" in text and "coveredRoutePoints" in text
+
+
+class TestVendoredHoverAttribution:
+    """Hover parity direction (b): hovering a node's LABEL (the package
+    folder tab, a badge, the title text) must highlight the owning node.
+    ipyelk's DragAwareHoverMouseListener sent HoverFeedbackAction with the
+    RAW event target's id -- for labels that is the label element, which
+    has no hoverFeedbackFeature, so sprotty's HoverFeedbackCommand
+    silently dropped the action (maintainer repro: hovering the tab gave
+    no feedback at all).  The vendored listener now resolves the nearest
+    HOVERABLE ancestor -- exactly how sprotty core's HoverMouseListener
+    and ipyelk's own select tool attribute their targets -- so hover and
+    selection agree on what a shape is.  (Source-level guard; the shipped
+    bundle picks the fix up at the next vendor rebuild + sync.)"""
+
+    LISTENER = (
+        Path(__file__).resolve().parent.parent
+        / "vendor/ipyelk/js/tools/draw-aware-mouse-listener.ts"
+    )
+
+    def test_hover_feedback_targets_the_nearest_hoverable_ancestor(self):
+        source = self.LISTENER.read_text(encoding="utf-8")
+        # both directions of the hover pair resolve through the feature
+        # walk; neither ships the raw target id any more
+        assert source.count("findParentByFeature(target, isHoverable)") == 2
+        assert "mouseoverElement: hoverTarget.id" in source
+        assert "mouseoverElement: target.id" not in source
 
 
 class TestClientValidateStrictImports:

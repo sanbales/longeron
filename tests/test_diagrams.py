@@ -32,6 +32,40 @@ def _walk(node):
         yield from _walk(child)
 
 
+def _assert_adornment_contract(widget):
+    """Walk EVERYTHING a built widget emits and assert the node-adornment
+    contract (see TestAdornmentContract): every node-attached ICON label
+    and every drawn port carries the ``sysml-adornment`` marker, icon
+    kinds are registered in diagrams._ADORNMENTS, and hollow-family
+    symbols bind the shared stroke-width bridge.  Returns the set of
+    ``(kind, flavor)`` pairs discovered, so callers can assert coverage."""
+
+    found = set()
+    for node in _walk(widget.source.value):
+        for label in node.labels or []:
+            shape = label.properties.shape
+            if type(shape).__name__ != "Icon":
+                continue  # text labels are not adornments
+            css = label.properties.cssClasses or ""
+            assert "sysml-adornment" in css, (
+                f"icon label {shape.use!r} on {node.id!r} skipped _adornment_label"
+            )
+            assert shape.use in diagrams._ADORNMENTS, (
+                f"icon adornment {shape.use!r} is not registered in diagrams._ADORNMENTS"
+            )
+            found.add((shape.use, "label"))
+        for port in getattr(node, "ports", None) or []:
+            css = port.properties.cssClasses or ""
+            if not css:
+                continue  # invisible convergence anchors never draw
+            assert "sysml-adornment" in css, (
+                f"drawn port {port.id!r} on {node.id!r} skipped _adornment_port"
+            )
+            kind = "sysml-port-proxy" if "sysml-port-proxy" in css else "sysml-port"
+            found.add((kind, "port"))
+    return found
+
+
 @pytest.fixture(scope="module")
 def drone_model():
     return longeron.load("examples/drone.sysml")
@@ -538,7 +572,15 @@ class TestStructure:
         rover = next(n for n in _walk(widget.source.value) if n.id == "P::Rover")
         assert rover.labels[0].text == "\u00abindividual part def\u00bb"
 
-    def test_actor_and_stakeholder_boxes(self):
+    def test_actor_default_is_the_stick_figure(self):
+        """Actor usages draw the spec's stick figure by DEFAULT (BNF
+        printed p.244; crop gt-actor.png): a fixed-size SVG-shape node in
+        the usage palette, name below the figure, «actor» stereotype
+        omitted -- the figure IS the stereotype.  Geometry single-sourced
+        with the headless renderer via render._actor_geometry."""
+
+        from longeron import render
+
         model = longeron.loads("""
             package P {
                 part def Person;
@@ -549,8 +591,56 @@ class TestStructure:
         """)
         widget = diagrams.structure_diagram(model)
         driver = next(n for n in _walk(widget.source.value) if n.id == "P::Deliver::driver")
+        assert driver.properties.cssClasses == "sysml-actor"
+        assert (driver.width, driver.height) == (render._ACTOR_WIDTH, render._ACTOR_HEIGHT)
+        use = driver.properties.shape.use
+        cx, cy, _r, limbs = render._actor_geometry()
+        assert f'<circle class="glyph-actor glyph-actor-head" cx="{cx:g}" cy="{cy:g}"' in use
+        assert f'd="{limbs}"' in use
+        # ONE label: the name below the figure (no «actor» row)
+        assert [label.text for label in driver.labels] == ["driver : Person"]
+        label = driver.labels[0]
+        assert not label.properties.cssClasses  # title typography, not stereotype
+        assert label.layoutOptions["nodeLabels.placement"] == "OUTSIDE H_CENTER V_BOTTOM"
+        # the figure joins the box selection/hover contract: state rules
+        # bind the SAME theme variables as the rects
+        assert diagrams.SYSML_STYLE[" .sysml-actor .glyph-actor"]["stroke-width"] == (
+            "var(--jp-elk-stroke-width)"
+        )
+        for state, width in (
+            ("selected", "var(--jp-elk-stroke-width-selected)"),
+            ("mouseover", "var(--jp-elk-stroke-width-hover)"),
+            ("selected.mouseover", "var(--jp-elk-stroke-width-hover)"),
+        ):
+            rule = diagrams.SYSML_STYLE[f" .sysml-actor > .elknode.{state} .glyph-actor"]
+            assert rule["stroke-width"] == width
+
+    def test_actor_box_form_and_stakeholder_boxes(self):
+        """actor_style="box" keeps the «actor» keyword box (errata N17);
+        stakeholders ALWAYS draw the «stakeholder» box -- the spec
+        reserves the figure for actors."""
+
+        model = longeron.loads("""
+            package P {
+                part def Person;
+                use case def Deliver {
+                    actor driver : Person;
+                }
+                requirement def Comfort {
+                    stakeholder owner : Person;
+                }
+            }
+        """)
+        widget = diagrams.structure_diagram(model, actor_style="box")
+        driver = next(n for n in _walk(widget.source.value) if n.id == "P::Deliver::driver")
         assert driver.labels[0].text == "\u00abactor\u00bb"
         assert "sysml-usage" in driver.properties.cssClasses
+        widget = diagrams.structure_diagram(model)  # figure default
+        owner = next(n for n in _walk(widget.source.value) if n.id == "P::Comfort::owner")
+        assert owner.labels[0].text == "\u00abstakeholder\u00bb"
+        assert "sysml-usage" in owner.properties.cssClasses
+        with pytest.raises(ValueError, match="actor_style"):
+            diagrams.structure_diagram(model, actor_style="stick")
 
     def test_relationships_can_be_disabled(self, drone_model):
         widget = diagrams.structure_diagram(drone_model, show_relationships=False)
@@ -774,18 +864,20 @@ class TestPortNotation:
         part2 = next(n for n in _walk(root) if n.id == "P::part0::part2")
         pc = {port.id: port for port in part2.ports}["P::part0::part2::pc"]
         assert pc.labels[0].text == "pc : ~Pin"
-        assert pc.properties.cssClasses == "sysml-port sysml-port-out"  # in, flipped
+        # in, flipped (+ the adornment contract marker, like every drawn port)
+        assert pc.properties.cssClasses == "sysml-adornment sysml-port sysml-port-out"
         assert pc.properties.shape.use == "port-out-east"  # arrow leaves the node
         pd = {port.id: port for port in part2.ports}["P::part0::part2::pd"]
         assert pd.labels[0].text == "pd : ~Pout"
-        assert pd.properties.cssClasses == "sysml-port sysml-port-in"  # out, flipped
+        # out, flipped
+        assert pd.properties.cssClasses == "sysml-adornment sysml-port sysml-port-in"
         assert pd.properties.shape.use == "port-in-west"  # arrow enters the node
         assert pd.layoutOptions["elk.port.side"] == "WEST"
 
     def test_plain_squares_draw_no_arrow(self, root):
         part1 = next(n for n in _walk(root) if n.id == "P::part0::part1")
         p4 = {port.id: port for port in part1.ports}["P::part0::part1::p4"]
-        assert p4.properties.cssClasses == "sysml-port"
+        assert p4.properties.cssClasses == "sysml-adornment sysml-port"
         assert p4.properties.shape is None
 
     def test_undirected_ports_keep_free_constraints(self):
@@ -994,6 +1086,153 @@ class TestConnectorNotation:
         assert not any("sysml-edge-allocate" in e.properties.cssClasses for e in root.edges)
 
 
+class TestAdornmentContract:
+    """Round 4, the UNIVERSAL node-adornment mechanism: every glyph that
+    rides a node -- the package folder tab, accept/send badges, boundary
+    port squares, proxy dots, and any future adornment -- is built through
+    ONE construction site (diagrams._adornment_label /
+    diagrams._adornment_port), which stamps the ``sysml-adornment``
+    contract class, and is styled by ONE derived rule family keyed on that
+    class, so hover AND selection treat the node + its adornments as a
+    single shape BY CONSTRUCTION (maintainer: 'I don't want this to be an
+    issue every time we have a new type of node')."""
+
+    @pytest.fixture(scope="class")
+    def contract_widgets(self):
+        """Widgets exercising every adornment construction site the
+        builders have: package tabs, boundary squares (directed, plain,
+        conjugated, nested), proxy dots, accept/send badges -- across the
+        structure view (both membership modes, annotations, both actor
+        styles), the action view, and the state view."""
+
+        structure = longeron.loads("""
+            package Contract {
+                part def Person;
+                port def Pin { in item x : Person; }
+                port def Pout { out item y : Person; }
+                part def Part2 { part part4; }
+                part def Part3 { part part5; }
+                part def Box {
+                    port a : Pin;
+                    port b : Pout;
+                    port c : ~Pin;
+                    port plain;
+                }
+                part box1 : Box;
+                part part1 {
+                    part part2 : Part2;
+                    part part3 : Part3;
+                    connect part2.part4 to part3.part5;
+                }
+                use case def Deliver { actor driver : Person; }
+                requirement def Comfort { stakeholder owner : Person; }
+                comment about Person /* annotated */
+            }
+        """)
+        behavior = longeron.loads("""
+            package B {
+                item def Go;
+                action def Chat {
+                    action rx accept go : Go;
+                    action tx send new Go() via ch;
+                    first start then rx;
+                    first rx then tx;
+                    first tx then done;
+                }
+                state def Machine {
+                    entry; then on;
+                    state on;
+                    transition first on accept quit then off;
+                    state off;
+                }
+            }
+        """)
+        return [
+            diagrams.structure_diagram(structure, annotations=True),
+            diagrams.structure_diagram(structure, membership="edges"),
+            diagrams.structure_diagram(structure, actor_style="box"),
+            diagrams.action_diagram(behavior.find("B::Chat")),
+            diagrams.state_diagram(behavior.find("B::Machine")),
+        ]
+
+    def test_every_built_adornment_carries_the_contract(self, contract_widgets):
+        """DISCOVERY tripwire: walk everything the builders actually emit
+        and fail any node-attached glyph that skipped the construction
+        helpers -- a future adornment added without them breaks here
+        immediately.  Applied to the full notation gallery too
+        (test_every_gallery_model_ships_with_ids)."""
+
+        found = set()
+        for widget in contract_widgets:
+            found |= _assert_adornment_contract(widget)
+        # the fixture exercises every REGISTERED icon adornment kind
+        icon_kinds = {kind for kind, flavor in found if flavor == "label"}
+        assert icon_kinds == set(diagrams._ADORNMENTS)
+        assert ("sysml-port", "port") in found  # squares walked too
+        assert ("sysml-port-proxy", "port") in found
+
+    def test_icon_adornment_kinds_are_registered_and_styled(self):
+        """The _ADORNMENTS table is the single per-kind parameter source:
+        each kind gets exactly one derived resting-ink rule, and the
+        hollow family's symbol geometry binds the shared width bridge."""
+
+        library = diagrams._symbols().library
+        for use, (family, rest_color) in diagrams._ADORNMENTS.items():
+            assert family in ("hollow", "filled")
+            assert diagrams.SYSML_STYLE[f" .{use}"] == {"color": rest_color}
+            svg = library[use].element.properties.shape.use
+            binds_bridge = "var(--lgn-adorn-stroke-width" in svg
+            assert binds_bridge == (family == "hollow")
+
+    def test_node_hover_reaches_every_adornment(self):
+        """Maintainer repro (a): hovering a package highlighted the rect
+        but the tab kept its resting weight.  Hover feedback lands ONLY on
+        the node's own <rect> (.elknode.mouseover -- sprotty's hover
+        pipeline never decorates labels), but the rect is the PRECEDING
+        SIBLING of the <g class="elkchildren"> that holds the adornments
+        as DIRECT children (DOM verified live), so the ~ combinator
+        retargets the contract bridge -- no decoration needed at all.  The
+        rules bind the SAME theme hover variables the rect uses, so the
+        weights and colors always match; hover overrides selection (higher
+        specificity), and hovered+selected takes the hover-selected color
+        at hover width, exactly like the rect."""
+
+        hover = diagrams.SYSML_STYLE[" .elknode.mouseover ~ .elkchildren > .sysml-adornment"]
+        assert hover == {
+            "color": "var(--jp-elk-stroke-hover)",
+            "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-hover)",
+        }
+        both = diagrams.SYSML_STYLE[
+            " .elknode.selected.mouseover ~ .elkchildren > .sysml-adornment"
+        ]
+        assert both == {
+            "color": "var(--jp-elk-stroke-hover-selected)",
+            "--lgn-adorn-stroke-width": "var(--jp-elk-stroke-width-hover)",
+        }
+
+    def test_node_states_recolor_port_squares(self):
+        """Ports are the contract's third flavor: the square straddles the
+        border, so node selection AND hover recolor its outline and its
+        currentColor geometry (direction arrows, proxy dots) with the box;
+        the width stays PINNED (the port contract -- hover never fattens a
+        10px square) and a port selected in its OWN right keeps the
+        fill-flip with a white arrow."""
+
+        for state, color in (
+            ("selected", "var(--jp-elk-color-selected)"),
+            ("mouseover", "var(--jp-elk-stroke-hover)"),
+            ("selected.mouseover", "var(--jp-elk-stroke-hover-selected)"),
+        ):
+            rule = diagrams.SYSML_STYLE[
+                f" .elknode.{state} ~ .elkchildren > .sysml-adornment .elkport"
+            ]
+            assert rule == {"stroke": color, "color": color}
+            own = diagrams.SYSML_STYLE[
+                f" .elknode.{state} ~ .elkchildren > .sysml-adornment .elkport.selected"
+            ]
+            assert own == {"color": "#ffffff"}
+
+
 class TestPackageTabAndAnnotations:
     """Phase 5: the package folder tab (spec printed p.24) and the opt-in
     annotation layer (notes + metadata adornments, printed pp.20-21, 157)."""
@@ -1028,7 +1267,7 @@ class TestPackageTabAndAnnotations:
         assert 'stroke-width="1"' in use  # never the .elklabel 0-width
         assert diagrams.SYSML_STYLE[" .package-tab"]["color"] == style["stroke"]
         assert (
-            diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]["color"]
+            diagrams.SYSML_STYLE[" .elklabel.sysml-adornment.selected"]["color"]
             == "var(--jp-elk-color-selected)"
         )
 
@@ -1042,19 +1281,23 @@ class TestPackageTabAndAnnotations:
         inline var() style, and the derived stylesheet retargets it: the
         theme's base width normally, the theme's SELECTED width when the
         node is selected (sprotty's select tool decorates every child
-        vnode, the tab's <use> included, with the node's .selected)."""
+        vnode, the tab's <use> included, with the node's .selected).
+        Round 4 universalized the bridge: the property is the adornment
+        contract's --lgn-adorn-stroke-width, retargeted by the ONE rule
+        family keyed on .sysml-adornment (hover variants included -- see
+        test_node_hover_reaches_every_adornment)."""
 
         symbol = diagrams._symbols().library["package-tab"]
         use = symbol.element.properties.shape.use
         # the inline style consumes the inherited custom property, with
         # the base weight as fallback (renderers without the scoped rules)
-        assert 'style="stroke-width: var(--lgn-tab-stroke-width, 1)"' in use
-        base = diagrams.SYSML_STYLE[" .package-tab"]
-        selected = diagrams.SYSML_STYLE[" .elklabel.package-tab.selected"]
+        assert 'style="stroke-width: var(--lgn-adorn-stroke-width, 1)"' in use
+        base = diagrams.SYSML_STYLE[" .sysml-adornment"]
+        selected = diagrams.SYSML_STYLE[" .elklabel.sysml-adornment.selected"]
         # bound to the SAME theme variables the .elknode rect uses, so
         # box and tab can never thicken apart
-        assert base["--lgn-tab-stroke-width"] == "var(--jp-elk-stroke-width)"
-        assert selected["--lgn-tab-stroke-width"] == "var(--jp-elk-stroke-width-selected)"
+        assert base["--lgn-adorn-stroke-width"] == "var(--jp-elk-stroke-width)"
+        assert selected["--lgn-adorn-stroke-width"] == "var(--jp-elk-stroke-width-selected)"
 
     def test_annotations_default_off(self, drone_model):
         root = diagrams.structure_diagram(drone_model).source.value
@@ -1368,14 +1611,16 @@ class TestActions:
         # explicit fill attribute there would beat any rule on the <use>),
         # so the stylesheet's `color` binding -- which DOES inherit into
         # the shadow -- drives dark ink normally and the selection color
-        # when the owning box is selected (filled family, rule 3)
+        # when the owning box is selected (filled family, rule 3; the
+        # state rules ride the sysml-adornment contract class)
         assert "accept-badge" in widget.symbols.library
         assert "send-badge" in widget.symbols.library
         for form in ("accept", "send"):
             assert diagrams.SYSML_STYLE[f" .{form}-badge"] == {"color": "#333333"}
-            assert diagrams.SYSML_STYLE[f" .elklabel.{form}-badge.selected"] == {
-                "color": "var(--jp-elk-color-selected)"
-            }
+            assert (
+                diagrams.SYSML_STYLE[" .elklabel.sysml-adornment.selected"]["color"]
+                == "var(--jp-elk-color-selected)"
+            )
             use = widget.symbols.library[f"{form}-badge"].element.properties.shape.use
             assert 'fill="currentColor"' in use and 'stroke="none"' in use
 
@@ -1703,3 +1948,7 @@ class TestBrowserTransportIds:
         for name, widget in sorted(widgets.items()):
             nulls = _null_transport_ids(_transport_json(widget))
             assert nulls == [], f"gallery widget {name!r} ships null ids: {nulls[:5]}"
+            # the adornment contract holds across the WHOLE gallery too:
+            # any node-attached glyph a gallery section emits without the
+            # construction helpers fails the suite here
+            _assert_adornment_contract(widget)
