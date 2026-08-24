@@ -231,6 +231,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2b/0a/7b98e1e119878a27ba8618ca1e18b14f992ff1eda40f47bccccf4de44121/kiwisolver-1.5.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -469,6 +470,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a8/3a/d0a972b34e1c63e2409413104216cd1caa02c5a37cb668d1687d466c1c45/kiwisolver-1.5.0-cp313-cp313-macosx_11_0_arm64.whl
@@ -699,6 +701,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/be/8a/be60e3bbcf513cc5a50f4a3e88e1dcecebb79c1ad607a7222877becaa101/kiwisolver-1.5.0-cp313-cp313-win_amd64.whl
@@ -972,6 +975,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5f/53/fb7122b71361a0d121b669dcf3d31244ef75badbbb724af388948de543e2/imagesize-2.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/64/6b/67b87da9d36bff9df7d0efbd1a325fa372a43be7158effaf43ed7b22341d/jupyter_cache-1.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
@@ -1236,6 +1240,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5f/53/fb7122b71361a0d121b669dcf3d31244ef75badbbb724af388948de543e2/imagesize-2.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/64/6b/67b87da9d36bff9df7d0efbd1a325fa372a43be7158effaf43ed7b22341d/jupyter_cache-1.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
@@ -1493,6 +1498,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5f/53/fb7122b71361a0d121b669dcf3d31244ef75badbbb724af388948de543e2/imagesize-2.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/64/6b/67b87da9d36bff9df7d0efbd1a325fa372a43be7158effaf43ed7b22341d/jupyter_cache-1.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
@@ -1780,6 +1786,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
@@ -2018,6 +2025,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
@@ -2248,6 +2256,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/15/aa/0aca39a37d3c7eb941ba736ede56d689e7be91cab5d9ca846bde3999eba6/isodate-0.7.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
@@ -2514,6 +2523,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/80/46/bddc13df6c2a40741e0cc7865bb1c9ed4796b6760bd04ce5fae3928ef917/kiwisolver-1.5.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -2748,6 +2758,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0a/aa/510dc933d87767584abfe03efa445889996c70c2990f6f87c3ebaa0a18c5/kiwisolver-1.5.0-cp311-cp311-macosx_11_0_arm64.whl
@@ -2974,6 +2985,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/be/6c/28f17390b62b8f2f520e2915095b3c94d88681ecf0041e75389d9667f202/kiwisolver-1.5.0-cp311-cp311-win_amd64.whl
@@ -3241,6 +3253,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c4/13/680c54afe3e65767bed7ec1a15571e1a2f1257128733851ade24abcefbcc/kiwisolver-1.5.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -3478,6 +3491,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/99/9f/795fedf35634f746151ca8839d05681ceb6287fbed6cc1c9bf235f7887c2/kiwisolver-1.5.0-cp312-cp312-macosx_11_0_arm64.whl
@@ -3707,6 +3721,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ad/cf/0348374369ca588f8fe9c338fae49fa4e16eeb10ffb3d012f23a54578a9e/kiwisolver-1.5.0-cp312-cp312-win_amd64.whl
@@ -3974,6 +3989,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/2b/0a/7b98e1e119878a27ba8618ca1e18b14f992ff1eda40f47bccccf4de44121/kiwisolver-1.5.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
@@ -4212,6 +4228,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a8/3a/d0a972b34e1c63e2409413104216cd1caa02c5a37cb668d1687d466c1c45/kiwisolver-1.5.0-cp313-cp313-macosx_11_0_arm64.whl
@@ -4442,6 +4459,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/ab/6d/ea1d52e9038558dd37f5d30647eb9f07888c164960a5d4daa5f970c6da25/future_fstrings-1.2.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a3/ce/f9018bf69ae91b273b6391a095e7c93fa5e1617f25b6ba81ad4b20c9df10/immutabledict-4.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c3/55/298e9b3b864a198234997e87a1471c1b17d7f3546ace6d18fb5cf1ce24b2/ipywidgets-8.1.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/be/8a/be60e3bbcf513cc5a50f4a3e88e1dcecebb79c1ad607a7222877becaa101/kiwisolver-1.5.0-cp313-cp313-win_amd64.whl
@@ -7450,6 +7468,13 @@ packages:
   - pkg:pypi/ipykernel?source=hash-mapping
   size: 138635
   timestamp: 1781101665847
+- pypi: https://files.pythonhosted.org/packages/98/18/f08867a10c1c67064c5cf42c99884de7b9395ca2f0468ff346b1d2351021/ipylab-1.1.0-py3-none-any.whl
+  name: ipylab
+  version: 1.1.0
+  sha256: a24c29aeb7d6d8b26c150794ef30c8d9ac2e387c47ea49f9afd8fa19dcd07b62
+  requires_dist:
+  - ipywidgets>=7.6.0,<9
+  requires_python: '>=3.8'
 - conda: https://conda.anaconda.org/conda-forge/noarch/ipython-8.37.0-pyh8f84b5b_0.conda
   sha256: e43fa762183b49c3c3b811d41259e94bb14b7bff4a239b747ef4e1c6bbe2702d
   md5: 177cfa19fe3d74c87a8889286dc64090
@@ -9572,7 +9597,7 @@ packages:
 - pypi: ./
   name: longeron
   version: 0.8.0
-  sha256: 39a2084e35161a69933139a70877b0c73240930b053aa6d8a781768c56c1ecd9
+  sha256: 2ac038d210c0a661c6b9ae939938f1965be803bf71b5fdbb00ecab93d8c9178d
   requires_dist:
   - antlr4-python3-runtime==4.13.2
   - pytest>=8 ; extra == 'dev'
@@ -9585,6 +9610,7 @@ packages:
   - ipykernel>=6 ; extra == 'dev'
   - pytest-asyncio>=0.23 ; extra == 'dev'
   - anywidget>=0.9 ; extra == 'dev'
+  - ipylab>=1 ; extra == 'dev'
   - matplotlib>=3.8 ; extra == 'dev'
   - openmdao>=3.30 ; extra == 'dev'
   - ortools>=9.8 ; extra == 'dev'
@@ -9606,6 +9632,7 @@ packages:
   - pyecore>=0.15 ; extra == 'server'
   - rdflib>=7.0 ; extra == 'rdf'
   - anywidget>=0.9 ; extra == 'replay'
+  - ipylab>=1 ; extra == 'explorer'
   - openmdao>=3.30 ; extra == 'mdao'
   - ortools>=9.8 ; extra == 'trades'
   - z3-solver>=4.12 ; extra == 'smt'
