@@ -110,8 +110,15 @@
     "nb_cell_index": 39,
     "code_cell_index": 19,
     "output_index": 0,
-    "alt": "traitlets.traitlets.N2Widget",
+    "alt": "longeron.analysis.scoreboard._widget_class",
     "image": "07_analysis_and_trades/cell-19.png"
+   },
+   {
+    "nb_cell_index": 43,
+    "code_cell_index": 21,
+    "output_index": 0,
+    "alt": "traitlets.traitlets.N2Widget",
+    "image": "07_analysis_and_trades/cell-21.png"
    }
   ],
   "10_diagram_3d_link": [

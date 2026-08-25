@@ -41,7 +41,7 @@ extra.
 | {doc}`4. Actions and states <04_actions_and_states>` | action graphs, hierarchical/parallel state machines, time |
 | {doc}`5. Stdlib and validation <05_stdlib_and_validation>` | the vendored standard library, `longeron lint` |
 | {doc}`6. Interactive diagrams <06_interactive_diagrams>` | ipyelk structure/state/action diagrams, click-selection, headless SVG/PNG |
-| {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views |
+| {doc}`7. Analysis and trades <07_analysis_and_trades>` | multi-mission UAV trade studies, OpenMDAO sizing, Z3 consistency, 3D views, the requirements scoreboard picking the preferred mix |
 | {doc}`8. Semantic web and RAG <08_semantic_web_and_rag>` | RDF projection + SPARQL, retrieval chunks, neighborhoods, keyword search, the agent loop |
 | {doc}`9. M0 interpretations <09_m0_interpretations>` | populations of identified individuals, Annex A sequences, roll-ups over actual instances, random sampling, occurrences from executions, the trade-study bridge |
 | {doc}`10. Diagrams meet CAD: M1 and M0 <10_diagram_3d_link>` | linked selection between a structure diagram and the 3D viewer, per-instance geometry keyed by M0 individual ids, the M1 -> M0 fan-out and the M0 -> M1 projection |

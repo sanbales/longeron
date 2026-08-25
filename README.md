@@ -158,12 +158,13 @@ tutorials live in [`notebooks/`](notebooks/):
 | `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
 | `05_stdlib_and_validation` | the vendored standard library, `longeron lint` |
 | `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
-| `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views |
+| `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views, the requirements scoreboard turning the feasible answer into the preferred one |
 | `08_semantic_web_and_rag` | RDF projection + SPARQL queries, deterministic retrieval chunks, semantic neighborhoods, keyword search, the agent tool-use loop |
 | `09_m0_interpretations` | M0 populations of identified individuals: stable ids, Annex A sequences, roll-ups over actual instances, seeded random sampling, occurrence individuals from executions, the trade-study bridge |
 | `10_diagram_3d_link` | diagram <-> 3D linked selection as an M1/M0 lens: per-instance geometry keyed by M0 individual ids, one-usage-to-four-meshes fan-out, picks that project back to M1 without losing the individual |
 | `11_notation_gallery` | every implemented SysML v2 glyph beside its OMG spec figure -- the specialization-family shaft adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, stick-figure actors -- each section self-verifying, doubling as the notation regression harness |
 | `12_model_explorer` | the model explorer: a searchable, keyboard-navigable tree over the owning structure beside a diagram pane with per-selection kinds (structure/state/action/requirements), two-way selection linkage, and JupyterLab docking via the `[explorer]` extra |
+| `13_requirements_scoreboard` | MAUT over the requirement hierarchy: weights/utility shapes/measures declared in the model, pluggable aggregation (additive, weakest-link, geometric), and the treemap/Voronoi scoreboard widget -- area is importance, color is utility, double-click collapses a subtree to its aggregate |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
