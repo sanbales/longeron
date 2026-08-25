@@ -58,6 +58,37 @@ the SAME panes either ``inline`` (a plain HBox, works everywhere) or
 into a resizable JupyterLab split panel via ipylab (``lab``; the
 ``explorer`` extra); ``auto`` picks ``lab`` only when ipylab is
 installed and a Lab frontend is detected, else falls back inline.
+
+Docking is a WELL-BEHAVED Lab citizen, twice over.  First, the panel
+docks with ``mode="tab-after"`` by default -- its own full-width
+main-area tab (not activated), so running a notebook never reshapes it;
+pass ``mode="split-right"`` (or any Lab dock mode) to opt into a split.
+Because a background tab renders hidden, the panel's FIRST reveal
+triggers one diagram re-fit (the initial auto-fit aimed at a zero-sized
+viewport).  Second, docking is IDEMPOTENT per model: re-running the
+cell -- or restarting the kernel and running all cells -- REPLACES the
+model's panel instead of stacking a new one.  Two mechanisms cooperate,
+keyed by :func:`_dock_key` (a slug of the model's display name, so
+explorers over different models coexist):
+
+* same kernel: a module-level registry (:data:`_DOCKED_PANELS`) closes
+  the previous ipylab panel before adding the new one;
+* fresh kernel (the restart case, where the old panel's kernel is dead
+  and no Python-side handle can reach it): every docked panel's tab
+  carries its identity as ``data-lgxkey`` / ``data-lgxstamp``
+  attributes (lumino renders ``title.dataset`` onto the tab via
+  ``setAttribute``, which lowercases keys -- hence the flat spelling;
+  ipylab syncs ``panel.title.dataset``), and a tiny hidden anywidget
+  (:class:`_DockSweeper`) rides inside each panel.  When the NEW
+  panel's sweeper renders, it finds any main-area tab with the same key
+  and an OLDER stamp and closes it through lumino's own close path
+  (synthetic pointer events on the tab's close icon -- exactly what a
+  user click does), so the dock layout stays consistent; a
+  MutationObserver re-sweeps whenever the dock's tabs change, so panels
+  that finish attaching late are still reconciled.  ipylab 1.1
+  itself exposes no dispose-by-id surface (its ``Shell`` model only
+  supports ``add``/``expandLeft``/``expandRight``), which is why the
+  orphan case is handled browser-side.
 """
 
 from __future__ import annotations
@@ -65,6 +96,8 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
+import time
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
@@ -866,6 +899,164 @@ def requirements_view(scope: M.Namespace, *, resolver: Resolver | None = None) -
 
 
 # ---------------------------------------------------------------------------
+# JupyterLab docking: one keyed panel per model, replaced not accumulated
+# ---------------------------------------------------------------------------
+
+#: the ipylab panels THIS kernel docked, by dock key: `explore()` twice on
+#: the same model closes the first panel instead of stacking a second one
+#: (the cross-kernel orphan case is the sweeper's job -- module docstring)
+_DOCKED_PANELS: dict[str, Any] = {}
+
+
+def _dock_key(model: M.Model) -> str:
+    """The stable dock identity of ``model``: a slug of its display name.
+
+    Keyed by MODEL identity (its source name), not by a global
+    'longeron-explorer' constant, so explorers over different models
+    coexist in the dock while re-running a cell -- or restarting the
+    kernel and running all cells -- replaces the panel for the SAME
+    model.  The collision caveat: two models sharing a display name
+    (e.g. two anonymous ``loads(...)`` results, both named ``<text>``)
+    share a key and therefore replace each other; give them distinct
+    ``source_name``s to keep both docked.
+    """
+
+    slug = re.sub(r"[^a-z0-9]+", "-", _display_name(model).lower()).strip("-")
+    return slug or "model"
+
+
+# On render, tag the OWN panel node with the explorer classes (the
+# kernel-side add_class only lands once the panel is 'displayed', which a
+# background tab never is), then close every STALE explorer tab for this
+# sweeper's key: same ``data-lgxkey``, strictly older ``data-lgxstamp``
+# (BigInt: time_ns exceeds 2^53).  Closing goes through lumino's real user
+# path -- pointer events on the tab's close icon (TabBar hit-tests event
+# coordinates, so the events carry the icon's real rect) -- keeping the
+# dock layout consistent.  The sweeper renders BEFORE its own panel joins
+# the shell (ipylab creates the view first), so orphans are gone by the
+# time the replacement docks.  A hidden tab bar (single-document mode)
+# defeats the hit test; the sweep then no-ops, which is harmless -- panels
+# are hidden there anyway, and the same-kernel registry still replaces.
+_SWEEPER_ESM = """
+function render({ model, el }) {
+  el.style.display = "none";
+  const key = model.get("key");
+  const stamp = BigInt(model.get("stamp"));
+  const dock = () => document.getElementById("jp-main-dock-panel") || document;
+  const tagOwnPanel = () => {
+    const panel = el.closest(".jp-JupyterLuminoSplitPanelWidget, .lm-SplitPanel");
+    if (!panel) return false;
+    panel.classList.add("lgx-explorer", `lgx-explorer-${key}`);
+    return true;
+  };
+  const staleTab = () => {
+    for (const tab of dock().querySelectorAll(".lm-TabBar-tab[data-lgxkey]")) {
+      const theirs = tab.dataset.lgxstamp;
+      if (tab.dataset.lgxswept) continue; // already closed; render pending
+      if (tab.dataset.lgxkey === key && theirs && BigInt(theirs) < stamp) return tab;
+    }
+    return null;
+  };
+  const closeTab = (tab) => {
+    const icon = tab.querySelector(".lm-TabBar-tabCloseIcon");
+    if (!icon) return false;
+    const rect = icon.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false; // hidden tab bar: no hit-test
+    // LabShell merges the widget's DOM id into title.dataset: the panel
+    // NODE detaches synchronously on close, while the tab's own DOM
+    // re-render is deferred a frame -- so the node is the success signal
+    const panel = tab.dataset.id ? document.getElementById(tab.dataset.id) : null;
+    const at = {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.x + rect.width / 2,
+      clientY: rect.y + rect.height / 2,
+    };
+    icon.dispatchEvent(new PointerEvent("pointerdown", at));
+    icon.dispatchEvent(new PointerEvent("pointerup", at));
+    const ok = panel ? !panel.isConnected : !tab.isConnected;
+    if (ok) tab.dataset.lgxswept = "1"; // skip while its tab render is pending
+    return ok;
+  };
+  const sweep = () => {
+    tagOwnPanel(); // add_class needs 'displayed'; a background tab never is
+    watchShown(); // the panel node may attach after render; keep trying
+    let closed = 0;
+    for (let round = 0; round < 16; round += 1) {
+      const tab = staleTab(); // re-query: closing re-renders the tab bar
+      if (!tab || !closeTab(tab)) break;
+      closed += 1;
+    }
+    if (closed) {
+      model.set("swept", model.get("swept") + closed);
+      model.save_changes();
+    }
+  };
+  // report the panel's FIRST reveal: an auto-fit that ran while the tab
+  // was hidden had a zero-sized viewport, so the kernel re-fits on reveal
+  let sizeObserver = null;
+  const watchShown = () => {
+    if (model.get("shown") || sizeObserver) return;
+    const panel = el.closest(".jp-JupyterLuminoSplitPanelWidget, .lm-SplitPanel");
+    if (!panel) return;
+    const check = () => {
+      const rect = panel.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && !model.get("shown")) {
+        model.set("shown", true);
+        model.save_changes();
+        if (sizeObserver) sizeObserver.disconnect();
+      }
+    };
+    sizeObserver = new ResizeObserver(check);
+    sizeObserver.observe(panel);
+    check();
+  };
+  sweep(); // orphans are already in the DOM when the new panel renders
+  // panels attach asynchronously (ipylab builds the whole view tree before
+  // shell.add), so re-sweep whenever the dock's tab set changes; the stamp
+  // guard makes every extra sweep a no-op unless a genuinely OLDER panel
+  // materialized late
+  const observer = new MutationObserver(sweep);
+  observer.observe(
+    document.getElementById("jp-main-dock-panel") || document.body,
+    { childList: true, subtree: true },
+  );
+  return () => {
+    observer.disconnect();
+    if (sizeObserver) sizeObserver.disconnect();
+  };
+}
+export default { render };
+"""
+
+
+class _DockSweeper(anywidget.AnyWidget):
+    """A hidden janitor inside every docked panel (see module docstring).
+
+    Frontend-only, two jobs on render: tag its own panel node with the
+    ``lgx-explorer`` classes (a robust DOM handle -- the kernel-side
+    ``add_class`` only applies once the panel is displayed, which a
+    background tab never is), and close main-area tabs whose
+    ``data-lgxkey`` matches :attr:`key` with a ``data-lgxstamp`` older
+    than :attr:`stamp` -- the orphaned panels of previous runs, including
+    panels whose kernel is DEAD (a restart), which no Python-side handle
+    can reach.  :attr:`swept` counts the closures (kernel-visible, for
+    tests and diagnostics).  :attr:`shown` flips true on the panel's
+    FIRST reveal (background tabs render hidden), which the explorer
+    answers with one diagram re-fit -- the initial auto-fit had a
+    zero-sized viewport to aim at.
+    """
+
+    _esm = _SWEEPER_ESM
+
+    key = T.Unicode("", help="the dock key this sweeper guards").tag(sync=True)
+    stamp = T.Unicode("", help="this panel's birth stamp (time_ns)").tag(sync=True)
+    swept = T.Int(0, help="how many stale panels this sweeper closed").tag(sync=True)
+    shown = T.Bool(False, help="whether the panel has ever been visible").tag(sync=True)
+
+
+# ---------------------------------------------------------------------------
 # the explorer widget
 # ---------------------------------------------------------------------------
 
@@ -946,7 +1137,9 @@ class Explorer(W.HBox):
       element;
     * :attr:`element` / :attr:`kind` -- the current selection and view;
     * :attr:`layout_strategy` -- the resolved layout (``"inline"`` or
-      ``"lab"``; see :func:`explore`).
+      ``"lab"``; see :func:`explore`);
+    * :attr:`dock_mode` -- how the ``lab`` layout docks into the shell
+      (default ``"tab-after"``; see :func:`explore`).
 
     The panes are built ONCE; the layout strategy only composes them:
     ``inline`` puts them side by side in this HBox (28%/72%), ``lab``
@@ -964,6 +1157,7 @@ class Explorer(W.HBox):
         *,
         tree: TreeView | None = None,
         layout: str = "auto",
+        mode: str = "tab-after",
         structure_scope: str = "package",
         height: str = "600px",
     ) -> None:
@@ -971,6 +1165,9 @@ class Explorer(W.HBox):
             raise ValueError(
                 f"structure_scope must be 'package' or 'element', not {structure_scope!r}"
             )
+        if not isinstance(mode, str) or not mode:
+            raise ValueError(f"mode must be a JupyterLab dock mode string, not {mode!r}")
+        self.dock_mode = mode
         self.model = model
         self._structure_scope = structure_scope
         self._resolver = Interpreter(model).resolver
@@ -1003,6 +1200,7 @@ class Explorer(W.HBox):
 
         self.lab_panel: Any = None
         self._lab_app: Any = None
+        self._dock_sweeper: Any = None
         self.layout_strategy = _resolve_layout(layout)
         super().__init__(
             self._compose(height),
@@ -1031,7 +1229,8 @@ class Explorer(W.HBox):
                 W.HTML(
                     '<em style="font-size: 12px; color: var(--jp-ui-font-color2, #666);">'
                     "model explorer docked as a JupyterLab panel "
-                    "(<code>layout='lab'</code>); this output is a placeholder</em>"
+                    f"(<code>layout='lab'</code>, <code>mode={self.dock_mode!r}</code>); "
+                    "this output is a placeholder</em>"
                 )
             ]
         if self._tree_widget is not None:
@@ -1049,6 +1248,12 @@ class Explorer(W.HBox):
 
         The split handle is Lab's own (lumino), so the user resizes the
         tree/diagram split through the dock -- no hardcoded percentages.
+        The panel joins the shell under :attr:`dock_mode` WITHOUT
+        activation (a background tab by default: running a notebook must
+        not reshape or refocus it), and docking is IDEMPOTENT per model:
+        the previous panel for this model's dock key is closed kernel-side
+        (same kernel) or swept browser-side (orphans of a dead kernel) --
+        see the module docstring for the full mechanism.
         """
 
         import ipylab  # _resolve_layout guarantees it imports
@@ -1065,11 +1270,46 @@ class Explorer(W.HBox):
         self._pane.layout.height = "100%"
         children.append(self._pane)
         panel.children = children
+        key = _dock_key(self.model)
+        stamp = str(time.time_ns())
         panel.title.label = f"Explorer: {_display_name(self.model)}"
+        # the dock TAB carries the panel's identity (lumino renders
+        # title.dataset onto the tab via setAttribute, which lowercases
+        # keys), so a FRESH kernel's sweeper can find a dead kernel's panel
+        panel.title.dataset = {"lgxkey": key, "lgxstamp": stamp}
+        # panel-node classes: applied kernel-side for foreground panels;
+        # the sweeper re-tags browser-side (background tabs never display)
+        panel.add_class("lgx-explorer")
+        panel.add_class(f"lgx-explorer-{key}")
+        self._dock_sweeper = _DockSweeper(key=key, stamp=stamp, layout=W.Layout(display="none"))
+        self._dock_sweeper.observe(self._on_panel_first_shown, "shown")
+        self._pane.children = (*self._pane.children, self._dock_sweeper)
+        previous = _DOCKED_PANELS.pop(key, None)
+        if previous is not None:
+            previous.close()  # same-kernel re-run: replace, do not accumulate
         app = ipylab.JupyterFrontEnd()
-        app.shell.add(panel, "main", {"mode": "split-right"})
+        app.shell.add(panel, "main", {"mode": self.dock_mode, "activate": False})
+        _DOCKED_PANELS[key] = panel
         self.lab_panel = panel
         self._lab_app = app
+
+    def _on_panel_first_shown(self, change: Any) -> None:
+        """Re-fit the visible diagram when the docked panel first appears.
+
+        Under the default background-tab docking the initial auto-fit
+        runs while the panel is HIDDEN -- a zero-sized viewport -- so the
+        diagram would look blank until the user clicked Fit.  One re-fit
+        on the first reveal corrects it; later tab switches never re-fit
+        (the user's viewport is theirs).
+        """
+
+        if not change["new"]:
+            return
+        diagram = self.diagram
+        if diagram is not None:
+            from .toolbar import AutoFitTool
+
+            diagram.get_tool(AutoFitTool).refit_now()
 
     # -- public surface ------------------------------------------------------
 
@@ -1253,6 +1493,16 @@ def explore(model: M.Model, **kwargs: Any) -> Explorer:
       -- nbclient, VS Code, docs), or ``"lab"`` (require the ipylab
       docking; raises :class:`~longeron.errors.MissingExtraError` unless
       the ``explorer`` extra is installed);
+    * ``mode`` -- how the ``lab`` layout docks into the shell, passed
+      straight through to JupyterLab (``"tab-after"``, ``"tab-before"``,
+      ``"split-right"``, ``"split-left"``, ``"split-top"``,
+      ``"split-bottom"``, ...).  The default ``"tab-after"`` opens the
+      explorer as its own full-width main-area tab WITHOUT stealing
+      focus or width from the notebook; choose a ``split-*`` mode (or
+      drag the tab) to see both at once.  Ignored by the ``inline``
+      layout.  Re-running the cell -- or restarting the kernel and
+      running all cells -- REPLACES the model's docked panel instead of
+      accumulating copies (see the module docstring);
     * ``tree`` -- a custom :class:`TreeView` engine (default
       :class:`ModelTree`);
     * ``structure_scope`` -- ``"package"`` (the default) scopes the

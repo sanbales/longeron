@@ -588,15 +588,26 @@ class AutoFitTool(Tool):
 
         self.pending = True
 
+    def refit_now(self) -> None:
+        """Fit immediately, without waiting for a layout arrival.
+
+        For fits that happened into a USELESS viewport: the explorer's
+        docked panel defaults to a background tab, so the first auto-fit
+        runs while the panel is hidden (a zero-sized viewport) and the
+        diagram looks blank until re-fitted on the panel's first reveal.
+        """
+
+        self.fit_count += 1
+        try:
+            self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
+        except Exception:  # never break the caller's observer chain
+            self.log.exception("refit request failed")
+
     def _on_view_tree(self, change: Any) -> None:
         if change["new"] is None or not self.pending:
             return
         self.pending = False
-        self.fit_count += 1
-        try:
-            self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
-        except Exception:  # never break the render pipeline's callback
-            self.log.exception("auto-fit request failed")
+        self.refit_now()
 
 
 class DirectionTool(Tool):

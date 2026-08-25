@@ -10,6 +10,7 @@ pytest.importorskip("ipyelk")
 pytest.importorskip("anywidget")
 
 import longeron
+from longeron import explorer as explorer_module
 from longeron import model as M
 from longeron.errors import MissingExtraError
 from longeron.explorer import (
@@ -586,11 +587,25 @@ class _StubFrontEnd:
         self.shell = _StubShell()
 
 
+class _StubTitle:
+    def __init__(self):
+        self.label = ""
+        self.dataset = {}
+
+
 class _StubSplitPanel:
     def __init__(self):
         self.children = ()
         self.orientation = ""
-        self.title = types.SimpleNamespace(label="")
+        self.title = _StubTitle()
+        self.classes = []
+        self.closed = False
+
+    def add_class(self, name):
+        self.classes.append(name)
+
+    def close(self):
+        self.closed = True
 
 
 def _install_stub_ipylab(monkeypatch):
@@ -634,9 +649,11 @@ class TestLayoutStrategies:
         # the SAME pane objects the inline strategy uses, recomposed
         assert list(panel.children) == [ex.tree, ex._pane]
         assert ex._diagram_box.children  # the diagram pane still renders
-        # docked into the main area through the frontend shell
+        # docked into the main area through the frontend shell: a NEW
+        # background tab by default -- never a forced split, never focused
         ((added, area, options),) = ex._lab_app.shell.added
-        assert added is panel and area == "main" and options == {"mode": "split-right"}
+        assert added is panel and area == "main"
+        assert options == {"mode": "tab-after", "activate": False}
         # the cell output is just a placeholder hint
         assert len(ex.children) == 1 and "placeholder" in ex.children[0].value
 
@@ -664,6 +681,104 @@ class TestLayoutStrategies:
         assert list(ex.children) == [ex.tree, ex._pane]
         assert ex.tree.layout.width == "28%"
         assert ex._pane.layout.width == "72%"
+
+
+# ---------------------------------------------------------------------------
+# lab docking is a well-behaved citizen: mode plumbing + replace-not-stack
+# ---------------------------------------------------------------------------
+
+
+class TestDocking:
+    @pytest.fixture(autouse=True)
+    def _fresh_registry(self, monkeypatch):
+        # the registry is module-level state (that is the point: it must
+        # outlive any one Explorer); isolate it per test
+        monkeypatch.setattr(explorer_module, "_DOCKED_PANELS", {})
+
+    def test_mode_defaults_to_tab_after_without_activation(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab")
+        ((_, _, options),) = ex._lab_app.shell.added
+        # tab-after: a full-width main-area tab -- the notebook keeps its
+        # width; activate=False: run-all never yanks focus off the notebook
+        assert options == {"mode": "tab-after", "activate": False}
+        assert ex.dock_mode == "tab-after"
+
+    def test_mode_passes_through_to_the_shell(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab", mode="split-right")
+        ((_, _, options),) = ex._lab_app.shell.added
+        assert options == {"mode": "split-right", "activate": False}
+
+    @pytest.mark.parametrize("bad", ["", None, 42])
+    def test_mode_must_be_a_nonempty_string(self, drone_model, bad):
+        with pytest.raises(ValueError, match="mode must be"):
+            explore(drone_model, layout="inline", mode=bad)
+
+    def test_mode_is_inert_inline(self, drone_model):
+        ex = explore(drone_model, layout="inline", mode="split-bottom")
+        assert ex.dock_mode == "split-bottom"  # stored, unused
+        assert ex.lab_panel is None and ex._dock_sweeper is None
+
+    def test_redocking_the_same_model_replaces_the_panel(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        first = explore(drone_model, layout="lab")
+        second = explore(drone_model, layout="lab")
+        assert first.lab_panel.closed  # same kernel: closed, not orphaned
+        assert not second.lab_panel.closed
+        key = explorer_module._dock_key(drone_model)
+        assert explorer_module._DOCKED_PANELS == {key: second.lab_panel}
+
+    def test_different_models_coexist(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        other = longeron.loads("package Solo { part s; }", source_name="solo")
+        ex1 = explore(drone_model, layout="lab")
+        ex2 = explore(other, layout="lab")
+        assert not ex1.lab_panel.closed and not ex2.lab_panel.closed
+        assert len(explorer_module._DOCKED_PANELS) == 2
+
+    def test_panel_carries_its_dock_identity(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab")
+        key = explorer_module._dock_key(drone_model)
+        panel = ex.lab_panel
+        # the tab dataset is the cross-kernel handle; the classes are the
+        # DOM selector (browser tests + the sweeper's own panel)
+        assert panel.title.dataset["lgxkey"] == key
+        assert panel.title.dataset["lgxstamp"].isdigit()
+        assert panel.classes == ["lgx-explorer", f"lgx-explorer-{key}"]
+        assert panel.title.label.startswith("Explorer: ")
+
+    def test_stamps_strictly_increase(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        first = explore(drone_model, layout="lab")
+        second = explore(drone_model, layout="lab")
+        older = int(first.lab_panel.title.dataset["lgxstamp"])
+        newer = int(second.lab_panel.title.dataset["lgxstamp"])
+        assert older < newer  # the sweeper only ever closes OLDER stamps
+
+    def test_sweeper_rides_hidden_inside_the_pane(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab")
+        sweeper = ex._dock_sweeper
+        assert sweeper is ex._pane.children[-1]  # ships INSIDE the panel
+        assert sweeper.layout.display == "none"
+        assert sweeper.key == explorer_module._dock_key(drone_model)
+        assert sweeper.stamp == ex.lab_panel.title.dataset["lgxstamp"]
+        assert sweeper.swept == 0
+
+    def test_first_reveal_refits_the_visible_diagram(self, drone_model, monkeypatch):
+        # a background tab renders hidden: the initial auto-fit aimed at a
+        # zero-sized viewport, so the browser's first-reveal report must
+        # trigger exactly one immediate re-fit of the current diagram
+        from longeron.toolbar import AutoFitTool
+
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab")
+        tool = ex.diagram.get_tool(AutoFitTool)
+        before = tool.fit_count
+        ex._dock_sweeper.shown = True  # what the sweeper reports on reveal
+        assert tool.fit_count == before + 1
 
 
 # ---------------------------------------------------------------------------

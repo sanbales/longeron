@@ -194,10 +194,66 @@ print(json.dumps({
     )
 
 
+def explorer_dock_notebook() -> dict[str, Any]:
+    """Scenario: docked-explorer lab citizenship (replace, never accumulate).
+
+    ``layout="lab"`` docks the explorer through ipylab deterministically
+    (no frontend auto-detection), under the default ``mode="tab-after"``:
+    a background main-area tab that must not reshape the notebook.  The
+    ``source_name`` pins the dock key (``dock-demo``), which the test
+    uses to find the panel's tab and prove restart+run-all REPLACES the
+    panel instead of stacking a second one.
+
+    The second cell manufactures a genuine ORPHAN: it wipes the kernel-
+    side registry (as a kernel restart would) before re-exploring, so
+    the kernel cannot close the first panel -- only the browser-side
+    sweeper can.  Every run-all therefore exercises the sweep, and the
+    checker's ``swept >= 1`` is the proof it fired.
+    """
+
+    return _notebook(
+        '''
+import json
+
+import longeron
+from longeron.explorer import explore
+
+model = longeron.loads("""
+package Dock {
+    part def Frame;
+    part chassis : Frame;
+    part motor;
+}
+""", source_name="dock demo")
+ex = explore(model, layout="lab")
+ex
+''',
+        """
+# manufacture an orphan: forget the kernel-side handle (exactly what a
+# kernel restart does), then re-explore -- the browser-side sweeper is
+# the ONLY thing that can close the first panel now
+from longeron import explorer as _explorer_module
+
+_explorer_module._DOCKED_PANELS.clear()
+ex = explore(model, layout="lab")
+ex
+""",
+        """
+print(json.dumps({
+    "strategy": ex.layout_strategy,
+    "mode": ex.dock_mode,
+    "key": ex._dock_sweeper.key,
+    "swept": int(ex._dock_sweeper.swept),
+}))
+""",
+    )
+
+
 #: filename -> builder; the session fixture writes these into the lab root
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "toolbar_scenario.ipynb": toolbar_notebook,
     "explorer_scenario.ipynb": explorer_notebook,
+    "explorer_dock_scenario.ipynb": explorer_dock_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,
 }
