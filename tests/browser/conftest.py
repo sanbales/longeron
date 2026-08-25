@@ -180,7 +180,18 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     tracker = settings / "@jupyterlab" / "notebook-extension"
     tracker.mkdir(parents=True)
     (tracker / "tracker.jupyterlab-settings").write_text(
-        json.dumps({"autoStartDefaultKernel": True}), encoding="utf-8"
+        json.dumps(
+            {
+                "autoStartDefaultKernel": True,
+                # windowed notebooks detach offscreen cells from the DOM;
+                # sprotty then updates detached diagram roots ('element not
+                # in DOM: sprotty_N' console-error storms) and rendered-
+                # widget counts depend on scroll position. Tests need every
+                # cell attached and deterministic.
+                "windowingMode": "none",
+            }
+        ),
+        encoding="utf-8",
     )
     env = dict(
         os.environ,
@@ -285,7 +296,11 @@ _SNAPSHOT_JS = """() => {
         return t && t !== 'scale(1) translate(0,0)' && t !== 'translate(0, 0) scale(1)';
     }).length;
     const elknodes = document.querySelectorAll('.sprotty svg .elknode').length;
-    return {rendered, busy, bars, fitted, elknodes};
+    const loading = [...document.querySelectorAll('.jp-OutputArea-output')].filter(
+        (el) => el.textContent.trim() === 'Loading widget...').length;
+    const kernel = document.querySelector('.jp-Notebook-ExecutionIndicator')
+        ?.getAttribute('data-status') || 'missing';
+    return {rendered, busy, bars, fitted, elknodes, loading, kernel};
 }"""
 
 _CELL_STATE_JS = """(index) => {
@@ -335,9 +350,26 @@ class LabPage:
             time.sleep(1)
         raise TimeoutError(f"JupyterLab app handle never appeared for {name}")
 
+    def wait_kernel_idle(self, timeout: float = 120.0) -> None:
+        """Block until the notebook's kernel connection is established + idle.
+
+        Run-all must not fire before the kernel websocket is up: widget
+        comm_open messages sent while the frontend is still connecting are
+        lost, and every widget output then shows 'Loading widget...'
+        forever (the CI failure mode after the kernel-picker fix; dev
+        machines always win that race, 2-core runners always lose it).
+        """
+
+        self.page.wait_for_selector(
+            '.jp-Notebook-ExecutionIndicator[data-status="idle"]',
+            state="attached",
+            timeout=timeout * 1000,
+        )
+
     def run_all(self, attempts: int = 5) -> None:
         """Run all cells via the command registry; confirm execution started."""
 
+        self.wait_kernel_idle()
         for _attempt in range(attempts):
             # fire-and-forget: commands.execute returns a promise that only
             # resolves when the WHOLE run finishes, and page.evaluate awaits
@@ -391,12 +423,13 @@ class LabPage:
         min_fitted: int = 0,
         timeout: float = 300.0,
     ) -> dict[str, Any]:
-        """Settled: nothing busy, no visible progress bars, widgets rendered."""
+        """Settled: nothing busy, no progress bars or stuck widgets, all rendered."""
 
         return self.wait_until(
             lambda s: (
                 s["busy"] == 0
                 and not s["bars"]
+                and s["loading"] == 0
                 and s["rendered"] >= min_widgets
                 and s["fitted"] >= min_fitted
             ),
