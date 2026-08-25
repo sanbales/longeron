@@ -602,3 +602,104 @@ class TestWidget:
         one = scoreboard(uav_model).widget().nodes_json
         two = scoreboard(uav_model).widget().nodes_json
         assert one == two
+
+
+# ---------------------------------------------------------------------------
+# zoomable navigation: zoom_root + breadcrumb + twist + the max_depth window
+# ---------------------------------------------------------------------------
+
+
+class TestZoomNavigation:
+    def test_default_view_traits(self, widget):
+        assert widget.zoom_root == ""  # "" = the tree root (no breadcrumb)
+        assert widget.max_depth is None  # None = unlimited render depth
+
+    def test_zoom_root_accepts_known_qnames(self, uav):
+        pytest.importorskip("anywidget")
+        widget = uav.widget(zoom_root="ScoutUAV::mission::performance")
+        assert widget.zoom_root == "ScoutUAV::mission::performance"
+
+    def test_unknown_zoom_root_is_rejected(self, uav):
+        pytest.importorskip("anywidget")
+        with pytest.raises(ValueError, match="unknown zoom_root"):
+            uav.widget(zoom_root="Nope::nothere")
+
+    def test_max_depth_must_be_positive_or_none(self, uav):
+        pytest.importorskip("anywidget")
+        assert uav.widget(max_depth=1).max_depth == 1
+        assert uav.widget(max_depth=None).max_depth is None
+        for bad in (0, -3):
+            with pytest.raises(ValueError, match="max_depth"):
+                uav.widget(max_depth=bad)
+
+    def test_zoom_root_and_collapsed_are_independent_state(self, uav):
+        # zooming is navigation, not collapse: both live side by side in
+        # the synced state, and collapsed entries deeper than the zoom
+        # root keep applying (the front-end ignores the rest)
+        pytest.importorskip("anywidget")
+        widget = uav.widget(
+            zoom_root="ScoutUAV::mission::operability",
+            collapsed=["ScoutUAV::mission::performance"],
+            max_depth=2,
+        )
+        assert widget.zoom_root == "ScoutUAV::mission::operability"
+        assert widget.collapsed == ["ScoutUAV::mission::performance"]
+        assert widget.max_depth == 2
+
+    def test_view_state_never_touches_scoring(self, uav):
+        # zoom_root/max_depth are VIEW state: the payload (and every
+        # aggregate in it) is identical to the unzoomed widget's
+        pytest.importorskip("anywidget")
+        base = uav.widget()
+        zoomed = uav.widget(zoom_root="ScoutUAV::mission::performance", max_depth=1)
+        assert zoomed.nodes_json == base.nodes_json
+        payload = json.loads(zoomed.nodes_json)
+        assert payload["aggregate"] == pytest.approx(uav.score)
+
+    def test_every_payload_node_carries_windowing_aggregates(self, widget):
+        # the depth window renders ANY group as an aggregate cell, so
+        # every node must carry what the front-end draws one from
+        def walk(node):
+            yield node
+            for child in node["children"]:
+                yield from walk(child)
+
+        for node in walk(json.loads(widget.nodes_json)):
+            for key in ("qname", "label", "weight", "aggregate", "measured", "leaves"):
+                assert key in node, key
+
+    def test_seed_derivation_is_stable(self, uav):
+        # same (seed, zoom_root) twice -> the same synced state; the ESM
+        # mixes both into the voronoi PRNG so each zoom level is stable
+        pytest.importorskip("anywidget")
+        one = uav.widget("voronoi", zoom_root="ScoutUAV::mission::performance", seed=7)
+        two = uav.widget("voronoi", zoom_root="ScoutUAV::mission::performance", seed=7)
+        view = ("nodes_json", "tessellation", "collapsed", "zoom_root", "max_depth", "seed")
+        assert [getattr(one, k) for k in view] == [getattr(two, k) for k in view]
+        assert "lgnSbMixSeed" in one._esm
+
+    def test_esm_zoom_contracts(self, widget):
+        # zoom + breadcrumb + twist + depth window + Esc, both-way synced
+        for token in (
+            "zoom_root",
+            "change:zoom_root",
+            "max_depth",
+            "change:max_depth",
+            "lgn-sb-crumb",
+            "lgn-sb-twist",
+            "Escape",
+            "lgnSbMixSeed",
+            "lgnSbTwistAnchor",
+        ):
+            assert token in widget._esm, token
+
+    def test_double_click_now_zooms_not_collapses(self, widget):
+        # the old gesture (double-click a leaf collapses its group) is
+        # gone: double-click always means zoom, the twist collapses
+        assert "double-click to collapse" not in widget._esm
+        assert "double-click to expand" not in widget._esm
+        assert "double-click to zoom" in widget._esm
+
+    def test_crumb_and_twist_css_contracts(self, widget):
+        for token in ("lgn-sb-crumbs", "lgn-sb-crumb-here", "lgn-sb-crumb-sep", "lgn-sb-twist"):
+            assert token in widget._css, token

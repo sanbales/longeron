@@ -321,6 +321,13 @@
     "output_index": 0,
     "alt": "longeron.analysis.scoreboard._widget_class",
     "image": "13_requirements_scoreboard/cell-05.png"
+   },
+   {
+    "nb_cell_index": 22,
+    "code_cell_index": 11,
+    "output_index": 0,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "13_requirements_scoreboard/cell-11.png"
    }
   ]
  }

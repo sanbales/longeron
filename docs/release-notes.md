@@ -16,8 +16,13 @@
   Voronoi tessellation (the vendored BSD-licensed d3-voronoi-treemap)
   where area is importance and color is utility on a perceptual
   OKLab red->yellow->green ramp; hover for details, click to select
-  (linked-selection-ready `selected` trait), double-click to collapse
-  a subtree in place into one aggregated cell; unmeasured
+  (linked-selection-ready `selected` trait), double-click to zoom
+  into a subtree (breadcrumb bar + Esc to zoom back out), a twist on
+  every group to collapse it in place into one aggregated cell, and a
+  `max_depth` render window for deep hierarchies (all of it --
+  `selected`, `collapsed`, `zoom_root`, `max_depth` -- scriptable as
+  two-way traits; zoom and depth are view state, never scoring
+  state); unmeasured
   requirements render hatched grey. Tutorial 13 walks it end to end
 
 ## 0.9.1

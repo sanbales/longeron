@@ -52,17 +52,24 @@ utility NaN and are excluded from their parent's aggregation; a fully
 unmeasured subtree aggregates to NaN.
 
 Area semantics in the widget: a node's area share among its siblings is
-its weight's share, recursively -- so a COLLAPSED subtree (double-click
-a cell to collapse its group in place, double-click again to expand)
-renders as one cell occupying exactly the area its leaves occupied,
-colored by the subtree aggregate.  Hover shows qualified name, weight
+its weight's share, recursively -- so a COLLAPSED subtree (click a
+group's twist to collapse or expand it in place) renders as one cell
+occupying exactly the area its leaves occupied, colored by the subtree
+aggregate.  Double-click zooms instead of collapsing: a group cell
+re-tessellates to fill the whole canvas (a leaf zooms to its parent
+group), the breadcrumb bar above the canvas walks back out (Esc steps
+out one level), and ``max_depth`` windows the render depth below the
+current zoom root so deep hierarchies reveal themselves level by level.
+Zoom and depth window are VIEW state only -- scores and aggregates are
+always computed over the full tree.  Hover shows qualified name, weight
 and share, raw value, and utility; click writes the ``selected`` trait
 (the same observer idiom as the other longeron widgets, ready for
 linked selection).  Unmeasured cells are grey and hatched.  The color
 ramp is red -> yellow -> green interpolated in OKLab (perceptual, with
 a monotone-ish lightness cue for red/green-weak viewers).  Both
 tessellations are deterministic: stable model order, and the Voronoi
-iteration runs on a seeded PRNG (``seed=``).
+iteration runs on a seeded PRNG (``seed=``, re-derived per zoom root so
+every zoom level re-tessellates stably).
 
 The Voronoi tessellation is computed by Kcnarf's d3-voronoi-treemap,
 vendored with its dependency closure as one inlined bundle
@@ -577,6 +584,8 @@ class Scoreboard:
         tessellation: str = "treemap",
         *,
         collapsed: Iterable[str] = (),
+        zoom_root: str = "",
+        max_depth: int | None = None,
         seed: int = 42,
         width_px: int = 960,
         height_px: int = 540,
@@ -585,11 +594,31 @@ class Scoreboard:
 
         ``tessellation`` picks ``"treemap"`` (squarified) or
         ``"voronoi"`` (the vendored d3-voronoi-treemap; ``seed`` makes
-        its iteration deterministic).  ``collapsed`` pre-collapses
-        subtrees by qualified name.  Hover for details; click a cell to
-        select (the ``selected`` trait); double-click a cell to collapse
-        its group in place, and a collapsed cell to expand it.  Needs
-        the ``viz`` extra (anywidget).
+        its iteration deterministic, re-derived per zoom root).  Hover a
+        cell for details; click to select (the ``selected`` trait).  The
+        navigation gestures:
+
+        * **double-click** a group cell to ZOOM into that subtree (it
+          re-tessellates to fill the whole canvas); double-clicking a
+          leaf zooms to its parent group.  A breadcrumb bar above the
+          canvas tracks the zoom path (hidden at the tree root): each
+          crumb zooms back out, and Esc steps out one level.  Zooming
+          is pure navigation -- it never touches the collapsed set.
+        * the **twist** on a group (the small triangle) collapses or
+          expands that group IN PLACE, at any depth: a collapsed group
+          renders as one cell occupying its subtree's total area,
+          colored by the subtree aggregate.
+
+        ``collapsed`` pre-collapses subtrees by qualified name;
+        ``zoom_root`` starts zoomed into one (``""`` is the tree root);
+        ``max_depth`` (default ``None`` = unlimited) windows the render
+        depth below the CURRENT zoom root -- deeper levels draw as
+        aggregate cells (same visual as collapsed, without entering the
+        collapsed set), and zooming in reveals the next ``max_depth``
+        levels.  All navigation state is scriptable: ``selected``,
+        ``collapsed``, ``zoom_root`` and ``max_depth`` are two-way
+        traits.  None of them affect scoring, which always runs over
+        the full tree.  Needs the ``viz`` extra (anywidget).
         """
 
         if tessellation not in ("treemap", "voronoi"):
@@ -598,12 +627,19 @@ class Scoreboard:
         unknown = [qname for qname in collapsed if qname not in self._index]
         if unknown:
             raise ValueError(f"unknown collapsed qname(s): {unknown}")
+        zoom_root = str(zoom_root)
+        if zoom_root and zoom_root not in self._index:
+            raise ValueError(f"unknown zoom_root qname: {zoom_root!r}")
+        if max_depth is not None and max_depth < 1:
+            raise ValueError(f"max_depth must be a positive int or None, not {max_depth!r}")
         cls = _widget_class()
         return cls(
             nodes_json=json.dumps(self._payload(self.root)),
             tessellation=tessellation,
             aggregation=self.aggregation,
             collapsed=sorted(collapsed),
+            zoom_root=zoom_root,
+            max_depth=max_depth,
             seed=seed,
             width_px=width_px,
             height_px=height_px,
@@ -807,6 +843,27 @@ function lgnSbPolyCentroid(poly) {
   if (Math.abs(a) < 1e-9) return poly[0];
   return [cx / (3 * a), cy / (3 * a)];
 }
+function lgnSbMixSeed(seed, zoomRoot) {
+  // FNV-1a over the zoom root's qname, folded into the base seed: each
+  // zoom level gets its own stable PRNG stream (deterministic re-renders)
+  let h = ((seed >>> 0) ^ 2166136261) >>> 0;
+  for (let i = 0; i < zoomRoot.length; i++) {
+    h = Math.imul(h ^ zoomRoot.charCodeAt(i), 16777619) >>> 0;
+  }
+  return h || 1;
+}
+function lgnSbTwistAnchor(polygon) {
+  // just inside the polygon (convex): its topmost vertex nudged toward
+  // the centroid -- the voronoi analogue of a rect's top-left corner
+  let top = polygon[0];
+  for (const p of polygon) {
+    if (p[1] < top[1] || (p[1] === top[1] && p[0] < top[0])) top = p;
+  }
+  const [cx, cy] = lgnSbPolyCentroid(polygon);
+  const dist = Math.hypot(cx - top[0], cy - top[1]) || 1;
+  const t = Math.min(0.5, 13 / dist);
+  return [top[0] + (cx - top[0]) * t, top[1] + (cy - top[1]) * t];
+}
 
 function render({ model, el }) {
   // unique across ALL module copies (anywidget loads one module per
@@ -816,14 +873,17 @@ function render({ model, el }) {
   globalThis.lgnSbSeq = (globalThis.lgnSbSeq || 0) + 1;
   const iid = `lgn-sb-${globalThis.lgnSbSeq}-${lgnSbInstances++}`;
   el.classList.add("lgn-sb-host");
+  const crumbs = document.createElement("div");
+  crumbs.className = "lgn-sb-crumbs";
   const wrap = document.createElement("div");
   wrap.className = "lgn-sb-wrap";
+  wrap.tabIndex = -1; // focusable (not tabbable): Esc zooms out one level
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
   const tip = document.createElement("div");
   tip.className = "lgn-sb-tip";
   wrap.append(svg, tip);
-  el.append(wrap);
+  el.append(crumbs, wrap);
 
   let root = null;
   const parentOf = new Map(); // qname -> parent node (null at the root)
@@ -843,53 +903,82 @@ function render({ model, el }) {
 
   const collapsedSet = () => new Set(model.get("collapsed") || []);
   const selectedSet = () => new Set(model.get("selected") || []);
+  const zoomNode = () => byQname.get(model.get("zoom_root") || "") || root;
+  const viewState = () => {
+    const maxDepth = model.get("max_depth");
+    return {
+      zoom: zoomNode(),
+      collapsed: collapsedSet(),
+      window: maxDepth == null || maxDepth < 1 ? Infinity : maxDepth,
+    };
+  };
 
-  function expandedKids(node, collapsed) {
-    if (!node.children || !node.children.length || collapsed.has(node.qname)) return null;
+  function zoomTo(node) {
+    const qname = !node || node === root ? "" : node.qname;
+    if ((model.get("zoom_root") || "") === qname) return;
+    model.set("zoom_root", qname);
+    model.save_changes();
+  }
+
+  // what renders below a node: null = it draws as ONE aggregate cell.
+  // depth is RELATIVE to the zoom root; the zoom root itself always
+  // expands (its own collapsed-set entry must not hide what zooming in
+  // reveals), and levels past the max_depth window draw as aggregates
+  function expandedKids(node, view, depth) {
+    if (!node.children || !node.children.length) return null;
+    if (depth >= view.window) return null;
+    if (depth > 0 && view.collapsed.has(node.qname)) return null;
     return node.children;
   }
 
   // area semantics: a node's share of its parent's area is its weight's
   // share among the siblings, recursively -- collapse is area-preserving
-  function assignAreas(node, area, collapsed) {
+  function assignAreas(node, area, view, depth) {
     node._area = area;
-    const kids = expandedKids(node, collapsed);
+    const kids = expandedKids(node, view, depth);
     if (!kids) return;
     const total = kids.reduce((s, k) => s + Math.max(k.weight, 0), 0);
     for (const k of kids) {
       const share = total > 0 ? Math.max(k.weight, 0) / total : 1 / kids.length;
-      assignAreas(k, area * share, collapsed);
+      assignAreas(k, area * share, view, depth + 1);
     }
   }
 
-  function treemapCells(node, rect, collapsed, cells, outlines, depth) {
-    const kids = expandedKids(node, collapsed);
+  function treemapCells(node, rect, view, cells, outlines, depth) {
+    const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
+    const twist = [rect.x + 11, rect.y + 12];
+    const kids = expandedKids(node, view, depth);
     if (!kids) {
-      const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
       cells.push({ node, d, cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2,
-                   area: rect.w * rect.h, width: rect.w });
+                   area: rect.w * rect.h, width: rect.w, twist });
       return;
     }
-    if (depth > 0) {
-      const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
-      outlines.push({ d, depth });
-    }
+    if (depth > 0) outlines.push({ node, d, depth, area: rect.w * rect.h, twist });
     const rects = lgnSbSquarify(kids.map((k) => k._area), rect);
-    kids.forEach((k, i) => treemapCells(k, rects[i], collapsed, cells, outlines, depth + 1));
+    kids.forEach((k, i) => treemapCells(k, rects[i], view, cells, outlines, depth + 1));
   }
 
-  function voronoiCells(W, H, collapsed, cells, outlines) {
+  function voronoiCells(W, H, view, cells, outlines) {
     if (typeof lgnVoronoi === "undefined") {
       return false; // vendored bundle missing: caller shows the notice
     }
     const minArea = W * H * 1e-6;
-    function prune(node) {
-      const kids = expandedKids(node, collapsed);
-      if (!kids) return { node, value: Math.max(node._area, minArea) };
-      return { node, children: kids.map(prune) };
+    if (!expandedKids(view.zoom, view, 0)) {
+      // a childless zoom root (a leaf, by scripting zoom_root): one cell
+      // covering the canvas -- d3-voronoi-treemap needs children to run
+      const poly = [[0, 0], [0, H], [W, H], [W, 0]];
+      const d = `M${poly.map((p) => `${p[0]},${p[1]}`).join("L")}Z`;
+      cells.push({ node: view.zoom, d, cx: W / 2, cy: H / 2, area: W * H,
+                   width: W, twist: [11, 12] });
+      return true;
     }
-    const hier = lgnVoronoi.hierarchy(prune(root)).sum((d) => d.value || 0);
-    let s = (model.get("seed") >>> 0) || 1;
+    function prune(node, depth) {
+      const kids = expandedKids(node, view, depth);
+      if (!kids) return { node, value: Math.max(node._area, minArea) };
+      return { node, children: kids.map((k) => prune(k, depth + 1)) };
+    }
+    const hier = lgnVoronoi.hierarchy(prune(view.zoom, 0)).sum((d) => d.value || 0);
+    let s = lgnSbMixSeed(model.get("seed"), model.get("zoom_root") || "");
     const prng = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
     lgnVoronoi
       .voronoiTreemap()
@@ -898,13 +987,17 @@ function render({ model, el }) {
     for (const n of hier.descendants()) {
       if (!n.polygon) continue;
       const d = `M${n.polygon.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join("L")}Z`;
+      const twist = lgnSbTwistAnchor(n.polygon);
       if (n.children) {
-        if (n.depth > 0) outlines.push({ d, depth: n.depth });
+        if (n.depth > 0) {
+          outlines.push({ node: n.data.node, d, depth: n.depth,
+                          area: lgnSbPolyArea(n.polygon), twist });
+        }
         continue;
       }
       const [cx, cy] = lgnSbPolyCentroid(n.polygon);
       const area = lgnSbPolyArea(n.polygon);
-      cells.push({ node: n.data.node, d, cx, cy, area, width: Math.sqrt(area) * 1.15 });
+      cells.push({ node: n.data.node, d, cx, cy, area, width: Math.sqrt(area) * 1.15, twist });
     }
     return true;
   }
@@ -920,7 +1013,9 @@ function render({ model, el }) {
     const lines = [];
     const group = node.children && node.children.length;
     const isCollapsed = group && collapsed.has(node.qname);
-    lines.push(["title", node.label + (isCollapsed ? `  (${node.leaves} collapsed)` : "")]);
+    // a group only reaches the tooltip as ONE aggregate cell (collapsed,
+    // or cut off by the max_depth render window)
+    lines.push(["title", node.label + (group ? `  (${node.leaves} leaves)` : "")]);
     lines.push(["dim", node.qname]);
     const parent = parentOf.get(node.qname);
     const share = parent ? ` \u00b7 ${(node.share * 100).toFixed(0)}% of ${parent.label}` : "";
@@ -933,8 +1028,9 @@ function render({ model, el }) {
         ` (${model.get("aggregation")} over ${node.leaves} leaves)`;
       lines.push(["row", node.measured ? agg : "unmeasured"]);
     }
-    const hint = isCollapsed ? "double-click to expand"
-      : group ? "" : "double-click to collapse the group";
+    const hint = group
+      ? `double-click to zoom in${isCollapsed ? " \u00b7 \u25b8 expands in place" : ""}`
+      : "double-click to zoom to the group";
     lines.push(["dim", hint]);
     return lines;
   }
@@ -967,17 +1063,47 @@ function render({ model, el }) {
   }
 
   function toggle(node) {
+    if (!node.children || !node.children.length) return; // twists sit on groups only
     const collapsed = collapsedSet();
-    const group = node.children && node.children.length;
-    if (group && collapsed.has(node.qname)) collapsed.delete(node.qname); // expand
-    else if (group) collapsed.add(node.qname);
-    else {
-      const parent = parentOf.get(node.qname);
-      if (!parent) return;
-      collapsed.add(parent.qname);
-    }
+    if (collapsed.has(node.qname)) collapsed.delete(node.qname); // expand
+    else collapsed.add(node.qname);
     model.set("collapsed", [...collapsed].sort());
     model.save_changes();
+  }
+
+  function renderCrumbs() {
+    crumbs.textContent = "";
+    const zoom = zoomNode();
+    if (!root || zoom === root) {
+      crumbs.style.display = "none"; // zero chrome when unzoomed
+      return;
+    }
+    crumbs.style.display = "flex";
+    const path = [];
+    for (let n = zoom; n; n = parentOf.get(n.qname)) path.unshift(n);
+    path.forEach((n, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "lgn-sb-crumb-sep";
+        sep.textContent = "\u25b8";
+        crumbs.append(sep);
+      }
+      if (i === path.length - 1) {
+        const here = document.createElement("span");
+        here.className = "lgn-sb-crumb lgn-sb-crumb-here";
+        here.textContent = n.label;
+        here.title = n.qname;
+        crumbs.append(here);
+      } else {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "lgn-sb-crumb";
+        btn.textContent = n.label;
+        btn.title = n.qname;
+        btn.addEventListener("click", (ev) => { ev.stopPropagation(); zoomTo(n); });
+        crumbs.append(btn);
+      }
+    });
   }
 
   function restyle() {
@@ -1015,12 +1141,13 @@ function render({ model, el }) {
     defs.append(pattern);
     svg.append(defs);
 
-    const collapsed = collapsedSet();
-    assignAreas(root, W * H, collapsed);
+    renderCrumbs();
+    const view = viewState();
+    assignAreas(view.zoom, W * H, view, 0);
     const cells = [], outlines = [];
     const mode = model.get("tessellation") || "treemap";
     if (mode === "voronoi") {
-      if (!voronoiCells(W, H, collapsed, cells, outlines)) {
+      if (!voronoiCells(W, H, view, cells, outlines)) {
         const note = document.createElementNS(NS, "text");
         note.setAttribute("x", "16"); note.setAttribute("y", "28");
         note.setAttribute("class", "lgn-sb-note");
@@ -1029,13 +1156,50 @@ function render({ model, el }) {
         return;
       }
     } else {
-      treemapCells(root, { x: 0, y: 0, w: W, h: H }, collapsed, cells, outlines, 0);
+      treemapCells(view.zoom, { x: 0, y: 0, w: W, h: H }, view, cells, outlines, 0);
     }
 
     const cellLayer = document.createElementNS(NS, "g");
     const lineLayer = document.createElementNS(NS, "g");
     const textLayer = document.createElementNS(NS, "g");
-    svg.append(cellLayer, lineLayer, textLayer);
+    const twistLayer = document.createElementNS(NS, "g");
+    svg.append(cellLayer, lineLayer, textLayer, twistLayer);
+
+    const placedTwists = [];
+    function addTwist(node, at, open) {
+      // nudge right out of any earlier twist: nested groups share their
+      // top-left corner, especially in the treemap
+      let [x, y] = at;
+      while (placedTwists.some((p) => Math.abs(p.x - x) < 14 && Math.abs(p.y - y) < 13)) x += 14;
+      placedTwists.push({ x, y });
+      const glyph = document.createElementNS(NS, "text");
+      glyph.setAttribute("x", x);
+      glyph.setAttribute("y", y);
+      glyph.setAttribute("class", "lgn-sb-twist");
+      glyph.dataset.qname = node.qname;
+      glyph.textContent = open ? "\u25be" : "\u25b8";
+      const title = document.createElementNS(NS, "title");
+      title.textContent = view.collapsed.has(node.qname)
+        ? "expand in place" : "collapse in place";
+      glyph.append(title);
+      const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      glyph.addEventListener("dblclick", swallow); // the twist never zooms
+      glyph.addEventListener("click", (ev) => { swallow(ev); toggle(node); }); // never selects
+      twistLayer.append(glyph);
+    }
+
+    // outlines (and their twists) first: parents claim their corner
+    // before their descendants' twists get nudged aside
+    for (const outline of outlines.sort((a, b) => a.depth - b.depth)) {
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", outline.d);
+      path.setAttribute("class", "lgn-sb-outline");
+      path.setAttribute("stroke-width", Math.max(1, 4 - outline.depth).toFixed(1));
+      lineLayer.append(path);
+      // every expanded group collapses in place from its own twist --
+      // including one whose children are all groups
+      if (outline.area >= W * H * 0.004) addTwist(outline.node, outline.twist, true);
+    }
     for (const cell of cells) {
       const node = cell.node;
       const path = document.createElementNS(NS, "path");
@@ -1049,14 +1213,18 @@ function render({ model, el }) {
       path.addEventListener("pointerleave", () => { tip.style.display = "none"; });
       path.addEventListener("click", (ev) => { ev.stopPropagation(); setSelected([node.qname]); });
       path.addEventListener("dblclick", (ev) => {
+        // zoom is navigation, never collapse: a group cell zooms in, a
+        // leaf zooms to its parent group
         ev.stopPropagation();
         ev.preventDefault();
-        toggle(node);
+        const group = node.children && node.children.length;
+        zoomTo(group ? node : parentOf.get(node.qname));
       });
       cellLayer.append(path);
 
       if (cell.area >= W * H * 0.004) {
-        const isCollapsed = node.children && node.children.length;
+        const group = node.children && node.children.length;
+        if (group) addTwist(node, cell.twist, false); // aggregate cell: closed twist
         const size = Math.min(15, Math.max(9, 0.14 * Math.sqrt(cell.area)));
         const dark = measured ? color.dark : true;
         const label = document.createElementNS(NS, "text");
@@ -1066,7 +1234,7 @@ function render({ model, el }) {
         label.setAttribute("class", cls);
         label.setAttribute("font-size", size.toFixed(1));
         const maxChars = Math.max(3, Math.floor(cell.width / (0.62 * size)));
-        let text = isCollapsed ? `\u25b8 ${node.label}` : node.label;
+        let text = node.label;
         if (text.length > maxChars) text = `${text.slice(0, Math.max(1, maxChars - 1))}\u2026`;
         label.textContent = text;
         textLayer.append(label);
@@ -1081,22 +1249,26 @@ function render({ model, el }) {
         }
       }
     }
-    for (const outline of outlines.sort((a, b) => a.depth - b.depth)) {
-      const path = document.createElementNS(NS, "path");
-      path.setAttribute("d", outline.d);
-      path.setAttribute("class", "lgn-sb-outline");
-      path.setAttribute("stroke-width", Math.max(1, 4 - outline.depth).toFixed(1));
-      lineLayer.append(path);
-    }
     restyle();
   }
 
   svg.addEventListener("click", () => setSelected([]));
   svg.addEventListener("dblclick", (ev) => ev.preventDefault());
+  wrap.addEventListener("pointerdown", () => wrap.focus({ preventScroll: true }));
+  wrap.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    const zoom = zoomNode();
+    if (!root || zoom === root) return; // unzoomed: Esc stays JupyterLab's
+    ev.stopPropagation();
+    ev.preventDefault();
+    zoomTo(parentOf.get(zoom.qname)); // one level out
+  });
   model.on("change:nodes_json", rebuild);
   model.on("change:collapsed", renderAll);
   model.on("change:tessellation", renderAll);
   model.on("change:seed", renderAll);
+  model.on("change:zoom_root", renderAll);
+  model.on("change:max_depth", renderAll);
   model.on("change:width_px", renderAll);
   model.on("change:height_px", renderAll);
   model.on("change:selected", restyle);
@@ -1110,6 +1282,28 @@ _SCOREBOARD_CSS = """
   font-family: var(--jp-ui-font-family, system-ui, sans-serif);
 }
 .lgn-sb-wrap { position: relative; width: 100%; }
+.lgn-sb-wrap:focus { outline: none; }
+.lgn-sb-crumbs {
+  display: none; align-items: center; flex-wrap: wrap; gap: 2px;
+  margin: 0 0 4px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--jp-border-color2, #e0e0e0);
+  background: var(--jp-layout-color2, #f5f5f5);
+  color: var(--jp-ui-font-color1, #333333);
+  font-size: 11.5px; line-height: 1.4;
+}
+.lgn-sb-crumb {
+  border: 0; background: none; margin: 0; padding: 1px 3px; border-radius: 3px;
+  font: inherit; color: var(--jp-brand-color1, #1976d2); cursor: pointer;
+}
+button.lgn-sb-crumb:hover {
+  text-decoration: underline; background: var(--jp-layout-color3, #ededed);
+}
+.lgn-sb-crumb-here {
+  color: var(--jp-ui-font-color1, #333333); cursor: default; font-weight: 600;
+}
+.lgn-sb-crumb-sep {
+  color: var(--jp-ui-font-color2, #777777); font-size: 10px; padding: 0 1px;
+}
 .lgn-sb-wrap svg {
   display: block; width: 100%; height: auto;
   border: 1px solid var(--jp-border-color2, #e0e0e0); border-radius: 6px;
@@ -1126,6 +1320,13 @@ _SCOREBOARD_CSS = """
   fill: none; stroke: var(--jp-layout-color1, #ffffff);
   pointer-events: none; opacity: 0.9;
 }
+.lgn-sb-twist {
+  cursor: pointer; user-select: none;
+  text-anchor: middle; dominant-baseline: middle; font-size: 12px;
+  paint-order: stroke; stroke: var(--jp-layout-color1, #ffffff);
+  stroke-width: 3px; stroke-linejoin: round; fill: rgba(0, 0, 0, 0.72);
+}
+.lgn-sb-twist:hover { fill: var(--jp-brand-color1, #1976d2); }
 .lgn-sb-label {
   pointer-events: none; user-select: none;
   text-anchor: middle; dominant-baseline: middle;
@@ -1162,8 +1363,9 @@ def _widget_class() -> type[Any]:
 
     class ScoreboardWidget(anywidget.AnyWidget):
         """Treemap/Voronoi over one scoreboard payload (area = weight,
-        color = utility).  ``selected`` and ``collapsed`` are the two-way
-        automation surface; build instances via :meth:`Scoreboard.widget`."""
+        color = utility).  ``selected``, ``collapsed``, ``zoom_root``
+        and ``max_depth`` are the two-way automation surface; build
+        instances via :meth:`Scoreboard.widget`."""
 
         _esm = vendored + _SCOREBOARD_JS
         _css = _SCOREBOARD_CSS
@@ -1176,6 +1378,14 @@ def _widget_class() -> type[Any]:
         ).tag(sync=True)
         collapsed = traitlets.List(
             traitlets.Unicode(), help="collapsed subtree qnames (each renders as one cell)"
+        ).tag(sync=True)
+        zoom_root = traitlets.Unicode(
+            "", help="qname of the subtree the view is zoomed into; '' = the tree root"
+        ).tag(sync=True)
+        max_depth = traitlets.Int(
+            None,
+            allow_none=True,
+            help="render-depth window below the current zoom root; None = unlimited",
         ).tag(sync=True)
         seed = traitlets.Int(42, help="Voronoi iteration seed (determinism)").tag(sync=True)
         width_px = traitlets.Int(960).tag(sync=True)
