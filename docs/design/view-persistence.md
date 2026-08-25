@@ -382,6 +382,11 @@ interpretations out of the API projection
 
 ## Open questions for the maintainer
 
+All five were ratified as recommended by the maintainer on 2026-08-25;
+they are recorded here with their rationale. The tranche-2
+implementation treats them as settled contract.
+
+
 1. **Where does a new view usage land in multi-file workspaces?**
    Options: append to the file owning the scope package, or collect views
    in a dedicated `views.sysml`. *Recommendation:* append to the owning
