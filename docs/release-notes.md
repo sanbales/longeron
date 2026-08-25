@@ -1,5 +1,19 @@
 # Release notes
 
+## 0.9.1
+
+- **The `sysml2` alias is removed** — the `sysml2` PyPI name and
+  namespace were ceded to the [OpenMBEE](https://www.openmbee.org/)
+  organization. Gone completely, with no deprecation period: the
+  bundled `import sysml2` compatibility shim (which shipped inside the
+  longeron wheel and would file-collide with a future OpenMBEE `sysml2`
+  package), the `sysml2` console command, the `sysml2` metadata-only
+  alias distribution, and the `$SYSML2_CACHE_DIR` cache-directory
+  fallback. Replace `import sysml2` with `import longeron`, the
+  `sysml2` command with `longeron`, and `$SYSML2_CACHE_DIR` with
+  `$LONGERON_CACHE_DIR`
+- Note: 0.9.0 shipped wheel-only on PyPI
+
 ## 0.9.0
 
 - **The notation program completes** (tranche 3 + polish): ports render

@@ -45,7 +45,7 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `test-browser` (pixi) | the browser-truth tier (`tests/browser/`): headless JupyterLab driven by Playwright/Chromium. See below. |
 | `lint` | `ruff format --check` and `ruff check` over `src tests examples scripts notebooks docs`. |
 | `format` | `ruff format` plus `ruff check --fix` over the same paths. |
-| `typecheck` | `mypy` over `src/longeron` and `src/sysml2` (generated code excluded). |
+| `typecheck` | `mypy` over `src/longeron` (generated code excluded). |
 | `coverage` | pytest with `--cov=longeron`. |
 | `parsers` | regenerate the ANTLR parsers from `grammars/*.g4` (needs Java; pixi provides it). |
 | `stdlib` | rebuild the prebuilt standard-library JSON (`scripts/vendor_stdlib.py --prebuilt-only`). |

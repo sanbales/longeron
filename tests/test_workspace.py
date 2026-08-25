@@ -41,7 +41,6 @@ def workspace_dir(tmp_path):
 def isolated_cache(tmp_path_factory, monkeypatch):
     cache_root = tmp_path_factory.mktemp("longeron-cache")
     monkeypatch.setenv("LONGERON_CACHE_DIR", str(cache_root))
-    monkeypatch.delenv("SYSML2_CACHE_DIR", raising=False)
     return cache_root
 
 
@@ -200,28 +199,29 @@ class TestCache:
 
 
 class TestCacheDirEnv:
-    """The override chain: LONGERON_CACHE_DIR, then SYSML2_CACHE_DIR (the
-    pre-rename name), then $XDG_CACHE_HOME/longeron, then ~/.cache/longeron."""
+    """The override chain: LONGERON_CACHE_DIR, then $XDG_CACHE_HOME/longeron,
+    then ~/.cache/longeron."""
 
     def test_longeron_var_is_primary(self, monkeypatch, tmp_path):
         monkeypatch.setenv("LONGERON_CACHE_DIR", str(tmp_path / "new"))
-        monkeypatch.setenv("SYSML2_CACHE_DIR", str(tmp_path / "old"))
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
         assert workspace.cache_dir() == tmp_path / "new"
 
-    def test_sysml2_var_still_honored(self, monkeypatch, tmp_path):
+    def test_pre_rename_var_ignored(self, monkeypatch, tmp_path):
+        # the pre-rename SYSML2_CACHE_DIR fallback was removed in 0.9.1
+        # (the sysml2 name was ceded to OpenMBEE); it must do nothing now
         monkeypatch.delenv("LONGERON_CACHE_DIR", raising=False)
         monkeypatch.setenv("SYSML2_CACHE_DIR", str(tmp_path / "old"))
-        assert workspace.cache_dir() == tmp_path / "old"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        assert workspace.cache_dir() == tmp_path / "longeron"
 
     def test_xdg_fallback(self, monkeypatch, tmp_path):
         monkeypatch.delenv("LONGERON_CACHE_DIR", raising=False)
-        monkeypatch.delenv("SYSML2_CACHE_DIR", raising=False)
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         assert workspace.cache_dir() == tmp_path / "longeron"
 
     def test_home_fallback(self, monkeypatch):
         monkeypatch.delenv("LONGERON_CACHE_DIR", raising=False)
-        monkeypatch.delenv("SYSML2_CACHE_DIR", raising=False)
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
         assert workspace.cache_dir().parts[-2:] == (".cache", "longeron")
 

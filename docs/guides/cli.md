@@ -1,8 +1,6 @@
 # Command-line reference
 
-The package installs one console command, `longeron`. It also installs
-`sysml2`, the same program under the pre-rename name (see
-[Migrating from sysml2](compat.md)). The eight subcommands map onto the
+The package installs one console command, `longeron`. The eight subcommands map onto the
 Python API one-to-one, so anything the command line does, a script can do.
 
 | Subcommand | Does | Python equivalent |

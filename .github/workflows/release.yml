@@ -6,8 +6,8 @@ name: release
 #
 #   release = git tag vX.Y.Z && git push origin vX.Y.Z
 #
-# workflow_dispatch exists for alias-only publishes (e.g. the 'sysml2'
-# alias): with skip-existing, already-uploaded files are ignored.
+# workflow_dispatch is the recovery path for partial publishes: with
+# skip-existing, already-uploaded files are ignored.
 
 on:
   push:
@@ -25,7 +25,6 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install build twine
       - run: python -m build
-      - run: python -m build alias/sysml2 --outdir dist
       - run: python -m twine check dist/*
       - name: tag matches package version
         if: github.ref_type == 'tag'
@@ -46,12 +45,6 @@ jobs:
           diagnostics = validate(model)  # stdlib must resolve from the wheel
           assert len(diagnostics) == 1 and "Reall" in diagnostics[0].message
           assert longeron.Interpreter(model).instantiate("P::V").slots["m"] == 1.0
-
-          # the bundled sysml2 compatibility shim: same objects, both names
-          import sysml2
-          import sysml2.rdf
-          assert sysml2.loads is longeron.loads
-          assert sysml2.rdf is longeron.rdf
           print("wheel smoke OK")
           EOF
       - uses: actions/upload-artifact@v7

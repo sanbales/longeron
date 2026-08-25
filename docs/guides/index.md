@@ -14,7 +14,6 @@ the [API reference](../reference/index.md).
 | [Notation coverage](notation-coverage.md) | know exactly which SysML v2 graphical notations the diagrams draw, and which they do not |
 | [Choosing an analysis](analysis.md) | pick between trade studies, MDAO sizing, SMT checks, and RDF/RAG queries |
 | [Development](contributing.md) | build, test, and contribute — including the notebook conventions |
-| [Migrating from sysml2](compat.md) | keep pre-0.3.0 code, commands, and caches working |
 
 ```{toctree}
 :hidden:
@@ -28,5 +27,4 @@ grammar
 notation-coverage
 analysis
 contributing
-compat
 ```

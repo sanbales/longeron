@@ -60,12 +60,6 @@ single exception type, `longeron.errors.MissingExtraError` (both a
 `SysMLError` and an `ImportError`), whose message names the exact
 `pip install "longeron[...]"` command.
 
-> **Renamed from `sysml2`:** the import package is `longeron` as of 0.3.0.
-> The old names still work with no changes — the package ships a built-in
-> `sysml2` compatibility shim (`import sysml2` hands back longeron's own
-> modules) and keeps the `sysml2` console command; the `sysml2` PyPI
-> distribution remains as a metadata-only alias of `longeron`.
-
 ### With pixi (optional)
 
 The repo also carries `[tool.pixi]` config in `pyproject.toml` (dependency
@@ -222,8 +216,7 @@ imports (`private import Units::*;`) and qualified references resolve.
 Files load in sorted path order for determinism.
 
 Built models are cached (as JSON — the same lossless schema as `to_json`,
-never pickles) in `~/.cache/longeron` (override with `$LONGERON_CACHE_DIR`;
-the pre-rename `$SYSML2_CACHE_DIR` is still honored),
+never pickles) in `~/.cache/longeron` (override with `$LONGERON_CACHE_DIR`),
 keyed by source content plus a fingerprint of the generated parser and
 builder code — edits, grammar regeneration, and package upgrades invalidate
 cleanly. Caching is on by default -- for single files as well as
@@ -274,7 +267,6 @@ src/longeron/
 vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `longeron` console command
-src/sysml2/                compatibility shim: `import sysml2` is longeron
 examples/                  drone.sysml + kernel.kerml + demo.py
 tests/                     pytest suite (see the coverage badge above)
 .github/workflows/ci.yml   pixi-based: check + test matrix (3.10-3.13)

@@ -13,8 +13,7 @@ Loading
 Caching
 =======
 Built models are cached as JSON in a content-addressed cache
-(``$LONGERON_CACHE_DIR``, ``$XDG_CACHE_HOME/longeron``, or ``~/.cache/longeron``;
-``$SYSML2_CACHE_DIR`` is still honored as a fallback for pre-rename setups).
+(``$LONGERON_CACHE_DIR``, ``$XDG_CACHE_HOME/longeron``, or ``~/.cache/longeron``).
 Cache entries use the same lossless schema as :func:`longeron.to_json` -- no
 pickles, so entries are inspectable text and never execute code on load.
 An entry's key is the SHA-256 of the source text plus a fingerprint of the
@@ -69,9 +68,7 @@ def _fingerprint() -> str:
 def cache_dir() -> Path:
     """The directory used for cached models (created on demand)."""
 
-    # LONGERON_CACHE_DIR is the documented override; SYSML2_CACHE_DIR (the
-    # pre-0.3.0 name) keeps working as a fallback for existing environments.
-    override = os.environ.get("LONGERON_CACHE_DIR") or os.environ.get("SYSML2_CACHE_DIR")
+    override = os.environ.get("LONGERON_CACHE_DIR")
     if override:
         return Path(override)
     xdg = os.environ.get("XDG_CACHE_HOME")

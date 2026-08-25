@@ -16,13 +16,6 @@ The import name is `longeron`:
 import longeron
 ```
 
-:::{note}
-The project was renamed from `sysml2` in 0.3.0. `import sysml2`, the
-`sysml2` console command, and the `sysml2` PyPI distribution all keep
-working as supported aliases. See
-[Migrating from sysml2](guides/compat.md).
-:::
-
 ### Optional extras
 
 Everything beyond parse/validate/execute/export sits behind extras, so

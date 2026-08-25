@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longeron"
-version = "0.9.0"
+version = "0.9.1"
 description = "Define, execute, and replay SysML v2 models in Python: ANTLR-based parser, validator, interpreter, and diagram renderers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "sanbales" }]
-keywords = ["sysml", "sysml2", "kerml", "mbse", "systems-engineering", "modeling"]
+keywords = ["sysml", "kerml", "mbse", "systems-engineering", "modeling"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -77,10 +77,9 @@ browser-test = [
 
 [project.scripts]
 longeron = "longeron.cli:main"
-sysml2 = "longeron.cli:main"  # pre-0.3.0 command name, kept as an alias
 
 [tool.setuptools.packages.find]
-where = ["src"]  # picks up both longeron and the sysml2 compat shim
+where = ["src"]
 
 [tool.setuptools.package-data]
 longeron = [
@@ -122,11 +121,10 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/longeron/__init__.py" = ["F403"]  # re-export of the model namespace
-"src/sysml2/__init__.py" = ["F403"]  # compat shim re-exports longeron's surface
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/longeron", "src/sysml2"]
+files = ["src/longeron"]
 exclude = ["src/longeron/_gen"]
 check_untyped_defs = true
 no_implicit_optional = true
@@ -138,12 +136,6 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = "longeron._gen.*"
 follow_imports = "skip"
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-# the sysml2 compat shim aliases longeron dynamically (star re-export,
-# module __getattr__, meta-path finder) -- not worth typing strictly
-module = "sysml2"
 ignore_errors = true
 
 [[tool.mypy.overrides]]

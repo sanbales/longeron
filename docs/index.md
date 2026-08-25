@@ -2,8 +2,7 @@
 
 *The spine of your system model.* `longeron` is a Python package that
 defines, exports, imports, and **executes** SysML v2 models. The import
-name is `longeron`, and `sysml2` remains a built-in compatibility alias
-([migration notes](guides/compat.md)). The parsers are generated with
+name is `longeron`. The parsers are generated with
 ANTLR 4 from combined SysML v2 and KerML grammars, and the full official
 SysML-v2-Release corpus parses and builds
 ([grammar conformance](guides/grammar.md)).
@@ -40,14 +39,12 @@ visualization, and interchange features live behind extras
   [command line](guides/cli.md), [workspaces & caching](guides/workspaces.md),
   [validation](guides/validation.md),
   [grammar conformance](guides/grammar.md),
-  [choosing an analysis](guides/analysis.md),
-  [development](guides/contributing.md), and
-  [migration from sysml2](guides/compat.md).
+  [choosing an analysis](guides/analysis.md), and
+  [development](guides/contributing.md).
 - [API reference](reference/index.md) — autodoc pages for every module.
 - [Architecture](architecture.md) — how a model flows through the
   package, and what is vendored.
-- [Release notes](release-notes.md) — what shipped in 0.2.0 and what is
-  queued for 0.3.0.
+- [Release notes](release-notes.md) — what shipped in each release.
 
 ```{toctree}
 :hidden:

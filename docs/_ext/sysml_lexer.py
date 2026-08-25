@@ -45,7 +45,7 @@ class SysMLLexer(RegexLexer):
     """Lex enough SysML v2 to color keywords, literals, and comments."""
 
     name = "SysML v2"
-    aliases: ClassVar = ["sysml", "sysml2", "kerml"]
+    aliases: ClassVar = ["sysml", "kerml"]
     filenames: ClassVar = ["*.sysml", "*.kerml"]
 
     tokens: ClassVar = {

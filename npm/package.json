@@ -4,6 +4,6 @@
   "description": "Reserved for Longeron: define, execute, and replay SysML v2 models. Python package: `pip install longeron`. A JupyterLab extension will live here.",
   "repository": { "type": "git", "url": "git+https://github.com/sanbales/longeron.git" },
   "homepage": "https://github.com/sanbales/longeron",
-  "keywords": ["sysml", "sysml2", "kerml", "mbse", "systems-engineering"],
+  "keywords": ["sysml", "kerml", "mbse", "systems-engineering"],
   "license": "Apache-2.0"
 }

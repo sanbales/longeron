@@ -81,9 +81,8 @@ The cache directory is resolved in this order:
 | Priority | Source | Value |
 |---|---|---|
 | 1 | `$LONGERON_CACHE_DIR` | that directory |
-| 2 | `$SYSML2_CACHE_DIR` | that directory (pre-rename name, still honored) |
-| 3 | `$XDG_CACHE_HOME` | `$XDG_CACHE_HOME/longeron` |
-| 4 | default | `~/.cache/longeron` |
+| 2 | `$XDG_CACHE_HOME` | `$XDG_CACHE_HOME/longeron` |
+| 3 | default | `~/.cache/longeron` |
 
 {func}`~longeron.workspace.cache_dir` returns the resolved directory,
 and {func}`~longeron.workspace.clear_cache` deletes every entry.
