@@ -800,3 +800,32 @@ def test_demo_notebook_executes():
         resources={"metadata": {"path": str(NOTEBOOK.parent)}},
     )
     client.execute()  # the notebook asserts its own expectations
+
+
+class TestRootLabelAndTooltip:
+    """The tree root: short label, full-path tooltip (never a bare ~N)."""
+
+    def test_path_source_collapses_to_file_name(self):
+        model = longeron.loads(
+            "package P { part p; }", source_name="examples/deep/dir/uav_missions.sysml"
+        )
+        nodes, _ = explorer_module._tree_data(model)
+        assert nodes[0]["label"] == "uav_missions.sysml"
+        assert nodes[0]["tooltip"] == "examples/deep/dir/uav_missions.sysml"
+
+    def test_plain_source_name_is_untouched(self):
+        model = longeron.loads("package P { part p; }", source_name="solo")
+        nodes, _ = explorer_module._tree_data(model)
+        assert nodes[0]["label"] == "solo"
+        assert nodes[0]["tooltip"] == "solo"
+
+    def test_text_model_tooltip_is_its_source_marker(self):
+        model = longeron.loads("package P { part p; }")
+        nodes, _ = explorer_module._tree_data(model)
+        assert nodes[0]["label"] == "<text>"
+        assert nodes[0]["tooltip"] == "<text>"  # anything beats a bare ~0
+
+    def test_sourceless_model_has_no_tooltip(self):
+        nodes, _ = explorer_module._tree_data(M.Model())
+        assert "tooltip" not in nodes[0]
+        assert nodes[0]["label"] == "model"

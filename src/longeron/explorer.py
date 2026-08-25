@@ -99,6 +99,7 @@ import os
 import re
 import time
 from collections.abc import Callable, Iterator, Sequence
+from pathlib import PurePath
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
 try:
@@ -202,6 +203,7 @@ class TreeNode(_TreeNodeBase, total=False):
 
     children: list[TreeNode]
     suffix: str
+    tooltip: str
 
 
 @runtime_checkable
@@ -267,7 +269,12 @@ def _chip(element: M.Element) -> str:
 
 def _display_name(element: M.Element) -> str:
     if isinstance(element, M.Model):
-        return element.source_name or "model"
+        # a path-shaped source collapses to its file name (the tree root
+        # label stays short; the full path rides the node's tooltip)
+        source = element.source_name or "model"
+        if "/" in source or "\\" in source:
+            source = PurePath(source).name
+        return source
     if element.name or element.short_name:
         return str(element.name or element.short_name)
     if isinstance(element, M.SatisfyUsage):
@@ -316,6 +323,10 @@ def _tree_data(
             "badge": _chip(element),
             "has_children": False,
         }
+        if isinstance(element, M.Model) and element.source_name:
+            # the root's id is a synthetic ~N (useless as a tooltip); the
+            # full source path is what the shortened label elides
+            node["tooltip"] = element.source_name
         suffix = _suffix(element)
         if suffix:
             node["suffix"] = suffix
@@ -423,7 +434,7 @@ function render({ model, el }) {
     const name = document.createElement("span");
     name.className = "lgx-name";
     name.textContent = n.label;
-    name.title = n.id;
+    name.title = n.tooltip || n.id;
     if (hits.has(n.id)) row.classList.add("lgx-hit");
     row.append(twist, chip, name);
     if (n.suffix) {
