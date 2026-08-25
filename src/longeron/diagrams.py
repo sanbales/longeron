@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -1377,6 +1378,17 @@ def _finish(
     # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
     _assign_ids(root)
     result = ipyelk.from_element(root)
+    # browser-roundtrip budget: ipyelk's 30s pipe default classifies a slow
+    # machine (a loaded, shared CI runner rendering two dozen diagrams
+    # through one elkjs worker) as a layout FAILURE -- and error semantics
+    # rightly stop retries, so every affected diagram dies visibly. Real
+    # errors still surface immediately through the pipe's error messages;
+    # the timeout exists only to catch LOST roundtrips, so generosity is
+    # cheap. One knob for tests and slow environments.
+    roundtrip_timeout = float(os.environ.get("LONGERON_BROWSER_TIMEOUT", "120"))
+    for pipe in getattr(result.pipe, "pipes", ()):
+        if hasattr(pipe, "timeout"):
+            pipe.timeout = roundtrip_timeout
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
     result.layout.min_height = "400px"

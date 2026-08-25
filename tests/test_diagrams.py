@@ -1952,3 +1952,24 @@ class TestBrowserTransportIds:
             # any node-attached glyph a gallery section emits without the
             # construction helpers fails the suite here
             _assert_adornment_contract(widget)
+
+
+class TestRoundtripTimeouts:
+    """Pipe timeouts are longeron's knob, not ipyelk's 30s default (CI)."""
+
+    def _pipe_timeouts(self, widget) -> list[float]:
+        return [pipe.timeout for pipe in widget.pipe.pipes if hasattr(pipe, "timeout")]
+
+    def test_default_is_generous(self):
+        model = longeron.loads("package P { part def A; part a : A; }")
+        widget = diagrams.structure_diagram(model)
+        timeouts = self._pipe_timeouts(widget)
+        assert timeouts, "expected at least one browser-roundtrip pipe"
+        assert all(t == 120.0 for t in timeouts), timeouts
+
+    def test_env_var_overrides(self, monkeypatch):
+        monkeypatch.setenv("LONGERON_BROWSER_TIMEOUT", "600")
+        model = longeron.loads("package P { part def A; part a : A; }")
+        widget = diagrams.structure_diagram(model)
+        timeouts = self._pipe_timeouts(widget)
+        assert timeouts and all(t == 600.0 for t in timeouts), timeouts

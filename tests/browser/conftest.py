@@ -197,6 +197,10 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
         PYTHONHASHSEED="0",
+        # kernels inherit this: shared CI runners can take minutes to push
+        # two dozen gallery layouts through one elkjs worker, and a tripped
+        # roundtrip timeout is a final, visible layout failure (by design)
+        LONGERON_BROWSER_TIMEOUT="600",
         JUPYTERLAB_SETTINGS_DIR=str(settings),
         # the kernel must import THIS tree's sources even when the editable
         # install resolves elsewhere (worktree runs against the main venv)
