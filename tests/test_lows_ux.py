@@ -366,17 +366,20 @@ class TestLabextensionServingSync:
     VENDOR = ROOT / "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"
 
     def test_pixi_lab_depends_on_the_sync_task(self):
-        import tomllib
+        import re
 
-        with open(self.ROOT / "pyproject.toml", "rb") as handle:
-            tasks = tomllib.load(handle)["tool"]["pixi"]["tasks"]
-        sync = tasks["sync-labextension"]["cmd"]
+        # plain-text asserts: tomllib is stdlib only from python 3.11, and
+        # this test runs on the full version matrix
+        text = (self.ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        sync = re.search(r"\[tool\.pixi\.tasks\.sync-labextension\]\n(.*?)(?:\n\[|\Z)", text, re.S)
+        block = sync.group(1) if sync else text  # inline-table form falls back
         # vendor build -> every served env copy, loudly when one was stale
-        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in sync
-        assert ".pixi/envs/*/share/jupyter/labextensions" in sync
-        assert "rsync" in sync and "--delete" in sync
-        assert "STALE" in sync  # the warning that makes the footgun visible
-        assert "sync-labextension" in tasks["lab"]["depends-on"]
+        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in block
+        assert ".pixi/envs/*/share/jupyter/labextensions" in block
+        assert "rsync" in block and "--delete" in block
+        assert "STALE" in block  # the warning that makes the footgun visible
+        lab = re.search(r"^lab\s*=\s*\{.*?\}\s*$", text, re.M | re.S)
+        assert lab is not None and "sync-labextension" in lab.group(0)
 
     def test_makefile_mirrors_the_task(self):
         makefile = (self.ROOT / "Makefile").read_text(encoding="utf-8")
