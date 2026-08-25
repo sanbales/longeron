@@ -235,7 +235,11 @@ def _playwright() -> Any:
 def browser(_playwright: Any) -> Any:
     """Headless Chromium (`playwright install chromium` provides the binary)."""
 
-    chromium = _playwright.chromium.launch()
+    # --disable-dev-shm-usage: CI runners give Chromium a tiny /dev/shm and
+    # it hangs/crashes silently on memory-heavy pages (a full gallery
+    # notebook qualifies); the flag moves shared memory to /tmp. Harmless
+    # on developer machines.
+    chromium = _playwright.chromium.launch(args=["--disable-dev-shm-usage"])
     yield chromium
     chromium.close()
 
