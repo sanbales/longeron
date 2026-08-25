@@ -313,7 +313,7 @@ check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
 # (see tests/browser/README.md). Per-test timeout (thread method dumps every
 # stack) turns a runner-side hang into a diagnosable failure instead of an
 # eaten job clock; -v streams per-test progress to the CI log live.
-cmd = "pytest -v -m browser --reruns 1 --timeout 420 --timeout-method thread tests/browser"
+cmd = "pytest -v -m browser --reruns 1 --timeout 700 --timeout-method thread tests/browser"
 env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 

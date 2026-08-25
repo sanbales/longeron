@@ -170,10 +170,23 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     port = _free_port()
     token = secrets.token_hex(16)
     log_path = ARTIFACTS / "lab-server.log"
+    # a pristine home (CI runners) makes JupyterLab pop the "Select Kernel"
+    # dialog on every notebook open -- a modal that blocks all pointer
+    # interaction and stalled the whole tier (found via the artifact
+    # screenshot). A temp user-settings dir opts into auto-starting the
+    # notebook's preferred kernel, exactly what a developer machine has
+    # remembered from its first click.
+    settings = tmp_path_factory.mktemp("lab-user-settings")
+    tracker = settings / "@jupyterlab" / "notebook-extension"
+    tracker.mkdir(parents=True)
+    (tracker / "tracker.jupyterlab-settings").write_text(
+        json.dumps({"autoStartDefaultKernel": True}), encoding="utf-8"
+    )
     env = dict(
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
         PYTHONHASHSEED="0",
+        JUPYTERLAB_SETTINGS_DIR=str(settings),
         # the kernel must import THIS tree's sources even when the editable
         # install resolves elsewhere (worktree runs against the main venv)
         PYTHONPATH=os.pathsep.join(
@@ -307,6 +320,14 @@ class LabPage:
         workspace = f"{re.sub(r'[^a-z0-9]+', '-', name.lower())}-{next(self._workspace_ids)}"
         self.page.goto(self.server.url_for(name, workspace), wait_until="domcontentloaded")
         self.page.wait_for_selector(".jp-Notebook", state="attached", timeout=timeout * 1000)
+        # belt to the settings suspenders: DISMISS any modal dialog whenever
+        # one appears (a visible jp-Dialog blocks every click). Reject, not
+        # accept: the kernel picker cannot appear (autoStartDefaultKernel)
+        # and accepting e.g. 'Build Recommended' would start a rebuild.
+        self.page.add_locator_handler(
+            self.page.locator(".jp-Dialog .jp-mod-reject"),
+            lambda button: button.click(),
+        )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.page.evaluate("() => !!(window.jupyterapp || window.jupyterlab)"):
