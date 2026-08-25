@@ -318,9 +318,14 @@ class LabPage:
         """Run all cells via the command registry; confirm execution started."""
 
         for _attempt in range(attempts):
+            # fire-and-forget: commands.execute returns a promise that only
+            # resolves when the WHOLE run finishes, and page.evaluate awaits
+            # returned promises -- an unbounded hang if any cell stalls (the
+            # CI eaten-clock signature). The bounded wait_settled below owns
+            # the waiting and reports last-known state on timeout.
             self.page.evaluate(
-                "() => (window.jupyterapp || window.jupyterlab)"
-                ".commands.execute('notebook:run-all-cells')"
+                "() => { void (window.jupyterapp || window.jupyterlab)"
+                ".commands.execute('notebook:run-all-cells'); return true; }"
             )
             time.sleep(4)
             started = self.page.evaluate(
