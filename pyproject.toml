@@ -72,6 +72,7 @@ browser-test = [
     # browser (mirrored by the pixi `browser` feature below)
     "playwright>=1.55",
     "pytest-rerunfailures>=14",
+    "pytest-timeout>=2.3",
 ]
 
 [project.scripts]
@@ -266,6 +267,7 @@ python = "3.13.*"
 # stays in [project]; this feature only opts an environment into it)
 playwright = ">=1.55"
 pytest-rerunfailures = ">=14"
+pytest-timeout = ">=2.3"
 
 [tool.pixi.environments]
 # per-Python test environments; `pixi run -e py310 test` etc.
@@ -308,9 +310,11 @@ check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
 # env's COPY of the vendored jupyter-elk bundle, and testing a stale copy
 # proves nothing (browser binary: `pixi run -e browser playwright install
 # chromium`, once per machine). --reruns 1 is the retry-once flake policy
-# (see tests/browser/README.md).
-cmd = "pytest -q -m browser --reruns 1 tests/browser"
-env = { PYTHONHASHSEED = "0" }
+# (see tests/browser/README.md). Per-test timeout (thread method dumps every
+# stack) turns a runner-side hang into a diagnosable failure instead of an
+# eaten job clock; -v streams per-test progress to the CI log live.
+cmd = "pytest -v -m browser --reruns 1 --timeout 420 --timeout-method thread tests/browser"
+env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 
 [tool.pixi.tasks.sync-labextension]

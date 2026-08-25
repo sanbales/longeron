@@ -81,8 +81,9 @@ jobs:
 
       - run: pixi run test-browser
 
-      - name: Upload failure artifacts (screenshots, console + server logs)
-        if: failure()
+      - name: Upload artifacts (screenshots, console + server logs)
+        # always(): a timeout/cancel must still leave evidence behind
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: browser-test-artifacts
