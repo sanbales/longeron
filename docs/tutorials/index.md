@@ -1,6 +1,6 @@
 # Tutorials
 
-Ten executable notebooks live in
+The executable tutorial notebooks live in
 [`notebooks/`](https://github.com/sanbales/longeron/tree/main/notebooks).
 Together they walk every capability of the package, in order: each
 notebook builds on ideas from the ones before it, but each also states
@@ -16,7 +16,8 @@ the outputs you see here always match the code.
 analysis widgets (ipyelk diagrams and the replay player in tutorial 6;
 the parallel-coordinates plot, N2 map, 3D viewer, and dashboard in
 tutorial 7; the linked diagram + 3D pair in tutorial 10; the notation
-gallery in tutorial 11) are live browser applications and cannot run on
+gallery in tutorial 11; the requirements scoreboard in tutorial 13) are
+live browser applications and cannot run on
 a static site. On these pages each one is shown as a real PNG snapshot,
 captured from the executed notebook in a headless JupyterLab
 (`pixi run capture-widgets`); run the notebooks in JupyterLab
@@ -45,6 +46,7 @@ extra.
 | {doc}`9. M0 interpretations <09_m0_interpretations>` | populations of identified individuals, Annex A sequences, roll-ups over actual instances, random sampling, occurrences from executions, the trade-study bridge |
 | {doc}`10. Diagrams meet CAD: M1 and M0 <10_diagram_3d_link>` | linked selection between a structure diagram and the 3D viewer, per-instance geometry keyed by M0 individual ids, the M1 -> M0 fan-out and the M0 -> M1 projection |
 | {doc}`11. The notation gallery <11_notation_gallery>` | every implemented SysML v2 glyph beside its spec figure -- specialization adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, actors -- with self-verifying asserts |
+| {doc}`13. The requirements scoreboard <13_requirements_scoreboard>` | MAUT over the requirements hierarchy: model-declared weights and utility shapes, pluggable aggregation, the treemap/Voronoi scoreboard widget, what-if injection, the trade-study bridge |
 
 Tutorial 12 (`notebooks/12_model_explorer.ipynb`, the model explorer app)
 is JupyterLab-only for now and deliberately not rendered here; it will
@@ -65,4 +67,5 @@ join the docs when the ipylab-based integration is revamped.
 09_m0_interpretations
 10_diagram_3d_link
 11_notation_gallery
+13_requirements_scoreboard
 ```

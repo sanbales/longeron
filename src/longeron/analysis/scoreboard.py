@@ -1,0 +1,1201 @@
+"""A MAUT scoreboard over the requirements hierarchy (spike).
+
+Multi-attribute utility theory (MAUT) on top of the model's requirement
+usages: every leaf requirement maps a raw measured value onto a [0, 1]
+utility through a declared utility shape; parents aggregate their
+children's utilities by importance weight; the root aggregate is the
+design's overall score.  :func:`scoreboard` builds the
+:class:`Scoreboard`, whose :meth:`~Scoreboard.widget` renders it as an
+interactive treemap (or Voronoi) tessellation where AREA is importance
+and COLOR is utility.
+
+Weights and utility shapes live IN THE MODEL, as plain attribute usages
+on requirement definitions/usages (all of which the grammar parses
+today; typed usages inherit them from their requirement definition, own
+declarations override inherited ones)::
+
+    requirement endurance {
+        attribute weight : Real = 3.0;              // importance (default 1.0)
+        attribute utility : String = "larger-is-better";
+        attribute ramp0 : Real = 15.0;              // utility 0 anchor
+        attribute ramp1 : Real = 45.0;              // utility 1 anchor
+        attribute measure : Real = flightTime;      // the raw value
+    }
+
+The shape vocabulary (:data:`UTILITY_FUNCTIONS`): ``larger-is-better``
+and ``smaller-is-better`` (linear between the ``ramp0`` -> 0 and
+``ramp1`` -> 1 anchors, orientation validated), ``ramp`` (either
+orientation), ``target-is-best`` (1 at ``target``, falling to 0 at
+``limit`` away), and ``step`` (pass/fail).  ``step`` is the DEFAULT: a
+leaf requirement with no ``utility`` declaration scores 1 when its own
+``require constraint`` bodies hold (via
+:meth:`~longeron.interpreter.Interpreter.check_requirement`) and 0 when
+they do not.  Raw values come from the model too -- the ``measure``
+attribute's expression is evaluated by the interpreter in the
+requirement's own context -- or are injected per call: ``values=``
+entries override by requirement qualified name, by requirement name,
+and as evaluation-frame bindings for the free names inside ``measure``
+expressions and constraint bodies.  That last form is the trade-study
+bridge: :func:`architecture_values` turns a
+:class:`~longeron.analysis.trades.Architecture` into exactly such a
+dict, so ``scoreboard(model, values=architecture_values(arch))`` scores
+any mix without touching the model.  Python-side ``weights=`` /
+``utilities=`` keyword overrides exist for exploration; the model
+remains the source of truth.
+
+Aggregation is pluggable (:data:`AGGREGATORS` or any
+:class:`Aggregator` callable over ``(weight, utility)`` pairs):
+``saw`` -- weight-normalized simple additive weighting, the default --
+``min`` (weakest link), and ``geometric`` (weighted geometric mean).
+Unmeasured leaves (no raw value, or a non-applicable requirement) carry
+utility NaN and are excluded from their parent's aggregation; a fully
+unmeasured subtree aggregates to NaN.
+
+Area semantics in the widget: a node's area share among its siblings is
+its weight's share, recursively -- so a COLLAPSED subtree (double-click
+a cell to collapse its group in place, double-click again to expand)
+renders as one cell occupying exactly the area its leaves occupied,
+colored by the subtree aggregate.  Hover shows qualified name, weight
+and share, raw value, and utility; click writes the ``selected`` trait
+(the same observer idiom as the other longeron widgets, ready for
+linked selection).  Unmeasured cells are grey and hatched.  The color
+ramp is red -> yellow -> green interpolated in OKLab (perceptual, with
+a monotone-ish lightness cue for red/green-weak viewers).  Both
+tessellations are deterministic: stable model order, and the Voronoi
+iteration runs on a seeded PRNG (``seed=``).
+
+The Voronoi tessellation is computed by Kcnarf's d3-voronoi-treemap,
+vendored with its dependency closure as one inlined bundle
+(``longeron/_js/voronoi_treemap.bundled.js``; rebuild instructions in
+``voronoi_treemap.VENDOR.md`` next to it) -- all BSD-3-Clause / ISC:
+d3-voronoi-treemap 1.1.2 (BSD-3-Clause), d3-voronoi-map 2.1.1
+(BSD-3-Clause), d3-weighted-voronoi 1.1.3 (BSD-3-Clause), d3-hierarchy
+3.1.2 (ISC), d3-array 2.12.1 (BSD-3-Clause), d3-polygon 2.0.0
+(BSD-3-Clause), d3-timer 2.0.0 (BSD-3-Clause), d3-dispatch 2.0.0
+(BSD-3-Clause), internmap 1.0.1 (ISC).
+
+The widget requires the ``viz`` extra (``pip install "longeron[viz]"``);
+everything else runs on the interpreter alone.
+"""
+
+from __future__ import annotations
+
+import itertools
+import json
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+from .. import model as M
+from ..errors import MissingExtraError, SysMLError
+from ..interpreter import Interpreter
+from ._expr import AnalysisError
+
+__all__ = [
+    "AGGREGATORS",
+    "UTILITY_FUNCTIONS",
+    "Aggregator",
+    "Row",
+    "Scoreboard",
+    "architecture_values",
+    "scoreboard",
+]
+
+#: the vendored d3-voronoi-treemap bundle (see module docstring for licenses)
+_VORONOI_JS = Path(__file__).resolve().parents[1] / "_js" / "voronoi_treemap.bundled.js"
+
+#: model attribute names the scoreboard convention reserves on requirements
+WEIGHT_ATTR = "weight"
+UTILITY_ATTR = "utility"
+MEASURE_ATTR = "measure"
+_PARAM_ATTRS = ("target", "limit", "ramp0", "ramp1")
+
+#: synthetic node-id prefix for anonymous requirements / the multi-root
+#: aggregate ('~' cannot start a SysML identifier -- same idiom as the
+#: explorer's tree)
+_SYNTH_PREFIX = "~"
+
+
+# ---------------------------------------------------------------------------
+# utility functions: raw measured value -> [0, 1]
+# ---------------------------------------------------------------------------
+
+
+def _clamp01(value: float) -> float:
+    if math.isnan(value):
+        return value
+    return min(1.0, max(0.0, value))
+
+
+def _anchors(params: Mapping[str, float], shape: str) -> tuple[float, float]:
+    if "ramp0" not in params or "ramp1" not in params:
+        raise AnalysisError(f"utility shape {shape!r} needs 'ramp0' and 'ramp1' attributes")
+    ramp0, ramp1 = params["ramp0"], params["ramp1"]
+    if ramp0 == ramp1:
+        raise AnalysisError(f"utility shape {shape!r}: ramp0 and ramp1 must differ")
+    return ramp0, ramp1
+
+
+def _ramp(raw: float, params: Mapping[str, float]) -> float:
+    """0 at ``ramp0``, 1 at ``ramp1``, linear and clamped in between."""
+
+    ramp0, ramp1 = _anchors(params, "ramp")
+    return _clamp01((float(raw) - ramp0) / (ramp1 - ramp0))
+
+
+def _larger_is_better(raw: float, params: Mapping[str, float]) -> float:
+    """A rising ramp: ``ramp0 < ramp1`` (0 below, 1 above)."""
+
+    ramp0, ramp1 = _anchors(params, "larger-is-better")
+    if not ramp0 < ramp1:
+        raise AnalysisError("'larger-is-better' needs ramp0 < ramp1 (use 'ramp' to invert)")
+    return _clamp01((float(raw) - ramp0) / (ramp1 - ramp0))
+
+
+def _smaller_is_better(raw: float, params: Mapping[str, float]) -> float:
+    """A falling ramp: ``ramp1 < ramp0`` (1 below, 0 above)."""
+
+    ramp0, ramp1 = _anchors(params, "smaller-is-better")
+    if not ramp1 < ramp0:
+        raise AnalysisError("'smaller-is-better' needs ramp1 < ramp0 (use 'ramp' to invert)")
+    return _clamp01((float(raw) - ramp0) / (ramp1 - ramp0))
+
+
+def _target_is_best(raw: float, params: Mapping[str, float]) -> float:
+    """1 at ``target``, falling linearly to 0 at ``limit`` away."""
+
+    if "target" not in params or "limit" not in params:
+        raise AnalysisError("utility shape 'target-is-best' needs 'target' and 'limit' attributes")
+    if params["limit"] <= 0:
+        raise AnalysisError("'target-is-best' needs a positive 'limit'")
+    return _clamp01(1.0 - abs(float(raw) - params["target"]) / params["limit"])
+
+
+def _step(raw: Any, params: Mapping[str, float]) -> float:
+    """Pass/fail: 1 for a truthy raw value, 0 otherwise."""
+
+    if isinstance(raw, float) and math.isnan(raw):
+        return math.nan
+    return 1.0 if bool(raw) else 0.0
+
+
+#: the utility-shape registry (each: ``fn(raw, params) -> [0, 1]``)
+UTILITY_FUNCTIONS: dict[str, Callable[[Any, Mapping[str, float]], float]] = {
+    "larger-is-better": _larger_is_better,
+    "smaller-is-better": _smaller_is_better,
+    "ramp": _ramp,
+    "target-is-best": _target_is_best,
+    "step": _step,
+}
+
+
+# ---------------------------------------------------------------------------
+# aggregation strategies over (weight, utility) pairs
+# ---------------------------------------------------------------------------
+
+
+class Aggregator(Protocol):
+    """A parent's utility from its measured children's ``(weight, utility)``.
+
+    The scoreboard filters unmeasured (NaN-utility) children BEFORE the
+    call and never calls an aggregator with an empty sequence (a fully
+    unmeasured subtree is NaN without consulting the strategy) -- a
+    custom aggregator only ever sees finite utilities in [0, 1] with
+    non-negative weights.
+    """
+
+    def __call__(self, children: Sequence[tuple[float, float]]) -> float: ...
+
+
+def _saw(children: Sequence[tuple[float, float]]) -> float:
+    """Simple additive weighting, weight-normalized (the MAUT default)."""
+
+    total = sum(weight for weight, _ in children)
+    if total <= 0:
+        return math.nan
+    return sum(weight * utility for weight, utility in children) / total
+
+
+def _weakest_link(children: Sequence[tuple[float, float]]) -> float:
+    """The minimum child utility (weights only size the cells)."""
+
+    return min(utility for _, utility in children)
+
+
+def _geometric(children: Sequence[tuple[float, float]]) -> float:
+    """The weighted geometric mean (a zero child zeroes the parent)."""
+
+    total = sum(weight for weight, _ in children)
+    if total <= 0:
+        return math.nan
+    if any(utility <= 0 for _, utility in children):
+        return 0.0
+    return math.exp(sum(weight * math.log(utility) for weight, utility in children) / total)
+
+
+#: the aggregation-strategy registry
+AGGREGATORS: dict[str, Aggregator] = {
+    "saw": _saw,
+    "min": _weakest_link,
+    "geometric": _geometric,
+}
+
+
+# ---------------------------------------------------------------------------
+# the scoreboard
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Row:
+    """One requirement's line in :meth:`Scoreboard.table` (pre-order)."""
+
+    qname: str  # qualified name (or a '~' synthetic for anonymous nodes)
+    name: str  # display name
+    depth: int  # 0 = the root
+    kind: str  # 'leaf' | 'group'
+    weight: float  # own importance weight (default 1.0)
+    share: float  # weight / sum of sibling weights (1.0 at the root)
+    shape: str  # utility shape name ('' for groups)
+    raw: Any  # measured value (None when unmeasured; groups: None)
+    utility: float  # leaf utility in [0, 1]; NaN when unmeasured / a group
+    aggregate: float  # subtree score (leaves: == utility); NaN unmeasured
+
+
+@dataclass
+class _Node:
+    element: M.Definition | M.Usage | None
+    qname: str
+    name: str
+    depth: int
+    weight: float
+    share: float = 1.0
+    shape: str = ""
+    raw: Any = None
+    utility: float = math.nan
+    aggregate: float = math.nan
+    measured: bool = False
+    children: list[_Node] = field(default_factory=list)
+
+    @property
+    def leaves(self) -> int:
+        if not self.children:
+            return 1
+        return sum(child.leaves for child in self.children)
+
+
+def architecture_values(architecture: Any) -> dict[str, Any]:
+    """A ``values=`` dict from a trade-study architecture (duck-typed).
+
+    Any object with a ``metrics`` mapping qualifies --
+    :class:`longeron.analysis.trades.Architecture` in particular, whose
+    interpreter-exact derived metrics then override the same-named free
+    references inside ``measure`` expressions and constraint bodies::
+
+        best = max(
+            study.all_architectures(),
+            key=lambda a: scoreboard(model, values=architecture_values(a)).score,
+        )
+    """
+
+    metrics = getattr(architecture, "metrics", None)
+    if not isinstance(metrics, dict):
+        raise AnalysisError(
+            "architecture_values expects an architecture with a .metrics dict "
+            "(e.g. longeron.analysis.trades.Architecture)"
+        )
+    return dict(metrics)
+
+
+class Scoreboard:
+    """MAUT utilities and aggregates over one requirement hierarchy.
+
+    Build with :func:`scoreboard`.  ``.score`` is the root aggregate,
+    :meth:`table` the flat pre-order rows, :meth:`widget` the
+    treemap/Voronoi view.  ``str()`` renders an aligned text table.
+    """
+
+    def __init__(
+        self,
+        target: M.Model | M.Package | M.Definition | M.Usage,
+        *,
+        values: Mapping[str, Any] | None = None,
+        aggregation: str | Aggregator = "saw",
+        weights: Mapping[str, float] | None = None,
+        utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
+    ) -> None:
+        if isinstance(aggregation, str):
+            if aggregation not in AGGREGATORS:
+                options = ", ".join(sorted(AGGREGATORS))
+                raise AnalysisError(f"aggregation must be one of {options}; not {aggregation!r}")
+            self.aggregation = aggregation
+            self._aggregator: Aggregator = AGGREGATORS[aggregation]
+        else:
+            self.aggregation = getattr(aggregation, "__name__", "custom").lstrip("_")
+            self._aggregator = aggregation
+        self.values: dict[str, Any] = dict(values or {})
+        self._weights = dict(weights or {})
+        self._utilities = dict(utilities or {})
+        #: evaluation-frame bindings: plain-name values reach free
+        #: references inside measure expressions and constraint bodies
+        self._frame = {
+            key: value
+            for key, value in self.values.items()
+            if "::" not in key and key.isidentifier()
+        }
+        self.interp = Interpreter(_owning_model(target))
+        self._counter = itertools.count()
+        roots = _root_requirements(target)
+        if not roots:
+            raise AnalysisError(
+                f"{getattr(target, 'label', target)!r} contains no requirement usages "
+                "(pass a requirement definition directly to score it as the root)"
+            )
+        if len(roots) == 1:
+            self.root = self._build(roots[0], depth=0)
+        else:
+            children = [self._build(req, depth=1) for req in roots]
+            self.root = _Node(
+                element=None,
+                qname=f"{_SYNTH_PREFIX}root",
+                name=getattr(target, "name", None) or "requirements",
+                depth=0,
+                weight=1.0,
+                children=children,
+            )
+        self._aggregate(self.root)
+        self._share(self.root)
+        self._index: dict[str, _Node] = {}
+        for node in self._walk(self.root):
+            self._index[node.qname] = node
+
+    # -- construction --------------------------------------------------------
+
+    def _build(self, req: M.Definition | M.Usage, depth: int) -> _Node:
+        qname = req.qualified_name or f"{_SYNTH_PREFIX}{next(self._counter)}"
+        name = req.name or req.short_name or qname.split("::")[-1]
+        node = _Node(
+            element=req,
+            qname=qname,
+            name=name,
+            depth=depth,
+            weight=self._weight(req, qname, name),
+        )
+        nested = [
+            member
+            for member in req.members
+            if isinstance(member, (M.Definition, M.Usage)) and member.kind == "requirement"
+        ]
+        if nested:
+            node.children = [self._build(child, depth + 1) for child in nested]
+            return node
+        self._score_leaf(node, req, qname, name)
+        return node
+
+    def _weight(self, req: M.Definition | M.Usage, qname: str, name: str) -> float:
+        override = self._weights.get(qname, self._weights.get(name))
+        if override is not None:
+            weight = float(override)
+        else:
+            declared = self._attr_value(req, WEIGHT_ATTR)
+            weight = 1.0 if declared is None else float(declared)
+        if math.isnan(weight) or weight < 0:
+            raise AnalysisError(f"{qname}: weight must be a non-negative number, not {weight!r}")
+        return weight
+
+    def _score_leaf(self, node: _Node, req: M.Definition | M.Usage, qname: str, name: str) -> None:
+        shape = self._utilities.get(qname, self._utilities.get(name))
+        if shape is None:
+            declared = self._attr_value(req, UTILITY_ATTR)
+            shape = str(declared) if declared is not None else "step"
+        raw = self._raw(req, qname, name, shape)
+        node.raw = raw
+        if callable(shape):
+            node.shape = getattr(shape, "__name__", "custom").lstrip("_")
+            fn: Callable[[Any], float] = shape
+        else:
+            if shape not in UTILITY_FUNCTIONS:
+                options = ", ".join(sorted(UTILITY_FUNCTIONS))
+                raise AnalysisError(f"{qname}: unknown utility shape {shape!r} (have: {options})")
+            node.shape = shape
+            params = self._params(req)
+            registered = UTILITY_FUNCTIONS[shape]
+
+            def fn(value: Any) -> float:
+                return registered(value, params)
+
+        if raw is None:
+            return  # unmeasured: NaN utility, excluded from aggregation
+        try:
+            utility = _clamp01(float(fn(raw)))
+        except AnalysisError as err:
+            raise AnalysisError(f"{qname}: {err}") from None
+        if math.isnan(utility):
+            node.raw = None
+            return
+        node.utility = utility
+        node.aggregate = utility
+        node.measured = True
+
+    def _raw(self, req: M.Definition | M.Usage, qname: str, name: str, shape: Any) -> Any:
+        if qname in self.values:
+            return self.values[qname]
+        if name in self.values:
+            return self.values[name]
+        measure = self._attr_expr(req, MEASURE_ATTR)
+        if measure is not None:
+            try:
+                return self.interp.evaluate(measure, req, **self._frame)
+            except (SysMLError, TypeError, ValueError):
+                return None
+        if shape == "step":
+            try:
+                result = self.interp.check_requirement(req, **self._frame)
+            except (SysMLError, TypeError, ValueError):
+                return None
+            if not result.requirements:  # no require-constraint bodies
+                return None
+            return result.satisfied  # True / False / None (not applicable)
+        return None
+
+    def _params(self, req: M.Definition | M.Usage) -> dict[str, float]:
+        params: dict[str, float] = {}
+        for attr in _PARAM_ATTRS:
+            value = self._attr_value(req, attr)
+            if value is not None:
+                params[attr] = float(value)
+        return params
+
+    def _attr_expr(self, req: M.Definition | M.Usage, name: str) -> Any:
+        #: own members precede inherited ones in members_of, so a usage's
+        #: declaration overrides its typing definition's
+        for member in self.interp.resolver.members_of(req):
+            if (
+                isinstance(member, M.Usage)
+                and member.kind == "attribute"
+                and member.name == name
+                and member.value is not None
+            ):
+                return member.value.expr
+        return None
+
+    def _attr_value(self, req: M.Definition | M.Usage, name: str) -> Any:
+        expr = self._attr_expr(req, name)
+        if expr is None:
+            return None
+        try:
+            return self.interp.evaluate(expr, req)
+        except (SysMLError, TypeError, ValueError):
+            return None
+
+    def _aggregate(self, node: _Node) -> None:
+        if not node.children:
+            return
+        for child in node.children:
+            self._aggregate(child)
+        measured = [
+            (child.weight, child.aggregate)
+            for child in node.children
+            if not math.isnan(child.aggregate)
+        ]
+        node.measured = bool(measured)
+        if measured:
+            node.aggregate = _clamp01(float(self._aggregator(measured)))
+
+    def _share(self, node: _Node) -> None:
+        total = sum(child.weight for child in node.children)
+        for child in node.children:
+            child.share = child.weight / total if total > 0 else 1.0 / len(node.children)
+            self._share(child)
+
+    def _walk(self, node: _Node) -> Iterable[_Node]:
+        yield node
+        for child in node.children:
+            yield from self._walk(child)
+
+    # -- public surface --------------------------------------------------------
+
+    @property
+    def score(self) -> float:
+        """The root aggregate utility (NaN when nothing is measured)."""
+
+        return self.root.aggregate
+
+    def table(self) -> list[Row]:
+        """Flat pre-order rows: qname, weight, share, raw, utility, aggregate."""
+
+        return [
+            Row(
+                qname=node.qname,
+                name=node.name,
+                depth=node.depth,
+                kind="group" if node.children else "leaf",
+                weight=node.weight,
+                share=node.share,
+                shape=node.shape,
+                raw=node.raw,
+                utility=node.utility,
+                aggregate=node.aggregate,
+            )
+            for node in self._walk(self.root)
+        ]
+
+    def __str__(self) -> str:
+        def fmt(value: Any) -> str:
+            if value is None or (isinstance(value, float) and math.isnan(value)):
+                return "-"
+            if isinstance(value, bool):
+                return "pass" if value else "FAIL"
+            return f"{value:.3g}"
+
+        lines = [
+            f"{'requirement':<44} {'weight':>6} {'share':>6} {'raw':>8} "
+            f"{'utility':>7} {'aggregate':>9}"
+        ]
+        for row in self.table():
+            label = ("  " * row.depth + row.name)[:44]
+            lines.append(
+                f"{label:<44} {row.weight:>6.3g} {row.share:>5.0%} {fmt(row.raw):>8} "
+                f"{fmt(row.utility):>7} {fmt(row.aggregate):>9}"
+            )
+        lines.append(
+            f"{'score (' + self.aggregation + ')':<44} {'':>6} {'':>6} {'':>8} "
+            f"{'':>7} {fmt(self.score):>9}"
+        )
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"<Scoreboard {self.root.name!r}: score={self.score:.3f} "
+            f"({self.aggregation}), {self.root.leaves} leaves>"
+        )
+
+    def widget(
+        self,
+        tessellation: str = "treemap",
+        *,
+        collapsed: Iterable[str] = (),
+        seed: int = 42,
+        width_px: int = 960,
+        height_px: int = 540,
+    ) -> Any:
+        """The scoreboard as one interactive anywidget.
+
+        ``tessellation`` picks ``"treemap"`` (squarified) or
+        ``"voronoi"`` (the vendored d3-voronoi-treemap; ``seed`` makes
+        its iteration deterministic).  ``collapsed`` pre-collapses
+        subtrees by qualified name.  Hover for details; click a cell to
+        select (the ``selected`` trait); double-click a cell to collapse
+        its group in place, and a collapsed cell to expand it.  Needs
+        the ``viz`` extra (anywidget).
+        """
+
+        if tessellation not in ("treemap", "voronoi"):
+            raise ValueError(f"tessellation must be 'treemap' or 'voronoi', not {tessellation!r}")
+        collapsed = [str(qname) for qname in collapsed]
+        unknown = [qname for qname in collapsed if qname not in self._index]
+        if unknown:
+            raise ValueError(f"unknown collapsed qname(s): {unknown}")
+        cls = _widget_class()
+        return cls(
+            nodes_json=json.dumps(self._payload(self.root)),
+            tessellation=tessellation,
+            aggregation=self.aggregation,
+            collapsed=sorted(collapsed),
+            seed=seed,
+            width_px=width_px,
+            height_px=height_px,
+        )
+
+    def _payload(self, node: _Node) -> dict[str, Any]:
+        def scrub(value: Any) -> Any:  # JSON has no NaN
+            if isinstance(value, float) and math.isnan(value):
+                return None
+            return value
+
+        return {
+            "qname": node.qname,
+            "label": node.name,
+            "depth": node.depth,
+            "weight": node.weight,
+            "share": node.share,
+            "shape": node.shape,
+            "raw": scrub(node.raw),
+            "utility": scrub(node.utility),
+            "aggregate": scrub(node.aggregate),
+            "measured": node.measured,
+            "leaves": node.leaves,
+            "children": [self._payload(child) for child in node.children],
+        }
+
+
+def scoreboard(
+    model_or_element: M.Model | M.Package | M.Definition | M.Usage,
+    values: Mapping[str, Any] | None = None,
+    aggregation: str | Aggregator = "saw",
+    *,
+    weights: Mapping[str, float] | None = None,
+    utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
+) -> Scoreboard:
+    """MAUT-score the requirement hierarchy under ``model_or_element``.
+
+    The scope's root requirement usages become the top level (several
+    roots aggregate under one synthetic root; requirement definitions
+    contribute their attributes through typing -- pass a definition
+    itself to score it directly).  ``values`` injects raw measurements:
+    by requirement qualified name, by requirement name, or -- for plain
+    identifiers -- as evaluation-frame bindings overriding the free
+    references inside ``measure`` expressions and constraint bodies
+    (see :func:`architecture_values` for the trade-study bridge).
+    ``aggregation`` is a name from :data:`AGGREGATORS` or any
+    :class:`Aggregator`; ``weights``/``utilities`` are exploration-time
+    overrides keyed like ``values``.
+    """
+
+    return Scoreboard(
+        model_or_element,
+        values=values,
+        aggregation=aggregation,
+        weights=weights,
+        utilities=utilities,
+    )
+
+
+def _owning_model(element: M.Element) -> M.Model:
+    node: M.Element = element
+    while node.owner is not None:
+        node = node.owner
+    if isinstance(node, M.Model):
+        return node
+    # a detached fragment: list it under a throwaway root WITHOUT
+    # re-parenting (Model.add would steal it from its real owner)
+    root = M.Model()
+    root.members = [node]
+    return root
+
+
+def _root_requirements(scope: M.Element) -> list[M.Definition | M.Usage]:
+    """Requirement usages with no requirement ancestor inside ``scope``."""
+
+    if isinstance(scope, (M.Definition, M.Usage)) and scope.kind == "requirement":
+        return [scope]
+    roots: list[M.Definition | M.Usage] = []
+
+    def walk(namespace: M.Namespace) -> None:
+        for member in namespace.members:
+            if isinstance(member, M.Usage) and member.kind == "requirement":
+                roots.append(member)
+            elif isinstance(member, M.Namespace) and not (
+                isinstance(member, (M.Definition, M.Usage)) and member.kind == "requirement"
+            ):
+                walk(member)
+
+    if isinstance(scope, M.Namespace):
+        walk(scope)
+    return roots
+
+
+# ---------------------------------------------------------------------------
+# the widget (one anywidget; both tessellations behind the same front-end)
+# ---------------------------------------------------------------------------
+
+_SCOREBOARD_JS = r"""
+let lgnSbInstances = 0;
+
+// ---- perceptual color ramp: red -> yellow -> green, OKLab-interpolated ----
+function lgnSbSrgbToLin(c) {
+  c /= 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function lgnSbLinToSrgb(c) {
+  return Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055));
+}
+function lgnSbHexToOklab(hex) {
+  const r = lgnSbSrgbToLin(parseInt(hex.slice(1, 3), 16));
+  const g = lgnSbSrgbToLin(parseInt(hex.slice(3, 5), 16));
+  const b = lgnSbSrgbToLin(parseInt(hex.slice(5, 7), 16));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+function lgnSbOklabToRgb(L, a, b) {
+  const l = Math.pow(L + 0.3963377774 * a + 0.2158037573 * b, 3);
+  const m = Math.pow(L - 0.1055613458 * a - 0.0638541728 * b, 3);
+  const s = Math.pow(L - 0.0894841775 * a - 1.291485548 * b, 3);
+  const clamp = (x) => Math.min(1, Math.max(0, x));
+  return [
+    lgnSbLinToSrgb(clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)),
+    lgnSbLinToSrgb(clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)),
+    lgnSbLinToSrgb(clamp(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)),
+  ];
+}
+const LGN_SB_STOPS = ["#a50026", "#d73027", "#fee08b", "#66bd63", "#1a9850"].map(lgnSbHexToOklab);
+function lgnSbColor(u) {
+  u = Math.min(1, Math.max(0, u));
+  const t = u * (LGN_SB_STOPS.length - 1);
+  const i = Math.min(LGN_SB_STOPS.length - 2, Math.floor(t));
+  const f = t - i;
+  const A = LGN_SB_STOPS[i], B = LGN_SB_STOPS[i + 1];
+  const L = A[0] + (B[0] - A[0]) * f;
+  const [r, g, b] = lgnSbOklabToRgb(L, A[1] + (B[1] - A[1]) * f, A[2] + (B[2] - A[2]) * f);
+  return { css: `rgb(${r},${g},${b})`, dark: L > 0.72 };
+}
+
+// ---- squarified treemap (zero-dependency) ----------------------------------
+function lgnSbSquarify(areas, rect) {
+  // areas: number[] (already scaled so their sum equals rect area);
+  // returns rects aligned with the input order (deterministic: the
+  // descending processing order ties break on the original index).
+  const rects = new Array(areas.length);
+  const order = areas
+    .map((a, i) => ({ a: Math.max(a, 0), i }))
+    .sort((p, q) => q.a - p.a || p.i - q.i);
+  let x = rect.x, y = rect.y, w = rect.w, h = rect.h;
+  let start = 0;
+  while (start < order.length) {
+    const side = Math.max(Math.min(w, h), 1e-9);
+    let end = start, sum = 0, best = Infinity, mn = Infinity, mx = 0;
+    for (let k = start; k < order.length; k++) {
+      const s = sum + order[k].a;
+      mn = Math.min(mn, order[k].a);
+      mx = Math.max(mx, order[k].a);
+      const worst = s > 0
+        ? Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn))
+        : Infinity;
+      if (worst <= best || k === start) { best = worst; end = k; sum = s; }
+      else break;
+    }
+    const horizontal = w >= h; // lay the row along the shorter side
+    const thickness = sum > 0 ? sum / Math.max(horizontal ? h : w, 1e-9) : 0;
+    let offset = 0;
+    for (let k = start; k <= end; k++) {
+      const len = thickness > 0 ? order[k].a / thickness : 0;
+      rects[order[k].i] = horizontal
+        ? { x, y: y + offset, w: thickness, h: len }
+        : { x: x + offset, y, w: len, h: thickness };
+      offset += len;
+    }
+    if (horizontal) { x += thickness; w -= thickness; }
+    else { y += thickness; h -= thickness; }
+    start = end + 1;
+  }
+  return rects;
+}
+
+function lgnSbPolyArea(poly) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length];
+    s += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(s) / 2;
+}
+function lgnSbPolyCentroid(poly) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % poly.length];
+    const cross = x1 * y2 - x2 * y1;
+    a += cross; cx += (x1 + x2) * cross; cy += (y1 + y2) * cross;
+  }
+  if (Math.abs(a) < 1e-9) return poly[0];
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
+function render({ model, el }) {
+  // unique across ALL module copies (anywidget loads one module per
+  // widget): a duplicated pattern id would resolve to another widget's
+  // <defs>, which JupyterLab's windowed notebook may have detached --
+  // an unresolvable paint server paints nothing (the hatch went white)
+  globalThis.lgnSbSeq = (globalThis.lgnSbSeq || 0) + 1;
+  const iid = `lgn-sb-${globalThis.lgnSbSeq}-${lgnSbInstances++}`;
+  el.classList.add("lgn-sb-host");
+  const wrap = document.createElement("div");
+  wrap.className = "lgn-sb-wrap";
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  const tip = document.createElement("div");
+  tip.className = "lgn-sb-tip";
+  wrap.append(svg, tip);
+  el.append(wrap);
+
+  let root = null;
+  const parentOf = new Map(); // qname -> parent node (null at the root)
+  const byQname = new Map();
+  function rebuild() {
+    parentOf.clear();
+    byQname.clear();
+    root = JSON.parse(model.get("nodes_json") || "null");
+    (function index(node, parent) {
+      if (!node) return;
+      byQname.set(node.qname, node);
+      parentOf.set(node.qname, parent);
+      for (const child of node.children || []) index(child, node);
+    })(root, null);
+    renderAll();
+  }
+
+  const collapsedSet = () => new Set(model.get("collapsed") || []);
+  const selectedSet = () => new Set(model.get("selected") || []);
+
+  function expandedKids(node, collapsed) {
+    if (!node.children || !node.children.length || collapsed.has(node.qname)) return null;
+    return node.children;
+  }
+
+  // area semantics: a node's share of its parent's area is its weight's
+  // share among the siblings, recursively -- collapse is area-preserving
+  function assignAreas(node, area, collapsed) {
+    node._area = area;
+    const kids = expandedKids(node, collapsed);
+    if (!kids) return;
+    const total = kids.reduce((s, k) => s + Math.max(k.weight, 0), 0);
+    for (const k of kids) {
+      const share = total > 0 ? Math.max(k.weight, 0) / total : 1 / kids.length;
+      assignAreas(k, area * share, collapsed);
+    }
+  }
+
+  function treemapCells(node, rect, collapsed, cells, outlines, depth) {
+    const kids = expandedKids(node, collapsed);
+    if (!kids) {
+      const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
+      cells.push({ node, d, cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2,
+                   area: rect.w * rect.h, width: rect.w });
+      return;
+    }
+    if (depth > 0) {
+      const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
+      outlines.push({ d, depth });
+    }
+    const rects = lgnSbSquarify(kids.map((k) => k._area), rect);
+    kids.forEach((k, i) => treemapCells(k, rects[i], collapsed, cells, outlines, depth + 1));
+  }
+
+  function voronoiCells(W, H, collapsed, cells, outlines) {
+    if (typeof lgnVoronoi === "undefined") {
+      return false; // vendored bundle missing: caller shows the notice
+    }
+    const minArea = W * H * 1e-6;
+    function prune(node) {
+      const kids = expandedKids(node, collapsed);
+      if (!kids) return { node, value: Math.max(node._area, minArea) };
+      return { node, children: kids.map(prune) };
+    }
+    const hier = lgnVoronoi.hierarchy(prune(root)).sum((d) => d.value || 0);
+    let s = (model.get("seed") >>> 0) || 1;
+    const prng = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    lgnVoronoi
+      .voronoiTreemap()
+      .clip([[0, 0], [0, H], [W, H], [W, 0]])
+      .prng(prng)(hier);
+    for (const n of hier.descendants()) {
+      if (!n.polygon) continue;
+      const d = `M${n.polygon.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join("L")}Z`;
+      if (n.children) {
+        if (n.depth > 0) outlines.push({ d, depth: n.depth });
+        continue;
+      }
+      const [cx, cy] = lgnSbPolyCentroid(n.polygon);
+      const area = lgnSbPolyArea(n.polygon);
+      cells.push({ node: n.data.node, d, cx, cy, area, width: Math.sqrt(area) * 1.15 });
+    }
+    return true;
+  }
+
+  const fmtNum = (v) => {
+    if (v === null || v === undefined) return "\u2014";
+    if (typeof v === "boolean") return v ? "pass" : "fail";
+    if (typeof v !== "number") return String(v);
+    return Math.abs(v) >= 1000 ? v.toFixed(0) : +v.toPrecision(4) + "";
+  };
+
+  function tooltipFor(node, collapsed) {
+    const lines = [];
+    const group = node.children && node.children.length;
+    const isCollapsed = group && collapsed.has(node.qname);
+    lines.push(["title", node.label + (isCollapsed ? `  (${node.leaves} collapsed)` : "")]);
+    lines.push(["dim", node.qname]);
+    const parent = parentOf.get(node.qname);
+    const share = parent ? ` \u00b7 ${(node.share * 100).toFixed(0)}% of ${parent.label}` : "";
+    lines.push(["row", `weight ${fmtNum(node.weight)}${share}`]);
+    if (!group) {
+      lines.push(["row", `raw ${fmtNum(node.raw)}${node.shape ? ` \u00b7 ${node.shape}` : ""}`]);
+      lines.push(["row", node.measured ? `utility ${fmtNum(node.utility)}` : "unmeasured"]);
+    } else {
+      const agg = `aggregate ${fmtNum(node.aggregate)}` +
+        ` (${model.get("aggregation")} over ${node.leaves} leaves)`;
+      lines.push(["row", node.measured ? agg : "unmeasured"]);
+    }
+    const hint = isCollapsed ? "double-click to expand"
+      : group ? "" : "double-click to collapse the group";
+    lines.push(["dim", hint]);
+    return lines;
+  }
+
+  function showTip(ev, node, collapsed) {
+    tip.textContent = "";
+    for (const [kind, text] of tooltipFor(node, collapsed)) {
+      if (!text) continue;
+      const line = document.createElement("div");
+      line.className = `lgn-sb-tip-${kind}`;
+      line.textContent = text;
+      tip.append(line);
+    }
+    tip.style.display = "block";
+    const bounds = wrap.getBoundingClientRect();
+    let x = ev.clientX - bounds.left + 12;
+    let y = ev.clientY - bounds.top + 12;
+    x = Math.min(x, bounds.width - tip.offsetWidth - 6);
+    y = Math.min(y, bounds.height - tip.offsetHeight - 6);
+    tip.style.left = `${Math.max(0, x)}px`;
+    tip.style.top = `${Math.max(0, y)}px`;
+  }
+
+  function setSelected(ids) {
+    const current = model.get("selected") || [];
+    if (current.length !== ids.length || current.some((v, i) => v !== ids[i])) {
+      model.set("selected", ids);
+      model.save_changes();
+    }
+  }
+
+  function toggle(node) {
+    const collapsed = collapsedSet();
+    const group = node.children && node.children.length;
+    if (group && collapsed.has(node.qname)) collapsed.delete(node.qname); // expand
+    else if (group) collapsed.add(node.qname);
+    else {
+      const parent = parentOf.get(node.qname);
+      if (!parent) return;
+      collapsed.add(parent.qname);
+    }
+    model.set("collapsed", [...collapsed].sort());
+    model.save_changes();
+  }
+
+  function restyle() {
+    const selected = selectedSet();
+    for (const path of svg.querySelectorAll(".lgn-sb-cell")) {
+      const hit = selected.has(path.dataset.qname);
+      path.classList.toggle("lgn-sb-selected", hit);
+      if (hit) path.parentNode.append(path); // over its siblings' strokes
+    }
+  }
+
+  function renderAll() {
+    if (!root) return;
+    const W = model.get("width_px") || 960;
+    const H = model.get("height_px") || 540;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.textContent = "";
+    const defs = document.createElementNS(NS, "defs");
+    const pattern = document.createElementNS(NS, "pattern");
+    pattern.setAttribute("id", `${iid}-hatch`);
+    pattern.setAttribute("width", "7");
+    pattern.setAttribute("height", "7");
+    pattern.setAttribute("patternUnits", "userSpaceOnUse");
+    pattern.setAttribute("patternTransform", "rotate(45)");
+    const back = document.createElementNS(NS, "rect");
+    back.setAttribute("width", "7");
+    back.setAttribute("height", "7");
+    back.setAttribute("fill", "#d7d7d7");
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("x1", "0"); line.setAttribute("y1", "0");
+    line.setAttribute("x2", "0"); line.setAttribute("y2", "7");
+    line.setAttribute("stroke", "#a9a9a9");
+    line.setAttribute("stroke-width", "2.5");
+    pattern.append(back, line);
+    defs.append(pattern);
+    svg.append(defs);
+
+    const collapsed = collapsedSet();
+    assignAreas(root, W * H, collapsed);
+    const cells = [], outlines = [];
+    const mode = model.get("tessellation") || "treemap";
+    if (mode === "voronoi") {
+      if (!voronoiCells(W, H, collapsed, cells, outlines)) {
+        const note = document.createElementNS(NS, "text");
+        note.setAttribute("x", "16"); note.setAttribute("y", "28");
+        note.setAttribute("class", "lgn-sb-note");
+        note.textContent = "voronoi unavailable: the vendored d3-voronoi-treemap bundle is missing";
+        svg.append(note);
+        return;
+      }
+    } else {
+      treemapCells(root, { x: 0, y: 0, w: W, h: H }, collapsed, cells, outlines, 0);
+    }
+
+    const cellLayer = document.createElementNS(NS, "g");
+    const lineLayer = document.createElementNS(NS, "g");
+    const textLayer = document.createElementNS(NS, "g");
+    svg.append(cellLayer, lineLayer, textLayer);
+    for (const cell of cells) {
+      const node = cell.node;
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", cell.d);
+      path.setAttribute("class", "lgn-sb-cell");
+      path.dataset.qname = node.qname;
+      const measured = node.measured && node.aggregate !== null;
+      const color = measured ? lgnSbColor(node.aggregate) : null;
+      path.setAttribute("fill", measured ? color.css : `url(#${iid}-hatch)`);
+      path.addEventListener("pointermove", (ev) => showTip(ev, node, collapsedSet()));
+      path.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+      path.addEventListener("click", (ev) => { ev.stopPropagation(); setSelected([node.qname]); });
+      path.addEventListener("dblclick", (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        toggle(node);
+      });
+      cellLayer.append(path);
+
+      if (cell.area >= W * H * 0.004) {
+        const isCollapsed = node.children && node.children.length;
+        const size = Math.min(15, Math.max(9, 0.14 * Math.sqrt(cell.area)));
+        const dark = measured ? color.dark : true;
+        const label = document.createElementNS(NS, "text");
+        label.setAttribute("x", cell.cx);
+        label.setAttribute("y", cell.cy);
+        const cls = `lgn-sb-label ${dark ? "lgn-sb-label-dark" : "lgn-sb-label-light"}`;
+        label.setAttribute("class", cls);
+        label.setAttribute("font-size", size.toFixed(1));
+        const maxChars = Math.max(3, Math.floor(cell.width / (0.62 * size)));
+        let text = isCollapsed ? `\u25b8 ${node.label}` : node.label;
+        if (text.length > maxChars) text = `${text.slice(0, Math.max(1, maxChars - 1))}\u2026`;
+        label.textContent = text;
+        textLayer.append(label);
+        if (cell.area >= W * H * 0.012) {
+          const value = document.createElementNS(NS, "text");
+          value.setAttribute("x", cell.cx);
+          value.setAttribute("y", cell.cy + size * 1.15);
+          value.setAttribute("class", label.getAttribute("class"));
+          value.setAttribute("font-size", (size * 0.85).toFixed(1));
+          value.textContent = measured ? fmtNum(node.aggregate) : "\u2014";
+          textLayer.append(value);
+        }
+      }
+    }
+    for (const outline of outlines.sort((a, b) => a.depth - b.depth)) {
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", outline.d);
+      path.setAttribute("class", "lgn-sb-outline");
+      path.setAttribute("stroke-width", Math.max(1, 4 - outline.depth).toFixed(1));
+      lineLayer.append(path);
+    }
+    restyle();
+  }
+
+  svg.addEventListener("click", () => setSelected([]));
+  svg.addEventListener("dblclick", (ev) => ev.preventDefault());
+  model.on("change:nodes_json", rebuild);
+  model.on("change:collapsed", renderAll);
+  model.on("change:tessellation", renderAll);
+  model.on("change:seed", renderAll);
+  model.on("change:width_px", renderAll);
+  model.on("change:height_px", renderAll);
+  model.on("change:selected", restyle);
+  rebuild();
+}
+export default { render };
+"""
+
+_SCOREBOARD_CSS = """
+.lgn-sb-host {
+  font-family: var(--jp-ui-font-family, system-ui, sans-serif);
+}
+.lgn-sb-wrap { position: relative; width: 100%; }
+.lgn-sb-wrap svg {
+  display: block; width: 100%; height: auto;
+  border: 1px solid var(--jp-border-color2, #e0e0e0); border-radius: 6px;
+  background: var(--jp-layout-color1, #ffffff);
+}
+.lgn-sb-cell {
+  cursor: pointer; stroke: var(--jp-layout-color1, #ffffff); stroke-width: 1;
+}
+.lgn-sb-cell:hover { filter: brightness(1.07); }
+.lgn-sb-cell.lgn-sb-selected {
+  stroke: var(--jp-brand-color1, #1976d2); stroke-width: 3;
+}
+.lgn-sb-outline {
+  fill: none; stroke: var(--jp-layout-color1, #ffffff);
+  pointer-events: none; opacity: 0.9;
+}
+.lgn-sb-label {
+  pointer-events: none; user-select: none;
+  text-anchor: middle; dominant-baseline: middle;
+}
+.lgn-sb-label-dark { fill: rgba(0, 0, 0, 0.82); }
+.lgn-sb-label-light { fill: rgba(255, 255, 255, 0.94); }
+.lgn-sb-note { font-size: 13px; fill: var(--jp-ui-font-color2, #777777); }
+.lgn-sb-tip {
+  position: absolute; display: none; z-index: 10; pointer-events: none;
+  max-width: 320px; padding: 6px 9px; border-radius: 5px;
+  background: rgba(33, 33, 33, 0.93); color: #ffffff;
+  font-size: 11.5px; line-height: 1.45;
+}
+.lgn-sb-tip-title { font-weight: 600; font-size: 12px; }
+.lgn-sb-tip-dim { color: rgba(255, 255, 255, 0.62); font-size: 10.5px; }
+"""
+
+_WIDGET_CLS: type[Any] | None = None
+
+
+def _widget_class() -> type[Any]:
+    """Define ScoreboardWidget lazily -- anywidget is an optional extra."""
+
+    global _WIDGET_CLS
+    if _WIDGET_CLS is not None:
+        return _WIDGET_CLS
+    try:
+        import anywidget
+        import traitlets
+    except ImportError as err:
+        raise MissingExtraError("the requirements scoreboard widget", "anywidget", "viz") from err
+
+    vendored = _VORONOI_JS.read_text(encoding="utf-8") if _VORONOI_JS.is_file() else ""
+
+    class ScoreboardWidget(anywidget.AnyWidget):
+        """Treemap/Voronoi over one scoreboard payload (area = weight,
+        color = utility).  ``selected`` and ``collapsed`` are the two-way
+        automation surface; build instances via :meth:`Scoreboard.widget`."""
+
+        _esm = vendored + _SCOREBOARD_JS
+        _css = _SCOREBOARD_CSS
+
+        nodes_json = traitlets.Unicode("null").tag(sync=True)
+        tessellation = traitlets.Unicode("treemap").tag(sync=True)
+        aggregation = traitlets.Unicode("saw").tag(sync=True)
+        selected = traitlets.List(
+            traitlets.Unicode(), help="selected requirement qnames; [] = none"
+        ).tag(sync=True)
+        collapsed = traitlets.List(
+            traitlets.Unicode(), help="collapsed subtree qnames (each renders as one cell)"
+        ).tag(sync=True)
+        seed = traitlets.Int(42, help="Voronoi iteration seed (determinism)").tag(sync=True)
+        width_px = traitlets.Int(960).tag(sync=True)
+        height_px = traitlets.Int(540).tag(sync=True)
+
+        def __init__(self, **kwargs: Any) -> None:
+            # set BEFORE super().__init__: trait kwargs may fire observers
+            self._select_callbacks: list[Callable[[list[str]], None]] = []
+            super().__init__(**kwargs)
+
+        def on_select(self, callback: Callable[[list[str]], None]) -> None:
+            """Call ``callback`` with the selected qnames on every change."""
+
+            self._select_callbacks.append(callback)
+
+        @traitlets.observe("selected")
+        def _dispatch_select(self, change: Any) -> None:
+            ids = list(change["new"])
+            for callback in list(getattr(self, "_select_callbacks", ())):
+                callback(ids)
+
+    _WIDGET_CLS = ScoreboardWidget
+    return ScoreboardWidget

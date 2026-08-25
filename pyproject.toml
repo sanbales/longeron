@@ -90,6 +90,8 @@ longeron = [
     # fingerprinted against them and rebuilt from them when stale
     "_stdlib/README.md",
     "_js/elk.bundled.js",     # headless SVG/PNG layout (node still required)
+    "_js/voronoi_treemap.bundled.js",  # scoreboard voronoi (vendored, BSD/ISC)
+    "_js/voronoi_treemap.VENDOR.md",
 ]
 
 [tool.pytest.ini_options]

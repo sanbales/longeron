@@ -11,6 +11,12 @@ third-party dependencies):
 * :mod:`longeron.analysis.smt` -- requirement consistency, conflict cores, and
   design-space bounds over the reals on Z3
   (``pip install "longeron[smt]"``).
+* :mod:`longeron.analysis.scoreboard` -- a MAUT (multi-attribute utility)
+  scoreboard over the requirements hierarchy: model-declared weights and
+  utility shapes, pluggable aggregation, and an interactive
+  treemap/Voronoi widget where area is importance and color is utility
+  (the widget needs the ``viz`` extra; scoring runs on the interpreter
+  alone).
 * :mod:`longeron.analysis.viz` -- figures and a parallel-coordinates widget
   over trade-study results (``pip install "longeron[viz]"``).
 * :mod:`longeron.analysis.geometry` / :mod:`longeron.analysis.viewer3d` --
@@ -37,6 +43,7 @@ __all__ = [
     "geometry",
     "link",
     "mdao",
+    "scoreboard",
     "smt",
     "structure",
     "trades",

@@ -12,6 +12,7 @@ Guide for picking a bridge: [Choosing an analysis](../../guides/analysis.md).
 mdao
 trades
 smt
+scoreboard
 viz
 geometry
 viewer3d

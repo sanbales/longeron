@@ -17,10 +17,11 @@ surfaces.
 | Which discrete component mixes are feasible or optimal, and why do the others fail? | {mod}`~longeron.analysis.trades` (OR-Tools CP-SAT) | `trades` |
 | What continuous sizing is best, and what happens if I change an input? | {mod}`~longeron.analysis.mdao` (OpenMDAO) | `mdao` |
 | Is the requirement set consistent at all, and which requirements conflict? | {mod}`~longeron.analysis.smt` (Z3) | `smt` |
+| How well does a design satisfy the weighted requirement hierarchy, and where does the utility come from? | {mod}`~longeron.analysis.scoreboard` (MAUT, interpreter-only) | none (`viz` for the widget) |
 | Which elements relate how, across the whole model? | {mod}`longeron.rdf` (SPARQL) | `rdf` |
 | What context should an LLM agent retrieve about this model? | {mod}`longeron.rag` | none |
 
-One principle holds across all five: the interpreter stays the single
+One principle holds across all six: the interpreter stays the single
 source of semantics. Solver results are re-evaluated, or cross-checked,
 against the model itself, so an encoding bug cannot misreport a design.
 
@@ -82,6 +83,23 @@ unbounded reals and answers three questions: is the set satisfiable,
 which minimal subset conflicts (the unsat core), and what exact bounds
 does the set impose on a freed attribute. Because Z3 works over the
 reals, a "consistent" verdict is exact, not sampled.
+
+## Scoreboard: how good is this design, requirement by requirement
+
+Use {mod}`~longeron.analysis.scoreboard` when the requirement hierarchy
+carries importance weights and you want one number -- and its full
+decomposition -- for how well a design satisfies it. Weights and
+utility shapes are declared as plain attributes on the requirement
+usages themselves (`weight`, `utility`, `measure`, and the shape
+anchors), so the model stays the source of truth;
+{func}`~longeron.analysis.scoreboard.scoreboard` evaluates raw measures
+through the interpreter, maps them onto [0, 1] utilities, aggregates up
+the hierarchy (simple additive weighting by default, weakest-link and
+geometric strategies built in, custom aggregators pluggable), and
+renders as an interactive treemap or Voronoi tessellation where area is
+importance and color is utility. `values=` injection scores any
+trade-study architecture without touching the model (tutorial
+{doc}`13 <../tutorials/13_requirements_scoreboard>`).
 
 ## RDF and RAG: query and retrieve
 

@@ -1,5 +1,25 @@
 # Release notes
 
+## 0.10.0 (unreleased)
+
+- **The requirements scoreboard** (`longeron.analysis.scoreboard`): a
+  MAUT (multi-attribute utility) layer over the requirements
+  hierarchy. Importance weights and utility shapes are declared IN THE
+  MODEL as plain attributes on requirement usages (`weight`,
+  `utility`, `measure`, plus shape anchors; typed usages inherit from
+  their requirement definition), raw measures evaluate through the
+  interpreter, and aggregation up the hierarchy is pluggable (SAW by
+  default; weakest-link and geometric built in). `values=` injection
+  scores any design point without touching the model --
+  `architecture_values` bridges trade-study `Architecture` results
+  directly. One anywidget renders it as a squarified treemap or a
+  Voronoi tessellation (the vendored BSD-licensed d3-voronoi-treemap)
+  where area is importance and color is utility on a perceptual
+  OKLab red->yellow->green ramp; hover for details, click to select
+  (linked-selection-ready `selected` trait), double-click to collapse
+  a subtree in place into one aggregated cell; unmeasured
+  requirements render hatched grey. Tutorial 13 walks it end to end
+
 ## 0.9.1
 
 - **The `sysml2` alias is removed** — the `sysml2` PyPI name and

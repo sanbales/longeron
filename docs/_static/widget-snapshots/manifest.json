@@ -292,6 +292,29 @@
     "alt": "Diagram",
     "image": "11_notation_gallery/cell-69.png"
    }
+  ],
+  "13_requirements_scoreboard": [
+   {
+    "nb_cell_index": 7,
+    "code_cell_index": 3,
+    "output_index": 0,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "13_requirements_scoreboard/cell-03.png"
+   },
+   {
+    "nb_cell_index": 9,
+    "code_cell_index": 4,
+    "output_index": 0,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "13_requirements_scoreboard/cell-04.png"
+   },
+   {
+    "nb_cell_index": 11,
+    "code_cell_index": 5,
+    "output_index": 0,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "13_requirements_scoreboard/cell-05.png"
+   }
   ]
  }
 }
