@@ -473,6 +473,13 @@ def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest)
     """A fresh page (and console/error collectors) per test."""
 
     page = browser.new_page(viewport={"width": 1500, "height": 1100})
+    # a crashed renderer must fail fast, never masquerade as a hang: a
+    # pending page.evaluate on a crashed page waits forever (the CI
+    # eaten-clock failure mode; small /dev/shm kills renderers silently)
+    page.on(
+        "crash",
+        lambda _page: pytest.fail("chromium renderer crashed (see the /dev/shm note in conftest)"),
+    )
     driver = LabPage(page, lab_server)
     yield driver
     try:
