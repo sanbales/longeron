@@ -317,6 +317,18 @@ cmd = "pytest -v -m browser --reruns 1 --timeout 700 --timeout-method thread tes
 env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 
+[tool.pixi.feature.browser.tasks.capture-widgets]
+# regenerate the tutorial widget snapshots (docs/_static/widget-snapshots/):
+# boots a headless JupyterLab on notebooks/, runs tutorials 01..11, and
+# screenshots every rendered widget output (see the script's docstring).
+# The PNGs + manifest are COMMITTED artifacts -- deliberately NOT in the
+# `docs` task dependency chain, so docs builds stay deterministic and
+# Chromium-free (including CI). Same browser env prerequisite as
+# test-browser: `pixi run -e browser playwright install chromium` once.
+cmd = "python scripts/capture_widget_snapshots.py"
+env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
+depends-on = ["sync-labextension"]
+
 [tool.pixi.tasks.sync-labextension]
 # rsync the vendored labextension BUILD (vendor/ipyelk/src/_d/...) over the
 # SERVED copies (.pixi/envs/*/share/jupyter/labextensions/...), warning

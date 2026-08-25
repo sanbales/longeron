@@ -51,6 +51,7 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `stdlib` | rebuild the prebuilt standard-library JSON (`scripts/vendor_stdlib.py --prebuilt-only`). |
 | `demo` | run `examples/demo.py`. |
 | `docs` | `sphinx-build -W -b html docs build/docs` (needs the `docs` extra; execution needs the `dev` extras plus node). |
+| `capture-widgets` (pixi) | re-capture the tutorial widget snapshots (`docs/_static/widget-snapshots/`) from a headless JupyterLab; run after changing a widget-bearing cell in tutorials 1–11. See below. |
 | `hooks` | point `core.hooksPath` at `scripts/git-hooks`. |
 | `notebooks` (pixi) / `scripts/run_notebooks.py` | execute every tutorial notebook, then strip outputs. |
 | `sync-labextension` (pixi) | copy the vendored jupyter-elk labextension build into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
@@ -146,3 +147,15 @@ The site builds with `make docs` or `pixi run docs`, which run
 the committed notebooks, symlinked into `docs/tutorials/` and executed
 by myst-nb at build time. If you change a notebook, the next docs build
 re-executes it.
+
+Interactive widget outputs (ipyelk diagrams, anywidget viewers) render
+on the tutorial pages as committed PNG snapshots from
+`docs/_static/widget-snapshots/` (swapped in by the
+`docs/_ext/widget_snapshots.py` extension, keyed by its
+`manifest.json`). The docs build itself stays deterministic and
+Chromium-free; the snapshots are refreshed manually with
+`pixi run capture-widgets` (browser environment: needs
+`pixi run -e browser playwright install chromium` once per machine,
+like `test-browser`). If you change a widget-bearing cell in tutorials
+1–11, re-run it and commit the refreshed PNGs + manifest -- a stale
+manifest fails the `-W` build with a pointer to that command.

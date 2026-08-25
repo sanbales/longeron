@@ -39,6 +39,7 @@ extensions = [
     "sphinx_autodoc_typehints",
     "sphinx_copybutton",
     "sphinx_design",
+    "widget_snapshots",  # docs/_ext: captured PNGs replace live widget outputs
 ]
 
 exclude_patterns = [
@@ -59,8 +60,12 @@ nb_execution_timeout = 600  # mirrors tests/test_notebooks.py
 nb_execution_raise_on_error = True
 nb_output_stderr = "remove"  # solver / widget chatter is not content
 # Interactive widgets (ipyelk diagrams, anywidget viewers) cannot run on a
-# static site: drop the widget-view mime type so the text/plain repr renders
-# as a placeholder instead (see the note on the tutorials index page).
+# static site.  Captured PNG snapshots stand in for them: the
+# widget_snapshots extension (docs/_ext/) replaces manifest-listed widget
+# outputs with images from docs/_static/widget-snapshots/ (regenerate with
+# `pixi run capture-widgets`).  For widget outputs WITHOUT a snapshot
+# (a freshly added cell before re-capture), dropping the widget-view
+# mime type below makes the text/plain repr render as the placeholder.
 nb_mime_priority_overrides = [
     ("html", "application/vnd.jupyter.widget-view+json", None),
 ]
@@ -84,6 +89,7 @@ intersphinx_mapping = {
 # -- HTML ------------------------------------------------------------------
 
 html_theme = "furo"
+html_static_path = ["_static"]  # widget snapshots (PNGs, manifest, CSS)
 html_title = f"longeron {release}"
 html_theme_options = {
     "source_repository": "https://github.com/sanbales/longeron",
