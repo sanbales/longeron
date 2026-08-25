@@ -96,7 +96,9 @@ class TestTreeData:
     def test_counts_match_the_owning_structure(self, drone_model, uav_model):
         for model in (drone_model, uav_model):
             nodes, index = _tree_data(model)
-            expected = 1 + _reference_count(model)  # +1: the model root
+            top = [m for m in model.members if explorer_module._in_tree(m)]
+            flattened = len(top) == 1  # single-package models drop the file row
+            expected = _reference_count(model) + (0 if flattened else 1)
             assert len(index) == expected
             tree = ModelTree(nodes)
             assert tree.total_count == expected
@@ -107,9 +109,8 @@ class TestTreeData:
 
     def test_nesting_follows_ownership(self, drone_model):
         nodes, _ = _tree_data(drone_model)
-        root = nodes[0]
-        drone = _find(root.get("children", ()), "Drone")
-        assert drone is not None
+        drone = nodes[0]  # flattened: the lone package IS the root
+        assert drone["id"] == "Drone"
         quad = _find(drone["children"], "Drone::QuadCopter")
         assert quad is not None
         battery = _find(quad["children"], "Drone::QuadCopter::battery")
@@ -167,11 +168,28 @@ class TestTreeData:
         assert node["label"] == "satisfy requirement1"
         assert node["kind"] == "requirement"
 
-    def test_model_root_is_the_single_top_node(self, drone_model):
+    def test_single_package_model_flattens_to_the_package(self, drone_model):
+        # the language has no model-level name: the lone top-level
+        # package IS the model's humanized name, so it is the tree root
         nodes, index = _tree_data(drone_model)
         assert len(nodes) == 1
+        root = nodes[0]
+        assert isinstance(index[root["id"]], M.Package)
+        assert root["label"] == "Drone"
+        assert root["tooltip"].endswith("drone.sysml \u2014 Drone") or (
+            "drone.sysml" in root["tooltip"]
+        )
+
+    def test_multi_package_model_keeps_the_file_root(self):
+        model = longeron.loads(
+            "package A { part a; } package B { part b; }", source_name="dir/two.sysml"
+        )
+        nodes, index = _tree_data(model)
+        assert len(nodes) == 1
         assert isinstance(index[nodes[0]["id"]], M.Model)
+        assert nodes[0]["label"] == "two.sysml"
         assert nodes[0]["badge"] == "model"
+        assert nodes[0]["tooltip"] == "dir/two.sysml"
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +347,10 @@ class TestRequirementsView:
 
 class TestExplorer:
     def test_initial_state_shows_the_whole_model(self, ex, drone_model):
-        assert isinstance(ex.element, M.Model)
+        # single-package model: the root row (and thus the initial
+        # selection) is the package itself, a real diagram element
+        assert isinstance(ex.element, M.Package)
+        assert ex.element.name == "Drone"
         assert ex.kind == "structure"
         assert type(ex.diagram).__name__ == "Diagram"
         assert ex.tree.selected  # the model root node is selected
@@ -805,25 +826,22 @@ def test_demo_notebook_executes():
 class TestRootLabelAndTooltip:
     """The tree root: short label, full-path tooltip (never a bare ~N)."""
 
-    def test_path_source_collapses_to_file_name(self):
+    def test_flattened_root_shows_package_with_path_tooltip(self):
         model = longeron.loads(
             "package P { part p; }", source_name="examples/deep/dir/uav_missions.sysml"
         )
         nodes, _ = explorer_module._tree_data(model)
+        assert nodes[0]["label"] == "P"
+        assert nodes[0]["tooltip"] == "examples/deep/dir/uav_missions.sysml \u2014 P"
+
+    def test_multi_package_path_source_collapses_to_file_name(self):
+        model = longeron.loads(
+            "package P { part p; } package Q { part q; }",
+            source_name="examples/deep/dir/uav_missions.sysml",
+        )
+        nodes, _ = explorer_module._tree_data(model)
         assert nodes[0]["label"] == "uav_missions.sysml"
         assert nodes[0]["tooltip"] == "examples/deep/dir/uav_missions.sysml"
-
-    def test_plain_source_name_is_untouched(self):
-        model = longeron.loads("package P { part p; }", source_name="solo")
-        nodes, _ = explorer_module._tree_data(model)
-        assert nodes[0]["label"] == "solo"
-        assert nodes[0]["tooltip"] == "solo"
-
-    def test_text_model_tooltip_is_its_source_marker(self):
-        model = longeron.loads("package P { part p; }")
-        nodes, _ = explorer_module._tree_data(model)
-        assert nodes[0]["label"] == "<text>"
-        assert nodes[0]["tooltip"] == "<text>"  # anything beats a bare ~0
 
     def test_sourceless_model_has_no_tooltip(self):
         nodes, _ = explorer_module._tree_data(M.Model())

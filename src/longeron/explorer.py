@@ -337,6 +337,18 @@ def _tree_data(
                 node["has_children"] = True
         return node
 
+    # single-root flattening: a model whose members boil down to ONE
+    # top-level package gets that package as the tree root -- its name is
+    # the model's only humanized name (the language has no model-level
+    # name; a file is a nameless root namespace), and a synthetic file
+    # row above it would duplicate it. The file path still rides the
+    # root's tooltip. Multi-package files keep the file-stem root.
+    top = [member for member in model.members if _in_tree(member)]
+    if len(top) == 1 and isinstance(top[0], M.Package):
+        root = build(top[0])
+        if model.source_name:
+            root["tooltip"] = f"{model.source_name} \u2014 {root['label']}"
+        return [root], index
     return [build(model)], index
 
 
