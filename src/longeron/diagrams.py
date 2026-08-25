@@ -30,6 +30,8 @@ environments install it automatically).  Three views, one dispatcher:
   actors render as the spec's stick figure (name below; the
   ``actor_style="box"`` kwarg keeps the «actor» keyword-box alternative)
   while stakeholders render as «stakeholder» keyword boxes.
+  View usages -- saved diagram recipes (:mod:`longeron.views`) -- draw
+  as «view» keyword boxes.
   Packages carry the spec's folder tab.
   ``membership="edges"`` swaps package nesting for the spec's ALTERNATIVE
   owned-membership presentation: members as sibling nodes, solid edges
@@ -1401,6 +1403,25 @@ def _finish(
     return result
 
 
+def _stamp_view_state(
+    widget: Any, element: M.Element, kind: str, options: Mapping[str, Any] | None = None
+) -> Any:
+    """Mark a built widget with what it draws: root element, diagram
+    kind, and the non-default builder options.
+
+    This is the seam view persistence reads (:mod:`longeron.views`
+    duck-types diagram widgets through it): ``save_view(model, widget)``
+    needs to know the widget's scope and kind without re-deriving them
+    from ELK geometry.  Live presentation (direction, routing, collapse
+    state) is deliberately NOT stamped -- it is read off the source tree
+    at save time (:func:`longeron.views.capture_presentation`), so
+    toolbar toggles after construction are captured too.
+    """
+
+    widget._lgn_view_state = {"element": element, "kind": kind, "options": dict(options or {})}
+    return widget
+
+
 # ---------------------------------------------------------------------------
 # structure view
 # ---------------------------------------------------------------------------
@@ -1496,16 +1517,31 @@ def structure_diagram(
         builder.add_annotations(root)
     builder.pack_components(root)
     _size_compartment_rows(root)
+    # the sidecar tier persists only DEVIATIONS from these defaults
+    options: dict[str, Any] = {}
+    if not show_attributes:
+        options["show_attributes"] = False
+    if not show_relationships:
+        options["show_relationships"] = False
+    if composition != "defs":
+        options["composition"] = composition
+    if membership != "nested":
+        options["membership"] = membership
+    if annotations:
+        options["annotations"] = True
+    if actor_style != "figure":
+        options["actor_style"] = actor_style
     # package tabs ride flush with the box top (outside icon labels; the
     # spacing option applies per hierarchy level, so the package nodes
     # restate it for their nested packages)
-    return _finish(
+    widget = _finish(
         root,
         toolbar=toolbar,
         layout={"elk.spacing.labelNode": "0"},
         routing=routing,
         direction=direction,
     )
+    return _stamp_view_state(widget, element, "structure", options)
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -1666,6 +1702,10 @@ class _StructureBuilder:
             # (printed p.79); anonymous `allocate a to b` draws the
             # «allocate» keyword edge instead
             "allocation",
+            # «view» usage boxes: a saved diagram's recipe is a model
+            # element too, so it must be visible where it lives
+            # (docs/design/view-persistence.md, gap-analysis finding 3)
+            "view",
         ):
             if element.kind in ("satisfy", "allocation") and not element.name:
                 # the anonymous shorthands (`satisfy R by sys;`,
@@ -2536,7 +2576,9 @@ def state_diagram(
     resolver = Interpreter(model).resolver
     base = machine.qualified_name or machine.label
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
-    return _finish(root, toolbar=toolbar, routing=routing, direction=direction)
+    widget = _finish(root, toolbar=toolbar, routing=routing, direction=direction)
+    options = {} if submachine_depth is None else {"submachine_depth": submachine_depth}
+    return _stamp_view_state(widget, machine, "state", options)
 
 
 def _transition_text(transition: M.TransitionUsage) -> str | None:
@@ -2784,7 +2826,11 @@ def action_diagram(
     if lanes:
         layout = _apply_lanes(root, lanes, steps, elements)
 
-    return _finish(root, direction=direction, toolbar=toolbar, layout=layout, routing=routing)
+    widget = _finish(root, direction=direction, toolbar=toolbar, layout=layout, routing=routing)
+    options = (
+        {} if lanes is None else {"lanes": dict(lanes) if isinstance(lanes, Mapping) else lanes}
+    )
+    return _stamp_view_state(widget, action, "action", options)
 
 
 def _lane_groups(

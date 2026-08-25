@@ -105,6 +105,8 @@ class _Checker:
             self.check_expressions(element)
         if isinstance(element, M.Import):
             self.check_target(element, element.target, "import")
+        if isinstance(element, M.Expose):
+            self.check_expose(element)
         if isinstance(element, M.Alias):
             self.check_target(element, element.target, "alias")
         if isinstance(element, M.Dependency):
@@ -170,6 +172,30 @@ class _Checker:
             self._check_implicit(element, ref)
             return
         self.report("warning", "unresolved-reference", element, f"{role} {ref!r} does not resolve")
+
+    def check_expose(self, expose: M.Expose) -> None:
+        """dangling-expose: an ``expose`` inside a view usage names an
+        element that no longer resolves.  Restore skips such exposes with
+        a warning (:mod:`longeron.views`); this diagnostic surfaces the
+        same condition in ``validate`` / ``longeron lint``.  Warning, not
+        error: the spec places no well-formedness constraint on an import
+        target's continued existence, and the target may live in a file
+        that was not loaded."""
+
+        if not expose.target or self._resolves(expose.target, expose):
+            return
+        owner = expose.owner
+        where = (owner.qualified_name or owner.label) if owner is not None else expose.label
+        location = getattr(expose, "source_location", None)
+        self.diagnostics.append(
+            Diagnostic(
+                "warning",
+                "dangling-expose",
+                f"expose target {expose.target!r} does not resolve",
+                where,
+                location,
+            )
+        )
 
     def _check_implicit(self, element: M.Element, ref: str) -> None:
         """stdlib-implicit-name: ``ref`` resolved, but only through the

@@ -57,6 +57,7 @@ set of constants in both render pipelines.
 | Comment / documentation | folded-corner note, dashed anchor | ✔ (`annotations=True`) |
 | Metadata | «@Type» / «#keyword» adornments | ✔ (`annotations=True`) |
 | Individual / timeslice / snapshot | keyword adornments | ✔ |
+| View usage | «view» keyword box | ✔ (a saved diagram's recipe is a model element; [view persistence](../reference/views.md)) |
 
 ## Behavior views
 

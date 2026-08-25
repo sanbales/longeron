@@ -11,8 +11,9 @@ metaclass, ``@id``/``elementId`` UUIDs, and every reference expressed as
     spec = longeron.api.spec_from_api_json(records)     # API JSON -> spec instances
 
 The export is a structural prototype: element skeletons, names, flags,
-memberships, and specialization/typing relationships -- not expression
-trees.  See :mod:`longeron.ecore` for what is and is not projected.
+memberships, specialization/typing relationships, and the view-persistence
+records (exposes and element filters) -- not expression trees.
+See :mod:`longeron.ecore` for what is and is not projected.
 Relationship records carry the derived ``source``/``target`` endpoint
 arrays by default (``derived=True``), matching what the OMG pilot-
 implementation API servers serialize -- see :func:`to_api_records`.
@@ -547,21 +548,100 @@ def _reference_name(target: M.Element) -> str | None:
     return target.qualified_name or target.name or target.short_name
 
 
+def _parse_condition(text: str):
+    """Parse a filter-condition body back into an expression tree, or
+    ``None`` when it does not parse (a foreign payload)."""
+
+    from .builder import parse_expression
+
+    try:
+        return parse_expression(text)
+    except Exception:
+        return None
+
+
+def _condition_from_records(
+    record: dict[str, Any], by_id: dict[str, dict[str, Any]]
+) -> tuple[Any, set[str]]:
+    """Decode an ElementFilterMembership's condition.
+
+    The exporter carries the condition as an owned Expression whose
+    TextualRepresentation (language ``sysml``/``kerml``) holds the
+    rendered text (:mod:`longeron.ecore`); re-parsing the body restores
+    the exact expression tree.  Returns ``(condition | None, consumed
+    record ids)`` -- the whole owned expression subtree is consumed so
+    its records never leak into the rebuilt model as stray roots.
+    Structured pilot expressions without a textual representation decode
+    to ``None`` (expression trees are outside this import's scope).
+    """
+
+    condition = None
+    consumed: set[str] = set()
+    stack = _all_ids(record, "ownedRelatedElement", "target")
+    while stack:
+        current_id = stack.pop()
+        current = by_id.get(current_id)
+        if current is None or current_id in consumed:
+            continue
+        consumed.add(current_id)
+        stack.extend(_all_ids(current, "ownedRelationship"))
+        stack.extend(_all_ids(current, "ownedRelatedElement"))
+        if (
+            condition is None
+            and current.get("@type") == "TextualRepresentation"
+            and str(current.get("language", "")).lower() in ("sysml", "kerml")
+        ):
+            condition = _parse_condition(str(current.get("body", "")))
+    return condition, consumed
+
+
+def _expose_target_element(
+    record: dict[str, Any],
+    by_id: dict[str, dict[str, Any]],
+    elements: dict[str, M.Element],
+) -> M.Element | None:
+    """The model element a MembershipExpose / NamespaceExpose record
+    points at.  A NamespaceExpose references the namespace directly; a
+    MembershipExpose references the target's owning MEMBERSHIP, so the
+    lookup hops through it to the owned element."""
+
+    if record.get("@type") == "NamespaceExpose":
+        target_id = _first_id(record, "importedNamespace", "target")
+        return elements.get(target_id) if target_id else None
+    target_id = _first_id(record, "importedMembership", "target")
+    if target_id is None:
+        return None
+    direct = elements.get(target_id)
+    if direct is not None:  # tolerate records that reference the element
+        return direct
+    membership = by_id.get(target_id)
+    if membership is not None and str(membership.get("@type", "")).endswith("Membership"):
+        element_id = _first_id(membership, "ownedRelatedElement", "target")
+        return elements.get(element_id) if element_id else None
+    return None
+
+
 def model_from_api_records(records: list[dict[str, Any]]) -> M.Model:
     """Rebuild a :class:`~longeron.model.Model` from flat API records.
 
     This is the reverse of :func:`to_api_records` at the same structural
     fidelity: element kinds, names, flags, ownership (via the reified
-    membership records), and the FeatureTyping / Subclassification /
-    Subsetting / Redefinition relationships come back; expression trees,
-    attribute values, multiplicities, and import/dependency targets are
-    not part of API records and are therefore absent from the result.
-    Relationship endpoints are read from the stored role features when
-    present and from the derived ``source``/``target`` arrays otherwise,
-    so both longeron exports and pilot-server payloads import.  Records
-    are accepted in flat GET form or pilot POST ``identity``/``payload``
-    form; unknown ``@type`` values are skipped, never fatal.  Unlike
-    :func:`spec_from_api_records` this needs no pyecore.
+    membership records), the FeatureTyping / Subclassification /
+    Subsetting / Redefinition relationships, and view persistence --
+    ``expose`` (MembershipExpose / NamespaceExpose, targets rebound by
+    qualified name) and ``filter`` (ElementFilterMembership, conditions
+    re-parsed from their textual representation) -- come back;
+    expression trees, attribute values, multiplicities, and
+    import/dependency targets are not part of API records and are
+    therefore absent from the result.  An expose whose target reference
+    is missing (it never resolved at export) has no textual form and is
+    dropped.  Relationship endpoints are read from the stored role
+    features when present and from the derived ``source``/``target``
+    arrays otherwise, so both longeron exports and pilot-server payloads
+    import.  Records are accepted in flat GET form or pilot POST
+    ``identity``/``payload`` form; unknown ``@type`` values are skipped,
+    never fatal.  Unlike :func:`spec_from_api_records` this needs no
+    pyecore.
     """
 
     flat = _flat_api_records(records)
@@ -571,11 +651,47 @@ def model_from_api_records(records: list[dict[str, Any]]) -> M.Model:
         element = _element_from_api_record(record)
         if element is not None:
             elements[record_id] = element
-    # ownership: walk the reified membership records
+    # ownership: walk the reified membership records -- plus the expose
+    # and filter records, IN STREAM ORDER, so view members come back in
+    # their textual order (exposes before the render reference)
     owned: set[str] = set()
     root_order: list[str] = []
+    exposes: dict[str, M.Expose] = {}  # expose record @id -> rebuilt element
+    pending_exposes: list[tuple[M.Expose, dict[str, Any]]] = []
+    consumed: set[str] = set()  # filter-condition payload records
     for record in flat:
-        if not str(record.get("@type", "")).endswith("Membership"):
+        type_name = str(record.get("@type", ""))
+        if type_name in ("MembershipExpose", "NamespaceExpose"):
+            owner_id = _first_id(record, "owningRelatedElement", "source")
+            owner = elements.get(owner_id) if owner_id else None
+            if not isinstance(owner, M.Namespace):
+                continue
+            expose = M.Expose(
+                is_namespace=type_name == "NamespaceExpose",
+                is_recursive=bool(record.get("isRecursive")),
+            )
+            owner.add(expose)
+            expose_id = record.get("@id")
+            if expose_id is not None:
+                exposes[str(expose_id)] = expose
+            pending_exposes.append((expose, record))
+            continue
+        if type_name == "ElementFilterMembership":
+            owner_id = _first_id(
+                record, "owningRelatedElement", "membershipOwningNamespace", "source"
+            )
+            condition, condition_ids = _condition_from_records(record, by_id)
+            consumed.update(condition_ids)
+            expose_owner = exposes.get(owner_id) if owner_id else None
+            if expose_owner is not None:  # an expose's bracket filter
+                if condition is not None:
+                    expose_owner.filters.append(condition)
+                continue
+            owner = elements.get(owner_id) if owner_id else None
+            if isinstance(owner, M.Namespace) and condition is not None:
+                owner.add(M.ElementFilter(condition=condition))
+            continue
+        if not type_name.endswith("Membership"):
             continue
         parent_id = _first_id(record, "owningRelatedElement", "membershipOwningNamespace", "source")
         parent = elements.get(parent_id) if parent_id else None
@@ -616,12 +732,25 @@ def model_from_api_records(records: list[dict[str, Any]]) -> M.Model:
         names = getattr(source, attribute, None)
         if name and isinstance(names, list) and name not in names:
             names.append(name)
+    # expose targets: rebind by qualified name once ownership is complete
+    # (qualified names need the finished owner chains)
+    for expose, record in pending_exposes:
+        target_element = _expose_target_element(record, by_id, elements)
+        name = _reference_name(target_element) if target_element is not None else None
+        if name is None:  # a target-less expose has no textual form: drop it
+            expose_home = expose.owner
+            if isinstance(expose_home, M.Namespace):
+                expose_home.members.remove(expose)
+            continue
+        expose.target = name
     model = M.Model()
     for root_id in root_order:
         if root_id not in owned:
             model.add(elements[root_id])
             owned.add(root_id)
     for record_id, element in elements.items():  # unowned leftovers stay roots
+        if record_id in consumed:
+            continue  # filter-condition payloads are not model members
         if record_id not in owned and record_id not in root_order:
             model.add(element)
     return model

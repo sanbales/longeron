@@ -52,6 +52,7 @@ missing target may live in a file you did not load.
 | `specialization-cycle` | error | An element's specialization hierarchy (`specializes` / `typed by` / `subsets`, including implied specializations) reaches the element itself. Redefinitions (`:>>`) are not specialization edges: redefining a same-named inherited feature is not a cycle. |
 | `unknown-state` | error | A transition names a source or target that is not a state of its machine. |
 | `unresolved-reference` | warning | A declared reference does not resolve: `typed by`, `specializes`, `subsets`, `redefines`, `references`, `crosses`, connection/binding ends, `satisfied by`, an import, an alias, or a dependency end. |
+| `dangling-expose` | warning | An `expose` inside a view usage names an element that no longer resolves. Restoring the view ([view persistence](../reference/views.md)) skips such exposes with a warning; this diagnostic surfaces the same condition statically. |
 | `unresolved-name` | warning | The leading name of an expression does not resolve. Locals, loop variables, accept payloads, builtin functions, and inherited members are recognized first. |
 | `no-entry-transition` | warning | A state machine declares states but no `entry; then <state>;` transition, so simulation has no starting state. |
 | `calc-without-result` | warning | A calc has no result expression and no `return`-directed member with a value. Reference calc usages that delegate to a typed calc stay silent. |

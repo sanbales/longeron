@@ -918,7 +918,7 @@ class _Builder:
                     exp.target = self.qname(ni.qualifiedName())
                     exp.is_namespace = True
                     exp.is_recursive = ni.isRecursive is not None
-            ns.add(exp)
+            ns.add(self.locate(exp, e))  # position for dangling-expose lint
             return
         if item.satisfyRequirementUsage() is not None:
             ns.add(self.satisfy_requirement_usage(item.satisfyRequirementUsage()))

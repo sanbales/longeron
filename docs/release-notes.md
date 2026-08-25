@@ -2,6 +2,25 @@
 
 ## 0.10.0 (unreleased)
 
+- **View persistence** (`longeron.views`): diagrams save as SysML v2
+  views and restore from them, per the ratified
+  [design](design/view-persistence.md). `save_view` appends a
+  `ViewUsage` -- typed by the matching `StandardViewDefinitions` view
+  definition, exposing the shown scope (`expose Pkg::**`), with a
+  `render Views::asInterconnectionDiagram` reference -- to the scope's
+  owning package; the standard tier round-trips through `.sysml` text
+  and the Systems Modeling API and is legible to any conformant tool.
+  Presentation (direction, routing, collapse state, builder options)
+  lives in a small versioned sidecar (`.longeron/views.json`, keyed by
+  view qualified name); `restore_view` picks the builder from the
+  typing, resolves the expose closure through the resolver (metaclass
+  filters evaluate), and re-applies the sidecar -- dangling exposes
+  warn and skip, never raise. The API projection now emits
+  `MembershipExpose`/`NamespaceExpose`/`ElementFilterMembership`
+  records (it used to silently drop every expose and filter), view
+  usages draw as `«view»` boxes in structure diagrams, `validate`
+  gained the `dangling-expose` diagnostic, and the explorer's header
+  grew a save button (`Explorer.save_view`)
 - **The requirements scoreboard** (`longeron.analysis.scoreboard`): a
   MAUT (multi-attribute utility) layer over the requirements
   hierarchy. Importance weights and utility shapes are declared IN THE

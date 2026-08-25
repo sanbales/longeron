@@ -28,6 +28,7 @@ objects are defined.
 |---|---|---|
 | [Diagrams](diagrams.md) | `longeron.diagrams`, `longeron.toolbar` | interactive ELK diagrams (ipyelk) and their compact search toolbar |
 | [Model explorer](explorer.md) | `longeron.explorer` | the tree + diagram-pane explorer widget |
+| [View persistence](views.md) | `longeron.views` | saving diagrams as SysML v2 views, sidecar presentation, restore |
 | [Rendering](render.md) | `longeron.render` | headless SVG/PNG export (elkjs via node) |
 | [Replay](replay.md) | `longeron.replay` | animated simulation/action replays |
 
@@ -62,6 +63,7 @@ api-server
 cli
 diagrams
 explorer
+views
 render
 replay
 analysis/index

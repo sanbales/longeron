@@ -282,6 +282,75 @@ class TestUnresolvedExpressionNames:
         assert len(found) == 1
 
 
+class TestDanglingExposes:
+    """dangling-expose: an expose whose target no longer resolves (the
+    view-persistence design's finding 5)."""
+
+    def test_dangling_expose_warns(self):
+        found = diags("package P { part a; view v { expose P::gone; } }", "dangling-expose")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "P::gone" in found[0].message
+        # the subject is the owning view usage (the expose is anonymous)
+        assert found[0].element == "P::v"
+
+    def test_resolving_exposes_stay_silent(self):
+        assert (
+            diags(
+                """
+            package P {
+                part a;
+                view v {
+                    expose P::a;
+                    expose P::*;
+                    expose P::**[not @SysML::ConnectionUsage];
+                }
+            }
+        """,
+                "dangling-expose",
+            )
+            == []
+        )
+
+    def test_saved_view_shape_is_clean(self):
+        # the exact text save_view writes (design doc example)
+        assert (
+            diags(
+                """
+            package Rig {
+                part def Axle { part hub : Hub [2]; }
+                part def Hub;
+                part axle : Axle;
+                view 'axle structure' : StandardViewDefinitions::InterconnectionView {
+                    expose Rig::**;
+                    render Views::asInterconnectionDiagram;
+                }
+            }
+        """
+            )
+            == []
+        )
+
+    def test_location_points_at_the_expose(self):
+        source = "package P {\n    part a;\n    view v {\n        expose P::gone;\n    }\n}\n"
+        model = longeron.loads(source, source_name="views.sysml")
+        found = [d for d in longeron.validate(model) if d.code == "dangling-expose"]
+        assert len(found) == 1
+        location = found[0].location
+        assert location is not None
+        assert (location.source_name, location.line) == ("views.sysml", 4)
+
+    def test_lint_cli_reports_dangling_exposes(self, tmp_path, capsys):
+        from longeron.cli import main
+
+        target = tmp_path / "views.sysml"
+        target.write_text("package P { part a; view v { expose P::gone; } }")
+        assert main(["lint", str(target), "--no-cache"]) == 0  # warning, not error
+        out = capsys.readouterr().out
+        assert "dangling-expose" in out
+        assert main(["lint", str(target), "--no-cache", "--strict"]) == 1
+
+
 class TestStructuralErrors:
     def test_duplicate_names(self):
         found = diags(

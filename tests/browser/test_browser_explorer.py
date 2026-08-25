@@ -30,9 +30,9 @@ def test_tree_and_diagram_selection_round_trip(lab):
     page = lab.page
     page.wait_for_selector(".lgx-row", state="attached", timeout=60_000)
 
-    # expand the collapsed "Rig" package first: the tree renders lazily,
-    # so only expanded rows reach the DOM at all
-    page.locator(".lgx-row", has_text="Rig").first.locator(".lgx-twist").click()
+    # single-package flattening (2736fb4): Rig IS the root row, and roots
+    # start expanded -- axle is already in the DOM (clicking Rig's twist
+    # would collapse it, the old pre-flattening idiom)
     page.wait_for_selector(".lgx-row:has-text('axle')", state="attached", timeout=30_000)
 
     # -- tree -> diagram: click the "axle" row --------------------------------

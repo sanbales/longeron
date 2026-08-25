@@ -222,6 +222,11 @@ def start_lab_server() -> LabServer:
         os.environ,
         PYTHONHASHSEED="0",  # deterministic kernel hashing, like the `lab` task
         JUPYTERLAB_SETTINGS_DIR=str(settings),
+        # workspaces PERSIST in ~/.jupyter/lab/workspaces across runs and
+        # Lab RESTORES them on open: a crashed/contended previous run
+        # leaves a poisoned layout where the notebook is not the current
+        # widget and the capture waits forever. Isolate per run.
+        JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
         # the kernel must import THIS tree's sources (and its vendored
         # ipyelk) even when the editable install resolves elsewhere
         PYTHONPATH=os.pathsep.join(

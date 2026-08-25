@@ -202,6 +202,10 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         # roundtrip timeout is a final, visible layout failure (by design)
         LONGERON_BROWSER_TIMEOUT="600",
         JUPYTERLAB_SETTINGS_DIR=str(settings),
+        # workspace layouts persist in ~/.jupyter/lab/workspaces and are
+        # restored on open -- state leaking BETWEEN test sessions (and
+        # from crashed runs). Isolate per session.
+        JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
         # the kernel must import THIS tree's sources even when the editable
         # install resolves elsewhere (worktree runs against the main venv)
         PYTHONPATH=os.pathsep.join(

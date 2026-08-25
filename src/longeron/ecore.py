@@ -9,8 +9,12 @@ model onto that abstract syntax using the pilot implementation's published
 
 Scope (prototype): element skeletons, names, common flags, reified
 memberships, and Specialization / FeatureTyping / Subsetting / Redefinition
-relationships for targets that resolve inside the model.  Expression trees
-and unresolved (standard-library) references are counted in the report, not
+relationships for targets that resolve inside the model.  View persistence
+projects too: ``expose`` becomes MembershipExpose / NamespaceExpose
+records (targets wired when they resolve in-model) and ``filter`` becomes
+ElementFilterMembership records whose condition Expression carries the
+rendered text as a TextualRepresentation.  Expression trees and
+unresolved (standard-library) references are counted in the report, not
 mapped.  Requires the ``ecore`` extra: ``pip install longeron[ecore]``.
 """
 
@@ -23,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import model as M
+from .ast import expr_to_text
 from .errors import MissingExtraError, SysMLError
 from .interpreter import Resolver
 
@@ -220,6 +225,10 @@ class _Projector:
         self.resolver = Resolver(model)
         self.report = SpecReport()
         self.instances: dict[int, Any] = {}  # id(model element) -> EObject
+        # id(model element) -> its owning-membership EObject (a
+        # MembershipExpose's importedMembership names the target's
+        # MEMBERSHIP, not the target element itself)
+        self.memberships: dict[int, Any] = {}
 
     # -- helpers ---------------------------------------------------------------
 
@@ -243,6 +252,12 @@ class _Projector:
         if structural is None or structural.derived:
             return
         instance.eSet(feature, value)
+
+    def _set_visibility(self, instance: Any, name: str) -> None:
+        kind = self.package.getEClassifier("VisibilityKind")
+        literal = None if kind is None else kind.getEEnumLiteral(name)
+        if literal is not None:
+            self._set(instance, "visibility", literal)
 
     def _own(self, parent: Any, child: Any, membership_class: str, path: str) -> Any:
         membership = self._instantiate(membership_class, None, f"{path}#membership")
@@ -282,13 +297,69 @@ class _Projector:
         return SpecModel(root, self.report, self.instances)
 
     def _project_member(self, parent: Any, element: M.Element, path: str) -> None:
+        if isinstance(element, M.Expose):
+            self._project_expose(parent, element, path)
+            return
+        if isinstance(element, M.ElementFilter):
+            self._project_element_filter(parent, element, element.condition, path)
+            return
         instance = self._project_element(element, path)
         if instance is None:
             return
-        self._own(parent, instance, self._membership_class(element), path)
+        self.memberships[id(element)] = self._own(
+            parent, instance, self._membership_class(element), path
+        )
         if isinstance(element, M.Namespace):
             for index, child in enumerate(element.members):
                 self._project_member(instance, child, f"{path}/{index}")
+
+    def _project_expose(self, parent: Any, expose: M.Expose, path: str) -> None:
+        """``expose ...`` -> a MembershipExpose / NamespaceExpose record.
+
+        An Import is an ``ownedRelationship`` of its importing namespace,
+        so the expose attaches DIRECTLY to the view usage -- no reified
+        membership wrapper.  The two abstract-syntax constraints ride
+        along: ``isImportAll`` is always true and the visibility is
+        always protected (spec 8.3.26.2).  The import target is wired in
+        the relationship pass (it may be declared later in the model);
+        bracket filters (``expose X::**[...]``) project as owned
+        ElementFilterMembership records, exactly like view-level filters.
+        """
+
+        class_name = "NamespaceExpose" if expose.is_namespace else "MembershipExpose"
+        instance = self._instantiate(class_name, expose, path)
+        self._set(instance, "isRecursive", expose.is_recursive)
+        self._set(instance, "isImportAll", True)
+        self._set_visibility(instance, "protected")
+        parent.ownedRelationship.append(instance)
+        self.report.relationships += 1
+        for index, condition in enumerate(expose.filters):
+            self._project_element_filter(instance, None, condition, f"{path}/filter/{index}")
+
+    def _project_element_filter(
+        self, parent: Any, source: M.Element | None, condition: Any, path: str
+    ) -> None:
+        """``filter <expr>;`` (and an expose's bracket filter) -> an
+        ElementFilterMembership whose member is the condition Expression.
+
+        Expression *trees* are outside this projection's scope (module
+        docstring), so the condition rides the spec's own vehicle for
+        text a tool does not structure: the Expression owns a
+        TextualRepresentation in language "sysml" whose body is the
+        rendered condition.  Standard vocabulary -- and lossless for the
+        model-layer inverse, which re-parses the body
+        (:func:`longeron.api.model_from_api_records`).
+        """
+
+        membership = self._instantiate("ElementFilterMembership", source, path)
+        parent.ownedRelationship.append(membership)
+        self.report.memberships += 1
+        expression = self._instantiate("Expression", None, f"{path}#condition")
+        membership.ownedRelatedElement.append(expression)
+        rep = self._instantiate("TextualRepresentation", None, f"{path}#condition/rep")
+        self._set(rep, "language", "sysml")
+        self._set(rep, "body", expr_to_text(condition))
+        self._own(expression, rep, "OwningMembership", f"{path}#condition/rep")
 
     def _project_element(self, element: M.Element, path: str) -> Any:
         if isinstance(element, M.Package):
@@ -399,6 +470,34 @@ class _Projector:
                         "redefiningFeature",
                         "redefinedFeature",
                     )
+            elif isinstance(element, M.Expose):
+                self._wire_expose(element, instance)
+
+    def _wire_expose(self, expose: M.Expose, instance: Any) -> None:
+        """Point an expose record at its import target: a NamespaceExpose
+        names the namespace itself (``importedNamespace``), a
+        MembershipExpose names the target's owning MEMBERSHIP
+        (``importedMembership``).  Targets that do not resolve inside the
+        model (dangling, or standard-library names) are counted as
+        unresolved and the reference is omitted -- exactly the existing
+        import behavior."""
+
+        target = self._resolve_model_element(expose.target, expose)
+        if target is None:
+            self.report.unresolved_references.append(expose.target)
+            return
+        if expose.is_namespace:
+            target_instance = self.instances.get(id(target))
+            if target_instance is None or not self._conforms(target_instance, "Namespace"):
+                self.report.unresolved_references.append(expose.target)
+                return
+            self._set(instance, "importedNamespace", target_instance)
+        else:
+            membership = self.memberships.get(id(target))
+            if membership is None:
+                self.report.unresolved_references.append(expose.target)
+                return
+            self._set(instance, "importedMembership", membership)
 
     def _project_subsetting(self, element: M.Element, instance: Any, target_name: str) -> None:
         """Project a stored ``subsets`` reference onto the spec relationship.
@@ -450,6 +549,10 @@ class _Projector:
         self.report.relationships += 1
 
     def _resolve_instance(self, name: str, context: M.Element) -> Any:
+        element = self._resolve_model_element(name, context)
+        return None if element is None else self.instances.get(id(element))
+
+    def _resolve_model_element(self, name: str, context: M.Element) -> M.Element | None:
         from .errors import ResolutionError
 
         scope: M.Element | None = context.owner or self.model
@@ -459,4 +562,4 @@ class _Projector:
                 scope = found
         except ResolutionError:
             return None
-        return self.instances.get(id(scope))
+        return scope

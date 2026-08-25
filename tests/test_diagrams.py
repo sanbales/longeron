@@ -1391,6 +1391,57 @@ class TestPackageTabAndAnnotations:
         assert pump.labels[0].text == "\u00abpart def\u00bb"
 
 
+class TestViewUsageBoxes:
+    """View usages draw in structure diagrams (view-persistence design,
+    gap-analysis finding 3): saved diagram recipes are model elements
+    too, presented as \u00abview\u00bb keyword boxes."""
+
+    MODEL = """
+    package Rig {
+        part def Axle { part hub : Hub [2]; }
+        part def Hub;
+        part axle : Axle;
+        view 'axle structure' : StandardViewDefinitions::InterconnectionView {
+            expose Rig::**;
+            render Views::asInterconnectionDiagram;
+        }
+    }
+    """
+
+    def test_view_usage_draws_as_a_keyword_box(self):
+        model = longeron.loads(self.MODEL)
+        widget = diagrams.structure_diagram(model)
+        node = next((n for n in _walk(widget.source.value) if n.id == "Rig::axle structure"), None)
+        assert node is not None, "the view usage is not drawn"
+        assert "sysml-usage" in node.properties.cssClasses
+        stereotypes = [
+            label.text
+            for label in node.labels
+            if "sysml-stereotype" in (label.properties.cssClasses or "")
+        ]
+        assert stereotypes == ["\u00abview\u00bb"]
+
+    def test_view_recipe_members_draw_no_stray_boxes(self):
+        # the expose and the render reference configure the view; they are
+        # not themselves boxes
+        model = longeron.loads(self.MODEL)
+        widget = diagrams.structure_diagram(model)
+        view_node = next(n for n in _walk(widget.source.value) if n.id == "Rig::axle structure")
+        assert view_node.children == []
+
+    def test_headless_svg_contains_the_view_box(self):
+        from longeron import render
+
+        model = longeron.loads(self.MODEL)
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        assert "\u00abview\u00bb" in svg
+        assert "axle structure" in svg
+
+    def test_adornment_contract_holds_with_view_boxes(self):
+        model = longeron.loads(self.MODEL)
+        _assert_adornment_contract(diagrams.structure_diagram(model))
+
+
 class TestStates:
     def test_builds_with_marker_and_transitions(self, drone_model):
         machine = drone_model.find("Drone::FlightStates")

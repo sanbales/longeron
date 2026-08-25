@@ -853,7 +853,9 @@ def applicable_kinds(element: M.Element) -> tuple[str, ...]:
     return tuple(kinds)
 
 
-def requirements_view(scope: M.Namespace, *, resolver: Resolver | None = None) -> Any:
+def requirements_view(
+    scope: M.Namespace, *, resolver: Resolver | None = None, **kwargs: Any
+) -> Any:
     """The requirements landscape of ``scope`` as a structure diagram.
 
     Collects the requirement definitions and usages under ``scope``, the
@@ -871,6 +873,11 @@ def requirements_view(scope: M.Namespace, *, resolver: Resolver | None = None) -
     Elements whose ancestor is already collected are skipped -- they are
     drawn nested inside that ancestor's box, and a second top-level node
     would duplicate their qualified-name id.
+
+    Keyword arguments pass through to
+    :func:`~longeron.diagrams.structure_diagram` (``direction``,
+    ``routing``, ``membership``, ...) -- the seam view restoration uses
+    to re-apply persisted presentation.
     """
 
     if resolver is None:
@@ -918,7 +925,11 @@ def requirements_view(scope: M.Namespace, *, resolver: Resolver | None = None) -
     view.members = kept
     root = M.Model(source_name="requirements view")
     root.add(view)
-    return diagrams.structure_diagram(root)
+    widget = diagrams.structure_diagram(root, **kwargs)
+    # re-stamp over structure_diagram's synthetic-root stamp: what this
+    # widget SHOWS is the real scope, as a requirements view (the seam
+    # longeron.views reads; diagrams._stamp_view_state)
+    return diagrams._stamp_view_state(widget, scope, "requirements")
 
 
 # ---------------------------------------------------------------------------
@@ -1158,6 +1169,9 @@ class Explorer(W.HBox):
     * :attr:`diagram` -- the currently displayed diagram widget;
     * :meth:`select` -- programmatic selection by qualified name or
       element;
+    * :meth:`save_view` (and the header's :attr:`save_button`) -- save
+      the current diagram as a SysML v2 view usage plus sidecar entry
+      (:mod:`longeron.views`);
     * :attr:`element` / :attr:`kind` -- the current selection and view;
     * :attr:`layout_strategy` -- the resolved layout (``"inline"`` or
       ``"lab"``; see :func:`explore`);
@@ -1211,9 +1225,16 @@ class Explorer(W.HBox):
             tooltips=(_KIND_TOOLTIPS["structure"],),
             style={"button_width": "auto"},
         )
+        self.save_button = W.Button(
+            icon="save",
+            tooltip="Save this diagram as a SysML view (a view usage in "
+            "the model, presentation in the workspace sidecar)",
+            layout=W.Layout(width="30px", padding="0", margin="0 0 0 6px"),
+        )
+        self.save_button.on_click(lambda _button: self.save_view())
         self._crumb = W.HTML(layout=W.Layout(margin="0 0 0 auto"))
         header = W.HBox(
-            [self.kind_switcher, self._crumb],
+            [self.kind_switcher, self.save_button, self._crumb],
             layout=W.Layout(align_items="center", width="100%"),
         )
         self._diagram_box = W.Box(layout=W.Layout(width="100%"))
@@ -1374,6 +1395,49 @@ class Explorer(W.HBox):
         if node_id is None:
             raise KeyError(f"{target!r} is not in this explorer's tree")
         self._apply_selection(node_id, origin="api")
+
+    def save_view(self, name: str | None = None, *, sidecar: Any = None) -> M.Element:
+        """Save the current pane's diagram as a SysML v2 view usage.
+
+        The chrome affordance behind the header's save button.  The
+        currently shown diagram widget carries its own root and kind
+        (the :mod:`longeron.views` seam), so this is a thin capture:
+        :func:`longeron.views.save_view` appends the typed view usage --
+        with a recursive expose of the shown scope and the standard
+        ``render`` reference -- to the scope's owning package, and the
+        live presentation (direction, routing, collapse state) lands in
+        the sidecar entry.  ``sidecar`` is a path, ``None`` to
+        auto-discover the workspace sidecar next to the model's sources
+        (skipped silently for in-memory models), or ``False`` to skip
+        the sidecar write.  The model text itself is NOT rewritten here:
+        export the model (:func:`longeron.save` / ``to_sysml``) or push
+        it over the API to materialize the change.  Returns the view
+        usage element; the tree refreshes so the saved view appears.
+        """
+
+        from . import views as views_module
+
+        widget = self.diagram
+        if widget is None:
+            from .errors import SysMLError
+
+            raise SysMLError("no diagram is shown; select an element first")
+        if sidecar is None:
+            sidecar = views_module.sidecar_path(self.model)
+        elif sidecar is False:
+            sidecar = None
+        view = views_module.save_view(self.model, widget, name=name, sidecar=sidecar)
+        # the model changed: refresh the tree so the view usage appears
+        # (diagram caches are left alone -- the current viewport is the
+        # user's; the new box draws on the next rebuild)
+        selected = list(self.tree.selected)
+        nodes, index = _tree_data(self.model)
+        self._index = index
+        self._ids = {id(el): nid for nid, el in index.items()}
+        self.tree.set_nodes(nodes)
+        if selected and selected[0] in self._index:
+            self.tree.selected = selected
+        return view
 
     # -- selection plumbing (idempotent at every hop; see module docstring) ---
 

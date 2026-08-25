@@ -544,6 +544,93 @@ class StubTree:
             callback(list(ids))
 
 
+class TestSaveViewSeam:
+    """Explorer.save_view: the chrome affordance for view persistence
+    (longeron.views).  Minimal by design -- the full chrome is a later
+    tranche; here the seam captures the CURRENT pane's diagram kind and
+    shown root into save_view() plus a sidecar entry."""
+
+    @pytest.fixture()
+    def model(self):
+        return longeron.loads(
+            """
+            package Rig {
+                part def Axle { part hub : Hub [2]; }
+                part def Hub;
+                part axle : Axle;
+                state def Machine { entry; then idle; state idle; }
+            }
+            """
+        )
+
+    def test_header_carries_a_compact_save_button(self, model):
+        ex = explore(model, layout="inline")
+        header = ex._pane.children[0]
+        assert ex.save_button in header.children
+        assert ex.save_button.icon == "save"
+        assert ex.save_button.layout.width == "30px"  # the toolbar idiom
+
+    def test_saves_the_current_panes_kind_and_root(self, model, tmp_path):
+        from longeron import views
+
+        ex = explore(model, layout="inline")
+        ex.select("Rig::axle")  # structure pane, scoped to package Rig
+        view = ex.save_view("axle structure", sidecar=tmp_path)
+        assert view.owner is model.find("Rig")
+        assert view.types == ["StandardViewDefinitions::InterconnectionView"]
+        exposes = [m for m in view.members if isinstance(m, M.Expose)]
+        assert [(e.target, e.is_recursive) for e in exposes] == [("Rig", True)]
+        entry = views.load_sidecar(tmp_path)["Rig::axle structure"]
+        assert entry["kind"] == "structure"
+
+    def test_state_pane_saves_a_state_view(self, model, tmp_path):
+        from longeron import views
+
+        ex = explore(model, layout="inline")
+        ex.select("Rig::Machine")
+        ex.kind = "state"
+        view = ex.save_view(sidecar=tmp_path)
+        assert view.types == ["StandardViewDefinitions::StateTransitionView"]
+        exposes = [m for m in view.members if isinstance(m, M.Expose)]
+        assert [e.target for e in exposes] == ["Rig::Machine"]
+        assert views.load_sidecar(tmp_path)[str(view.qualified_name)]["kind"] == "state"
+
+    def test_saved_view_appears_in_the_refreshed_tree(self, model):
+        ex = explore(model, layout="inline")
+        ex.select("Rig")
+        view = ex.save_view("fresh view", sidecar=False)
+        assert "Rig::fresh view" in ex._index
+        assert ex._index["Rig::fresh view"] is view
+        # the selection survives the tree rebuild
+        assert list(ex.tree.selected) == ["Rig"]
+
+    def test_sidecar_false_skips_the_file(self, model, tmp_path, monkeypatch):
+        from longeron import views as views_module
+
+        monkeypatch.setattr(views_module, "sidecar_path", lambda source: tmp_path / "views.json")
+        ex = explore(model, layout="inline")
+        ex.select("Rig")
+        ex.save_view("no sidecar", sidecar=False)
+        assert not (tmp_path / "views.json").exists()
+
+    def test_in_memory_model_skips_the_sidecar_silently(self, model):
+        # loads() text has no workspace: model edit only, no error
+        ex = explore(model, layout="inline")
+        ex.select("Rig")
+        view = ex.save_view()
+        assert view.owner is model.find("Rig")
+
+    def test_save_then_restore_round_trip(self, model, tmp_path):
+        from longeron import views
+
+        ex = explore(model, layout="inline")
+        ex.select("Rig::axle")
+        ex.save_view("axle structure", sidecar=tmp_path)
+        widget = views.restore_view(model, "Rig::axle structure", sidecar=tmp_path)
+        assert widget._lgn_view_state["kind"] == "structure"
+        assert widget._lgn_view_state["element"] is model.find("Rig")
+
+
 class TestTreeViewProtocol:
     def test_modeltree_conforms(self):
         assert isinstance(ModelTree(), TreeView)

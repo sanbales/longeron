@@ -533,3 +533,144 @@ def test_satisfy_of_requirement_definition_projects():
     assert not any(
         r["subsettedFeature"] == {"@id": req_def["@id"]} for r in by_type.get("Subsetting", [])
     )
+
+
+VIEWS_MODEL = """
+package Rig {
+    part def Axle {
+        part hub : Hub [2];
+    }
+    part def Hub;
+    part axle : Axle;
+    view 'axle structure' : StandardViewDefinitions::InterconnectionView {
+        expose Rig::**;
+        render Views::asInterconnectionDiagram;
+    }
+    view detail {
+        expose Rig::axle;
+        expose Rig::*[not @SysML::ConnectionUsage];
+        filter @SysML::PartUsage;
+    }
+}
+"""
+
+
+class TestViewPersistenceRecords:
+    """The API expose projection (view-persistence design, finding 2).
+
+    ``to_api_records`` used to keep the ViewUsage shell but silently drop
+    every Expose and ElementFilter -- a view pushed through the API
+    arrived empty.  These tests pin the fixed projection (MembershipExpose
+    / NamespaceExpose / ElementFilterMembership records) and its inverse.
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def records():
+        return api.to_api_records(longeron.loads(VIEWS_MODEL))
+
+    @staticmethod
+    def by_type(records):
+        out: dict[str, list] = {}
+        for record in records:
+            out.setdefault(record["@type"], []).append(record)
+        return out
+
+    def test_expose_and_filter_records_exist(self, records):
+        by_type = self.by_type(records)
+        assert len(by_type["MembershipExpose"]) == 2
+        assert len(by_type["NamespaceExpose"]) == 1
+        # detail's view filter + the namespace expose's bracket filter
+        assert len(by_type["ElementFilterMembership"]) == 2
+
+    def test_expose_records_carry_the_spec_constraints(self, records):
+        # validateExposeIsImportAll / validateExposeVisibility (spec
+        # 8.3.26.2): always import-all, always protected
+        for record in records:
+            if record["@type"] in ("MembershipExpose", "NamespaceExpose"):
+                assert record["isImportAll"] is True
+                assert record["visibility"] == "protected"
+
+    def test_recursive_flag_projected(self, records):
+        by_type = self.by_type(records)
+        recursive = [r for r in by_type["MembershipExpose"] if r.get("isRecursive")]
+        assert len(recursive) == 1  # expose Rig::**
+
+    def test_membership_expose_targets_the_owning_membership(self, records):
+        by_id = {r["@id"]: r for r in records}
+        by_type = self.by_type(records)
+        rig = next(r for r in by_type["Package"] if r["declaredName"] == "Rig")
+        recursive = next(r for r in by_type["MembershipExpose"] if r.get("isRecursive"))
+        membership = by_id[recursive["importedMembership"]["@id"]]
+        assert membership["@type"].endswith("Membership")
+        assert membership["ownedRelatedElement"] == [{"@id": rig["@id"]}]
+
+    def test_namespace_expose_targets_the_namespace(self, records):
+        by_type = self.by_type(records)
+        rig = next(r for r in by_type["Package"] if r["declaredName"] == "Rig")
+        (namespace_expose,) = by_type["NamespaceExpose"]
+        assert namespace_expose["importedNamespace"] == {"@id": rig["@id"]}
+
+    def test_filter_condition_rides_a_textual_representation(self, records):
+        # standard vocabulary for text the projection does not structure:
+        # the condition Expression owns a TextualRepresentation
+        by_type = self.by_type(records)
+        bodies = {r["body"] for r in by_type["TextualRepresentation"]}
+        assert "@SysML::PartUsage" in bodies
+        assert "not (@SysML::ConnectionUsage)" in bodies
+
+    def test_derived_endpoints_present_on_expose_records(self, records):
+        for record in records:
+            if record["@type"] in ("MembershipExpose", "NamespaceExpose"):
+                assert record["source"], record
+                assert record["target"], record
+
+    def test_spec_level_round_trip_lossless(self, records):
+        again = api.to_api_records(api.spec_from_api_records(records))
+        assert again == records
+
+    def test_model_round_trip_preserves_expose_semantics(self):
+        model = longeron.loads(VIEWS_MODEL)
+        clone = api.model_from_api_records(api.to_api_records(model))
+        view = clone.find("Rig::axle structure")
+        exposes = [m for m in view.members if isinstance(m, longeron.model.Expose)]
+        assert [(e.target, e.is_namespace, e.is_recursive) for e in exposes] == [
+            ("Rig", False, True)
+        ]
+        detail = clone.find("Rig::detail")
+        exposes = [m for m in detail.members if isinstance(m, longeron.model.Expose)]
+        assert [(e.target, e.is_namespace, e.is_recursive) for e in exposes] == [
+            ("Rig::axle", False, False),
+            ("Rig", True, False),
+        ]
+        # the bracket filter and the view filter come back as expressions
+        assert [f.to_text() for f in exposes[1].filters] == ["not (@SysML::ConnectionUsage)"]
+        filters = [m for m in detail.members if isinstance(m, longeron.model.ElementFilter)]
+        assert [f.condition.to_text() for f in filters] == ["@SysML::PartUsage"]
+
+    def test_model_round_trip_reaches_a_textual_fixpoint(self):
+        # rt := to_api_records -> model_from_api_records; after one trip
+        # (which qualifies names), a second trip must be a fixpoint
+        def rt(model):
+            return api.model_from_api_records(api.to_api_records(model))
+
+        once = rt(longeron.loads(VIEWS_MODEL))
+        assert longeron.to_sysml(rt(once)) == longeron.to_sysml(once)
+
+    def test_condition_payload_never_leaks_into_the_model(self):
+        clone = api.model_from_api_records(api.to_api_records(longeron.loads(VIEWS_MODEL)))
+        # no stray roots: the filter-condition Expression's textual
+        # representation is a payload, not a model member
+        assert [type(el).__name__ for el in clone.members] == ["Package"]
+        assert not any(
+            isinstance(el, longeron.model.TextualRepresentation) for el in clone.iter_tree()
+        )
+
+    def test_dangling_expose_target_drops_the_expose_not_the_view(self):
+        # a target that never resolved projects without a reference; the
+        # inverse drops the (textually unrepresentable) expose, keeps the view
+        model = longeron.loads("package P { part a; view v { expose P::gone; expose P::a; } }")
+        clone = api.model_from_api_records(api.to_api_records(model))
+        view = clone.find("P::v")
+        exposes = [m for m in view.members if isinstance(m, longeron.model.Expose)]
+        assert [e.target for e in exposes] == ["P::a"]

@@ -1,5 +1,12 @@
 # Saving diagrams as SysML v2 views (design)
 
+> **Status: implemented in 0.10.0** (tranche 2 core): `longeron.views`
+> (save/restore/sidecar/closure), the API expose projection fix in
+> `longeron.ecore`/`longeron.api`, `«view»` boxes in structure
+> diagrams, the `dangling-expose` diagnostic, and the explorer's save
+> seam. All five open questions were ratified as recommended
+> (2026-08-25) and are recorded below.
+
 Goal: let a user click "Save view" on an explorer diagram and get the
 diagram back later -- in longeron, in any conformant SysML v2 tool, and
 across the Systems Modeling API. This document records the design for
