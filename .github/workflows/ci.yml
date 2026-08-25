@@ -51,7 +51,10 @@ jobs:
     # bundles, marker paint, layout-error starvation, auto-fit). Runs in
     # parallel with the matrix; one Python (the locked browser env).
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # cold runners pay env-solve + chromium download before the ~8 min of
+    # scenarios (and a timeout-cancel skips the cache save, keeping the
+    # next run cold too) -- budget for cold, not warm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
