@@ -86,6 +86,11 @@ def _swept_checker(lab, *, timeout: float = 90.0) -> dict:
     message lands and read a stale 0. Re-running the (print-only,
     idempotent) checker keeps the assertion about WHETHER the sweep
     fired, not about how fast comm messages travel on a 2-core runner.
+
+    The checker read itself goes over a FRESH kernel connection
+    (:meth:`LabPage.run_cell`), so a broken shared connection cannot
+    swallow it; a ``TimeoutError`` here means the kernel side truly
+    did not answer, which is worth one more attempt within the budget.
     """
 
     deadline = time.monotonic() + timeout
@@ -159,6 +164,12 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
         page.locator(".jp-Dialog .jp-mod-reject"),
         lambda button: button.click(),
     )
+
+    # gate on PROOF the execute channel survived the restart before
+    # waiting for its effects: the indicator says Idle even while the
+    # restarted session swallows every execute (the CI artifacts), so
+    # only a completed execute round trip may open this phase
+    lab.wait_execute_channel_ready(timeout=120)
 
     # the run has re-docked when a tab with a NEWER stamp appears; requiring
     # EXACTLY one tab + one panel (two stable polls) proves replacement --

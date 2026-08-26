@@ -419,6 +419,123 @@ _CELL_STATE_JS = """(index) => {
 _PROMPTS_JS = """() => [...document.querySelectorAll('.jp-InputArea-prompt')]
     .map((el) => el.textContent.trim())"""
 
+#: find the (single) notebook panel among the main-area widgets and hand
+#: back {panel, kernel}; every miss is a self-naming string instead
+_FIND_NOTEBOOK_JS = """
+    const app = window.jupyterapp || window.jupyterlab;
+    if (!app) return {why: 'no JupyterLab app handle on window'};
+    const panel = [...app.shell.widgets('main')].find(
+        (w) => w.sessionContext && w.content && w.content.model
+            && w.content.model.cells);
+    if (!panel) return {why: 'no notebook panel among the main-area widgets'};
+    const session = panel.sessionContext.session;
+    const kernel = session ? session.kernel : null;
+    if (!kernel) return {
+        why: 'notebook sessionContext has no kernel yet'
+            + ' (isReady=' + panel.sessionContext.isReady + ')',
+    };
+"""
+
+#: prove the notebook's OWN kernel connection can round-trip an execute:
+#: an empty silent execute must come back with an execute_reply.  This is
+#: the signal the execution indicator CANNOT give (artifact-verified: the
+#: indicator said Idle while every execute vanished): a reply proves
+#: websocket send -> kernel -> reply -> the connection's serial incoming
+#: message chain, end to end -- exactly the path run-all and cell prompts
+#: depend on.  Bounded by our own race; never hangs page.evaluate.
+_CHANNEL_PROBE_JS = (
+    """async ({timeoutMs}) => {"""
+    + _FIND_NOTEBOOK_JS
+    + """
+    const state = () => ' (connectionStatus=' + kernel.connectionStatus
+        + ', kernelStatus=' + kernel.status
+        + ', isReady=' + panel.sessionContext.isReady + ')';
+    try {
+        const future = kernel.requestExecute(
+            {code: '', silent: true, store_history: false}, false);
+        const reply = await Promise.race([
+            future.done,
+            new Promise((resolve) => setTimeout(
+                () => resolve('__probe_timeout__'), timeoutMs)),
+        ]);
+        future.dispose();
+        if (reply === '__probe_timeout__') return {
+            why: 'no execute_reply to the probe within ' + timeoutMs + 'ms'
+                + state(),
+        };
+        return {ok: true};
+    } catch (err) {
+        return {why: 'probe requestExecute threw: ' + err + state()};
+    }
+}"""
+)
+
+#: reconnect the notebook kernel's websocket (fire-and-forget: the next
+#: probe is the arbiter of whether it helped)
+_RECONNECT_JS = (
+    """() => {"""
+    + _FIND_NOTEBOOK_JS
+    + """
+    void kernel.reconnect();
+    return {ok: true};
+}"""
+)
+
+#: run one cell's SOURCE directly on the kernel over a FRESH cloned
+#: connection, bypassing the notebook command machinery AND the shared
+#: kernel connection (see LabPage.run_cell for why both must be bypassed).
+#: Returns the concatenated stream/error/result text; bounded by our own
+#: race so page.evaluate can never hang on a swallowed request.
+_DIRECT_EXECUTE_JS = (
+    """async ({index, timeoutMs}) => {"""
+    + _FIND_NOTEBOOK_JS
+    + """
+    const cells = panel.content.model.cells;
+    const at = index < 0 ? cells.length + index : index;
+    if (at < 0 || at >= cells.length) return {
+        why: 'no cell at index ' + index + ' (notebook has ' + cells.length + ')',
+    };
+    const code = cells.get(at).sharedModel.getSource();
+    // a fresh KernelConnection: its own websocket and its own serial
+    // incoming-message chain, so neither a silently-queued send nor a
+    // wedged chain on the notebook's shared connection can eat this
+    // execute or its reply. handleComms=false: widget traffic stays on
+    // the shared connection.
+    const clone = kernel.clone();
+    try {
+        let out = '';
+        const future = clone.requestExecute(
+            {code, store_history: false, allow_stdin: false, stop_on_error: false},
+            false);
+        future.onIOPub = (msg) => {
+            const kind = msg.header.msg_type;
+            if (kind === 'stream') out += msg.content.text;
+            else if (kind === 'execute_result') {
+                out += (msg.content.data || {})['text/plain'] || '';
+            } else if (kind === 'error') {
+                out += '\\n' + msg.content.ename + ': ' + msg.content.evalue;
+            }
+        };
+        const reply = await Promise.race([
+            future.done,
+            new Promise((resolve) => setTimeout(
+                () => resolve('__execute_timeout__'), timeoutMs)),
+        ]);
+        if (reply === '__execute_timeout__') return {
+            why: 'no execute_reply within ' + timeoutMs + 'ms over a FRESH '
+                + 'kernel connection (clone connectionStatus='
+                + clone.connectionStatus + ', kernel status=' + clone.status
+                + '): the kernel/service side is not answering',
+        };
+        return {ok: true, status: reply.content.status, out};
+    } catch (err) {
+        return {why: 'direct requestExecute threw: ' + err};
+    } finally {
+        clone.dispose();
+    }
+}"""
+)
+
 
 class LabPage:
     """Drive one notebook document; collect console + page errors."""
@@ -472,6 +589,48 @@ class LabPage:
             timeout=timeout * 1000,
         )
 
+    def wait_execute_channel_ready(self, timeout: float = 120.0) -> None:
+        """Block until the notebook kernel PROVABLY answers an execute.
+
+        The execution indicator is not that proof: the CI artifacts show
+        it pinned at Idle while every execute request vanished for 120s+
+        (the kernel connection either silently queues sends -- non-empty
+        ``_pendingMessages``, ``connectionStatus !== 'connected'``, or
+        ``_isRestarting`` -- or its serial incoming-message chain is
+        wedged behind one never-resolving comm_open handler, so replies
+        arrive but are never processed).  The only signal that the
+        channel WORKS is a completed round trip, so this fires an empty
+        silent execute and waits (bounded) for its execute_reply.
+
+        After two dead probes the kernel websocket is reconnected (a
+        reconnect flushes a stuck send queue; it cannot unwedge the
+        incoming chain -- ``_clearKernelState`` only runs on restart --
+        but then the LOUD failure below names exactly what is broken).
+        """
+
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        last: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            attempt += 1
+            budget_ms = int(max(min(15.0, deadline - time.monotonic()), 3.0) * 1000)
+            last = dict(self.page.evaluate(_CHANNEL_PROBE_JS, {"timeoutMs": budget_ms}))
+            if last.get("ok"):
+                if attempt > 1:
+                    sys.stderr.write(f"execute channel proven alive on probe attempt {attempt}\n")
+                return
+            sys.stderr.write(
+                f"execute-channel probe {attempt} found a dead channel: {last.get('why')}\n"
+            )
+            if attempt == 2:
+                sys.stderr.write("escalating: reconnecting the notebook kernel's websocket\n")
+                self.page.evaluate(_RECONNECT_JS)
+            time.sleep(1.0)
+        raise TimeoutError(
+            f"the notebook kernel never answered an execute probe within {timeout}s "
+            f"(even after a websocket reconnect); last probe: {last}"
+        )
+
     def run_all(self, attempts: int = 5) -> None:
         """Run all cells via the command registry; confirm execution started.
 
@@ -485,6 +644,11 @@ class LabPage:
         """
 
         self.wait_kernel_idle()
+        # idle indicator != working channel (see wait_execute_channel_ready):
+        # prove the execute channel BEFORE the first run-all, so a slow
+        # runner's half-wired session costs one bounded probe instead of a
+        # swallowed run + re-fire cycle
+        self.wait_execute_channel_ready()
         before = list(self.page.evaluate(_PROMPTS_JS))
         for _attempt in range(attempts):
             # fire-and-forget: commands.execute returns a promise that only
@@ -611,74 +775,71 @@ class LabPage:
         return str(state["out"])
 
     def run_cell(self, index: int = -1, timeout: float = 60.0) -> str:
-        """Re-run one cell (activate + notebook:run-cell); return its output.
+        """Run one cell's source DIRECTLY on the kernel; return its output.
 
-        The command is fired-and-forgotten and RE-FIRED while the cell
-        shows no sign of running: ``notebook:run-cell``'s promise resolves
-        only when the cell's execution completes, and ``page.evaluate``
-        awaits returned promises -- awaiting it hung CI (and local runs
-        under load) FOREVER when the execute request was swallowed by a
-        just-restarted kernel's half-rewired session (the docking test's
-        post-restart checker; the same eaten-clock class ``run_all``
-        documents). The bounded poll below owns the waiting; every caller
-        re-runs an idempotent print-only checker cell, so an occasional
-        double execution is harmless.
+        Not ``notebook:run-cell``: every checker cell here is a print-only
+        kernel-state read, and the notebook path proved unrecoverable on
+        loaded runners.  The CI artifacts (checker pinned at ``[*]``,
+        indicator Idle, no websocket drop, 12 re-fires all swallowed,
+        including runs with NO restart) match the two silent failure modes
+        of the notebook's SHARED kernel connection in Lab 4.6's own code:
 
-        A ``[*]`` prompt is trusted only while the KERNEL is actually
-        working: a cell pinned at ``[*]`` with an idle kernel means the
-        execute request itself was swallowed (artifact-verified after
-        restart-run-all: checker at ``[*]``, kernel idle, and the old
-        unconditional running-check suppressed every re-fire for the
-        full 60s budget), so after a ~10s grace the command is re-fired
-        anyway -- the fresh request replaces the dead one.
+        * ``_sendMessage`` silently queues an execute whenever pending
+          messages exist, the socket is not 'connected', or the client is
+          mid-restart -- and the queue only flushes on a later
+          connected-transition, so a re-fired command just queues behind
+          the dead one;
+        * all incoming messages are chained through one serial promise
+          (``_msgChain``); a single never-resolving comm_open handler (the
+          widget manager, during the post-run-all comm storm) freezes
+          every later reply/status/stream FOREVER while sends still work
+          -- the kernel executes, and nothing in the DOM ever shows it.
+          ``kernel.reconnect()`` does not reset that chain; only a
+          restart/dispose does.
+
+        So the checker read must not depend on that connection at all:
+        run the cell's SOURCE over a fresh ``kernel.clone()`` connection
+        (own websocket, own message chain, same kernel process and
+        namespace) and collect the reply's stream text ourselves, bounded
+        by our own timeout.  ``store_history=False`` keeps the kernel's
+        execution counter untouched; the DOM cell is not involved (its
+        prompt/output are irrelevant to what the callers assert).  After
+        two dead attempts the shared connection is reconnected too (it
+        may be what broke, and later DOM-level waits depend on it).
         """
 
-        before = self.page.evaluate(_CELL_STATE_JS, index)
-        assert before is not None, f"no cell at index {index}"
-        self.page.evaluate(
-            """(index) => {
-                const cells = [...document.querySelectorAll('.jp-Notebook .jp-Cell')];
-                const cell = cells.at(index);
-                cell.scrollIntoView();
-                cell.querySelector('.jp-InputArea').dispatchEvent(
-                    new MouseEvent('mousedown', {bubbles: true}));
-            }""",
-            index,
-        )
-        time.sleep(0.5)
         deadline = time.monotonic() + timeout
-        refire_at = time.monotonic()  # first fire happens immediately
-        pinned_since: float | None = None
+        attempt = 0
+        last: dict[str, Any] = {}
         while time.monotonic() < deadline:
-            state = self.page.evaluate(_CELL_STATE_JS, index)
-            if (
-                state is not None
-                and state["prompt"] != before["prompt"]
-                and "*" not in state["prompt"]
-                and re.search(r"\[\d+\]", state["prompt"])
-            ):
-                return str(state["out"])
-            now = time.monotonic()
-            running = state is not None and "*" in state["prompt"]
-            if running and state is not None and state["kernel"] == "idle":
-                pinned_since = pinned_since if pinned_since is not None else now
-            else:
-                pinned_since = None
-            dead = pinned_since is not None and now - pinned_since >= 10.0
-            if (not running or dead) and now >= refire_at:
-                if dead:
-                    sys.stderr.write(
-                        f"run_cell({index}): prompt pinned at [*] with an idle "
-                        "kernel (swallowed execute); re-firing\n"
+            attempt += 1
+            budget_ms = int(max(min(20.0, deadline - time.monotonic()), 3.0) * 1000)
+            result = dict(
+                self.page.evaluate(_DIRECT_EXECUTE_JS, {"index": index, "timeoutMs": budget_ms})
+            )
+            if result.get("ok"):
+                if result.get("status") != "ok":
+                    raise AssertionError(
+                        f"cell {index} direct execute replied "
+                        f"{result.get('status')!r}: {result.get('out')}"
                     )
-                self.page.evaluate(
-                    "() => { void (window.jupyterapp || window.jupyterlab)"
-                    ".commands.execute('notebook:run-cell'); return true; }"
+                return str(result.get("out", ""))
+            last = result
+            sys.stderr.write(
+                f"run_cell({index}): direct kernel execute attempt {attempt} "
+                f"got no reply ({result.get('why')}); retrying on a fresh clone\n"
+            )
+            if attempt == 2:
+                sys.stderr.write(
+                    f"run_cell({index}): escalating -- reconnecting the notebook "
+                    "kernel's shared websocket\n"
                 )
-                refire_at = now + 15.0
-                pinned_since = None
-            time.sleep(0.5)
-        raise TimeoutError(f"cell {index} did not finish re-running within {timeout}s")
+                self.page.evaluate(_RECONNECT_JS)
+            time.sleep(1.0)
+        raise TimeoutError(
+            f"cell {index} did not finish re-running within {timeout}s: every direct "
+            f"kernel execute over a fresh connection went unanswered; last: {last}"
+        )
 
     def run_cell_json(self, index: int = -1, timeout: float = 60.0) -> dict[str, Any]:
         """Re-run a checker cell and parse the JSON line it prints."""
@@ -734,6 +895,13 @@ def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest)
     """A fresh page (and console/error collectors) per test."""
 
     page = browser.new_page(viewport={"width": 1500, "height": 1100})
+    # repro aid for slow-CI timing bugs: LONGERON_BROWSER_CPU_THROTTLE=<rate>
+    # slows the RENDERER by that factor via CDP (e.g. 8 approximates a
+    # loaded 2-core runner on a fast dev machine). Off by default.
+    throttle = float(os.environ.get("LONGERON_BROWSER_CPU_THROTTLE", "0") or 0)
+    if throttle > 1:
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Emulation.setCPUThrottlingRate", {"rate": throttle})
     # a crashed renderer must fail fast, never masquerade as a hang: a
     # pending page.evaluate on a crashed page waits forever (the CI
     # eaten-clock failure mode; small /dev/shm kills renderers silently)
