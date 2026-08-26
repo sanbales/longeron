@@ -20,7 +20,16 @@ declarations override inherited ones)::
         attribute ramp0 : Real = 15.0;              // utility 0 anchor
         attribute ramp1 : Real = 45.0;              // utility 1 anchor
         attribute measure : Real = flightTime;      // the raw value
+        attribute unit : String = "min";            // display unit (optional)
     }
+
+The optional ``unit`` attribute names the measurement unit of the raw
+value, DISPLAY-ONLY: it shows after ``raw`` in the widget tooltip and
+the text table (:class:`Row` carries it), and the ramp/target anchors
+are read in that same unit.  No conversion happens anywhere -- SysML
+quantity values like ``32.0 [SI::min]`` parse and evaluate to their
+magnitude (the measurement reference is an annotation), and a proper
+units integration (pint) is designed separately.
 
 The shape vocabulary (:data:`UTILITY_FUNCTIONS`): ``larger-is-better``
 and ``smaller-is-better`` (linear between the ``ramp0`` -> 0 and
@@ -61,8 +70,9 @@ group), the breadcrumb bar above the canvas walks back out (Esc steps
 out one level), and ``max_depth`` windows the render depth below the
 current zoom root so deep hierarchies reveal themselves level by level.
 Zoom and depth window are VIEW state only -- scores and aggregates are
-always computed over the full tree.  Hover shows qualified name, weight
-and share, raw value, and utility; click writes the ``selected`` trait
+always computed over the full tree.  Hover shows qualified name,
+weight and share, raw value (with its declared ``unit``), and utility;
+click writes the ``selected`` trait
 (the same observer idiom as the other longeron widgets, ready for
 linked selection).  Unmeasured cells are grey and hatched.  The color
 ramp is red -> yellow -> green interpolated in OKLab (perceptual, with
@@ -117,6 +127,7 @@ _VORONOI_JS = Path(__file__).resolve().parents[1] / "_js" / "voronoi_treemap.bun
 WEIGHT_ATTR = "weight"
 UTILITY_ATTR = "utility"
 MEASURE_ATTR = "measure"
+UNIT_ATTR = "unit"
 _PARAM_ATTRS = ("target", "limit", "ramp0", "ramp1")
 
 #: synthetic node-id prefix for anonymous requirements / the multi-root
@@ -267,6 +278,7 @@ class Row:
     share: float  # weight / sum of sibling weights (1.0 at the root)
     shape: str  # utility shape name ('' for groups)
     raw: Any  # measured value (None when unmeasured; groups: None)
+    unit: str  # declared measurement unit of raw ('' = none; display only)
     utility: float  # leaf utility in [0, 1]; NaN when unmeasured / a group
     aggregate: float  # subtree score (leaves: == utility); NaN unmeasured
 
@@ -281,6 +293,7 @@ class _Node:
     share: float = 1.0
     shape: str = ""
     raw: Any = None
+    unit: str = ""
     utility: float = math.nan
     aggregate: float = math.nan
     measured: bool = False
@@ -383,12 +396,14 @@ class Scoreboard:
     def _build(self, req: M.Definition | M.Usage, depth: int) -> _Node:
         qname = req.qualified_name or f"{_SYNTH_PREFIX}{next(self._counter)}"
         name = req.name or req.short_name or qname.split("::")[-1]
+        declared_unit = self._attr_value(req, UNIT_ATTR)
         node = _Node(
             element=req,
             qname=qname,
             name=name,
             depth=depth,
             weight=self._weight(req, qname, name),
+            unit="" if declared_unit is None else str(declared_unit),
         )
         nested = [
             member
@@ -543,6 +558,7 @@ class Scoreboard:
                 share=node.share,
                 shape=node.shape,
                 raw=node.raw,
+                unit=node.unit,
                 utility=node.utility,
                 aggregate=node.aggregate,
             )
@@ -557,18 +573,26 @@ class Scoreboard:
                 return "pass" if value else "FAIL"
             return f"{value:.3g}"
 
+        def fmt_raw(row: Row) -> str:
+            text = fmt(row.raw)
+            if row.unit and text != "-":  # unit after raw, display only
+                text = f"{text} {row.unit}"
+            return text
+
+        rows = self.table()
+        raw_width = max(8, *(len(fmt_raw(row)) for row in rows))
         lines = [
-            f"{'requirement':<44} {'weight':>6} {'share':>6} {'raw':>8} "
+            f"{'requirement':<44} {'weight':>6} {'share':>6} {'raw':>{raw_width}} "
             f"{'utility':>7} {'aggregate':>9}"
         ]
-        for row in self.table():
+        for row in rows:
             label = ("  " * row.depth + row.name)[:44]
             lines.append(
-                f"{label:<44} {row.weight:>6.3g} {row.share:>5.0%} {fmt(row.raw):>8} "
+                f"{label:<44} {row.weight:>6.3g} {row.share:>5.0%} {fmt_raw(row):>{raw_width}} "
                 f"{fmt(row.utility):>7} {fmt(row.aggregate):>9}"
             )
         lines.append(
-            f"{'score (' + self.aggregation + ')':<44} {'':>6} {'':>6} {'':>8} "
+            f"{'score (' + self.aggregation + ')':<44} {'':>6} {'':>6} {'':>{raw_width}} "
             f"{'':>7} {fmt(self.score):>9}"
         )
         return "\n".join(lines)
@@ -659,6 +683,7 @@ class Scoreboard:
             "share": node.share,
             "shape": node.shape,
             "raw": scrub(node.raw),
+            "unit": node.unit,
             "utility": scrub(node.utility),
             "aggregate": scrub(node.aggregate),
             "measured": node.measured,
@@ -1021,7 +1046,9 @@ function render({ model, el }) {
     const share = parent ? ` \u00b7 ${(node.share * 100).toFixed(0)}% of ${parent.label}` : "";
     lines.push(["row", `weight ${fmtNum(node.weight)}${share}`]);
     if (!group) {
-      lines.push(["row", `raw ${fmtNum(node.raw)}${node.shape ? ` \u00b7 ${node.shape}` : ""}`]);
+      const unit = node.unit && node.raw != null ? ` ${node.unit}` : "";
+      const shape = node.shape ? ` \u00b7 ${node.shape}` : "";
+      lines.push(["row", `raw ${fmtNum(node.raw)}${unit}${shape}`]);
       lines.push(["row", node.measured ? `utility ${fmtNum(node.utility)}` : "unmeasured"]);
     } else {
       const agg = `aggregate ${fmtNum(node.aggregate)}` +

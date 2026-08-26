@@ -104,6 +104,42 @@ package Reqs {
 """
 
 
+#: the `unit` reserved attribute (display-only), declared on a def
+#: (inherited through typing, overridable on the usage) plus a design
+#: point carrying a real SysML quantity value (`32.0 [SI::min]` parses
+#: into a QuantityOp; the interpreter evaluates it to the magnitude)
+UNIT_MODEL = """
+package Timed {
+    attribute flightTime : Real = 32.0 [SI::min];
+    requirement def Endures {
+        attribute utility : String = "larger-is-better";
+        attribute ramp0 : Real = 15.0;
+        attribute ramp1 : Real = 45.0;
+        attribute measure : Real = flightTime;
+        attribute unit : String = "min";
+    }
+    requirement mission {
+        requirement endurance : Endures;
+        requirement enduranceHours : Endures {
+            attribute ramp0 : Real = 0.25;
+            attribute ramp1 : Real = 0.75;
+            attribute measure : Real = flightTime / 60.0;
+            attribute unit : String = "h";
+        }
+        requirement unitless {
+            attribute utility : String = "ramp";
+            attribute ramp0 : Real = 0.0;
+            attribute ramp1 : Real = 10.0;
+            attribute measure : Real = 5.0;
+        }
+        requirement someday {
+            attribute unit : String = "kg";  // declared but unmeasured
+        }
+    }
+}
+"""
+
+
 @pytest.fixture(scope="module")
 def uav_model():
     return longeron.loads(UAV_MODEL)
@@ -334,6 +370,83 @@ class TestModelAttributes:
     def test_custom_utility_callable_override(self, uav_model):
         board = scoreboard(uav_model, utilities={"endurance": lambda raw: raw / 100.0})
         assert rows_by_name(board)["endurance"].utility == pytest.approx(0.32)
+
+
+# ---------------------------------------------------------------------------
+# the `unit` reserved attribute (display-only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def unit_board():
+    return scoreboard(longeron.loads(UNIT_MODEL))
+
+
+class TestUnitAttribute:
+    def test_unit_inherits_through_typing(self, unit_board):
+        assert rows_by_name(unit_board)["endurance"].unit == "min"  # from the def
+
+    def test_own_unit_overrides_the_inherited_one(self, unit_board):
+        assert rows_by_name(unit_board)["enduranceHours"].unit == "h"
+
+    def test_absent_unit_is_the_empty_string(self, unit_board):
+        rows = rows_by_name(unit_board)
+        assert rows["unitless"].unit == ""
+        assert rows["mission"].unit == ""  # groups have no raw to annotate
+
+    def test_quantity_valued_measure_evaluates_to_its_magnitude(self, unit_board):
+        # `32.0 [SI::min]` is real SysML v2 quantity syntax: it parses
+        # (ast.QuantityOp) and evaluates to the magnitude -- the unit
+        # reference is an annotation, no stdlib load required
+        rows = rows_by_name(unit_board)
+        assert rows["endurance"].raw == pytest.approx(32.0)
+        assert rows["endurance"].utility == pytest.approx((32 - 15) / 30)
+
+    def test_str_prints_the_unit_after_raw(self, unit_board):
+        text = str(unit_board)
+        assert "32 min" in text
+        assert "0.533 h" in text  # 32/60, three significant digits
+
+    def test_str_skips_the_unit_when_unmeasured(self, unit_board):
+        assert "- kg" not in str(unit_board)  # someday: unit but no raw
+
+    def test_str_without_units_is_unchanged(self, uav):
+        # no declared units: exactly the pre-unit rendering (8-wide raw)
+        header = (
+            f"{'requirement':<44} {'weight':>6} {'share':>6} {'raw':>8} "
+            f"{'utility':>7} {'aggregate':>9}"
+        )
+        lines = str(uav).splitlines()
+        assert lines[0] == header
+        assert all(" min" not in line and " kg" not in line for line in lines)
+
+    def test_widget_payload_carries_unit(self, unit_board):
+        pytest.importorskip("anywidget")
+        payload = json.loads(unit_board.widget().nodes_json)
+        by_label = {child["label"]: child for child in payload["children"]}
+        assert by_label["endurance"]["unit"] == "min"
+        assert by_label["enduranceHours"]["unit"] == "h"
+        assert by_label["unitless"]["unit"] == ""
+        assert payload["unit"] == ""
+
+    def test_absent_unit_payload_matches_todays_shape(self, widget):
+        # the UAV fixture declares no units: every node carries '' (the
+        # front-end renders exactly what it rendered before)
+        def walk(node):
+            yield node
+            for child in node["children"]:
+                yield from walk(child)
+
+        assert all(node["unit"] == "" for node in walk(json.loads(widget.nodes_json)))
+
+    def test_tooltip_esm_renders_the_unit(self, widget):
+        assert "node.unit" in widget._esm  # 'raw 32 min \u00b7 larger-is-better'
+
+    def test_module_docstring_documents_unit(self):
+        from longeron.analysis import scoreboard as module
+
+        assert 'attribute unit : String = "min"' in module.__doc__
+        assert "DISPLAY-ONLY" in module.__doc__
 
 
 # ---------------------------------------------------------------------------
