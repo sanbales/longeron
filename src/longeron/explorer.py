@@ -1980,7 +1980,11 @@ class Explorer(W.HBox):
             target: M.Element | None = element
             while target is not None and (target.qualified_name or "") not in drawn:
                 target = target.owner
-            want = (target.qualified_name,) if target is not None else ()
+            want = (
+                (target.qualified_name,)
+                if target is not None and target.qualified_name is not None
+                else ()
+            )
         selection = widget.view.selection
         if tuple(selection.ids) != want:
             self._syncing = True

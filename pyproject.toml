@@ -136,6 +136,13 @@ warn_return_any = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
+# EXPERIMENTAL spike helper: depends on hypothesis (not a project dep)
+# and prioritizes readability over annotations; excluded from typecheck
+module = "longeron.analysis._verify_spike"
+ignore_errors = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "longeron._gen.*"
 follow_imports = "skip"
 ignore_errors = true
