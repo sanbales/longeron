@@ -434,6 +434,102 @@ class TestDirectionToggle:
             apply_direction(widget.source.value, "diagonal")
 
 
+class TestCompoundLabelFit:
+    """apply_direction's per-node companion (_fit_compound_labels): elkjs
+    0.9.3 sizes EXPANDED compound nodes under a vertical flow in its
+    internal horizontal coordinates -- the NODE_LABELS width contribution
+    lands on the HEIGHT while the width collapses to children + padding,
+    and elk.nodeSize.minimum is applied swapped, as (height, width).  The
+    maintainer repro: QuadCopter's totalMass row past the node border
+    after a top-down toggle (collapsing the node -- a LEAF, sized after
+    the transposition -- made it fit).  So every direction change rewrites
+    the compartment-bearing containers: vertical flows drop NODE_LABELS
+    and pin the width through the swapped minimum; horizontal flows
+    restore the diagrams._NODE_LAYOUT defaults."""
+
+    def _node(self, widget, ident):
+        return next(n for n in _iter_nodes(widget.source.value) if n.id == ident)
+
+    def test_down_pins_compound_width_through_the_swapped_minimum(self, widget):
+        apply_direction(widget.source.value, "down")
+        quad = self._node(widget, "Drone::QuadCopter")
+        assert quad.layoutOptions["nodeSize.constraints"] == "PORTS MINIMUM_SIZE"
+        # (height, width): the widest pre-sized row + the box's side padding
+        widest = max(
+            label.properties.shape.width or 0
+            for label in quad.labels
+            if label.properties.shape is not None
+        )
+        assert quad.layoutOptions["elk.nodeSize.minimum"] == f"(44, {widest + 16:g})"
+
+    def test_right_restores_the_node_layout_defaults(self, widget):
+        root = widget.source.value
+        apply_direction(root, "down")
+        apply_direction(root, "right")
+        quad = self._node(widget, "Drone::QuadCopter")
+        assert quad.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
+        assert quad.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
+
+    def test_toggling_is_a_lossless_round_trip(self, widget):
+        root = widget.source.value
+        before = {node.id: dict(node.layoutOptions) for node in _iter_nodes(root) if node.children}
+        for direction in ("down", "right", "down", "right"):
+            apply_direction(root, direction)
+        after = {node.id: dict(node.layoutOptions) for node in _iter_nodes(root) if node.children}
+        assert after == before
+
+    def test_leaves_are_never_touched(self, widget):
+        apply_direction(widget.source.value, "down")
+        battery = self._node(widget, "Drone::Battery")  # rows, but no children
+        assert battery.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
+        assert battery.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
+
+    def test_pack_grid_compounds_keep_horizontal_defaults(self, widget):
+        """SEPARATE_CHILDREN containers are sized by their OWN sub-run,
+        which stays at the elkjs default horizontal flow whatever the
+        root direction (see test_render's layout-truth twins) -- swapped
+        minimums would land on the wrong axis of the wrong run."""
+
+        apply_direction(widget.source.value, "down")
+        states = self._node(widget, "Drone::FlightStates")  # inside the pack grid
+        assert states.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
+        assert states.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
+
+    def test_grid_compound_itself_keeps_horizontal_defaults(self):
+        """A compound whose loose children make IT the packing grid: the
+        node carries SEPARATE_CHILDREN, so its own sub-run (horizontal)
+        sizes it via NODE_LABELS even when the root flows top-down."""
+
+        model = longeron.loads(
+            """
+            package Fit {
+                part def Wide {
+                    attribute total : Real = a.mass + b.mass + 4.0 * 0.06;
+                    part a;
+                    part b;
+                }
+            }
+            """
+        )
+        built = diagrams.structure_diagram(model)
+        apply_direction(built.source.value, "down")
+        wide = self._node(built, "Fit::Wide")
+        assert wide.layoutOptions["elk.hierarchyHandling"] == "SEPARATE_CHILDREN"
+        assert wide.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
+        assert wide.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
+
+    def test_fit_constants_mirror_the_node_layout(self):
+        """toolbar can't import diagrams (circular), so the fit constants
+        restate diagrams._NODE_LAYOUT -- this pin breaks if they drift."""
+
+        minimum = diagrams._NODE_LAYOUT["elk.nodeSize.minimum"].strip("()")
+        assert tuple(float(part) for part in minimum.split(",")) == toolbar._NODE_MINIMUM
+        padding = dict(
+            part.split("=") for part in diagrams._NODE_LAYOUT["elk.padding"].strip("[]").split(",")
+        )
+        assert float(padding["left"]) + float(padding["right"]) == toolbar._NODE_SIDE_PADDING
+
+
 class TestAutoFit:
     """The one-shot initial fit: the first layout arrival from the
     browser answers with exactly one fit-to-screen request (small

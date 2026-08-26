@@ -66,6 +66,13 @@ class LabelProperties(BaseProperties):
     selectable: Optional[bool] = Field(
         False, description="Specifies if label is individually selectable"
     )
+    tooltip: Optional[str] = Field(
+        None,
+        description=(
+            "Hover text rendered as the label's svg <title> "
+            "(e.g. the full text of a truncated label)"
+        ),
+    )
 
     def get_shape(self) -> LabelShape:
         return super().get_shape()

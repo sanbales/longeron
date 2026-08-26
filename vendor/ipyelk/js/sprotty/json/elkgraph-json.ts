@@ -28,6 +28,7 @@ export interface ElkProperties {
   shape?: Shape;
   isSymbol?: boolean;
   selectable?: boolean;
+  tooltip?: string; // hover text: the full text of a truncated label (LOCAL PATCH)
 }
 
 export function isPrimitive(edge: ElkEdge): edge is ElkPrimitiveEdge {

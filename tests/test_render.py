@@ -1531,6 +1531,16 @@ package Loose {
 }
 """
 
+_WIDE_GRID_COMPOUND = """
+package Fit {
+    part def Wide {
+        attribute totalMass : Real = chassis.mass + battery.mass + 4.0 * 0.06 + payloadMass;
+        part a;
+        part b;
+    }
+}
+"""
+
 
 class TestGalleryNits3:
     """Round-3 gallery review: the layout-direction toggle, pinned against
@@ -1591,6 +1601,129 @@ class TestGalleryNits3:
             }
 
         assert grid({}) == grid({"direction": "down"})
+
+
+class TestCompoundLabelFit:
+    """No compartment label may overflow its node -- in EITHER direction,
+    pinned against the REAL vendored elkjs (the maintainer repro:
+    QuadCopter's ``totalMass`` row past the border after a top-down
+    toggle).  elkjs 0.9.3 sizes an EXPANDED compound node under a
+    vertical flow in its internal horizontal coordinates: the
+    ``NODE_LABELS`` width contribution lands on the HEIGHT while the
+    width collapses to children + padding (leaves are sized after the
+    transposition -- collapsing the node made the rows fit).  Both
+    pipelines counter it the same way: drop the transposed label
+    contribution and pin the width through the swapped
+    ``elk.nodeSize.minimum`` (``render._to_elk_json`` headless,
+    ``toolbar._fit_compound_labels`` for the widget tree)."""
+
+    @staticmethod
+    def _compound_label_overflows(graph) -> list[tuple]:
+        """INSIDE labels poking past their COMPOUND node's box (leaves are
+        snug-sized around their widest row by construction)."""
+
+        overflows = []
+        for node in _walk_json(graph):
+            if not node.get("children"):
+                continue
+            for label in node.get("labels", []):
+                placement = (label.get("layoutOptions") or {}).get("nodeLabels.placement", "")
+                if "OUTSIDE" in placement:
+                    continue  # package tabs ride above the box
+                if label["x"] < -0.01 or label["x"] + label["width"] > node["width"] + 0.01:
+                    overflows.append((node["id"], label["text"], label["x"], node["width"]))
+        return overflows
+
+    @pytest.mark.parametrize("direction", ["right", "down"])
+    def test_compartment_rows_fit_expanded_compounds(self, drone_model, direction):
+        widget = diagrams.structure_diagram(drone_model, direction=direction)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        assert self._compound_label_overflows(graph) == []
+
+    @pytest.mark.parametrize("direction", ["right", "down"])
+    def test_rows_fit_a_packing_grid_compound(self, direction):
+        """A compound whose loose children make IT the packing grid
+        (``SEPARATE_CHILDREN`` on the node itself) is sized by its OWN
+        horizontal sub-run whatever the root flow -- it must keep the
+        horizontal ``NODE_LABELS`` sizing, not the swapped minimum (the
+        swap would land on the wrong axis of the wrong run)."""
+
+        model = longeron.loads(_WIDE_GRID_COMPOUND)
+        widget = diagrams.structure_diagram(model, direction=direction)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        assert self._compound_label_overflows(graph) == []
+
+    def test_down_keeps_the_compound_height_content_driven(self, drone_model):
+        """The same transposition also inflated the compound's HEIGHT by
+        the widest row's WIDTH (a huge blank band under the children);
+        dropping NODE_LABELS under vertical flows keeps the box snug."""
+
+        widget = diagrams.structure_diagram(drone_model, direction="down")
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        quad = next(n for n in _walk_json(graph) if n["id"] == "Drone::QuadCopter")
+        rows = max(label["width"] for label in quad["labels"])
+        assert quad["width"] >= rows  # the fix: rows drive the width ...
+        assert quad["height"] < rows  # ... and never the height
+
+    def test_package_nested_compound_rows_stay_inside_under_down(self):
+        """The maintainer's second repro (UavMissions, NB12): a part def
+        with children AND very wide rows nested INSIDE a package.  Under
+        the un-fixed top-down transposition its width collapsed to
+        children + padding while the H_CENTERed full-width rows poked
+        ~900px LEFT of the box -- a glob of text over the package's
+        top-left corner.  ``max_label_width=None`` keeps the rows at
+        full width, so this pins the fit itself (not the row cap)."""
+
+        model = longeron.loads(_PACKAGE_GLOB)
+        widget = diagrams.structure_diagram(model, direction="down", max_label_width=None)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        assert self._compound_label_overflows(graph) == []
+        mission = next(n for n in _walk_json(graph) if n["id"] == "Missions::Logistics")
+        rows = max(label["width"] for label in mission["labels"])
+        assert rows > 480  # uncapped: the row really is absurd
+        assert mission["width"] >= rows
+
+
+_PACKAGE_GLOB = """
+package Missions {
+    part def Logistics {
+        attribute outboundPowerW : Real = basePowerW + cargo.bayMass * airframe.dragArea
+            * airframe.cruiseSpeed * airframe.cruiseSpeed / (props.cruiseEff * motors.efficiency)
+            + battery.energyWh * battery.usableFraction - avionics.powerW;
+        part cargo;
+    }
+}
+"""
+
+
+class TestRowCapTooltips:
+    """The ``max_label_width`` cap's render-side half: truncated rows carry
+    their full text as ``properties.tooltip``, which the headless SVG
+    writer emits as the label's ``<title>`` (the browser view renders the
+    same element; tests/browser/test_browser_label_fit.py asserts it
+    against the live DOM)."""
+
+    def test_capped_rows_keep_the_node_narrow(self):
+        model = longeron.loads(_PACKAGE_GLOB)
+        widget = diagrams.structure_diagram(model)  # default cap: 480
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        mission = next(n for n in _walk_json(graph) if n["id"] == "Missions::Logistics")
+        assert mission["width"] <= 480 + 20  # widest row + box side padding
+
+    def test_truncated_rows_title_the_full_text(self):
+        model = longeron.loads(_PACKAGE_GLOB)
+        widget = diagrams.structure_diagram(model)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        svg = render._svg_from_layout(graph)
+        assert "<title>outboundPowerW : Real = basePowerW" in svg
+        assert "avionics.powerW</title>" in svg
+
+    def test_uncapped_rows_emit_no_label_titles(self):
+        model = longeron.loads(_PACKAGE_GLOB)
+        widget = diagrams.structure_diagram(model, max_label_width=None)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        svg = render._svg_from_layout(graph, title=None)
+        assert "<title>" not in svg
 
 
 class TestPng:

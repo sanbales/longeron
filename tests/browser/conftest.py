@@ -218,9 +218,16 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         # from crashed runs). Isolate per session.
         JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
         # the kernel must import THIS tree's sources even when the editable
-        # install resolves elsewhere (worktree runs against the main venv)
+        # install resolves elsewhere (worktree runs against the main venv);
+        # the vendored ipyelk rides along for the same reason
         PYTHONPATH=os.pathsep.join(
-            p for p in (str(REPO / "src"), os.environ.get("PYTHONPATH", "")) if p
+            p
+            for p in (
+                str(REPO / "src"),
+                str(REPO / "vendor/ipyelk/src"),
+                os.environ.get("PYTHONPATH", ""),
+            )
+            if p
         ),
     )
     with log_path.open("wb") as log:

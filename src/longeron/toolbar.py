@@ -54,7 +54,7 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
         command="pip install -e vendor/ipyelk",
     ) from _err
 
-from .render import _SYNTH_ID_PREFIX
+from .render import _SYNTH_ID_PREFIX, _measure
 
 __all__ = [
     "DIRECTIONS",
@@ -202,6 +202,11 @@ def apply_direction(root: Any, direction: str) -> str:
     ``SEPARATE_CHILDREN`` packing grids keep their own default flow (they
     stay wide either way, which is what the pack-aspect chains assume).
 
+    The one per-node companion is :func:`_fit_compound_labels`: elkjs
+    sizes EXPANDED compound nodes on the wrong axis under vertical flows,
+    so the compartment-bearing containers get their width pinned (or
+    their horizontal defaults restored) alongside every direction change.
+
     Already-computed edge routes are dropped for the same reason
     :func:`apply_routing` drops them: a direction change makes them stale,
     and elkjs writes new routes INTO old section objects without clearing
@@ -214,9 +219,118 @@ def apply_direction(root: Any, direction: str) -> str:
         choices = " or ".join(word.lower() for word in DIRECTIONS)
         raise ValueError(f"direction must be {choices}; not {direction!r}")
     root.layoutOptions["elk.direction"] = name
+    _fit_compound_labels(root, transposed=name in ("DOWN", "UP"))
     for edge in _iter_edges(root):
         edge.sections = None
     return name
+
+
+#: the node-box defaults the compound-label fit restores/derives from --
+#: MUST mirror ``diagrams._NODE_LAYOUT`` (``elk.nodeSize.minimum`` and the
+#: left+right ``elk.padding``); pinned against it by tests/test_toolbar.py
+_NODE_MINIMUM = (60.0, 44.0)
+_NODE_SIDE_PADDING = 16.0  # elk.padding left=8 + right=8
+
+
+def _label_width(label: Any) -> float:
+    """A label's box width: the pre-sized shape when one is pinned (edge
+    labels, compartment rows -- see ``diagrams._size_compartment_rows``),
+    else the headless Helvetica estimate (``render._measure``) that the
+    browser measurement tracks because the stylesheet pins the fonts
+    (``text.elklabel`` !important).  Icon composites (a label carrying
+    sub-labels) add their parts like ipyelk's ``size_nested_label``."""
+
+    shape = label.properties.shape
+    width = float(shape.width) if shape is not None and shape.width else None
+    if width is None:
+        width = _measure(label.text or "", label.properties.cssClasses or "")[0]
+    for sublabel in label.labels or []:
+        spacing = float((sublabel.layoutOptions or {}).get("org.eclipse.elk.spacing.labelLabel", 0))
+        width += _label_width(sublabel) + spacing
+    return width
+
+
+def _inside_label_widths(node: Any) -> list[float]:
+    """Box widths of the node's INSIDE-placed labels (title, stereotype,
+    compartment rows).  OUTSIDE labels (package tabs, glyph captions) and
+    pinned labels (empty placement -- geometry computed in diagrams) never
+    drive the box width."""
+
+    default = (node.layoutOptions or {}).get("nodeLabels.placement", "INSIDE")
+    widths = []
+    for label in node.labels or []:
+        options = label.layoutOptions or {}
+        placement = options.get(
+            "org.eclipse.elk.nodeLabels.placement", options.get("nodeLabels.placement", default)
+        )
+        if "INSIDE" in placement:
+            widths.append(_label_width(label))
+    return widths
+
+
+def _fit_compound_labels(root: Any, transposed: bool) -> None:
+    """Keep EXPANDED compound nodes at least as wide as their compartments.
+
+    elkjs (0.9.3) sizes a compound node under ``INCLUDE_CHILDREN`` in its
+    internal left-to-right coordinate system and only transposes the
+    CONTENT for vertical flows: with ``elk.direction`` DOWN/UP the
+    ``NODE_LABELS`` size contribution lands on the wrong axis (the widest
+    row inflates the HEIGHT while the width collapses to children +
+    padding), and ``elk.nodeSize.minimum`` is applied swapped, as
+    ``(height, width)``.  Leaves are sized after the transposition and
+    are unaffected -- which is why a COLLAPSED node fit while the
+    expanded one overflowed (the maintainer repro: QuadCopter's
+    ``totalMass`` row past the border after a T->D toggle).
+
+    So, for every node with children AND inside labels:
+
+    * vertical flow -- drop the ``NODE_LABELS`` token (its transposed
+      contribution is pure height inflation) and pin the width through
+      the swapped minimum ``(min-height, widest label + side padding)``;
+    * horizontal flow -- restore the ``diagrams._NODE_LAYOUT`` defaults
+      (``NODE_LABELS`` sizes the box correctly there), so direction
+      toggles are lossless round trips.
+
+    The ``SEPARATE_CHILDREN`` containers (packing grids, and any node
+    inheriting the option inside one) are sized by their OWN sub-run,
+    which keeps the elkjs DEFAULT (horizontal) flow whatever the root
+    direction (see :func:`apply_direction`) -- so they take the
+    horizontal defaults even under a vertical root flow, and honor their
+    own ``elk.direction`` should one ever be set.
+    """
+
+    min_width, min_height = _NODE_MINIMUM
+
+    def fit(node: Any, run_transposed: bool, inherited_separate: bool) -> None:
+        # the run that SIZES this node: its own sub-run when its effective
+        # hierarchyHandling is SEPARATE_CHILDREN (elkjs resizes such a
+        # compound from within, at the sub-run's flow), the enclosing
+        # INCLUDE_CHILDREN run otherwise.  hierarchyHandling is inherited.
+        own = node.layoutOptions.get("elk.hierarchyHandling")
+        separate = own == "SEPARATE_CHILDREN" if own else inherited_separate
+        if separate:
+            transposed = node.layoutOptions.get("elk.direction") in ("DOWN", "UP")
+        else:
+            transposed = run_transposed
+        widths = _inside_label_widths(node) if node.children else []
+        if widths:
+            options = node.layoutOptions
+            constraints = (options.get("nodeSize.constraints") or "").split()
+            if transposed:
+                fit_width = max(min_width, max(widths) + _NODE_SIDE_PADDING)
+                options["elk.nodeSize.minimum"] = f"({min_height:g}, {fit_width:g})"
+                constraints = [token for token in constraints if token != "NODE_LABELS"]
+            else:
+                options["elk.nodeSize.minimum"] = f"({min_width:g}, {min_height:g})"
+                if "NODE_LABELS" not in constraints:
+                    constraints.insert(0, "NODE_LABELS")
+            options["nodeSize.constraints"] = " ".join(constraints)
+        # this node's run lays out its children in both cases
+        for child in node.children:
+            fit(child, transposed, separate)
+
+    for child in root.children:
+        fit(child, transposed, inherited_separate=False)
 
 
 def _collect_entries(root: Any) -> tuple[_SearchEntry, ...]:

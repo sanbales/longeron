@@ -64,6 +64,13 @@ its first layout arrives -- a small margin, never zoomed past 1:1 --
 and later relayouts keep the user's viewport
 (:class:`longeron.toolbar.AutoFitTool`).
 
+Compartment rows cap their display width at ``max_label_width`` px
+(default 480; a kwarg on every view constructor): overlong rows --
+calculation/expression attributes are the usual offenders -- draw
+END-ellipsized with the full text on the row's hover tooltip, so one
+absurd expression no longer makes its whole node absurd.  Pass
+``max_label_width=None`` to draw every row at full width.
+
 Node ids are qualified names, so browser-side selections map back to model
 elements: use :func:`on_select` to react to clicks.
 """
@@ -521,6 +528,11 @@ _ROOT_LAYOUT = {
     # them at a segment end, half under the target node)
     "elk.edgeLabels.centerLabelPlacementStrategy": "CENTER_LAYER",
 }
+
+#: default cap on a compartment row's DISPLAY width, px (the calculation /
+#: expression rows are unbounded in the model; see ``max_label_width`` on the
+#: diagram builders).  ``None`` disables the cap.
+_MAX_LABEL_WIDTH = 480.0
 
 _NODE_LAYOUT = {
     "nodeSize.constraints": "NODE_LABELS PORTS MINIMUM_SIZE",
@@ -1439,6 +1451,7 @@ def structure_diagram(
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
+    max_label_width: float | None = _MAX_LABEL_WIDTH,
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
 
@@ -1497,8 +1510,16 @@ def structure_diagram(
     ``direction`` picks the layout flow -- ``"right"`` (left-to-right,
     the default) or ``"down"`` (top-to-bottom); the toolbar's orientation
     button toggles it live.
+
+    ``max_label_width`` caps how wide a compartment row may draw, in px
+    (default 480): longer rows -- calculation/expression attributes are
+    the usual offenders -- are end-ellipsized with the FULL text on the
+    row's hover tooltip, so one absurd expression no longer makes the
+    whole node absurd.  ``None`` lifts the cap (every row at full width).
     """
 
+    if max_label_width is not None and max_label_width <= 0:
+        raise ValueError(f"max_label_width must be positive or None, not {max_label_width!r}")
     if membership not in ("nested", "edges"):
         raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
     if actor_style not in ("figure", "box"):
@@ -1516,6 +1537,8 @@ def structure_diagram(
     if annotations:
         builder.add_annotations(root)
     builder.pack_components(root)
+    if max_label_width is not None:
+        _ellipsize_rows(root, max_label_width)
     _size_compartment_rows(root)
     # the sidecar tier persists only DEVIATIONS from these defaults
     options: dict[str, Any] = {}
@@ -1531,6 +1554,8 @@ def structure_diagram(
         options["annotations"] = True
     if actor_style != "figure":
         options["actor_style"] = actor_style
+    if max_label_width != _MAX_LABEL_WIDTH:
+        options["max_label_width"] = max_label_width
     # package tabs ride flush with the box top (outside icon labels; the
     # spacing option applies per hierarchy level, so the package nodes
     # restate it for their nested packages)
@@ -1542,6 +1567,47 @@ def structure_diagram(
         direction=direction,
     )
     return _stamp_view_state(widget, element, "structure", options)
+
+
+def _ellipsize_rows(node: Node, max_width: float) -> None:
+    """Cap compartment-row labels at ``max_width`` display pixels.
+
+    Calculation/expression rows can be arbitrarily long in the model, and a
+    compartment is as wide as its widest row -- one absurd expression made
+    the whole node (and every fit computed from it) absurd.  Rows past the
+    cap are END-ellipsized ('name : Real = if airframe.wing\u2026'), keeping the
+    feature name -- the row's identity -- visible.
+
+    Truncation happens HERE, kernel-side at construction time and BEFORE any
+    measurement, so both pipelines see only the display string: the browser
+    text sizer measures it, :func:`_size_compartment_rows` pre-sizes with it,
+    and ``toolbar._fit_compound_labels`` / ``render._to_elk_json`` derive
+    their compound minimum widths from it automatically.  The full original
+    text rides ``label.properties.tooltip``: the browser label view renders
+    it as the SVG ``<title>`` (the native hover tooltip) and the headless
+    SVG writer emits the same element.  The label element itself is
+    untouched otherwise -- css classes, selection and adornment behavior are
+    exactly those of an untruncated row.
+    """
+
+    for label in node.labels or []:
+        css = label.properties.cssClasses or ""
+        if "sysml-attribute" not in css:
+            continue
+        text = label.text or ""
+        if _measure(text, css)[0] <= max_width:
+            continue
+        lo, hi = 1, len(text)  # longest prefix whose 'prefix\u2026' still fits
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _measure(text[:mid].rstrip() + "\u2026", css)[0] <= max_width:
+                lo = mid
+            else:
+                hi = mid - 1
+        label.properties.tooltip = text
+        label.text = text[:lo].rstrip() + "\u2026"
+    for child in node.children:
+        _ellipsize_rows(child, max_width)
 
 
 def _size_compartment_rows(node: Node) -> None:
@@ -2544,6 +2610,7 @@ def state_diagram(
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
+    max_label_width: float | None = _MAX_LABEL_WIDTH,
 ) -> Any:
     """A hierarchical state machine: states, entry markers, transitions.
 
@@ -2559,7 +2626,10 @@ def state_diagram(
     plain leaves (the pre-0.8 behavior).  Plain nested states are always
     shown.  ``toolbar=False`` keeps ipyelk's stock toolbar; ``routing``
     picks the edge routing style (orthogonal / polyline / splines);
-    ``direction`` the layout flow (``"right"`` or ``"down"``).
+    ``direction`` the layout flow (``"right"`` or ``"down"``);
+    ``max_label_width`` caps compartment-row display width exactly like
+    :func:`structure_diagram` (state boxes carry no rows today, so the
+    cap is future-proofing).
 
     Expanded substate ids are instance-qualified
     (``…::swapSource::swap::evaluating``) so they stay unique per
@@ -2576,8 +2646,14 @@ def state_diagram(
     resolver = Interpreter(model).resolver
     base = machine.qualified_name or machine.label
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
+    if max_label_width is not None:
+        _ellipsize_rows(root, max_label_width)
     widget = _finish(root, toolbar=toolbar, routing=routing, direction=direction)
-    options = {} if submachine_depth is None else {"submachine_depth": submachine_depth}
+    options: dict[str, Any] = (
+        {} if submachine_depth is None else {"submachine_depth": submachine_depth}
+    )
+    if max_label_width != _MAX_LABEL_WIDTH:
+        options["max_label_width"] = max_label_width
     return _stamp_view_state(widget, machine, "state", options)
 
 
@@ -2721,6 +2797,7 @@ def action_diagram(
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
+    max_label_width: float | None = _MAX_LABEL_WIDTH,
 ) -> Any:
     """The succession control-flow graph the interpreter executes.
 
@@ -2745,6 +2822,9 @@ def action_diagram(
     ipyelk's stock toolbar; ``routing`` picks the edge routing style
     (orthogonal / polyline / splines); ``direction`` the layout flow
     (``"right"``, the flow-reading default, or ``"down"``).
+    ``max_label_width`` caps compartment-row display width exactly like
+    :func:`structure_diagram` (behavior boxes carry no rows today, so
+    the cap is future-proofing).
     """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -2826,10 +2906,14 @@ def action_diagram(
     if lanes:
         layout = _apply_lanes(root, lanes, steps, elements)
 
+    if max_label_width is not None:
+        _ellipsize_rows(root, max_label_width)
     widget = _finish(root, direction=direction, toolbar=toolbar, layout=layout, routing=routing)
-    options = (
+    options: dict[str, Any] = (
         {} if lanes is None else {"lanes": dict(lanes) if isinstance(lanes, Mapping) else lanes}
     )
+    if max_label_width != _MAX_LABEL_WIDTH:
+        options["max_label_width"] = max_label_width
     return _stamp_view_state(widget, action, "action", options)
 
 

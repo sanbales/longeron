@@ -320,12 +320,16 @@ export class ElkLabelView extends ShapeView {
       );
       setClass(mark, use, true);
     } else {
+      // a truncated label carries its full text in properties.tooltip;
+      // the svg <title> is the native hover tooltip (LOCAL PATCH)
+      let tooltip = label?.properties?.tooltip;
       mark = (
         <text
           class-elklabel={true}
           class-selected={label.selected}
           class-mouseover={label.hoverFeedback}
         >
+          {tooltip ? <title>{tooltip}</title> : undefined}
           {label.text}
         </text>
       );

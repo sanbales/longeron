@@ -2024,3 +2024,104 @@ class TestRoundtripTimeouts:
         widget = diagrams.structure_diagram(model)
         timeouts = self._pipe_timeouts(widget)
         assert timeouts and all(t == 600.0 for t in timeouts), timeouts
+
+
+_ABSURD_ROW = """
+package Fleet {
+    part def Mission {
+        attribute absurd : Real = base.mass + cargo.bayMass + cargo.payloadKg
+            + airframe.wingSpan * airframe.wingArea / (props.cruiseEff * motors.efficiency)
+            + battery.energyWh * battery.usableFraction - avionics.mass * 9.81;
+        attribute short : Real = 1.0;
+        part cargo;
+        part battery;
+    }
+}
+"""
+
+
+class TestMaxLabelWidth:
+    """``max_label_width`` caps compartment-row DISPLAY width (default 480):
+    calculation/expression rows are unbounded in the model, and one absurd
+    expression made its whole node (and every fit computed from it) absurd.
+    Overlong rows are END-ellipsized kernel-side at construction, BEFORE any
+    measurement -- so the browser text sizer, ``_size_compartment_rows`` and
+    the compound-width fits all see only the display string -- and the full
+    text rides ``properties.tooltip`` (the label's svg ``<title>`` in both
+    pipelines).  Labels stay labels: css classes and selection behavior are
+    untouched."""
+
+    def _node(self, widget, ident):
+        return next(n for n in _walk(widget.source.value) if n.id == ident)
+
+    def test_overlong_rows_are_ellipsized_with_the_full_text_on_the_tooltip(self):
+        from longeron.render import _measure
+
+        model = longeron.loads(_ABSURD_ROW)
+        widget = diagrams.structure_diagram(model)
+        node = self._node(widget, "Fleet::Mission")
+        row = next(label for label in node.labels if (label.text or "").startswith("absurd"))
+        assert row.text.endswith("\u2026")
+        assert _measure(row.text, row.properties.cssClasses or "")[0] <= 480.0
+        full = row.properties.tooltip
+        assert full is not None and full.startswith("absurd : Real = ") and "9.81" in full
+        assert "sysml-attribute" in (row.properties.cssClasses or "")  # still a row
+
+    def test_short_rows_are_untouched(self):
+        model = longeron.loads(_ABSURD_ROW)
+        widget = diagrams.structure_diagram(model)
+        node = self._node(widget, "Fleet::Mission")
+        row = next(label for label in node.labels if (label.text or "").startswith("short"))
+        assert row.text == "short : Real = 1.0"
+        assert row.properties.tooltip is None
+
+    def test_the_pinned_row_shapes_see_the_display_width(self):
+        """_size_compartment_rows runs AFTER truncation, so the shared
+        row-box width (and through it every compound fit) keys off the
+        truncated string automatically."""
+
+        model = longeron.loads(_ABSURD_ROW)
+        widget = diagrams.structure_diagram(model)
+        node = self._node(widget, "Fleet::Mission")
+        for label in node.labels:
+            shape = label.properties.shape
+            if shape is not None and shape.width:
+                assert shape.width <= 480.0 + 0.01
+
+    def test_none_lifts_the_cap(self):
+        model = longeron.loads(_ABSURD_ROW)
+        widget = diagrams.structure_diagram(model, max_label_width=None)
+        node = self._node(widget, "Fleet::Mission")
+        row = next(label for label in node.labels if (label.text or "").startswith("absurd"))
+        assert not row.text.endswith("\u2026")
+        assert row.properties.tooltip is None
+
+    def test_a_tighter_cap_and_option_persistence(self):
+        model = longeron.loads(_ABSURD_ROW)
+        widget = diagrams.structure_diagram(model, max_label_width=200)
+        node = self._node(widget, "Fleet::Mission")
+        from longeron.render import _measure
+
+        for label in node.labels:
+            if "sysml-attribute" in (label.properties.cssClasses or ""):
+                assert _measure(label.text or "", label.properties.cssClasses or "")[0] <= 200.0
+        # deviations persist through the view sidecar; the default does not
+        assert widget._lgn_view_state["options"]["max_label_width"] == 200
+        default = diagrams.structure_diagram(model)
+        assert "max_label_width" not in default._lgn_view_state["options"]
+        lifted = diagrams.structure_diagram(model, max_label_width=None)
+        assert lifted._lgn_view_state["options"]["max_label_width"] is None
+
+    def test_invalid_cap_is_rejected(self):
+        model = longeron.loads(_ABSURD_ROW)
+        with pytest.raises(ValueError, match="max_label_width"):
+            diagrams.structure_diagram(model, max_label_width=0)
+        with pytest.raises(ValueError, match="max_label_width"):
+            diagrams.structure_diagram(model, max_label_width=-10)
+
+    def test_state_and_action_builders_accept_the_cap(self, drone_model):
+        diagrams.state_diagram(drone_model.find("Drone::FlightStates"), max_label_width=200)
+        widget = diagrams.action_diagram(
+            drone_model.find("Drone::PlanBattery"), max_label_width=200
+        )
+        assert widget._lgn_view_state["options"]["max_label_width"] == 200

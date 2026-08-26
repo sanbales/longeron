@@ -120,6 +120,81 @@ print(json.dumps({
     )
 
 
+def label_fit_notebook() -> dict[str, Any]:
+    """Scenario: compartment rows must fit their node in EVERY direction.
+
+    The model is the maintainer repro (examples/drone.sysml, structure
+    section): ``QuadCopter`` is an EXPANDED compound node -- children AND
+    wide attribute-compartment rows (the ``totalMass`` expression) -- the
+    exact shape that tripped elkjs's transposed compound-node sizing
+    under a top-down flow (see test_browser_label_fit).  ``Hauler`` adds
+    the second maintainer repro (UavMissions' ``LogisticsUav``): an
+    expanded compound whose calculation row is ABSURDLY wide -- under the
+    un-fixed top-down flow its H_CENTERed rows poked far left of the
+    collapsed box, a glob of text over the package's top-left corner --
+    and, with the default ``max_label_width`` cap, the row must draw
+    END-ellipsized with the full text on its hover ``<title>``.
+    """
+
+    return _notebook(
+        '''
+import json
+
+import longeron
+from longeron import diagrams
+from longeron.toolbar import DirectionTool
+
+model = longeron.loads("""
+package Drone {
+    part def Battery {
+        attribute capacity : Real = 5200.0;
+        attribute mass : Real = 0.38;
+    }
+    part def Rotor {
+        attribute maxThrust : Real = 9.0;
+        attribute mass : Real = 0.06;
+    }
+    part def Frame {
+        attribute mass : Real = 0.42;
+    }
+    part def QuadCopter {
+        attribute payloadMass : Real = 0.2;
+        attribute totalMass : Real =
+            chassis.mass + battery.mass + 4.0 * 0.06 + payloadMass;
+        attribute maxTakeoffMass : Real = 1.5;
+
+        part chassis : Frame;
+        part battery : Battery;
+        part rotors : Rotor[4];
+
+        assert constraint takeoffMassLimit { totalMass <= maxTakeoffMass }
+        assert constraint canHover {
+            4.0 * 9.0 > totalMass * 9.81
+        }
+    }
+    part def Hauler {
+        attribute outboundPowerW : Real = basePowerW
+            + cargo.bayMass * dragArea * cruiseSpeed * cruiseSpeed
+            / (cruiseEff * motorEff * propEff * transmissionEff)
+            + battery.capacity * usableFraction - avionicsPowerW
+            + hoverPowerW * hoverOpsSec / missionSec;
+
+        part cargo : Frame;
+        part battery : Battery;
+    }
+}
+""")
+widget = diagrams.structure_diagram(model)
+widget
+''',
+        """
+print(json.dumps({
+    "direction": widget.get_tool(DirectionTool).direction,
+}))
+""",
+    )
+
+
 def explorer_notebook() -> dict[str, Any]:
     """Scenario: the tree <-> diagram selection round trip, inline layout.
 
@@ -275,6 +350,7 @@ print(json.dumps({
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "toolbar_scenario.ipynb": toolbar_notebook,
+    "label_fit_scenario.ipynb": label_fit_notebook,
     "explorer_scenario.ipynb": explorer_notebook,
     "explorer_dock_scenario.ipynb": explorer_dock_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,

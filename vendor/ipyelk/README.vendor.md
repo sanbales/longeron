@@ -146,3 +146,12 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    - the upstream tests are ported:
      `tests/pipes/test_layout_error_semantics.py`,
      `tests/tools/test_progress.py`
+10. **Label hover tooltips** (2026-08-25): `LabelProperties` (python) and
+   `ElkProperties` (TS) gain an optional `tooltip` string; `ElkLabelView`
+   renders it as the label's svg `<title>` -- the native browser hover
+   tooltip. Longeron uses it for truncated compartment rows (the
+   `max_label_width` cap ellipsizes overlong calculation rows and parks
+   the full text on the tooltip; `render._svg_from_layout` emits the same
+   `<title>` headlessly). Bundles rebuilt as in patch 7 (same toolchain,
+   node 22.9.0): only the `elkdisplay` chunk, `remoteEntry` and the
+   labextension `package.json` `_build` pointer changed.

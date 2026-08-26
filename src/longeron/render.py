@@ -986,7 +986,7 @@ def _to_elk_json(root: Any) -> dict:
             labels.append(data)
         return labels
 
-    def convert(node: Any) -> dict:
+    def convert(node: Any, run_transposed: bool = False, inherited_separate: bool = False) -> dict:
         identifier = node_id(node)
         css = node.properties.cssClasses or ""
         is_marker = any(name in css for name in _GLYPH_NODE_CLASSES)
@@ -1021,12 +1021,17 @@ def _to_elk_json(root: Any) -> dict:
             zip(measured, node.labels or [], strict=True)
         ):
             is_attribute = "sysml-attribute" in label_css
+            properties: dict[str, Any] = {"cssClasses": label_css}
+            if label.properties.tooltip:
+                # a truncated row's full text: the SVG writer emits it as the
+                # label's <title> (hover tooltip), mirroring the browser view
+                properties["tooltip"] = label.properties.tooltip
             entry: dict[str, Any] = {
                 "id": f"{identifier}.l{index}",
                 "text": text,
                 "width": width,
                 "height": height,
-                "properties": {"cssClasses": label_css},
+                "properties": properties,
             }
             if "sysml-tab" in label_css:
                 # the package folder tab (spec printed p.24): containers
@@ -1080,8 +1085,21 @@ def _to_elk_json(root: Any) -> dict:
             "layoutOptions": layout_options,
             "properties": {"cssClasses": css},
             "labels": labels,
-            "children": [convert(child) for child in node.children],
         }
+        # the run that SIZES this node: its own sub-run when its effective
+        # hierarchyHandling is SEPARATE_CHILDREN (a packing grid, or any
+        # node inheriting the option inside one -- such sub-runs keep the
+        # elkjs default horizontal flow whatever the root direction), the
+        # enclosing INCLUDE_CHILDREN run otherwise -- mirrors
+        # toolbar._fit_compound_labels' effective-direction rule
+        own_hierarchy = layout_options.get("elk.hierarchyHandling")
+        separate = own_hierarchy == "SEPARATE_CHILDREN" if own_hierarchy else inherited_separate
+        if separate:
+            transposed = layout_options.get("elk.direction") in ("DOWN", "UP")
+        else:
+            transposed = run_transposed
+        # this node's run lays out its children in both cases
+        data["children"] = [convert(child, transposed, separate) for child in node.children]
         ports = []
         for port in getattr(node, "ports", None) or []:
             port_data: dict[str, Any] = {
@@ -1130,14 +1148,29 @@ def _to_elk_json(root: Any) -> dict:
             # ``name : Type`` labels within the part body)
             data["layoutOptions"]["elk.nodeLabels.placement"] = "H_CENTER V_TOP INSIDE"
             data["layoutOptions"]["elk.padding"] = "[top=8,left=12,bottom=12,right=12]"
-            data["layoutOptions"]["elk.nodeSize.constraints"] = (
-                "NODE_LABELS PORTS PORT_LABELS MINIMUM_SIZE"
-                if drawn_ports
-                else "NODE_LABELS MINIMUM_SIZE"
-            )
-            data["layoutOptions"]["elk.nodeSize.minimum"] = (
-                f"({max_width + 20:.0f},{cursor + 20:.0f})"
-            )
+            if transposed:
+                # elkjs (0.9.3) sizes compounds under a vertical flow in its
+                # internal horizontal coordinates: the NODE_LABELS width
+                # contribution lands on the HEIGHT and elk.nodeSize.minimum
+                # is applied swapped, as (height, width) -- so drop the
+                # transposed label contribution and pin the width through
+                # the swapped minimum (see toolbar._fit_compound_labels,
+                # the widget-pipeline half of the same fix)
+                data["layoutOptions"]["elk.nodeSize.constraints"] = (
+                    "PORTS PORT_LABELS MINIMUM_SIZE" if drawn_ports else "MINIMUM_SIZE"
+                )
+                data["layoutOptions"]["elk.nodeSize.minimum"] = (
+                    f"({cursor + 20:.0f},{max_width + 20:.0f})"
+                )
+            else:
+                data["layoutOptions"]["elk.nodeSize.constraints"] = (
+                    "NODE_LABELS PORTS PORT_LABELS MINIMUM_SIZE"
+                    if drawn_ports
+                    else "NODE_LABELS MINIMUM_SIZE"
+                )
+                data["layoutOptions"]["elk.nodeSize.minimum"] = (
+                    f"({max_width + 20:.0f},{cursor + 20:.0f})"
+                )
         else:  # leaf: snug width, uniform height (aligned boxes route
             # straighter: edges between equal-height siblings stay level)
             data["width"] = max(max_width + 16, 40.0)
@@ -1183,7 +1216,8 @@ def _to_elk_json(root: Any) -> dict:
             return identifier, identifier
         return node_id(endpoint), node_id(endpoint.get_parent())
 
-    return convert(root)
+    direction = (root.layoutOptions or {}).get("elk.direction")
+    return convert(root, run_transposed=direction in ("DOWN", "UP"))
 
 
 # ---------------------------------------------------------------------------
@@ -1483,10 +1517,12 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             x = ox + label.get("x", 0) + label.get("width", 0) / 2
             anchor = "middle"
         y = oy + label.get("y", 0) + size
+        tooltip = label.get("properties", {}).get("tooltip", "")
+        caption = f"<title>{_escape(tooltip)}</title>" if tooltip else ""
         parts.append(
             f'<text x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
-            f' text-anchor="{anchor}"{extra}>{_escape(text)}</text>'
+            f' text-anchor="{anchor}"{extra}>{caption}{_escape(text)}</text>'
         )
 
     def draw_edge(edge: dict, node_x: float, node_y: float) -> None:
