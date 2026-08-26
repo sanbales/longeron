@@ -231,7 +231,8 @@ dependency.
 @dataclass(frozen=True)
 class _Dim:
     exp: tuple[Fraction, ...]  # powers over (m, kg, s, A, K, mol, cd)
-    scale: Scale = "linear"    # Literal["linear", "log", "offset"]
+    scale: Scale = "linear"  # Literal["linear", "log", "offset"]
+
 
 def _unit_dimensions() -> dict[str, _Dim]:
     """qname -> exponent vector, derived from the vendored SI model
@@ -304,10 +305,10 @@ implementation detail; no public signature mentions it:
 ```python
 # longeron/units.py -- the [units] facade (sketch); py.typed clean
 def convert(value: float, from_unit: str, to_unit: str) -> float: ...
-def si_value(value: float, unit: str) -> float: ...   # (25.0, "°C") -> 298.15
-def si_unit(unit: str) -> str: ...                    # "min" -> "s"; "dBm" -> "W"
+def si_value(value: float, unit: str) -> float: ...  # (25.0, "°C") -> 298.15
+def si_unit(unit: str) -> str: ...  # "min" -> "s"; "dBm" -> "W"
 def format_quantity(value: float, unit: str, *, precision: int = 3) -> str: ...
-def om_unit(unit: str) -> str | None: ...             # OpenMDAO dialect; None = not expressible
+def om_unit(unit: str) -> str | None: ...  # OpenMDAO dialect; None = not expressible
 def with_units(df: pd.DataFrame, units: Mapping[str, str]) -> pd.DataFrame: ...
 ```
 
@@ -382,7 +383,7 @@ of dimensions the model actually uses:
 class Mass:
     def __add__(self, other: Mass) -> Mass: ...
     @overload
-    def __mul__(self, other: float) -> Mass: ...          # scaling is safe
+    def __mul__(self, other: float) -> Mass: ...  # scaling is safe
     @overload
     def __mul__(self, other: Acceleration) -> Force: ...  # products the model uses
     def __truediv__(self, other: Duration) -> MassFlow: ...
