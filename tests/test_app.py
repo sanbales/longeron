@@ -197,7 +197,13 @@ class TestOpen:
         app = _open_lab(monkeypatch)
         assert app._path_field.placeholder
         assert app._load_button.description == "Load"
+        # NO wordmark row (maintainer QA): the tab icon is the identity,
+        # so the panel opens straight onto the Models section header
+        first = app.children[0]
+        assert "lgx-app-section" in first.value and "Models" in first.value
+        assert app._busy_html.layout.display == "none"  # idle: no busy strip
         assert app._browse_box.layout.display == "none"  # folded until toggled
+        assert app._browse_load.disabled  # nothing selected yet
         assert app._push_bar.layout.display == "none"
         assert app._api_project.disabled and app._api_fetch.disabled
         # the empty list shows a hint, not zero children
@@ -405,7 +411,9 @@ class TestRows:
         assert explore_btn.description == "Explore"
         # drone.sysml has a requirement DEF but no usages: not scoreable
         assert score_btn.disabled
-        assert save_btn.description == "Save" and not save_btn.disabled
+        # Save is dirty-gated: a freshly loaded model has nothing to save
+        assert save_btn.description == "Save" and save_btn.disabled
+        assert "No unsaved edits" in save_btn.tooltip
         assert close_btn.description == "\u2715"
         assert model is app.current_model
 
@@ -668,15 +676,16 @@ class TestApiFold:
 # ---------------------------------------------------------------------------
 
 
-class TestBrowse:
-    @pytest.fixture()
-    def tree(self, tmp_path):
-        (tmp_path / "models").mkdir()
-        (tmp_path / "models" / "a.sysml").write_text("package A {}", encoding="utf-8")
-        (tmp_path / "models" / "notes.txt").write_text("not a model", encoding="utf-8")
-        (tmp_path / ".hidden").mkdir()
-        return tmp_path
+@pytest.fixture()
+def tree(tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "a.sysml").write_text("package A {}", encoding="utf-8")
+    (tmp_path / "models" / "notes.txt").write_text("not a model", encoding="utf-8")
+    (tmp_path / ".hidden").mkdir()
+    return tmp_path
 
+
+class TestBrowse:
     def test_toggle_reveals_the_listing(self, monkeypatch, tree):
         app = _open_lab(monkeypatch)
         app._browse_dir = tree
@@ -693,21 +702,130 @@ class TestBrowse:
         app = _open_lab(monkeypatch)
         app._browse_dir = tree
         app._browse_toggle.value = True
-        app._browse_select.value = "dir:models"
+        app._browse_select.value = ("dir:models",)
         assert app._browse_dir == tree / "models"
         labels = [label for label, _ in app._browse_select.options]
         assert "a.sysml" in labels
-        app._browse_select.value = "file:a.sysml"
+        app._browse_select.value = ("file:a.sysml",)
         assert app._path_field.value == str(tree / "models" / "a.sysml")
 
     def test_up_and_load_this_folder(self, monkeypatch, tree):
         app = _open_lab(monkeypatch)
         app._browse_dir = tree / "models"
         app._browse_toggle.value = True
-        app._browse_select.value = "::up::"
+        app._browse_select.value = ("::up::",)
         assert app._browse_dir == tree
-        app._browse_select.value = "::dir::"
+        app._browse_select.value = ("::dir::",)
         assert app._path_field.value == str(tree)
+
+    def test_crumb_carries_the_full_path_tooltip(self, monkeypatch, tree):
+        app = _open_lab(monkeypatch)
+        app._browse_dir = tree
+        app._browse_toggle.value = True
+        # long paths ellipsize (CSS); the tooltip carries the full path
+        assert f'title="{tree}"' in app._browse_crumb.value
+
+    def test_multi_select_enables_load_selected(self, monkeypatch, tree):
+        (tree / "models" / "b.sysml").write_text("package B { part b; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        app._browse_dir = tree / "models"
+        app._browse_toggle.value = True
+        assert app._browse_load.disabled  # nothing picked yet
+        app._browse_select.value = ("file:a.sysml",)
+        assert not app._browse_load.disabled
+        # the SINGLE pick still fills the path field (the simple case)
+        assert app._path_field.value == str(tree / "models" / "a.sysml")
+        app._path_field.value = "untouched"
+        app._browse_select.value = ("file:a.sysml", "file:b.sysml")
+        assert not app._browse_load.disabled
+        # a MULTI pick belongs to 'Load selected': the path field is left alone
+        assert app._path_field.value == "untouched"
+
+    def test_load_selected_loads_each_file(self, monkeypatch, tree):
+        (tree / "models" / "b.sysml").write_text("package B { part b; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        app._browse_dir = tree / "models"
+        app._browse_toggle.value = True
+        app._browse_select.value = ("file:a.sysml", "file:b.sysml")
+        app._browse_load.click()
+        assert [entry.origin for entry in app.entries] == ["file", "file"]
+        sources = {Path(entry.source).name for entry in app.entries}
+        assert sources == {"a.sysml", "b.sysml"}
+        assert "loaded 2 models" in app._status_html.value
+
+    def test_load_selected_ignores_directory_rows(self, monkeypatch, tree):
+        app = _open_lab(monkeypatch)
+        app._browse_dir = tree
+        app._browse_toggle.value = True
+        # only non-file rows picked: the action stays disabled and the
+        # programmatic surface refuses honestly
+        app._browse_select.value = ("::dir::",)
+        assert app._browse_load.disabled
+        with pytest.raises(SysMLError, match="select one or more model files"):
+            app.load_selected()
+
+
+# ---------------------------------------------------------------------------
+# the busy strip (loads take seconds; silence reads as a dead click)
+# ---------------------------------------------------------------------------
+
+
+class TestBusyIndicator:
+    def test_busy_strip_shows_during_a_load(self, monkeypatch, tmp_path):
+        source = tmp_path / "m.sysml"
+        source.write_text("package Mini { part p; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        observed = {}
+        real = app_module.workspace.load
+
+        def spy(target):
+            # capture the UI state WHILE the (synchronous) load runs:
+            # trait writes reach the browser immediately, so this is
+            # exactly what the user sees during a slow load
+            observed["display"] = app._busy_html.layout.display
+            observed["text"] = app._busy_html.value
+            observed["load_disabled"] = app._load_button.disabled
+            observed["browse_load_disabled"] = app._browse_load.disabled
+            return real(target)
+
+        monkeypatch.setattr(app_module.workspace, "load", spy)
+        app.load_path(source)
+        assert observed["display"] is None  # the strip was visible mid-load
+        assert "loading m.sysml" in observed["text"]
+        assert "lgx-app-busy-bar" in observed["text"]  # the animated bar
+        assert observed["load_disabled"] and observed["browse_load_disabled"]
+        # and everything resets once the load lands
+        assert app._busy_html.layout.display == "none"
+        assert app._busy_html.value == ""
+        assert not app._load_button.disabled
+
+    def test_busy_strip_clears_when_the_load_fails(self, monkeypatch, tmp_path):
+        bad = tmp_path / "broken.sysml"
+        bad.write_text("part {", encoding="utf-8")  # unparseable
+        app = _open_lab(monkeypatch)
+        with pytest.raises(SysMLError):
+            app.load_path(bad)
+        assert app._busy_html.layout.display == "none"
+        assert not app._load_button.disabled
+
+    def test_load_selected_wraps_the_batch_in_one_strip(self, monkeypatch, tree):
+        (tree / "models" / "b.sysml").write_text("package B { part b; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        app._browse_dir = tree / "models"
+        app._browse_toggle.value = True
+        app._browse_select.value = ("file:a.sysml", "file:b.sysml")
+        depths = []
+        real = app_module.workspace.load
+
+        def spy(target):
+            depths.append(app._busy_depth)  # outer batch strip + inner load
+            return real(target)
+
+        monkeypatch.setattr(app_module.workspace, "load", spy)
+        app.load_selected()
+        assert depths == [2, 2]  # nested: the strip never flickered off
+        assert app._busy_depth == 0
+        assert app._busy_html.layout.display == "none"
 
 
 # ---------------------------------------------------------------------------

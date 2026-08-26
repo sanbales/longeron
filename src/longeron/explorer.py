@@ -1711,6 +1711,39 @@ class Explorer(W.HBox):
             self.tree.selected = selected
         return view
 
+    def refresh(self) -> None:
+        """Re-read the model after an edit: rebuild the tree, re-render.
+
+        The app calls this on its launched explorers after a
+        :mod:`longeron.edit` rename or value edit (the tree's labels,
+        qualified-name node ids, and the diagrams' drawn labels may all
+        be stale).  The tree payload rebuilds wholesale
+        (:func:`_tree_data` + ``set_nodes`` -- the cheapest correct
+        hook); the resolver is rebuilt too, because renames invalidate
+        its resolution caches.  Every CACHED diagram is dropped and the
+        current selection re-rendered through the normal ``_show`` path;
+        the previously built widgets stay in the diagram box as hidden
+        children -- removing them would zombie their live browser views
+        (see :meth:`_show`) -- but the cache drop guarantees a stale
+        diagram is never shown again.  Selection is preserved by element
+        IDENTITY (its qualified name may have changed); an element that
+        left the tree falls back to the root.
+        """
+
+        selected = list(self.tree.selected)
+        keep = self._index.get(selected[0]) if selected else self._element
+        self._resolver = Interpreter(self.model).resolver
+        nodes, index = _tree_data(self.model)
+        self._index = index
+        self._ids = {id(el): nid for nid, el in index.items()}
+        self._root_id = nodes[0]["id"]
+        self.tree.set_nodes(nodes)
+        self._diagrams.clear()
+        self._diagram_ids.clear()
+        self._req_cache.clear()
+        node_id = self._ids.get(id(keep)) if keep is not None else None
+        self._apply_selection(node_id or self._root_id, origin="api")
+
     # -- selection plumbing (idempotent at every hop; see module docstring) ---
 
     def _kinds_for(self, element: M.Element) -> tuple[str, ...]:

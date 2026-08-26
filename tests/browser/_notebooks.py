@@ -426,15 +426,16 @@ print(json.dumps({
 
 
 def app_notebook() -> dict[str, Any]:
-    """Scenario: the sidebar model app (longeron.app).
+    """Scenario: the sidebar model app (longeron.app) + its item inspector.
 
     Cell 1 opens the app; cell 2 RE-opens it, so every run-all exercises
-    the same-kernel replace path (the test asserts exactly ONE left tab
-    carries the ``longeron-app`` dock key).  The test then drives the
-    LIVE panel -- types a path, clicks Load, clicks Explore -- and the
-    checker cell reports the kernel-side truth: the entries list, the
-    current model, and the inspector-seam element the launched explorer
-    delivered.
+    the same-kernel replace path for BOTH panels (the tests assert
+    exactly ONE left tab carries the ``longeron-app`` dock key and ONE
+    right tab carries ``longeron-inspector``).  The tests then drive the
+    LIVE panels -- load a model, launch an explorer, click a tree row,
+    edit through the inspector's sheet -- and the checker cell reports
+    the kernel-side truth: the entries list, the current model, the
+    inspector-seam element, and the current model's tracker dirtiness.
     """
 
     return _notebook(
@@ -464,12 +465,20 @@ current = next(
     ),
     None,
 )
+from longeron import edit
+
+dirty = (
+    edit.track(application.current_model).dirty
+    if application.current_model is not None
+    else False
+)
 print(json.dumps({
     "models": [Path(entry.source).name for entry in application.entries],
     "origins": [entry.origin for entry in application.entries],
     "current": current,
     "explorers": len(application.explorers),
     "element": element.qualified_name if element is not None else None,
+    "dirty": dirty,
 }))
 """,
     )

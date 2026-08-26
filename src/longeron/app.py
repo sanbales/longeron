@@ -12,14 +12,18 @@ The sidebar has one MODELS section:
 
 * a **path field + Load button** loads a ``.sysml``/``.kerml``/``.json``
   file or a whole directory through :func:`longeron.load` (which
-  dispatches to :func:`~longeron.workspace.load_dir` for directories).
-  A **Browse** toggle reveals a small server-side directory listing --
+  dispatches to :func:`~longeron.workspace.load_dir` for directories);
+  while a load runs, an indeterminate **busy strip** replaces silence
+  (big files take seconds) and the Load buttons disable.  A **Browse**
+  toggle reveals a small server-side directory listing --
   JupyterLab has no OS file dialog, and its ``filebrowser:*`` commands
   navigate the FILE BROWSER (they cannot return a selection to the
   kernel), so the least fragile picker is the kernel's own filesystem:
-  selecting a directory descends into it, selecting a file fills the
-  path field, and the ``<load this folder>`` row targets the directory
-  itself;
+  selecting a directory descends into it, selecting a single file fills
+  the path field, and the ``<load this folder>`` row targets the
+  directory itself.  The listing is MULTI-select (ctrl/cmd-click):
+  **Load selected** loads every picked file at once, one models-list
+  entry each;
 * a **Connect to API...** fold drives :class:`longeron.client.Client`
   against any Systems Modeling API server (``longeron serve``, the OMG
   pilot, Flexo per ``docs/design/openmbee-integration.md``): URL +
@@ -38,6 +42,22 @@ The sidebar has one MODELS section:
   :meth:`~longeron.client.Client.push_commit`; the closing ``x`` drops
   the row.
 
+DIRTY / SAVE / PUSH.  Every loaded model is change-tracked: the app
+calls :func:`longeron.edit.track` when a model joins the list and
+listens to its tracker.  Any committed ``edit.*`` operation -- from the
+docked item inspector (:mod:`longeron.inspector`) or a notebook cell --
+marks the model's row dirty (a ``\u25cf`` dot; the row tooltip lists
+the unsaved changes), and a rename or value edit also refreshes the
+trees and diagrams of the app-launched explorer tabs on that model
+(:meth:`ModelApp.refresh_explorers` -> :meth:`longeron.explorer.
+Explorer.refresh`; scoreboard tabs deliberately do NOT refresh -- their
+MAUT numbers are a snapshot).  **Save** and **Push** are DISABLED until
+the tracker is dirty; a successful save/push calls
+:meth:`~longeron.edit.Tracker.mark_saved`, clearing the dot and
+disabling the buttons again.  Direct model mutation (bypassing
+:mod:`longeron.edit`) is invisible to this chrome by design --
+:meth:`ModelApp.save_model` still saves it programmatically.
+
 Docking is IDEMPOTENT exactly like the explorer's (one panel, replaced
 never stacked), by the same two cooperating mechanisms keyed by the
 constant ``longeron-app`` identity: a module-level registry closes the
@@ -54,8 +74,9 @@ reveals the panel on open (``activate=True``): JupyterLab's shell does
 not activate left-area additions, so the sweeper clicks the app's own
 tab -- once, verified against the panel's visibility.
 
-THE INSPECTOR SEAM (the contract a parallel item-inspector attaches to,
-without touching this module's internals):
+THE INSPECTOR SEAM (the contract the item inspector --
+:mod:`longeron.inspector`, built by :func:`open` and docked into the
+RIGHT sidebar -- attaches to, without touching this module's internals):
 
 * ``app.current_model`` -- the most recently loaded/selected
   :class:`~longeron.model.Model` (``None`` before the first load), and
@@ -74,7 +95,11 @@ without touching this module's internals):
   pair ``(current_model, current_element)``;
 * ``app.models`` / ``app.entries`` / ``app.explorers`` enumerate the
   loaded models, their source records, and the launched explorer
-  widgets.
+  widgets; :meth:`ModelApp.select_element` is the seam's write half --
+  programmatic selection that routes through an app-launched explorer
+  of the element's model when one exists (tree reveal + diagram
+  highlight), else feeds the seam directly (how the inspector's
+  clickable relationship-endpoint rows navigate).
 
 Command palette: :func:`open` registers ``longeron:open-app`` (category
 *Longeron*) through ipylab's command registry when it can; executing it
@@ -83,7 +108,11 @@ stale entry from a dead kernel is replaced (the ipylab frontend disposes
 same-id commands on re-add), and any registration failure is swallowed
 -- the panel itself never depends on it.  A dead kernel's palette ITEM
 can linger until its command is re-registered; ipylab exposes no
-palette-item removal.
+palette-item removal.  (A JupyterLab LAUNCHER tile was investigated and
+is NOT reachable from the kernel: ipylab 1.1 ships no ``ILauncher``
+surface at all -- its frontend plugin depends only on apputils/mainmenu/
+notebook -- so a tile needs a tiny static labextension; see the final
+design notes.)
 
 Headless (``layout='auto'`` outside a Lab frontend, or
 ``layout='inline'``) the SAME widget renders inline in the cell output
@@ -111,7 +140,7 @@ except ImportError as _err:  # pragma: no cover - exercised without anywidget
 
     raise MissingExtraError("longeron.app", "anywidget", "replay") from _err
 
-from . import export, workspace
+from . import edit, export, workspace
 from . import model as M
 from .analysis.scoreboard import _root_requirements
 from .analysis.scoreboard import scoreboard as _build_scoreboard
@@ -191,10 +220,12 @@ def _resolve_layout(choice: str) -> str:
 # the sidebar sweeper: identity, orphan sweep, reveal (see module docstring)
 # ---------------------------------------------------------------------------
 
-# The left-sidebar sibling of the explorer's ``_DockSweeper``, same
-# identity idiom (``data-lgxkey``/``data-lgxstamp`` on the tab, stamps
-# strictly increase, BigInt because time_ns exceeds 2^53), different
-# close path: sidebar tabs render no close icon, so stale tabs are closed
+# The sidebar sibling of the explorer's ``_DockSweeper`` (the ``side``
+# trait picks the LEFT tab bar for the app panel, the RIGHT one for the
+# inspector's -- ipylab wires tabCloseRequested identically for both),
+# same identity idiom (``data-lgxkey``/``data-lgxstamp`` on the tab,
+# stamps strictly increase, BigInt because time_ns exceeds 2^53),
+# different close path: sidebar tabs render no close icon, so stale tabs are closed
 # with a synthetic MIDDLE-button pointer sequence -- lumino's TabBar
 # emits ``tabCloseRequested`` for a middle-click on a closable tab
 # (verified in the shipped lumino bundle), and ipylab connects that
@@ -212,13 +243,16 @@ function render({ model, el }) {
   el.style.display = "none";
   const key = model.get("key");
   const stamp = BigInt(model.get("stamp"));
+  const side = model.get("side") || "left";
   let revealed = false;
   let revealAttempts = 0;
   const tabs = () => [
-    ...document.querySelectorAll(".jp-SideBar.jp-mod-left .lm-TabBar-tab[data-lgxkey]"),
+    ...document.querySelectorAll(
+      `.jp-SideBar.jp-mod-${side} .lm-TabBar-tab[data-lgxkey]`,
+    ),
   ];
   const ownPanel = () =>
-    el.closest(".jp-SideAreaWidget") || el.closest("#jp-left-stack > .lm-Widget");
+    el.closest(".jp-SideAreaWidget") || el.closest(`#jp-${side}-stack > .lm-Widget`);
   const tagOwnPanel = () => {
     const panel = ownPanel();
     if (!panel) return;
@@ -306,25 +340,40 @@ export default { render };
 
 # House look on Lab CSS variables (plain-light fallbacks), riding the
 # sweeper so it is injected exactly when the panel renders.  Compact:
-# the left sidebar is ~280px wide.
+# the left sidebar is ~280px wide.  The min-width/overflow rules exist
+# because flex children default to min-width:auto -- a long path in the
+# text field, a long crumb, or a wide listing otherwise forces the whole
+# panel into a horizontal scrollbar (the ipywidgets flexbox footgun);
+# everything long ellipsizes with the full text on a title tooltip.
 _APP_CSS = """
 .lgx-app-host {
-  height: 100%; overflow-y: auto; padding: 8px 10px; box-sizing: border-box;
+  height: 100%; overflow-y: auto; overflow-x: hidden;
+  padding: 8px 10px; box-sizing: border-box;
   font-family: var(--jp-ui-font-family, system-ui, sans-serif);
   color: var(--jp-ui-font-color1, #333333);
   background: var(--jp-layout-color1, #ffffff);
 }
+.lgx-app-host .widget-box { min-width: 0; overflow-x: hidden; }
+/* full-width children must not ADD their stock 2px side margins on top of
+   width:100% (4px of guaranteed horizontal overflow otherwise -- the same
+   correction Jupyter applies via .jp-Output-result > .jupyter-widgets) */
+.lgx-app-host > .jupyter-widgets,
+.lgx-app-host .lgx-app-list > .jupyter-widgets,
+.lgx-app-host .lgx-app-row > .jupyter-widgets {
+  margin-left: 0; margin-right: 0;
+}
+.lgx-app-host input,
+.lgx-app-host select,
+.lgx-app-host textarea { box-sizing: border-box; }
+.lgx-app-host .widget-text,
+.lgx-app-host .widget-password,
+.lgx-app-host .widget-select-multiple { min-width: 0; }
 .lgx-app-host .widget-text input,
 .lgx-app-host .widget-password input {
-  font-size: 12px;
+  font-size: 12px; min-width: 0;
 }
-.lgx-app-brand {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.08em;
-  padding: 2px 0 0;
-}
-.lgx-app-brand small {
-  display: block; font-weight: 400; letter-spacing: normal;
-  color: var(--jp-ui-font-color2, #666666); font-size: 11px; margin-top: 1px;
+.lgx-app-host .widget-select-multiple select {
+  min-width: 0; max-width: 100%; font-size: 12px;
 }
 .lgx-app-section {
   font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em;
@@ -332,14 +381,43 @@ _APP_CSS = """
   margin: 10px 0 2px; border-bottom: 1px solid var(--jp-border-color2, #e0e0e0);
   padding-bottom: 2px;
 }
-.lgx-app-status { font-size: 11px; line-height: 1.5; min-height: 17px; }
+.lgx-app-status { font-size: 11px; line-height: 1.5; min-height: 17px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.lgx-app-status span { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; display: inline-block; max-width: 100%; }
 .lgx-app-status .lgx-ok { color: var(--jp-success-color0, #1b7d2c); }
 .lgx-app-status .lgx-error { color: var(--jp-error-color0, #b0413e); }
 .lgx-app-status .lgx-info { color: var(--jp-ui-font-color2, #666666); }
 .lgx-app-crumb {
   font-size: 11px; color: var(--jp-ui-font-color2, #666666);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%; min-width: 0;
 }
+/* the ellipsis must land on the CONTENT element: ipywidgets puts the
+   class on the wrapper, and an unconstrained inner div still overflows
+   the sidebar (the 70px-overflow tripwire's finding) */
+.lgx-app-crumb .widget-html-content,
+.lgx-app-status .widget-html-content {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%; display: block;
+}
+.lgx-app-busy {
+  display: flex; align-items: center; gap: 6px; padding: 2px 0;
+  font-size: 11px; color: var(--jp-ui-font-color2, #666666);
+}
+.lgx-app-busy .lgx-app-busy-text {
+  flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lgx-app-busy .lgx-app-busy-bar {
+  position: relative; flex: 1 1 40px; height: 4px; border-radius: 2px;
+  overflow: hidden; background: var(--jp-layout-color3, #e0e0e0);
+}
+.lgx-app-busy .lgx-app-busy-bar::after {
+  content: ""; position: absolute; left: -40%; width: 40%; height: 100%;
+  border-radius: 2px; background: var(--jp-brand-color1, #1976d2);
+  animation: lgx-app-busy-slide 1.1s linear infinite;
+}
+@keyframes lgx-app-busy-slide { to { left: 100%; } }
 .lgx-app-row {
   display: flex; flex-direction: column; gap: 1px; width: 100%;
   padding: 3px 0 4px;
@@ -361,6 +439,9 @@ _APP_CSS = """
   background: var(--jp-layout-color2, #f2f2f2);
   font-weight: 700;
 }
+.lgx-app-host .jupyter-button.lgx-app-name.lgx-app-dirty {
+  color: var(--jp-warn-color0, #9a6700);
+}
 .lgx-app-empty {
   font-size: 11.5px; color: var(--jp-ui-font-color2, #888888);
   font-style: italic; padding: 2px 0;
@@ -381,12 +462,15 @@ class _AppSweeper(anywidget.AnyWidget):
     Lab shell does not activate left-area additions).  :attr:`swept`
     counts verified orphan closures; bumping :attr:`poke` re-runs the
     reveal (how the ``longeron:open-app`` command surfaces the panel).
+    :attr:`side` picks the sidebar (``left`` here; the inspector's
+    subclass docks ``right`` -- same tab mechanics on both sides).
     """
 
     _esm = _APP_SWEEPER_ESM
     _css = _APP_CSS
 
     key = T.Unicode("", help="the dock key this sweeper guards").tag(sync=True)
+    side = T.Unicode("left", help="which sidebar the panel docks into").tag(sync=True)
     stamp = T.Unicode("", help="this panel's birth stamp (time_ns)").tag(sync=True)
     swept = T.Int(0, help="how many stale panels this sweeper closed").tag(sync=True)
     activate = T.Bool(True, help="reveal the panel once it attaches").tag(sync=True)
@@ -438,11 +522,14 @@ class ModelApp(W.VBox):
     #: the sweeper joins the panel -- needs an explicit type here
     children: Any
 
-    def __init__(self, *, layout: str = "auto", activate: bool = True) -> None:
+    def __init__(
+        self, *, layout: str = "auto", activate: bool = True, inspector: bool = True
+    ) -> None:
         self.layout_strategy = _resolve_layout(layout)
         self._activate = bool(activate)
         self._entries: list[ModelEntry] = []
         self._explorers: list[Explorer] = []
+        self._watched: set[int] = set()  # models whose tracker we listen to (by id)
         self._current_model: M.Model | None = None
         self._current_element: M.Element | None = None
         self._model_callbacks: list[Callable[[M.Model | None], None]] = []
@@ -462,17 +549,26 @@ class ModelApp(W.VBox):
         if self.layout_strategy == "lab":
             self._dock_in_sidebar()
 
+        # the item inspector consumes the seam above and docks RIGHT; built
+        # last so it observes a fully-assembled app (import is lazy: the
+        # inspector module imports this one for the sweeper base class)
+        self.inspector: Any = None
+        if inspector:
+            from .inspector import Inspector
+
+            self.inspector = Inspector(self)
+
     # -- content ---------------------------------------------------------------
 
     def _build_content(self) -> list[Any]:
-        brand = W.HTML(
-            '<div class="lgx-app-brand">LONGERON'
-            "<small>SysML v2 models: load, explore, score, save</small></div>"
-        )
-
+        # NO wordmark row: the sidebar tab's monogram icon is the identity
+        # (maintainer QA); the panel opens straight onto the Models section.
+        # Inputs are 98%-wide, never 100%: 100% + padding/border overflows
+        # the flex box and buys the whole panel a horizontal scrollbar (the
+        # house trick, backed up by the box-sizing/min-width CSS).
         self._path_field = W.Text(
             placeholder="path to a .sysml/.json file or a model directory",
-            layout=W.Layout(width="100%", flex="1 1 0"),
+            layout=W.Layout(width="98%", flex="1 1 0"),
         )
         self._path_field.add_class("lgx-app-path")
         self._load_button = W.Button(
@@ -483,6 +579,10 @@ class ModelApp(W.VBox):
         self._load_button.add_class("lgx-app-load")
         self._load_button.on_click(lambda _b: self._guard("load", self.load_path, None))
 
+        self._busy_html = W.HTML(layout=W.Layout(width="98%", display="none"))
+        self._busy_html.add_class("lgx-app-busy-row")
+        self._busy_depth = 0
+
         self._browse_toggle = W.ToggleButton(
             value=False,
             description="Browse\u2026",
@@ -492,13 +592,27 @@ class ModelApp(W.VBox):
         self._browse_toggle.add_class("lgx-app-browse-toggle")
         self._browse_crumb = W.HTML()
         self._browse_crumb.add_class("lgx-app-crumb")
-        self._browse_select = W.Select(
-            options=(), rows=8, layout=W.Layout(width="100%"), disabled=False
+        # MULTI-select (ctrl/cmd-click): 'Load selected' loads every picked
+        # file at once; a SINGLE pick keeps the old fill-the-path behavior
+        self._browse_select = W.SelectMultiple(
+            options=(), rows=8, layout=W.Layout(width="98%"), disabled=False
         )
         self._browse_select.add_class("lgx-app-browser")
         self._browse_select.observe(self._on_browse_pick, "value")
+        self._browse_load = W.Button(
+            description="Load selected",
+            disabled=True,
+            tooltip="Load every selected file; each becomes its own models-list entry",
+            layout=W.Layout(width="auto"),
+        )
+        self._browse_load.add_class("lgx-app-browse-load")
+        self._browse_load.on_click(lambda _b: self._guard("load", self.load_selected))
         self._browse_box = W.VBox(
-            [self._browse_crumb, self._browse_select],
+            [
+                self._browse_crumb,
+                self._browse_select,
+                W.HBox([self._browse_load], layout=W.Layout(width="100%")),
+            ],
             layout=W.Layout(width="100%", display="none"),
         )
         self._browse_toggle.observe(self._on_browse_toggle, "value")
@@ -511,7 +625,7 @@ class ModelApp(W.VBox):
 
         self._push_message = W.Text(
             placeholder="commit message",
-            layout=W.Layout(width="100%", flex="1 1 0"),
+            layout=W.Layout(width="98%", flex="1 1 0"),
         )
         self._push_message.add_class("lgx-app-push-message")
         push_confirm = W.Button(
@@ -533,12 +647,12 @@ class ModelApp(W.VBox):
         self._refresh_list()
 
         return [
-            brand,
             W.HTML('<div class="lgx-app-section">Models</div>'),
             W.HBox(
                 [self._path_field, self._load_button],
                 layout=W.Layout(width="100%", align_items="center"),
             ),
+            self._busy_html,
             W.HBox([self._browse_toggle], layout=W.Layout(width="100%")),
             self._browse_box,
             self._build_api_section(),
@@ -551,12 +665,12 @@ class ModelApp(W.VBox):
         self._api_url = W.Text(
             value="http://localhost:9000",
             placeholder="Systems Modeling API server URL",
-            layout=W.Layout(width="100%"),
+            layout=W.Layout(width="98%"),
         )
         self._api_url.add_class("lgx-app-api-url")
         self._api_token = W.Password(
             placeholder="bearer token (optional; Flexo JWT)",
-            layout=W.Layout(width="100%"),
+            layout=W.Layout(width="98%"),
         )
         self._api_token.add_class("lgx-app-api-token")
         self._api_connect = W.Button(
@@ -566,10 +680,10 @@ class ModelApp(W.VBox):
         )
         self._api_connect.add_class("lgx-app-api-connect")
         self._api_connect.on_click(lambda _b: self._guard("connect", self.connect_api))
-        self._api_project = W.Dropdown(options=(), disabled=True, layout=W.Layout(width="100%"))
+        self._api_project = W.Dropdown(options=(), disabled=True, layout=W.Layout(width="98%"))
         self._api_project.add_class("lgx-app-api-project")
         self._api_project.observe(self._on_project_change, "value")
-        self._api_commit = W.Dropdown(options=(), disabled=True, layout=W.Layout(width="100%"))
+        self._api_commit = W.Dropdown(options=(), disabled=True, layout=W.Layout(width="98%"))
         self._api_commit.add_class("lgx-app-api-commit")
         self._api_fetch = W.Button(
             description="Fetch model",
@@ -598,7 +712,9 @@ class ModelApp(W.VBox):
     # -- status + guarding -------------------------------------------------------
 
     def _status(self, text: str, kind: str = "info") -> None:
-        self._status_html.value = f'<span class="lgx-{kind}">{escape(text)}</span>'
+        self._status_html.value = (
+            f'<span class="lgx-{kind}" title="{escape(text)}">{escape(text)}</span>'
+        )
 
     def _guard(self, action: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run a UI action; failures land in the status line, never raise."""
@@ -608,6 +724,32 @@ class ModelApp(W.VBox):
         except Exception as err:
             self._status(f"{action} failed: {err}", kind="error")
             return None
+
+    # -- the busy strip (loads take seconds on big files; silence reads as
+    # -- a dead click.  Trait writes reach the browser IMMEDIATELY -- comm
+    # -- messages are sent as the traits change, and the frontend renders
+    # -- them while the kernel keeps working -- so showing the strip before
+    # -- a synchronous load genuinely animates during it.  Depth-counted:
+    # -- 'Load selected' wraps several single loads in one outer strip.
+
+    def _set_busy(self, text: str) -> None:
+        self._busy_depth += 1
+        self._busy_html.value = (
+            f'<div class="lgx-app-busy"><span class="lgx-app-busy-text">{escape(text)}</span>'
+            '<span class="lgx-app-busy-bar"></span></div>'
+        )
+        self._busy_html.layout.display = None
+        self._load_button.disabled = True
+        self._browse_load.disabled = True
+
+    def _clear_busy(self) -> None:
+        self._busy_depth = max(0, self._busy_depth - 1)
+        if self._busy_depth:
+            return
+        self._busy_html.layout.display = "none"
+        self._busy_html.value = ""
+        self._load_button.disabled = False
+        self._sync_browse_load(list(self._browse_select.value))
 
     # -- the inspector seam (module docstring: THE INSPECTOR SEAM) ---------------
 
@@ -687,12 +829,38 @@ class ModelApp(W.VBox):
         target = Path(raw).expanduser()
         if not target.exists():
             raise SysMLError(f"no such file or directory: {target}")
-        model = workspace.load(target)
+        self._set_busy(f"loading {target.name or target}\u2026")
+        try:
+            model = workspace.load(target)
+        finally:
+            self._clear_busy()
         origin = "dir" if target.is_dir() else "file"
         entry = ModelEntry(model=model, source=str(target), origin=origin, path=target)
         self._add_entry(entry)
         self._status(f"loaded {_display_name(model)} from {target}", kind="ok")
         return model
+
+    def load_selected(self) -> list[M.Model]:
+        """Load every FILE selected in the browse listing, one entry each.
+
+        The multi-select path (ctrl/cmd-click in the listing, then the
+        **Load selected** button): every picked ``file:`` row loads
+        through :meth:`load_path` and becomes its own models-list entry;
+        directory rows in the selection are ignored (descending is a
+        single-pick gesture).  One busy strip covers the whole batch.
+        """
+
+        picked = [value for value in self._browse_select.value if value.startswith("file:")]
+        if not picked:
+            raise SysMLError("select one or more model files in the listing first")
+        self._set_busy(f"loading {len(picked)} file(s)\u2026")
+        try:
+            models = [self.load_path(self._browse_dir / value[5:]) for value in picked]
+        finally:
+            self._clear_busy()
+        if len(models) > 1:
+            self._status(f"loaded {len(models)} models from {self._browse_dir}", kind="ok")
+        return models
 
     def add_model(self, model: M.Model, *, source: str | None = None) -> M.Model:
         """Adopt an in-memory model (origin ``"text"``; Save disabled)."""
@@ -730,8 +898,74 @@ class ModelApp(W.VBox):
     def _add_entry(self, entry: ModelEntry) -> None:
         self._entries = [e for e in self._entries if e.source != entry.source]
         self._entries.append(entry)
+        self._watch(entry.model)
         self._set_current_model(entry.model)
         self._refresh_list()
+
+    def _watch(self, model: M.Model) -> None:
+        """Track edits to a loaded model (idempotent per model object).
+
+        The tracker callback is how EVERY ``longeron.edit`` mutation --
+        the inspector's commits, a notebook cell -- reaches the app's
+        chrome: the row grows its dirty dot (Save/Push enable), and a
+        rename or value edit refreshes the launched explorer tabs.
+        """
+
+        if id(model) in self._watched:
+            return
+        self._watched.add(id(model))
+
+        def deliver(change: edit.Change, m: M.Model = model) -> None:
+            self._on_model_edit(m, change)
+
+        edit.track(model).on_change(deliver)
+
+    def _on_model_edit(self, model: M.Model, change: edit.Change) -> None:
+        if change.op in ("rename", "set_value"):
+            # qualified names / value rows moved: launched explorer tabs
+            # rebuild their trees and re-render the shown diagram; a
+            # refresh failure must never break the edit that caused it
+            self._guard("refresh", self.refresh_explorers, model)
+        self._refresh_list()
+
+    def refresh_explorers(self, model: M.Model) -> None:
+        """Refresh every APP-LAUNCHED explorer tab showing ``model``.
+
+        The bounded blast radius of a model edit (module docstring):
+        explorers this app launched rebuild their tree payload and the
+        selection's diagram (:meth:`longeron.explorer.Explorer.refresh`);
+        independently-created explorers and scoreboard tabs are left
+        alone.
+        """
+
+        for ex in self._explorers:
+            if ex.model is model:
+                ex.refresh()
+
+    def select_element(self, element: M.Element) -> None:
+        """Select ``element`` programmatically (the seam's write half).
+
+        Routes through the most recently launched explorer of the
+        element's model when one exists -- the tree reveals the element
+        and the diagram highlights it, and the explorer's own selection
+        hook feeds the seam back.  Without an explorer the seam updates
+        directly, so the inspector still follows.
+        """
+
+        root: M.Element = element
+        while root.owner is not None:
+            root = root.owner
+        model = root if isinstance(root, M.Model) else None
+        if model is not None:
+            for ex in reversed(self._explorers):
+                if ex.model is model:
+                    try:
+                        ex.select(element)
+                    except KeyError:
+                        break  # not in that tree (filtered kind): seam fallback
+                    else:
+                        return
+        self._set_current_element(element, model=model)
 
     def _refresh_list(self) -> None:
         if not self._entries:
@@ -741,12 +975,22 @@ class ModelApp(W.VBox):
         self._list_box.children = tuple(self._row(entry) for entry in self._entries)
 
     def _row(self, entry: ModelEntry) -> Any:
+        tracker = edit.track(entry.model)
+        dirty = tracker.dirty
+        tooltip = f"{entry.origin}: {entry.source}"
+        if dirty:
+            listed = "\n".join(
+                f"\u2022 {self._change_summary(change)}" for change in tracker.changes[-6:]
+            )
+            tooltip += f"\nunsaved changes ({len(tracker.changes)}):\n{listed}"
         name = W.Button(
-            description=_display_name(entry.model),
-            tooltip=f"{entry.origin}: {entry.source}",
+            description=_display_name(entry.model) + (" \u25cf" if dirty else ""),
+            tooltip=tooltip,
             layout=W.Layout(width="100%"),
         )
         name.add_class("lgx-app-name")
+        if dirty:
+            name.add_class("lgx-app-dirty")
         if entry.model is self._current_model:
             name.add_class("lgx-app-current")
         name.on_click(lambda _b, e=entry: self._set_current_model(e.model))
@@ -774,21 +1018,30 @@ class ModelApp(W.VBox):
         if entry.origin == "api":
             save_btn = W.Button(
                 description="Push",
-                tooltip="Push the model back to the API server as a commit",
+                disabled=not dirty,
+                tooltip=(
+                    "Push the model back to the API server as a commit"
+                    if dirty
+                    else "No unsaved edits (longeron.edit) to push"
+                ),
             )
             save_btn.add_class("lgx-app-push")
             save_btn.on_click(lambda _b, e=entry: self._show_push_bar(e))
         else:
             can_save = entry.origin == "file"
+            if not can_save:
+                save_tip = (
+                    "No single source file to save back to "
+                    "(use app.save_model(model, path=...) for a save-as)"
+                )
+            elif not dirty:
+                save_tip = "No unsaved edits (longeron.edit) to save"
+            else:
+                save_tip = f"Write the model back to {entry.source}"
             save_btn = W.Button(
                 description="Save",
-                disabled=not can_save,
-                tooltip=(
-                    f"Write the model back to {entry.source}"
-                    if can_save
-                    else "No single source file to save back to "
-                    "(use app.save_model(model, path=...) for a save-as)"
-                ),
+                disabled=not (can_save and dirty),
+                tooltip=save_tip,
             )
             save_btn.add_class("lgx-app-save")
             save_btn.on_click(lambda _b, e=entry: self._guard("save", self.save_model, e.model))
@@ -809,6 +1062,20 @@ class ModelApp(W.VBox):
         row = W.VBox([name, actions], layout=W.Layout(width="100%"))
         row.add_class("lgx-app-row")
         return row
+
+    @staticmethod
+    def _change_summary(change: edit.Change) -> str:
+        """One tooltip line per recorded edit (the dirty dot's evidence)."""
+
+        op, qname, detail = change
+        if op == "rename":
+            return f"renamed {detail.get('old_qname') or detail.get('old_name')} \u2192 {qname}"
+        if op == "set_value":
+            text = detail.get("text")
+            return f"{qname} = {text}" if text is not None else f"cleared the value of {qname}"
+        if op == "set_doc":
+            return f"documented {qname}" if detail.get("text") else f"removed the doc of {qname}"
+        return f"{op} {qname}"
 
     @staticmethod
     def _scoreboard_applicable(model: M.Model) -> bool:
@@ -930,6 +1197,10 @@ class ModelApp(W.VBox):
                 f"(origin {entry.origin!r}); pass an explicit path to save-as"
             )
         export.save(entry.model, target)
+        # the tracker's changes are 'edits since the last save': persisted
+        # now (even by a save-as), so the dot clears and Save/Push disable
+        edit.track(entry.model).mark_saved()
+        self._refresh_list()
         self._status(f"saved {_display_name(entry.model)} to {target}", kind="ok")
         return target
 
@@ -944,6 +1215,8 @@ class ModelApp(W.VBox):
             )
         response = entry.client.push_commit(entry.project, entry.model, description=message)
         commit_id = str(response.get("@id", "")) if isinstance(response, dict) else ""
+        edit.track(entry.model).mark_saved()  # the commit persisted the edits
+        self._refresh_list()
         self._status(f"pushed commit {commit_id[:12] or '(accepted)'}", kind="ok")
         return dict(response) if isinstance(response, dict) else {"response": response}
 
@@ -1092,15 +1365,29 @@ class ModelApp(W.VBox):
         self._browse_syncing = True
         try:
             self._browse_select.options = tuple(options)
-            self._browse_select.value = None
+            self._browse_select.value = ()
         finally:
             self._browse_syncing = False
-        self._browse_crumb.value = escape(str(self._browse_dir))
+        self._sync_browse_load([])
+        location = escape(str(self._browse_dir))
+        # ellipsized (CSS), with the full path on the tooltip -- long
+        # paths must never widen the panel into a horizontal scrollbar
+        self._browse_crumb.value = f'<div class="lgx-app-crumb" title="{location}">{location}</div>'
+
+    def _sync_browse_load(self, picked: list[str]) -> None:
+        """'Load selected' is live iff the selection holds file rows."""
+
+        files = [value for value in picked if value.startswith("file:")]
+        self._browse_load.disabled = not files or bool(self._busy_depth)
 
     def _on_browse_pick(self, change: Any) -> None:
-        value = change["new"]
-        if value is None or self._browse_syncing:
+        if self._browse_syncing:
             return
+        picked = list(change["new"] or ())
+        self._sync_browse_load(picked)
+        if len(picked) != 1:
+            return  # a multi-pick belongs to the 'Load selected' action
+        value = picked[0]
         if value == "::up::":
             self._browse_dir = self._browse_dir.parent
             self._refresh_browser()
@@ -1110,6 +1397,7 @@ class ModelApp(W.VBox):
             self._browse_dir = self._browse_dir / value[4:]
             self._refresh_browser()
         elif value.startswith("file:"):
+            # the simple case keeps working: a single click fills the path
             self._path_field.value = str(self._browse_dir / value[5:])
 
     # -- docking --------------------------------------------------------------------------
@@ -1199,7 +1487,7 @@ class ModelApp(W.VBox):
             self._sweeper.poke = self._sweeper.poke + 1
 
 
-def open(*, layout: str = "auto", activate: bool = True) -> ModelApp:
+def open(*, layout: str = "auto", activate: bool = True, inspector: bool = True) -> ModelApp:
     """Open the longeron model app (module docstring for the full tour).
 
     * ``layout`` -- ``"auto"`` (the default: dock into the JupyterLab
@@ -1210,7 +1498,11 @@ def open(*, layout: str = "auto", activate: bool = True) -> ModelApp:
       unless the ``explorer`` extra is installed);
     * ``activate`` -- reveal the sidebar panel once it attaches (the
       sweeper clicks the app's own tab; JupyterLab does not activate
-      left-area additions itself).
+      left-area additions itself);
+    * ``inspector`` -- also build the item inspector
+      (:mod:`longeron.inspector`), docked into the RIGHT sidebar under
+      the ``lab`` layout (collapsed until clicked) and exposed as
+      ``app.inspector`` everywhere.  ``False`` skips it.
 
     Re-running ``open()`` -- or restarting the kernel and re-running --
     REPLACES the docked panel instead of stacking a second one; the
@@ -1218,4 +1510,4 @@ def open(*, layout: str = "auto", activate: bool = True) -> ModelApp:
     the models).
     """
 
-    return ModelApp(layout=layout, activate=activate)
+    return ModelApp(layout=layout, activate=activate, inspector=inspector)
