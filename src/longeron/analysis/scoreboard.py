@@ -74,7 +74,10 @@ always computed over the full tree.  Hover shows qualified name,
 weight and share, raw value (with its declared ``unit``), and utility;
 click writes the ``selected`` trait
 (the same observer idiom as the other longeron widgets, ready for
-linked selection).  Unmeasured cells are grey and hatched.  The color
+linked selection).  Utilities and aggregates render through ONE
+consistent format everywhere (cell labels, tooltips, the text table):
+percent with one decimal by default, or three-decimal floats under
+``value_format="float"``.  Unmeasured cells are grey and hatched.  The color
 ramp is red -> yellow -> green interpolated in OKLab (perceptual, with
 a monotone-ish lightness cue for red/green-weak viewers).  Both
 tessellations are deterministic: stable model order, and the Voronoi
@@ -345,7 +348,11 @@ class Scoreboard:
         aggregation: str | Aggregator = "saw",
         weights: Mapping[str, float] | None = None,
         utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
+        value_format: str = "percent",
     ) -> None:
+        if value_format not in ("percent", "float"):
+            raise AnalysisError(f"value_format must be 'percent' or 'float'; not {value_format!r}")
+        self.value_format = value_format
         if isinstance(aggregation, str):
             if aggregation not in AGGREGATORS:
                 options = ", ".join(sorted(AGGREGATORS))
@@ -573,6 +580,16 @@ class Scoreboard:
                 return "pass" if value else "FAIL"
             return f"{value:.3g}"
 
+        def fmt_score(value: float) -> str:
+            # utilities/aggregates live in [0, 1]: ONE consistent rendering
+            # (maintainer QA: mixed 0.55 / 0.5867 / 1 read as noise) --
+            # percent with 1 decimal by default, 3-decimal floats otherwise
+            if isinstance(value, float) and math.isnan(value):
+                return "-"
+            if self.value_format == "percent":
+                return f"{value * 100:.1f}%"
+            return f"{value:.3f}"
+
         def fmt_raw(row: Row) -> str:
             text = fmt(row.raw)
             if row.unit and text != "-":  # unit after raw, display only
@@ -589,11 +606,11 @@ class Scoreboard:
             label = ("  " * row.depth + row.name)[:44]
             lines.append(
                 f"{label:<44} {row.weight:>6.3g} {row.share:>5.0%} {fmt_raw(row):>{raw_width}} "
-                f"{fmt(row.utility):>7} {fmt(row.aggregate):>9}"
+                f"{fmt_score(row.utility):>7} {fmt_score(row.aggregate):>9}"
             )
         lines.append(
             f"{'score (' + self.aggregation + ')':<44} {'':>6} {'':>6} {'':>{raw_width}} "
-            f"{'':>7} {fmt(self.score):>9}"
+            f"{'':>7} {fmt_score(self.score):>9}"
         )
         return "\n".join(lines)
 
@@ -613,6 +630,7 @@ class Scoreboard:
         seed: int = 42,
         width_px: int = 960,
         height_px: int = 540,
+        value_format: str | None = None,
     ) -> Any:
         """The scoreboard as one interactive anywidget.
 
@@ -639,14 +657,21 @@ class Scoreboard:
         depth below the CURRENT zoom root -- deeper levels draw as
         aggregate cells (same visual as collapsed, without entering the
         collapsed set), and zooming in reveals the next ``max_depth``
-        levels.  All navigation state is scriptable: ``selected``,
-        ``collapsed``, ``zoom_root`` and ``max_depth`` are two-way
-        traits.  None of them affect scoring, which always runs over
-        the full tree.  Needs the ``viz`` extra (anywidget).
+        levels.  ``value_format`` picks how utilities/aggregates render
+        in cell labels and tooltips: ``"percent"`` (one decimal, e.g.
+        ``61.1%``) or ``"float"`` (three decimals, e.g. ``0.611``);
+        default: the scoreboard's own ``value_format`` (``percent``).
+        All navigation state is scriptable: ``selected``,
+        ``collapsed``, ``zoom_root``, ``max_depth`` and ``value_format``
+        are two-way traits.  None of them affect scoring, which always
+        runs over the full tree.  Needs the ``viz`` extra (anywidget).
         """
 
         if tessellation not in ("treemap", "voronoi"):
             raise ValueError(f"tessellation must be 'treemap' or 'voronoi', not {tessellation!r}")
+        value_format = self.value_format if value_format is None else value_format
+        if value_format not in ("percent", "float"):
+            raise ValueError(f"value_format must be 'percent' or 'float', not {value_format!r}")
         collapsed = [str(qname) for qname in collapsed]
         unknown = [qname for qname in collapsed if qname not in self._index]
         if unknown:
@@ -667,6 +692,7 @@ class Scoreboard:
             seed=seed,
             width_px=width_px,
             height_px=height_px,
+            value_format=value_format,
         )
 
     def _payload(self, node: _Node) -> dict[str, Any]:
@@ -699,6 +725,7 @@ def scoreboard(
     *,
     weights: Mapping[str, float] | None = None,
     utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
+    value_format: str = "percent",
 ) -> Scoreboard:
     """MAUT-score the requirement hierarchy under ``model_or_element``.
 
@@ -712,7 +739,12 @@ def scoreboard(
     (see :func:`architecture_values` for the trade-study bridge).
     ``aggregation`` is a name from :data:`AGGREGATORS` or any
     :class:`Aggregator`; ``weights``/``utilities`` are exploration-time
-    overrides keyed like ``values``.
+    overrides keyed like ``values``.  ``value_format`` picks ONE
+    consistent rendering for utilities/aggregates everywhere they
+    display (``str()``'s table, the widget's cell labels and tooltips):
+    ``"percent"`` (the default; one decimal, ``61.1%``) or ``"float"``
+    (three decimals, ``0.611``).  :meth:`Scoreboard.table` always
+    carries the raw floats.
     """
 
     return Scoreboard(
@@ -721,6 +753,7 @@ def scoreboard(
         aggregation=aggregation,
         weights=weights,
         utilities=utilities,
+        value_format=value_format,
     )
 
 
@@ -1034,6 +1067,16 @@ function render({ model, el }) {
     return Math.abs(v) >= 1000 ? v.toFixed(0) : +v.toPrecision(4) + "";
   };
 
+  // utilities/aggregates ([0, 1]) render through ONE consistent format
+  // (maintainer QA: mixed 0.55 / 0.5867 / 1 read as noise): percent with
+  // 1 decimal by default, 3-decimal floats under value_format='float'
+  const fmtScore = (v) => {
+    if (v === null || v === undefined || typeof v !== "number") return "\u2014";
+    return model.get("value_format") === "float"
+      ? v.toFixed(3)
+      : `${(100 * v).toFixed(1)}%`;
+  };
+
   function tooltipFor(node, collapsed) {
     const lines = [];
     const group = node.children && node.children.length;
@@ -1049,9 +1092,9 @@ function render({ model, el }) {
       const unit = node.unit && node.raw != null ? ` ${node.unit}` : "";
       const shape = node.shape ? ` \u00b7 ${node.shape}` : "";
       lines.push(["row", `raw ${fmtNum(node.raw)}${unit}${shape}`]);
-      lines.push(["row", node.measured ? `utility ${fmtNum(node.utility)}` : "unmeasured"]);
+      lines.push(["row", node.measured ? `utility ${fmtScore(node.utility)}` : "unmeasured"]);
     } else {
-      const agg = `aggregate ${fmtNum(node.aggregate)}` +
+      const agg = `aggregate ${fmtScore(node.aggregate)}` +
         ` (${model.get("aggregation")} over ${node.leaves} leaves)`;
       lines.push(["row", node.measured ? agg : "unmeasured"]);
     }
@@ -1271,7 +1314,7 @@ function render({ model, el }) {
           value.setAttribute("y", cell.cy + size * 1.15);
           value.setAttribute("class", label.getAttribute("class"));
           value.setAttribute("font-size", (size * 0.85).toFixed(1));
-          value.textContent = measured ? fmtNum(node.aggregate) : "\u2014";
+          value.textContent = measured ? fmtScore(node.aggregate) : "\u2014";
           textLayer.append(value);
         }
       }
@@ -1298,6 +1341,7 @@ function render({ model, el }) {
   model.on("change:max_depth", renderAll);
   model.on("change:width_px", renderAll);
   model.on("change:height_px", renderAll);
+  model.on("change:value_format", renderAll);
   model.on("change:selected", restyle);
   rebuild();
 }
@@ -1417,6 +1461,11 @@ def _widget_class() -> type[Any]:
         seed = traitlets.Int(42, help="Voronoi iteration seed (determinism)").tag(sync=True)
         width_px = traitlets.Int(960).tag(sync=True)
         height_px = traitlets.Int(540).tag(sync=True)
+        value_format = traitlets.Enum(
+            ("percent", "float"),
+            default_value="percent",
+            help="how utilities/aggregates render: '61.1%' or '0.611'",
+        ).tag(sync=True)
 
         def __init__(self, **kwargs: Any) -> None:
             # set BEFORE super().__init__: trait kwargs may fire observers

@@ -626,6 +626,64 @@ class TestScopesAndTable:
         assert a.score == b.score
 
 
+class TestValueFormat:
+    """ONE consistent utility/aggregate rendering (maintainer QA: mixed
+    0.55 / 0.5867 / 1 read as noise): percent with 1 decimal by default,
+    3-decimal floats under ``value_format='float'`` -- in ``str()``'s
+    table and (via the synced trait) the widget's labels and tooltips."""
+
+    def test_percent_is_the_default_in_str(self, uav):
+        text = str(uav)
+        assert uav.value_format == "percent"
+        assert "56.7%" in text  # endurance utility, one decimal
+        assert "100.0%" in text  # a passing step still gets the decimal
+        assert "0.567" not in text and "0.5867" not in text
+
+    def test_float_mode_is_three_decimals(self, uav_model):
+        text = str(scoreboard(uav_model, value_format="float"))
+        assert "0.567" in text and "1.000" in text
+        assert "56.7%" not in text
+
+    def test_unmeasured_still_renders_a_dash(self, uav):
+        # futureProofing is unmeasured: '-' in the utility and aggregate
+        # columns, never 'nan%' (the share column keeps its own percent)
+        (line,) = [ln for ln in str(uav).splitlines() if "futureProofing" in ln]
+        assert "nan" not in line
+        assert line.split()[-2:] == ["-", "-"]  # utility, aggregate
+
+    def test_table_rows_keep_raw_floats(self, uav):
+        # the FORMAT is display-only; Row carries the numbers
+        rows = rows_by_name(uav)
+        assert rows["endurance"].utility == pytest.approx(17 / 30)
+
+    def test_bad_value_format_is_rejected(self, uav_model):
+        with pytest.raises(AnalysisError, match="value_format must be"):
+            scoreboard(uav_model, value_format="scientific")
+
+    def test_widget_trait_defaults_to_the_board_format(self, uav, uav_model):
+        pytest.importorskip("anywidget")
+        assert uav.widget().value_format == "percent"
+        assert uav.widget(value_format="float").value_format == "float"
+        floaty = scoreboard(uav_model, value_format="float")
+        assert floaty.widget().value_format == "float"  # inherits the board's
+
+    def test_widget_rejects_bad_value_format(self, uav):
+        pytest.importorskip("anywidget")
+        with pytest.raises(ValueError, match="value_format must be"):
+            uav.widget(value_format="scientific")
+
+    def test_esm_formats_scores_and_rerenders_on_change(self):
+        from longeron.analysis.scoreboard import _SCOREBOARD_JS
+
+        # the frontend twin of fmt_score: percent/float off the trait,
+        # re-rendered when it changes; tooltips and cell labels use it
+        assert "fmtScore" in _SCOREBOARD_JS
+        assert 'model.on("change:value_format", renderAll)' in _SCOREBOARD_JS
+        assert "utility ${fmtScore(node.utility)}" in _SCOREBOARD_JS
+        assert "aggregate ${fmtScore(node.aggregate)}" in _SCOREBOARD_JS
+        assert "fmtScore(node.aggregate) : " in _SCOREBOARD_JS
+
+
 # ---------------------------------------------------------------------------
 # the widget (headless: traits + front-end contracts)
 # ---------------------------------------------------------------------------

@@ -431,11 +431,17 @@ def app_notebook() -> dict[str, Any]:
     Cell 1 opens the app; cell 2 RE-opens it, so every run-all exercises
     the same-kernel replace path for BOTH panels (the tests assert
     exactly ONE left tab carries the ``longeron-app`` dock key and ONE
-    right tab carries ``longeron-inspector``).  The tests then drive the
-    LIVE panels -- load a model, launch an explorer, click a tree row,
-    edit through the inspector's sheet -- and the checker cell reports
-    the kernel-side truth: the entries list, the current model, the
-    inspector-seam element, and the current model's tracker dirtiness.
+    right tab carries ``longeron-inspector``).  Cell 3 adds a SCOREABLE
+    in-memory model (ScoutMini: requirement usages, all unmeasured) so
+    the tests can prove the Score button splits honestly -- live for
+    ScoutMini, disabled with a tooltip for drone.sysml (requirement DEF
+    only) -- and that a launched scoreboard tab actually RENDERS its
+    hatched cells (the maintainer's empty-tab finding).  The tests then
+    drive the LIVE panels -- load a model, launch tabs, click a tree
+    row, edit through the inspector's sheet -- and the checker cell
+    reports the kernel-side truth: the entries list, the current model,
+    the inspector-seam element, the inspector's own element, and the
+    current model's tracker dirtiness.
     """
 
     return _notebook(
@@ -455,6 +461,27 @@ print(type(application).__name__)
 application = app_module.open(layout="lab")
 print("reopened")
 """,
+        '''
+# a SCOREABLE model beside the file-loaded one: ScoutMini carries real
+# requirement usages (all unmeasured -- the scoreboard must still render
+# hatched cells, maintainer QA), so its row's Score button is live while
+# drone.sysml's (requirement def only) stays honestly disabled
+scored = longeron.loads(
+    """
+package ScoutMini {
+    part sys;
+    requirement mission {
+        attribute weight : Real = 2.0;
+        requirement coverage { attribute weight : Real = 3.0; }
+        requirement endurance;
+    }
+}
+""",
+    source_name="scout mini",
+)
+application.add_model(scored, source="inline demo text")
+print("scored model added")
+''',
         """
 element = application.current_element
 current = next(
@@ -472,12 +499,18 @@ dirty = (
     if application.current_model is not None
     else False
 )
+inspector_element = (
+    application.inspector.element.qualified_name
+    if application.inspector is not None and application.inspector.element is not None
+    else None
+)
 print(json.dumps({
     "models": [Path(entry.source).name for entry in application.entries],
     "origins": [entry.origin for entry in application.entries],
     "current": current,
     "explorers": len(application.explorers),
     "element": element.qualified_name if element is not None else None,
+    "inspector_element": inspector_element,
     "dirty": dirty,
 }))
 """,

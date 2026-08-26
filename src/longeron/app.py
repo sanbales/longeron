@@ -34,7 +34,11 @@ The sidebar has one MODELS section:
   tooltip) with per-model actions -- **Explore** docks a
   :func:`longeron.explorer.explore` tab; **Score** docks a requirements
   :func:`~longeron.analysis.scoreboard.scoreboard` tab (disabled unless
-  the model carries requirement usages); **Save** writes the model back
+  the model carries requirement usages; launched scoreboard tabs dock
+  as BACKGROUND tabs their sweeper immediately reveals with a real
+  synthetic tab click -- docking pre-activated leaves lumino's dock
+  layout without the currentChanged pass that assigns panel geometry,
+  an invisibly EMPTY tab, maintainer QA); **Save** writes the model back
   to its source file (:func:`longeron.export.save`; disabled for
   directory-merged, in-memory, and API models -- pass an explicit
   ``path`` to :meth:`ModelApp.save_model` for a save-as); API models get
@@ -177,13 +181,21 @@ _DOCKED_PANELS: dict[str, Any] = {}
 #: palette items are add-only in ipylab; add ours at most once per kernel
 _PALETTE_ADDED = False
 
-#: the longeron monogram: two stacked longerons (structural L-beams).
-#: ``jp-icon3`` makes the fill follow the Lab theme like the stock icons.
+#: the app's sidebar-tab icon: an abstract MODEL-DIAGRAM glyph -- two
+#: part boxes joined by a composition diamond and a routed edge, echoing
+#: the notation the tool draws.  Deliberately NOT the literal 'SysML'
+#: wordmark or OMG's logo ('SysML' is an OMG registered trademark; see
+#: the README's disclaimer).  ``width="16"`` mirrors the builtin Lab
+#: icons' intrinsic sizing (they ship ``width=16`` on a 24 viewBox and
+#: the sidebar upscales to 20px); ``jp-icon3`` makes the single fill
+#: follow the Lab theme like the stock icons.
 _ICON_SVG = """\
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<svg xmlns="http://www.w3.org/2000/svg" width="16" viewBox="0 0 24 24">
   <g class="jp-icon3" fill="#616161">
-    <path d="M4 2.5h4.4v13h11.6v5.5H4z"/>
-    <path d="M11.4 2.5h8.6v5.4h-4.2v5h-4.4z" fill-opacity="0.45"/>
+    <rect x="3" y="3" width="9.5" height="7" rx="1.2"/>
+    <path d="M7.75 10.1 9.55 12 7.75 13.9 5.95 12z"/>
+    <path d="M6.9 13.6h1.7v2.2h2.9v1.7H6.9z"/>
+    <rect x="11.5" y="14" width="9.5" height="7" rx="1.2"/>
   </g>
 </svg>
 """
@@ -338,6 +350,23 @@ function render({ model, el }) {
 export default { render };
 """
 
+# The icon-only sidebar tab, sized like the builtins.  JupyterLab never
+# hides sidebar tab LABELS (they render rotated, writing-mode
+# vertical-rl); builtin tabs are icon-only because their titles carry an
+# EMPTY label -- which ours now do too.  The sizing rule exists because
+# ipylab assigns ``title.icon`` asynchronously, AFTER Lab's
+# ``SideBarHandler.addWidget`` ran -- so our LabIcon misses the
+# ``bindprops({stylesheet: 'sideBar'})`` treatment every builtin icon
+# gets (svg width 20px, centered); restate it for our tagged tabs.
+_TAB_ICON_CSS = """
+.jp-SideBar .lm-TabBar-tab[data-lgxkey] .lm-TabBar-tabIcon {
+  display: flex; align-items: center; justify-content: center;
+}
+.jp-SideBar .lm-TabBar-tab[data-lgxkey] .lm-TabBar-tabIcon svg {
+  width: 20px; height: auto;
+}
+"""
+
 # House look on Lab CSS variables (plain-light fallbacks), riding the
 # sweeper so it is injected exactly when the panel renders.  Compact:
 # the left sidebar is ~280px wide.  The min-width/overflow rules exist
@@ -345,7 +374,9 @@ export default { render };
 # text field, a long crumb, or a wide listing otherwise forces the whole
 # panel into a horizontal scrollbar (the ipywidgets flexbox footgun);
 # everything long ellipsizes with the full text on a title tooltip.
-_APP_CSS = """
+_APP_CSS = (
+    _TAB_ICON_CSS
+    + """
 .lgx-app-host {
   height: 100%; overflow-y: auto; overflow-x: hidden;
   padding: 8px 10px; box-sizing: border-box;
@@ -447,6 +478,7 @@ _APP_CSS = """
   font-style: italic; padding: 2px 0;
 }
 """
+)
 
 
 class _AppSweeper(anywidget.AnyWidget):
@@ -523,10 +555,17 @@ class ModelApp(W.VBox):
     children: Any
 
     def __init__(
-        self, *, layout: str = "auto", activate: bool = True, inspector: bool = True
+        self,
+        *,
+        layout: str = "auto",
+        activate: bool = True,
+        inspector: bool = True,
+        reveal_inspector: bool = True,
     ) -> None:
         self.layout_strategy = _resolve_layout(layout)
         self._activate = bool(activate)
+        self.reveal_inspector = bool(reveal_inspector)
+        self._inspector_revealed = False
         self._entries: list[ModelEntry] = []
         self._explorers: list[Explorer] = []
         self._watched: set[int] = set()  # models whose tracker we listen to (by id)
@@ -791,6 +830,29 @@ class ModelApp(W.VBox):
         self._current_element = element
         for callback in list(self._element_callbacks):
             callback(element)
+        # the ONE-TIME inspector reveal (maintainer QA): the first element
+        # that flows through the seam from an app-launched tab surfaces the
+        # (otherwise collapsed) right-sidebar inspector, so users SEE where
+        # selections land; every later selection leaves the layout alone
+        self._reveal_inspector_once()
+
+    def _reveal_inspector_once(self) -> None:
+        """Reveal the docked inspector on the FIRST seam selection, once.
+
+        Gated by :attr:`reveal_inspector` (``open(reveal_inspector=False)``
+        disables it) and lab-docking (an inline inspector renders where it
+        is displayed; nothing to reveal).  One reveal per app instance:
+        auto-expanding the right sidebar on EVERY selection would reshape
+        the user's layout uninvited (the inspector's own docking rule).
+        """
+
+        if self._inspector_revealed or not self.reveal_inspector:
+            return
+        inspector = getattr(self, "inspector", None)
+        if inspector is None or getattr(inspector, "layout_strategy", "") != "lab":
+            return
+        self._inspector_revealed = True
+        self._guard("reveal inspector", inspector.reveal)
 
     # -- the model list -----------------------------------------------------------
 
@@ -1152,10 +1214,16 @@ class ModelApp(W.VBox):
         """Dock the scoreboard as a main-area tab, replaced not stacked.
 
         The explorer's :class:`~longeron.explorer._DockSweeper` rides
-        inside (the main-area identity idiom verbatim; the panel node
-        picks up its ``lgx-explorer`` tagging, which is cosmetic), keyed
+        inside (the main-area identity idiom verbatim), keyed
         ``scoreboard-<model slug>`` so scoreboards and explorers of the
-        same model coexist.
+        same model coexist.  The panel joins the shell as a BACKGROUND
+        tab and the sweeper reveals it with a real synthetic tab click
+        (``reveal=True``): docking with ``activate=True`` makes the tab
+        current before lumino's dock layout ever sizes the panel, and a
+        tab that is ALREADY current never gets the geometry-assigning
+        currentChanged pass -- the panel renders 0x0, a permanently
+        EMPTY tab (maintainer QA, reproduced in a real Lab).  The
+        sweeper's click IS that currentChanged pass.
         """
 
         import ipylab  # layout_strategy == "lab" guarantees it imports
@@ -1166,13 +1234,13 @@ class ModelApp(W.VBox):
         panel.title.label = f"Scoreboard: {_display_name(entry.model)}"
         panel.title.dataset = {"lgxkey": key, "lgxstamp": stamp}
         panel.add_class("lgx-app-scoreboard")
-        sweeper = _DockSweeper(key=key, stamp=stamp, layout=W.Layout(display="none"))
+        sweeper = _DockSweeper(key=key, stamp=stamp, reveal=True, layout=W.Layout(display="none"))
         panel.children = (widget, sweeper)
         previous = _DOCKED_PANELS.pop(key, None)
         if previous is not None:
             previous.close()  # same-kernel relaunch: replace, never stack
         frontend = self._frontend if self._frontend is not None else ipylab.JupyterFrontEnd()
-        frontend.shell.add(panel, "main", {"mode": "tab-after", "activate": True})
+        frontend.shell.add(panel, "main", {"mode": "tab-after", "activate": False})
         _DOCKED_PANELS[key] = panel
         return panel
 
@@ -1405,9 +1473,15 @@ class ModelApp(W.VBox):
     def _dock_in_sidebar(self) -> None:
         """Dock this widget into the LEFT sidebar, replaced never stacked.
 
-        The panel's tab carries the monogram :class:`ipylab.Icon` (the
+        The tab is ICON-ONLY, like every builtin sidebar tab: JupyterLab
+        renders sidebar tab labels (rotated), it does not hide them --
+        builtin tabs are icon-only because their titles carry an EMPTY
+        label, so ours does too, with the identity on ``title.caption``
+        (the hover tooltip) and the monogram :class:`ipylab.Icon` (the
         ipylab frontend renders ``title.icon`` as a real ``LabIcon``;
-        the stable icon name dedupes re-registrations) and the
+        the stable icon name dedupes re-registrations; the
+        ``_TAB_ICON_CSS`` rule restates the builtin 20px sizing ipylab's
+        late icon assignment misses).  The tab also carries the
         ``lgxkey``/``lgxstamp`` identity dataset the sweeper reconciles
         on (module docstring).  ``rank`` places the tab below the stock
         Lab sidebar items.
@@ -1417,12 +1491,14 @@ class ModelApp(W.VBox):
 
         stamp = str(time.time_ns())
         panel = ipylab.Panel()
-        panel.title.label = "Longeron"
+        panel.title.label = ""  # icon-only in the tab strip (maintainer QA)
         panel.title.caption = "Longeron: load SysML v2 models, launch explorer and scoreboard tabs"
         try:
             panel.title.icon = ipylab.Icon(name="longeron:app", svgstr=_ICON_SVG)
         except Exception:
-            panel.title.icon_class = "lgx-app-tab-icon"
+            # no ipylab.Icon (an older ipylab): a TEXT tab is ugly but
+            # discoverable; a blank icon-less tab would be neither
+            panel.title.label = "Longeron"
         panel.title.dataset = {"lgxkey": _APP_KEY, "lgxstamp": stamp}
         panel.add_class("lgx-app")
         self._sweeper = _AppSweeper(
@@ -1487,7 +1563,13 @@ class ModelApp(W.VBox):
             self._sweeper.poke = self._sweeper.poke + 1
 
 
-def open(*, layout: str = "auto", activate: bool = True, inspector: bool = True) -> ModelApp:
+def open(
+    *,
+    layout: str = "auto",
+    activate: bool = True,
+    inspector: bool = True,
+    reveal_inspector: bool = True,
+) -> ModelApp:
     """Open the longeron model app (module docstring for the full tour).
 
     * ``layout`` -- ``"auto"`` (the default: dock into the JupyterLab
@@ -1502,7 +1584,12 @@ def open(*, layout: str = "auto", activate: bool = True, inspector: bool = True)
     * ``inspector`` -- also build the item inspector
       (:mod:`longeron.inspector`), docked into the RIGHT sidebar under
       the ``lab`` layout (collapsed until clicked) and exposed as
-      ``app.inspector`` everywhere.  ``False`` skips it.
+      ``app.inspector`` everywhere.  ``False`` skips it;
+    * ``reveal_inspector`` -- reveal the docked inspector ONCE, on the
+      first element selection an app-launched tab feeds through the
+      seam (so users see where selections land); every later selection
+      leaves the layout alone.  ``False`` keeps the inspector fully
+      collapsed until its tab is clicked.
 
     Re-running ``open()`` -- or restarting the kernel and re-running --
     REPLACES the docked panel instead of stacking a second one; the
@@ -1510,4 +1597,6 @@ def open(*, layout: str = "auto", activate: bool = True, inspector: bool = True)
     the models).
     """
 
-    return ModelApp(layout=layout, activate=activate, inspector=inspector)
+    return ModelApp(
+        layout=layout, activate=activate, inspector=inspector, reveal_inspector=reveal_inspector
+    )

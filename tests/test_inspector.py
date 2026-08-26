@@ -199,7 +199,10 @@ class TestDocking:
         ((panel, area, options),) = frontend.shell.added
         assert panel is insp.lab_panel and area == "right"
         assert options == {"rank": 610}
-        assert panel.title.label == "Inspector"
+        # ICON-ONLY tab, exactly like the app panel's (maintainer QA):
+        # empty label, identity on the hover caption, the sibling icon
+        assert panel.title.label == ""
+        assert panel.title.caption.startswith("Longeron")
         assert panel.title.icon.name == "longeron:inspector"
         assert panel.title.dataset["lgxkey"] == "longeron-inspector"
         assert panel.title.dataset["lgxstamp"].isdigit()
@@ -231,6 +234,36 @@ class TestDocking:
     def test_inspector_false_skips_it(self, monkeypatch):
         app = _open_lab(monkeypatch, inspector=False)
         assert app.inspector is None
+
+    def test_tab_icon_contract(self, monkeypatch):
+        # the maintainer's icon spec, restated for the sibling variant:
+        # builtin intrinsic sizing, theme-following fill, and NEVER the
+        # trademarked 'SysML' wordmark (OMG registered trademark)
+        svg = inspector_module._ICON_SVG
+        assert 'width="16"' in svg
+        assert 'viewBox="0 0 24 24"' in svg
+        assert 'class="jp-icon3"' in svg
+        assert "SysML" not in svg and "OMG" not in svg
+        assert "<text" not in svg  # a glyph, not lettering
+        # the shared sidebar-icon sizing rule rides the inspector CSS too
+        assert ".lm-TabBar-tabIcon svg" in inspector_module._INSPECTOR_CSS
+
+    def test_reveal_pokes_the_sweeper(self, monkeypatch):
+        app = _open_lab(monkeypatch)
+        insp = app.inspector
+        sweeper = insp._sweeper
+        assert sweeper.activate is False and sweeper.poke == 0
+        insp.reveal()
+        assert sweeper.activate is True and sweeper.poke == 1
+        insp.reveal()  # idempotent mechanics: each call is one more poke
+        assert sweeper.poke == 2
+
+    def test_reveal_is_a_noop_inline(self, monkeypatch):
+        monkeypatch.delitem(sys.modules, "ipylab", raising=False)
+        monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+        app = app_module.open()
+        assert app.inspector._sweeper is None
+        app.inspector.reveal()  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +330,30 @@ class TestSheet:
         ex.select("Rig::Chassis::mass")
         # the house expression rendering (ast.expr_to_text) fills the field
         assert app.inspector._value_field.value == "10.0"
+
+    def test_value_field_shows_bracket_units(self, monkeypatch):
+        # maintainer QA: a quantity value's measurement reference (the
+        # bracket unit) must SHOW in the sheet -- expr_to_text renders the
+        # QuantityOp annotation, and the examples now carry real SI units
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        assert app.inspector._value_field.value == "0.38 [SI::kg]"
+
+    def test_value_edit_keeps_bracket_units(self, monkeypatch):
+        # committing a unit-bearing value goes through longeron.edit and
+        # re-normalizes through expr_to_text WITH the annotation intact
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "0.4 [SI::kg]"
+        element = model.find("Drone::Battery::mass")
+        assert app.inspector._value_field.value == "0.4 [SI::kg]"
+        from longeron.ast import expr_to_text
+
+        assert expr_to_text(element.value.expr) == "0.4 [SI::kg]"
 
     def test_sheet_clears_when_the_list_empties(self, monkeypatch, rig_model):
         app = _open_lab(monkeypatch)

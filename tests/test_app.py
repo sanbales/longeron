@@ -217,13 +217,32 @@ class TestSidebarDocking:
         ((panel, area, options),) = app._frontend.shell.added
         assert panel is app.lab_panel and area == "left"
         assert options == {"rank": 610}
-        assert panel.title.label == "Longeron"
+        # ICON-ONLY tab (maintainer QA): JupyterLab renders sidebar labels
+        # (rotated) rather than hiding them -- builtin sidebar tabs are
+        # icon-only because their labels are EMPTY, so ours must be too,
+        # with the identity on the hover caption
+        assert panel.title.label == ""
+        assert panel.title.caption.startswith("Longeron")
         assert panel.title.icon.name == "longeron:app"
         assert "<svg" in panel.title.icon.svgstr
         assert panel.title.dataset["lgxkey"] == "longeron-app"
         assert panel.title.dataset["lgxstamp"].isdigit()
         assert panel.classes == ["lgx-app"]
         assert panel.children == (app,)
+
+    def test_tab_icon_contract(self, monkeypatch):
+        # the maintainer's icon spec: builtin intrinsic sizing (width=16
+        # on a 24 viewBox), theme-following fill (jp-icon3), and NEVER the
+        # trademarked 'SysML' wordmark (OMG registered trademark)
+        for svg in (app_module._ICON_SVG,):
+            assert 'width="16"' in svg
+            assert 'viewBox="0 0 24 24"' in svg
+            assert 'class="jp-icon3"' in svg
+            assert "SysML" not in svg and "OMG" not in svg
+            assert "<text" not in svg  # a glyph, not lettering
+        # the sidebar sizing rule rides the app CSS (ipylab assigns the
+        # icon after Lab's sideBar-stylesheet pass; the CSS restates it)
+        assert ".lm-TabBar-tabIcon svg" in app_module._APP_CSS
 
     def test_reopen_replaces_the_panel(self, monkeypatch):
         first = _open_lab(monkeypatch)
@@ -423,6 +442,16 @@ class TestRows:
         _, _, score_btn, _, _ = _row_buttons(app)
         assert not score_btn.disabled
 
+    def test_scoreboard_disabled_with_honest_tooltip(self, monkeypatch, plain_model):
+        # a model without requirement USAGES cannot produce scoreboard
+        # rows (scoreboard() raises); the button must be disabled AND say
+        # why -- never an enabled button opening an empty tab
+        app = _open_lab(monkeypatch)
+        app.add_model(plain_model)
+        _, _, score_btn, _, _ = _row_buttons(app)
+        assert score_btn.disabled
+        assert score_btn.tooltip == "No requirement usages in this model"
+
     def test_save_disabled_for_text_and_dir_models(self, monkeypatch, req_model, tmp_path):
         (tmp_path / "a.sysml").write_text("package A { part a; }", encoding="utf-8")
         app = _open_lab(monkeypatch)
@@ -503,11 +532,16 @@ class TestLaunchWiring:
         assert panel.title.dataset["lgxkey"] == key
         assert panel.children[0] is widget
         # the explorer's main-area sweeper rides inside (the same idiom)
-        assert isinstance(panel.children[1], explorer_module._DockSweeper)
-        # docked to the main area, activated (the user clicked for it)
+        sweeper = panel.children[1]
+        assert isinstance(sweeper, explorer_module._DockSweeper)
+        # docked as a BACKGROUND tab that the sweeper reveals with a real
+        # synthetic tab click: docking pre-activated leaves lumino's dock
+        # layout without the currentChanged pass that assigns the panel
+        # geometry -- a permanently EMPTY tab (maintainer QA)
+        assert sweeper.reveal is True
         added = app._frontend.shell.added
         assert added[-1][1] == "main"
-        assert added[-1][2] == {"mode": "tab-after", "activate": True}
+        assert added[-1][2] == {"mode": "tab-after", "activate": False}
         app.scoreboard_model(req_model)
         assert panel.closed  # relaunch replaces, never stacks
 
@@ -537,6 +571,57 @@ class TestLaunchWiring:
         widget = app.scoreboard_model(req_model)
         assert not app_module._DOCKED_PANELS  # nothing to dock into
         assert type(widget).__name__ == "ScoreboardWidget"
+
+
+class TestInspectorReveal:
+    """The one-time inspector reveal on the first app-launched selection.
+
+    Maintainer QA: the inspector docks COLLAPSED by design, which failed
+    discoverability -- the FIRST element that flows through the seam now
+    reveals it once (sweeper: activate + poke); every later selection
+    leaves the layout alone, and ``reveal_inspector=False`` disables it.
+    """
+
+    def test_first_selection_reveals_once(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch)
+        sweeper = app.inspector._sweeper
+        assert sweeper.activate is False and sweeper.poke == 0  # docked collapsed
+        app.add_model(req_model)
+        assert sweeper.poke == 0  # loading alone selects no element
+        app.explore_model(req_model)  # seeds the seam with the root selection
+        assert sweeper.activate is True and sweeper.poke == 1
+        app.explorers[0].select("Scored::sys")  # a later selection
+        assert sweeper.poke == 1  # once per app instance, never again
+
+    def test_scoreboard_selection_also_reveals(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch)
+        sweeper = app.inspector._sweeper
+        app.add_model(req_model)
+        widget = app.scoreboard_model(req_model)
+        assert sweeper.poke == 0  # launching selects nothing by itself
+        widget.selected = ["Scored::mission::r1"]  # a cell click
+        assert sweeper.activate is True and sweeper.poke == 1
+
+    def test_reveal_inspector_false_disables_it(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch, reveal_inspector=False)
+        sweeper = app.inspector._sweeper
+        app.add_model(req_model)
+        app.explore_model(req_model)
+        assert sweeper.activate is False and sweeper.poke == 0
+
+    def test_without_an_inspector_it_is_a_noop(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch, inspector=False)
+        app.add_model(req_model)
+        app.explore_model(req_model)  # must not raise
+        assert app.current_element is not None
+
+    def test_inline_inspector_needs_no_reveal(self, monkeypatch, req_model):
+        monkeypatch.delitem(sys.modules, "ipylab", raising=False)
+        monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+        app = app_module.open()
+        app.add_model(req_model)
+        app.explore_model(req_model)  # must not raise; nothing docked
+        assert app.inspector._sweeper is None
 
 
 # ---------------------------------------------------------------------------

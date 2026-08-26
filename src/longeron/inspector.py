@@ -54,11 +54,18 @@ never stacked -- a module-level registry closes the previous panel in
 the same kernel, and the panel's tab carries ``data-lgxkey`` /
 ``data-lgxstamp`` so a fresh kernel's sweeper (the app's
 :class:`~longeron.app._AppSweeper`, ``side="right"``) closes a dead
-kernel's orphan through lumino's middle-click close path.  The panel is
-docked WITHOUT auto-reveal by default: the right sidebar starts
-collapsed and expanding it uninvited would reshape the user's layout --
-the tab is one click away.  Headless (an inline-strategy app) the same
-widget simply renders wherever it is displayed.
+kernel's orphan through lumino's middle-click close path.  The tab is
+ICON-ONLY like the app's (empty label; the box-and-lens icon plus a
+hover caption).  The panel is docked WITHOUT auto-reveal by default:
+the right sidebar starts collapsed and expanding it uninvited would
+reshape the user's layout -- the tab is one click away.  ONE exception
+(maintainer QA: a collapsed inspector failed discoverability): the
+first element selection an app-launched tab feeds through the seam
+reveals the inspector once per app (:meth:`Inspector.reveal`, called by
+:meth:`longeron.app.ModelApp._reveal_inspector_once`;
+``open(reveal_inspector=False)`` disables it).  Headless (an
+inline-strategy app) the same widget simply renders wherever it is
+displayed.
 """
 
 from __future__ import annotations
@@ -77,7 +84,7 @@ except ImportError as _err:  # pragma: no cover - exercised without anywidget
 
 from . import edit
 from . import model as M
-from .app import _AppSweeper
+from .app import _TAB_ICON_CSS, _AppSweeper
 from .ast import expr_to_text
 from .errors import EditError
 from .explorer import _chip, _display_name, _family
@@ -92,14 +99,18 @@ _INSPECTOR_KEY = "longeron-inspector"
 #: replacement; cross-kernel orphans are the sweeper's job)
 _OPEN_INSPECTORS: dict[str, Any] = {}
 
-#: the inspector monogram: a longeron cross-section under a field glass.
-#: ``jp-icon3`` makes the fill follow the Lab theme like the stock icons.
+#: the inspector's sidebar-tab icon: the app icon's sibling variant --
+#: one part box under a magnifier lens (inspect the model element).
+#: Same rules as the app's: an abstract glyph, never OMG's trademarked
+#: 'SysML' wordmark/logo; ``width="16"`` mirrors the builtin icons'
+#: intrinsic sizing; ``jp-icon3`` makes the fill follow the Lab theme.
 _ICON_SVG = """\
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<svg xmlns="http://www.w3.org/2000/svg" width="16" viewBox="0 0 24 24">
   <g class="jp-icon3" fill="#616161">
-    <path d="M10 3a7 7 0 1 0 4.3 12.5l4.6 4.6 1.6-1.6-4.6-4.6A7 7 0 0 0
-      10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/>
-    <path d="M8 7h1.6v4.4H13V13H8z" fill-opacity="0.65"/>
+    <rect x="3" y="3" width="10" height="6" rx="1.2"/>
+    <path fill-rule="evenodd" d="M13.75 8.5a5.25 5.25 0 1 0 0 10.5a5.25 5.25
+      0 1 0 0-10.5zm0 1.9a3.35 3.35 0 1 1 0 6.7a3.35 3.35 0 1 1 0-6.7z"/>
+    <path d="M17.61 16.55l4.1 4.1-1.06 1.06-4.1-4.1z"/>
   </g>
 </svg>
 """
@@ -108,7 +119,9 @@ _ICON_SVG = """\
 # sidebar is as narrow as the left one, so everything stays compact.
 # The chip palette restates the explorer's tree-badge families -- the
 # inspector must color chips even when no ModelTree ever rendered.
-_INSPECTOR_CSS = """
+_INSPECTOR_CSS = (
+    _TAB_ICON_CSS
+    + """
 .lgx-insp-host {
   height: 100%; overflow-y: auto; overflow-x: hidden;
   padding: 8px 10px; box-sizing: border-box;
@@ -190,6 +203,7 @@ _INSPECTOR_CSS = """
   font-style: italic; padding: 4px 0;
 }
 """
+)
 
 
 class _InspectorSweeper(_AppSweeper):
@@ -325,6 +339,23 @@ class Inspector(W.VBox):
         self._element = element
         self._clear_error()
         self._render_sheet()
+
+    def reveal(self) -> None:
+        """Expand the right sidebar and select the Inspector tab.
+
+        The sweeper clicks the inspector's own sidebar tab (the same
+        gesture a user makes; JupyterLab's ``shell.expand_right`` alone
+        would expand whatever tab was last current).  A no-op inline.
+        The APP calls this once per session, on the first app-launched
+        selection (:meth:`longeron.app.ModelApp._reveal_inspector_once`;
+        ``open(reveal_inspector=False)`` disables it) -- every LATER
+        selection deliberately leaves the user's layout alone.
+        """
+
+        if self._sweeper is None:
+            return
+        self._sweeper.activate = True
+        self._sweeper.poke = self._sweeper.poke + 1
 
     # -- rendering ---------------------------------------------------------------
 
@@ -590,20 +621,29 @@ class Inspector(W.VBox):
     # -- docking ------------------------------------------------------------------------
 
     def _dock_in_sidebar(self) -> None:
-        """Dock into the RIGHT sidebar, replaced never stacked (module docstring)."""
+        """Dock into the RIGHT sidebar, replaced never stacked (module docstring).
+
+        Icon-only tab, exactly like the app panel's: empty
+        ``title.label`` (builtin sidebar tabs are icon-only because
+        JupyterLab renders labels rather than hiding them), identity on
+        the hover ``title.caption``, the sibling monogram icon sized by
+        the shared ``_TAB_ICON_CSS`` rule.
+        """
 
         import ipylab  # layout_strategy == "lab" guarantees it imports
 
         stamp = str(time.time_ns())
         panel = ipylab.Panel()
-        panel.title.label = "Inspector"
+        panel.title.label = ""  # icon-only in the tab strip (maintainer QA)
         panel.title.caption = (
-            "Longeron: inspect and edit the selected model element (name, doc, value)"
+            "Longeron inspector: inspect and edit the selected model element (name, doc, value)"
         )
         try:
             panel.title.icon = ipylab.Icon(name="longeron:inspector", svgstr=_ICON_SVG)
         except Exception:
-            panel.title.icon_class = "lgx-insp-tab-icon"
+            # no ipylab.Icon (an older ipylab): a TEXT tab is ugly but
+            # discoverable; a blank icon-less tab would be neither
+            panel.title.label = "Inspector"
         panel.title.dataset = {"lgxkey": _INSPECTOR_KEY, "lgxstamp": stamp}
         panel.add_class("lgx-inspector")
         self._sweeper = _InspectorSweeper(

@@ -6,24 +6,24 @@ package Drone {
     // ----- structure ---------------------------------------------------
 
     part def Battery {
-        attribute capacity : Real = 5200.0;      // mAh
-        attribute mass : Real = 0.38;            // kg
+        attribute capacity : Real = 5200.0;      // mAh (no ampere-hour unit in the vendored SI)
+        attribute mass : Real = 0.38 [SI::kg];
     }
 
     part def Rotor {
-        attribute maxThrust : Real = 9.0;        // N
-        attribute mass : Real = 0.06;
+        attribute maxThrust : Real = 9.0 [SI::N];
+        attribute mass : Real = 0.06 [SI::kg];
     }
 
     part def Frame {
-        attribute mass : Real = 0.42;
+        attribute mass : Real = 0.42 [SI::kg];
     }
 
     part def QuadCopter {
-        attribute payloadMass : Real = 0.2;
+        attribute payloadMass : Real = 0.2 [SI::kg];
         attribute totalMass : Real =
             chassis.mass + battery.mass + 4.0 * 0.06 + payloadMass;
-        attribute maxTakeoffMass : Real = 1.5;
+        attribute maxTakeoffMass : Real = 1.5 [SI::kg];
 
         part chassis : Frame;
         part battery : Battery;

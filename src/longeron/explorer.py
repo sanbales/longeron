@@ -1190,14 +1190,26 @@ def _dock_key(model: M.Model) -> str:
 # time the replacement docks.  A hidden tab bar (single-document mode)
 # defeats the hit test; the sweep then no-ops, which is harmless -- panels
 # are hidden there anyway, and the same-kernel registry still replaces.
+# The own panel is the DIRECT dock-panel child that contains this widget
+# (NOT `.lm-SplitPanel` -- an ipylab.Panel vessel is a plain VBox, and
+# closest('.lm-SplitPanel') would walk past it to LAB'S OWN main split
+# panel and mis-tag the whole shell).  When ``reveal`` is set the sweeper
+# also clicks its OWN tab once (verified against the panel's geometry):
+# the scoreboard's reveal path -- a real synthetic tab click is the ONLY
+# reliable way to hand a fresh dock child its geometry (docking with
+# activate=true makes the tab current before lumino's dock layout sizes
+# the panel, and an already-current tab never gets the currentChanged
+# geometry pass: the panel stays 0x0, an EMPTY tab).
 _SWEEPER_ESM = """
 function render({ model, el }) {
   el.style.display = "none";
   const key = model.get("key");
   const stamp = BigInt(model.get("stamp"));
   const dock = () => document.getElementById("jp-main-dock-panel") || document;
+  const ownPanel = () => el.closest("#jp-main-dock-panel > .lm-Widget") ||
+    el.closest(".jp-JupyterLuminoSplitPanelWidget, .lm-SplitPanel");
   const tagOwnPanel = () => {
-    const panel = el.closest(".jp-JupyterLuminoSplitPanelWidget, .lm-SplitPanel");
+    const panel = ownPanel();
     if (!panel) return false;
     panel.classList.add("lgx-explorer", `lgx-explorer-${key}`);
     return true;
@@ -1235,6 +1247,7 @@ function render({ model, el }) {
   const sweep = () => {
     tagOwnPanel(); // add_class needs 'displayed'; a background tab never is
     watchShown(); // the panel node may attach after render; keep trying
+    reveal(); // the reveal-on-dock path (scoreboard tabs); no-op unless set
     let closed = 0;
     for (let round = 0; round < 16; round += 1) {
       const tab = staleTab(); // re-query: closing re-renders the tab bar
@@ -1246,12 +1259,42 @@ function render({ model, el }) {
       model.save_changes();
     }
   };
+  // reveal the panel by CLICKING its own tab (a real user gesture, so
+  // lumino's currentChanged pass assigns the panel geometry); verified
+  // against the panel's own width, bounded attempts, once per render
+  let revealed = false;
+  let revealAttempts = 0;
+  const reveal = () => {
+    if (!model.get("reveal") || revealed || revealAttempts > 12) return;
+    const panel = ownPanel();
+    if (panel && panel.getBoundingClientRect().width > 0) {
+      revealed = true; // already visible (and therefore sized): done
+      return;
+    }
+    const own = [...dock().querySelectorAll(".lm-TabBar-tab[data-lgxkey]")].find(
+      (tab) => tab.dataset.lgxkey === key && tab.dataset.lgxstamp === model.get("stamp"),
+    );
+    if (!own) return; // the tab attaches after render; retry on mutation
+    const rect = own.getBoundingClientRect();
+    if (!rect.width || !rect.height) return; // hidden tab bar: cannot click
+    revealAttempts += 1;
+    const at = {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.x + rect.width / 2,
+      clientY: rect.y + rect.height / 2,
+    };
+    own.dispatchEvent(new PointerEvent("pointerdown", at));
+    own.dispatchEvent(new PointerEvent("pointerup", at));
+    revealed = Boolean(panel && panel.getBoundingClientRect().width > 0);
+  };
   // report the panel's FIRST reveal: an auto-fit that ran while the tab
   // was hidden had a zero-sized viewport, so the kernel re-fits on reveal
   let sizeObserver = null;
   const watchShown = () => {
     if (model.get("shown") || sizeObserver) return;
-    const panel = el.closest(".jp-JupyterLuminoSplitPanelWidget, .lm-SplitPanel");
+    const panel = ownPanel();
     if (!panel) return;
     const check = () => {
       const rect = panel.getBoundingClientRect();
@@ -1275,9 +1318,19 @@ function render({ model, el }) {
     document.getElementById("jp-main-dock-panel") || document.body,
     { childList: true, subtree: true },
   );
+  // the reveal must not depend on further DOM mutations (a settled dock
+  // goes quiet, and a click that raced the tab's attach would never be
+  // retried): poll on a short timer until revealed or out of attempts
+  const revealTimer = model.get("reveal")
+    ? setInterval(() => {
+        reveal();
+        if (revealed || revealAttempts > 12) clearInterval(revealTimer);
+      }, 400)
+    : null;
   return () => {
     observer.disconnect();
     if (sizeObserver) sizeObserver.disconnect();
+    if (revealTimer) clearInterval(revealTimer);
   };
 }
 export default { render };
@@ -1298,7 +1351,9 @@ class _DockSweeper(anywidget.AnyWidget):
     tests and diagnostics).  :attr:`shown` flips true on the panel's
     FIRST reveal (background tabs render hidden), which the explorer
     answers with one diagram re-fit -- the initial auto-fit had a
-    zero-sized viewport to aim at.
+    zero-sized viewport to aim at.  :attr:`reveal` makes the sweeper
+    CLICK its own tab once (the scoreboard tabs' reveal-on-dock path;
+    the ESM comment explains why a real click, not ``activate=True``).
     """
 
     _esm = _SWEEPER_ESM
@@ -1307,6 +1362,7 @@ class _DockSweeper(anywidget.AnyWidget):
     stamp = T.Unicode("", help="this panel's birth stamp (time_ns)").tag(sync=True)
     swept = T.Int(0, help="how many stale panels this sweeper closed").tag(sync=True)
     shown = T.Bool(False, help="whether the panel has ever been visible").tag(sync=True)
+    reveal = T.Bool(False, help="click the panel's own tab once it attaches").tag(sync=True)
 
 
 # ---------------------------------------------------------------------------
