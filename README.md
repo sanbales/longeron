@@ -20,6 +20,16 @@ for SysML v2 and KerML, taken from
 > project is not affiliated with or endorsed by OMG, and is not a
 > conformance-certified implementation.
 
+## Demo
+
+![A 35-second tour: the model explorer docked in JupyterLab -- tree
+click to a part definition, the state-machine view, and the Voronoi
+requirements scoreboard with unit tooltips and zoom](https://github.com/sanbales/longeron/releases/latest/download/demo.gif)
+
+Re-recorded each release with `python scripts/record_demo.py`
+(deterministic playwright choreography; an mp4 rides the same
+[release assets](https://github.com/sanbales/longeron/releases/latest)).
+
 ## Capabilities
 
 | Verb | What you get |
