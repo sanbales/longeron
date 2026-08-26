@@ -126,7 +126,14 @@ def explorer_notebook() -> dict[str, Any]:
     ``layout="inline"`` keeps the panes in the cell output (no ipylab
     docking), so the test works against a single notebook document.  The
     part names share no substrings ("axle", "hub") because Playwright's
-    ``has_text`` matching is case-insensitive substring matching.
+    ``has_text`` matching is case-insensitive substring matching.  The
+    ``Spin`` state def gives the kind switcher a second applicable kind
+    (``state``) and is deliberately WIDE (a chain of states with verbose
+    transition labels lays out well past the pane's width), so the test
+    can prove a kind switch lands FITTED to the container -- the
+    maintainer-reported bug rendered the state kind wider than the pane
+    with a horizontal scrollbar -- and that the re-shown cached diagram
+    is re-fitted on the way back.
     """
 
     return _notebook(
@@ -142,6 +149,21 @@ package Rig {
     part axle : Chassis;
     part hub {
         part bearing;
+    }
+    state def Spin {
+        entry; then idle;
+
+        state idle;
+        transition first idle accept spin_up_commanded then accelerating;
+
+        state accelerating;
+        transition first accelerating accept nominal_rotation_speed_reached then turning;
+
+        state turning;
+        transition first turning accept controlled_slow_down_commanded then braking;
+
+        state braking;
+        transition first braking accept rotor_stopped then idle;
     }
 }
 """)

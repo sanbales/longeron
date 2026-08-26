@@ -63,9 +63,22 @@ Docking is a WELL-BEHAVED Lab citizen, twice over.  First, the panel
 docks with ``mode="tab-after"`` by default -- its own full-width
 main-area tab (not activated), so running a notebook never reshapes it;
 pass ``mode="split-right"`` (or any Lab dock mode) to opt into a split.
-Because a background tab renders hidden, the panel's FIRST reveal
-triggers one diagram re-fit (the initial auto-fit aimed at a zero-sized
-viewport).  Second, docking is IDEMPOTENT per model: re-running the
+Either way the panes FILL the panel: the header keeps its natural
+height and the diagram box flex-grows to every remaining pixel (the
+inline layout instead stays bounded at the ``height`` parameter -- it
+lives in a notebook cell).  Because a background tab renders hidden,
+the panel's FIRST reveal triggers one diagram re-fit (the initial
+auto-fit aimed at a zero-sized viewport); a hidden
+:class:`_FitSentinel` beside the diagram box keeps the framing honest
+afterwards -- a newly built diagram is fitted the moment its view
+actually renders (the first-layout auto-fit can be dropped mid view
+construction: wide diagrams used to come up unfitted, overflowing the
+pane), a cached diagram re-entering the box is re-fitted against its
+current rendered size (built widgets stay in the box as persistent,
+display-toggled children, so their live views hear the fit), and a
+pane resize re-fits the visible diagram unless the user has panned or
+zoomed since the last auto-fit (their viewport is theirs).  Second,
+docking is IDEMPOTENT per model: re-running the
 cell -- or restarting the kernel and running all cells -- REPLACES the
 model's panel instead of stacking a new one.  Two mechanisms cooperate,
 keyed by :func:`_dock_key` (a slug of the model's display name, so
@@ -1090,6 +1103,164 @@ class _DockSweeper(anywidget.AnyWidget):
     shown = T.Bool(False, help="whether the panel has ever been visible").tag(sync=True)
 
 
+# The fit sentinel: a hidden sibling of the diagram box (BOTH layout
+# strategies) that reports the two browser-side moments a kernel-side
+# re-fit must answer, extending the sweeper's observer seam:
+#
+# * ``fresh`` -- a NEW sprotty view materialized as the box's VISIBLE
+#   diagram.  A fresh view paints at sprotty's identity transform
+#   (top-left, 1:1), and the kernel-side auto-fit that answers the first
+#   layout arrival can be DROPPED: the viewer view registers its message
+#   handler asynchronously (initSprotty), after the layout pipe has
+#   already reported back, so a wide diagram built on a kind switch used
+#   to come up unfitted, overflowing the pane.  Watching the DOM for the
+#   new view's laid-out nodes is the reliable signal that the handler
+#   exists and a fit will land.  Detection: the visible sprotty host
+#   div's id changed (each view mints ``sprotty_N``) and it holds
+#   ``.elknode``s; hidden persistent siblings (display:none) are skipped.
+# * ``resized`` -- the diagram box changed size while visible (the dock
+#   split handle dragged, the panel resized, a hidden tab re-revealed),
+#   debounced, and ONLY while the user has not panned or zoomed since
+#   the last kernel-side auto-fit: the viewport is the user's the moment
+#   they touch it (wheel = zoom, pointer drag = pan; plain clicks are
+#   selection, not panning, and do not latch).  The kernel bumps
+#   :attr:`fit_stamp` after every auto-fit, which clears the latch --
+#   an untouched-since-fit viewport is exactly the fitted one, so
+#   re-fitting it on resize corrects the frame without fighting anyone.
+_SENTINEL_ESM = """
+function render({ model, el }) {
+  el.style.display = "none";
+  let box = null;
+  let sprottyId = "";
+  let interacted = false;
+  let baseline = null; // last acknowledged {w, h} of the visible box
+  let hidden = false; // the box was 0x0 on the previous observation
+  let debounce = null;
+  let retry = null;
+  let mutations = null;
+  let sizer = null;
+  let downAt = null;
+
+  const bump = (name) => {
+    model.set(name, model.get(name) + 1);
+    model.save_changes();
+  };
+
+  // -- fresh: the VISIBLE sprotty view is a new one, with laid-out nodes
+  // (div.sprotty is the view's HOST node -- its sprotty-root CHILD
+  // shares the id prefix, so the class guard keeps the match unique)
+  const checkFresh = () => {
+    for (const div of box.querySelectorAll('div.sprotty[id^="sprotty"]')) {
+      if (!div.querySelector(".elknode")) continue; // not laid out yet
+      const rect = div.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue; // hidden sibling
+      if (div.id !== sprottyId) {
+        sprottyId = div.id;
+        bump("fresh");
+      }
+      return; // exactly one child is displayed at a time
+    }
+  };
+
+  // -- resized: debounced, guarded by the user-viewport latch ----------
+  const onResize = () => {
+    const rect = box.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      hidden = true; // a hidden tab: nothing to fit against
+      return;
+    }
+    const first = baseline === null;
+    const changed =
+      first ||
+      hidden ||
+      Math.abs(rect.width - baseline.w) >= 2 ||
+      Math.abs(rect.height - baseline.h) >= 2;
+    baseline = { w: rect.width, h: rect.height };
+    hidden = false;
+    if (first || !changed) return; // the initial observation is a baseline
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      if (!interacted) bump("resized");
+    }, 200);
+  };
+
+  // -- the user's viewport is theirs: wheel = zoom, drag = pan ---------
+  const onWheel = () => {
+    interacted = true;
+  };
+  const onDown = (ev) => {
+    downAt = { x: ev.clientX, y: ev.clientY };
+  };
+  const onMove = (ev) => {
+    if (downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 3) {
+      interacted = true; // moved while down: a pan, not a click
+    }
+  };
+  const onUp = () => {
+    downAt = null;
+  };
+  model.on("change:fit_stamp", () => {
+    interacted = false; // the viewport is the fitted one again
+  });
+
+  const attach = () => {
+    box = el.parentElement && el.parentElement.querySelector(":scope > .lgx-diagram-box");
+    if (!box) {
+      retry = setTimeout(attach, 200); // sibling views render asynchronously
+      return;
+    }
+    mutations = new MutationObserver(checkFresh);
+    mutations.observe(box, { childList: true, subtree: true });
+    sizer = new ResizeObserver(onResize);
+    sizer.observe(box);
+    box.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    box.addEventListener("pointerdown", onDown, true);
+    box.addEventListener("pointermove", onMove, true);
+    box.addEventListener("pointerup", onUp, true);
+    checkFresh();
+    onResize();
+  };
+  attach();
+  return () => {
+    clearTimeout(debounce);
+    clearTimeout(retry);
+    if (mutations) mutations.disconnect();
+    if (sizer) sizer.disconnect();
+    if (box) {
+      box.removeEventListener("wheel", onWheel, { capture: true });
+      box.removeEventListener("pointerdown", onDown, true);
+      box.removeEventListener("pointermove", onMove, true);
+      box.removeEventListener("pointerup", onUp, true);
+    }
+  };
+}
+export default { render };
+"""
+
+
+class _FitSentinel(anywidget.AnyWidget):
+    """A hidden fit reporter beside the diagram box (see :data:`_SENTINEL_ESM`).
+
+    Frontend -> kernel: :attr:`fresh` counts new sprotty views
+    materializing as the box's visible diagram -- the moment a newly
+    BUILT widget needs a fit against its real rendered size (the
+    kernel's first-layout auto-fit can be dropped by the asynchronous
+    view construction; the wide-diagram-overflows-the-pane bug);
+    :attr:`resized` counts debounced box resizes that happened while the
+    user had NOT panned/zoomed since the last auto-fit.  The explorer
+    answers both with one :meth:`~longeron.toolbar.AutoFitTool.refit_now`
+    on the visible diagram.  Kernel -> frontend: :attr:`fit_stamp` is
+    bumped after every kernel-side auto-fit and clears the browser's
+    user-interaction latch.
+    """
+
+    _esm = _SENTINEL_ESM
+
+    fresh = T.Int(0, help="how many fresh diagram views appeared in the box").tag(sync=True)
+    resized = T.Int(0, help="debounced box resizes with an untouched viewport").tag(sync=True)
+    fit_stamp = T.Int(0, help="bumped per kernel auto-fit; clears the user latch").tag(sync=True)
+
+
 # ---------------------------------------------------------------------------
 # the explorer widget
 # ---------------------------------------------------------------------------
@@ -1235,12 +1406,28 @@ class Explorer(W.HBox):
         self._crumb = W.HTML(layout=W.Layout(margin="0 0 0 auto"))
         header = W.HBox(
             [self.kind_switcher, self.save_button, self._crumb],
-            layout=W.Layout(align_items="center", width="100%"),
+            # flex none: the header keeps its natural height and the
+            # diagram box below takes every remaining pixel of the pane
+            layout=W.Layout(align_items="center", width="100%", flex="0 0 auto"),
         )
-        self._diagram_box = W.Box(layout=W.Layout(width="100%"))
+        # the diagram area GROWS to fill the pane (flex-grow 1, basis 0);
+        # min-height 0 lets the pane -- not the diagram widget's own
+        # min-height floor -- own the height (min-height:auto would make
+        # the floor the effective height: NB12's 'view window too short'),
+        # and overflow hidden clips instead of spilling when the pane is
+        # squeezed below what the diagram wants
+        self._diagram_box = W.Box(
+            layout=W.Layout(width="100%", flex="1 1 0%", min_height="0", overflow="hidden")
+        )
+        self._diagram_box.add_class("lgx-diagram-box")  # the sentinel's DOM handle
+        self._fit_sentinel = _FitSentinel(layout=W.Layout(display="none"))
+        self._fit_sentinel.observe(self._on_sentinel_event, ["fresh", "resized"])
         # the right pane is built ONCE, strategy-independently; the layout
         # strategy below only composes it (asserted by the test suite)
-        self._pane = W.VBox([header, self._diagram_box], layout=W.Layout(flex="1 1 auto"))
+        self._pane = W.VBox(
+            [header, self._diagram_box, self._fit_sentinel],
+            layout=W.Layout(flex="1 1 auto"),
+        )
 
         self.lab_panel: Any = None
         self._lab_app: Any = None
@@ -1282,9 +1469,14 @@ class Explorer(W.HBox):
                 width="28%", min_width="220px", height=height, flex="0 0 auto"
             )
             self._pane.layout.width = "72%"
+            # the pane matches the tree's height, so the diagram box can
+            # flex to fill it: inline stays BOUNDED (this is a notebook
+            # cell) at exactly the requested height, no 400px strip
+            self._pane.layout.height = height
             self._pane.layout.margin = "0 0 0 8px"
             return [self._tree_widget, self._pane]
         self._pane.layout.width = "100%"
+        self._pane.layout.height = height  # bounded even without a tree pane
         return [self._pane]
 
     def _dock_in_lab(self, height: str) -> None:
@@ -1343,17 +1535,45 @@ class Explorer(W.HBox):
         Under the default background-tab docking the initial auto-fit
         runs while the panel is HIDDEN -- a zero-sized viewport -- so the
         diagram would look blank until the user clicked Fit.  One re-fit
-        on the first reveal corrects it; later tab switches never re-fit
-        (the user's viewport is theirs).
+        on the first reveal corrects it.  Later reveals and resizes are
+        the fit sentinel's job (:class:`_FitSentinel`), guarded by the
+        user-viewport latch -- a viewport the user has touched is theirs.
         """
 
         if not change["new"]:
             return
-        diagram = self.diagram
-        if diagram is not None:
-            from .toolbar import AutoFitTool
+        self._refit_current()
 
-            diagram.get_tool(AutoFitTool).refit_now()
+    def _refit_current(self) -> None:
+        """Fit the visible diagram to its CURRENT rendered size, now.
+
+        The one funnel for every explorer-driven fit (first reveal, a
+        widget (re)entering the box, a pane resize).  Bumping the
+        sentinel's ``fit_stamp`` afterwards clears the browser-side
+        user-interaction latch: the viewport is the fitted one again, so
+        a later resize may re-frame it without fighting the user.
+        """
+
+        diagram = self.diagram
+        if diagram is None:
+            return
+        from .toolbar import AutoFitTool
+
+        diagram.get_tool(AutoFitTool).refit_now()
+        self._fit_sentinel.fit_stamp += 1
+
+    def _on_sentinel_event(self, change: Any) -> None:
+        """A browser report from the pane: re-fit the visible diagram.
+
+        ``fresh``: a newly built diagram view materialized in the box
+        with its layout rendered -- the reliable moment to fit it (the
+        first-layout auto-fit can be dropped while the view is still
+        constructing).  ``resized``: the box changed size and the user
+        has not panned/zoomed since the last auto-fit (guarded
+        browser-side).
+        """
+
+        self._refit_current()
 
     # -- public surface ------------------------------------------------------
 
@@ -1378,10 +1598,17 @@ class Explorer(W.HBox):
 
     @property
     def diagram(self) -> Any:
-        """The diagram widget currently shown in the right pane."""
+        """The diagram widget currently SHOWN in the right pane.
 
-        children = self._diagram_box.children
-        return children[0] if children else None
+        Built widgets stay in the diagram box as persistent children --
+        their browser views must survive re-shows (see :meth:`_show`) --
+        so the shown one is the child whose ``display`` is not ``none``.
+        """
+
+        for child in self._diagram_box.children:
+            if child.layout.display != "none":
+                return child
+        return None
 
     def select(self, target: str | M.Element) -> None:
         """Select by tree node id / qualified name, or by element."""
@@ -1532,7 +1759,12 @@ class Explorer(W.HBox):
         widget = self._diagrams.get(key)
         if widget is None:
             widget = self._build(scope, kind)
+            # the diagram box owns the size: fill it exactly (the widget's
+            # stock 400px min-height floor would otherwise re-introduce
+            # overflow in panes shorter than the floor)
             widget.layout.width = "100%"
+            widget.layout.height = "100%"
+            widget.layout.min_height = "0"
             self._diagrams[key] = widget
             self._diagram_ids[id(widget)] = _diagram_node_ids(widget)
 
@@ -1540,8 +1772,30 @@ class Explorer(W.HBox):
                 self._from_diagram(w, els)
 
             diagrams.on_select(widget, self.model, deliver)
-        if self._diagram_box.children != (widget,):
-            self._diagram_box.children = (widget,)
+        # built widgets ACCUMULATE as persistent children; showing one is a
+        # display toggle, never a children swap.  Swapping would DESTROY
+        # the outgoing browser view, and the vendored jupyter-elk view
+        # never unbinds its model listeners on removal -- every later fit
+        # or selection write would replay into the zombie view's detached
+        # DOM ('Host is not attached.' page errors).  Persistent views
+        # also make the re-show fit deliverable kernel-side: the shown
+        # widget's view is ALIVE, so the fit message cannot be dropped.
+        if widget not in self._diagram_box.children:
+            self._diagram_box.children = (*self._diagram_box.children, widget)
+        reshown = False
+        for child in self._diagram_box.children:
+            display = None if child is widget else "none"
+            if child.layout.display != display:
+                child.layout.display = display
+                if child is widget:
+                    reshown = True
+        if reshown:
+            # a cached widget re-entering the visible box: fit it against
+            # its CURRENT rendered size (its old viewport was framed for
+            # whatever the pane looked like when it was last shown).  The
+            # display sync reaches the browser before the fit message, so
+            # the fit measures the just-revealed, full-sized canvas.
+            self._refit_current()
         if not highlight:
             return
         # highlight the element (or its nearest drawn ancestor) through the
@@ -1596,7 +1850,11 @@ def explore(model: M.Model, **kwargs: Any) -> Explorer:
       structure view to the selection's owning package so relationship
       edges to siblings stay visible; ``"element"`` scopes it to the
       selected namespace itself;
-    * ``height`` -- the tree pane's CSS height (default ``"600px"``).
+    * ``height`` -- the explorer's inline CSS height: the tree pane and
+      the diagram pane both honor it (default ``"600px"``; the diagram
+      area takes the pane minus the kind-switcher header).  The ``lab``
+      layout ignores it -- the docked panel fills its tab, and the
+      dock's split handles own the sizing.
     """
 
     return Explorer(model, **kwargs)

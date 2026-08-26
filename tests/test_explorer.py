@@ -890,6 +890,142 @@ class TestDocking:
 
 
 # ---------------------------------------------------------------------------
+# pane layout: the diagram area fills the pane; inline stays bounded
+# ---------------------------------------------------------------------------
+
+
+class TestPaneFill:
+    def test_diagram_box_grows_and_header_stays_fixed(self, ex):
+        # the vertical chain: header flex-none, diagram box flex-grow-1
+        # with a zero min-height (min-height:auto would turn the diagram
+        # widget's floor into the rendered height -- the '400px strip')
+        box = ex._diagram_box
+        assert box.layout.flex == "1 1 0%"
+        assert box.layout.min_height == "0"
+        assert box.layout.overflow == "hidden"
+        assert box.layout.width == "100%"
+        header = ex._pane.children[0]
+        assert header.layout.flex == "0 0 auto"
+
+    def test_diagram_widgets_defer_to_the_pane(self, ex):
+        # built widgets fill the box exactly; the stock 400px min-height
+        # floor (diagrams shown OUTSIDE the explorer keep it) is lifted
+        ex.select("Drone::QuadCopter")
+        assert ex.diagram.layout.height == "100%"
+        assert ex.diagram.layout.width == "100%"
+        assert ex.diagram.layout.min_height == "0"
+
+    def test_inline_pane_honors_the_height_parameter(self, drone_model):
+        ex = explore(drone_model, layout="inline", height="420px")
+        assert ex._pane.layout.height == "420px"
+        assert ex.tree.layout.height == "420px"
+
+    def test_headless_inline_pane_is_bounded_too(self, drone_model):
+        ex = Explorer(drone_model, tree=StubTree(), layout="inline", height="500px")
+        assert ex._pane.layout.height == "500px"
+
+    def test_docked_pane_fills_the_panel(self, drone_model, monkeypatch):
+        _install_stub_ipylab(monkeypatch)
+        ex = explore(drone_model, layout="lab", height="420px")
+        # the dock, not the height parameter, owns the panel's size
+        assert ex._pane.layout.height == "100%"
+        assert ex._pane.layout.width == "100%"
+        assert ex.tree.layout.height == "100%"
+        assert ex._diagram_box.layout.flex == "1 1 0%"
+
+
+# ---------------------------------------------------------------------------
+# the fit sentinel: cached widgets refit on re-show; guarded resize refits
+# ---------------------------------------------------------------------------
+
+
+class TestFitSentinel:
+    def test_sentinel_rides_hidden_beside_the_diagram_box(self, ex):
+        sentinel = ex._fit_sentinel
+        assert sentinel in ex._pane.children  # ships in BOTH layouts
+        assert sentinel.layout.display == "none"
+        assert (sentinel.fresh, sentinel.resized, sentinel.fit_stamp) == (0, 0, 0)
+
+    def test_fresh_view_report_refits_the_current_diagram(self, ex):
+        from longeron.toolbar import AutoFitTool
+
+        ex.select("Drone::QuadCopter")
+        tool = ex.diagram.get_tool(AutoFitTool)
+        before = tool.fit_count
+        stamp = ex._fit_sentinel.fit_stamp
+        ex._fit_sentinel.fresh += 1  # what the browser reports on a view swap
+        assert tool.fit_count == before + 1
+        # every auto-fit clears the browser's user-interaction latch
+        assert ex._fit_sentinel.fit_stamp == stamp + 1
+
+    def test_resize_report_refits_the_current_diagram(self, ex):
+        from longeron.toolbar import AutoFitTool
+
+        ex.select("Drone::QuadCopter")
+        tool = ex.diagram.get_tool(AutoFitTool)
+        before = tool.fit_count
+        ex._fit_sentinel.resized += 1  # a debounced, latch-guarded resize
+        assert tool.fit_count == before + 1
+
+    def test_reshow_refit_targets_the_reshown_widget(self, ex, monkeypatch):
+        # the AutoFitTool seam, spied: switching kinds away and back
+        # re-shows the CACHED widget, and the kernel must fit exactly the
+        # re-shown widget (its live view hears the fit -- see _show)
+        from longeron import toolbar
+
+        fitted: list = []
+        monkeypatch.setattr(
+            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
+        )
+        ex.select("Drone::FlightStates")
+        structure = ex.diagram
+        ex.kind = "state"
+        state = ex.diagram
+        assert state is not structure
+        ex.kind = "structure"
+        assert ex.diagram is structure  # cached: the SAME widget re-enters
+        assert fitted and fitted[-1] is structure  # ... freshly fitted
+        ex.kind = "state"
+        assert fitted[-1] is state  # and the same on the way back
+
+    def test_built_widgets_persist_as_display_toggled_children(self, ex):
+        # swapping children would DESTROY the outgoing browser view (whose
+        # model listeners the vendored frontend never unbinds): built
+        # widgets must STAY in the box, exactly one displayed
+        ex.select("Drone::FlightStates")
+        structure = ex.diagram
+        ex.kind = "state"
+        state = ex.diagram
+        assert {structure, state} <= set(ex._diagram_box.children)
+        assert structure.layout.display == "none"
+        assert state.layout.display is None  # displayed
+        ex.kind = "structure"
+        assert {structure, state} <= set(ex._diagram_box.children)  # both kept
+        assert state.layout.display == "none"
+        assert structure.layout.display is None
+
+    def test_first_build_is_not_kernel_refitted(self, ex, monkeypatch):
+        # a brand-new widget has no browser view yet -- a kernel fit
+        # would be dropped; its fit is the sentinel's ``fresh`` report
+        # (plus the AutoFitTool's own first-layout fit)
+        from longeron import toolbar
+
+        fitted: list = []
+        monkeypatch.setattr(
+            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
+        )
+        ex.select("Drone::FlightStates")
+        ex.kind = "state"  # builds the state widget
+        assert ex.diagram not in fitted
+
+    def test_sentinel_reports_are_safe_without_a_diagram(self, drone_model):
+        ex = Explorer(drone_model, tree=StubTree(), layout="inline")
+        ex._diagram_box.children = ()  # no visible diagram
+        ex._fit_sentinel.fresh += 1  # must not raise
+        ex._fit_sentinel.resized += 1
+
+
+# ---------------------------------------------------------------------------
 # the demo notebook (gitignored; skipped where it does not exist)
 # ---------------------------------------------------------------------------
 

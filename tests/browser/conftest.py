@@ -162,7 +162,18 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
     _sync_labextension()
     root = tmp_path_factory.mktemp("lab-root")
-    shutil.copy2(REPO / "notebooks" / "11_notation_gallery.ipynb", root)
+    # Hermetic copy: strip every code cell's outputs/execution_count.  The
+    # working-tree NB11 accumulates autosaved outputs (capture runs, live Lab
+    # sessions); stale widget-view outputs open as "widget model not found"
+    # console-error storms on a fresh kernel and poison the gallery test.
+    gallery = json.loads(
+        (REPO / "notebooks" / "11_notation_gallery.ipynb").read_text(encoding="utf-8")
+    )
+    for cell in gallery.get("cells", []):
+        if cell.get("cell_type") == "code":
+            cell["outputs"] = []
+            cell["execution_count"] = None
+    (root / "11_notation_gallery.ipynb").write_text(json.dumps(gallery, indent=1), encoding="utf-8")
     for name, build in SCENARIO_NOTEBOOKS.items():
         (root / name).write_text(json.dumps(build(), indent=1), encoding="utf-8")
 
@@ -455,7 +466,19 @@ class LabPage:
         return str(state["out"])
 
     def run_cell(self, index: int = -1, timeout: float = 60.0) -> str:
-        """Re-run one cell (activate + notebook:run-cell); return its output."""
+        """Re-run one cell (activate + notebook:run-cell); return its output.
+
+        The command is fired-and-forgotten and RE-FIRED while the cell
+        shows no sign of running: ``notebook:run-cell``'s promise resolves
+        only when the cell's execution completes, and ``page.evaluate``
+        awaits returned promises -- awaiting it hung CI (and local runs
+        under load) FOREVER when the execute request was swallowed by a
+        just-restarted kernel's half-rewired session (the docking test's
+        post-restart checker; the same eaten-clock class ``run_all``
+        documents). The bounded poll below owns the waiting; every caller
+        re-runs an idempotent print-only checker cell, so an occasional
+        double execution is harmless.
+        """
 
         before = self.page.evaluate(_CELL_STATE_JS, index)
         assert before is not None, f"no cell at index {index}"
@@ -470,10 +493,8 @@ class LabPage:
             index,
         )
         time.sleep(0.5)
-        self.page.evaluate(
-            "() => (window.jupyterapp || window.jupyterlab).commands.execute('notebook:run-cell')"
-        )
         deadline = time.monotonic() + timeout
+        refire_at = time.monotonic()  # first fire happens immediately
         while time.monotonic() < deadline:
             state = self.page.evaluate(_CELL_STATE_JS, index)
             if (
@@ -483,6 +504,13 @@ class LabPage:
                 and re.search(r"\[\d+\]", state["prompt"])
             ):
                 return str(state["out"])
+            running = state is not None and "*" in state["prompt"]
+            if not running and time.monotonic() >= refire_at:
+                self.page.evaluate(
+                    "() => { void (window.jupyterapp || window.jupyterlab)"
+                    ".commands.execute('notebook:run-cell'); return true; }"
+                )
+                refire_at = time.monotonic() + 15.0
             time.sleep(0.5)
         raise TimeoutError(f"cell {index} did not finish re-running within {timeout}s")
 

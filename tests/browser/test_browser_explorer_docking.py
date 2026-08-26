@@ -8,7 +8,10 @@ Two browser-truth requirements (the 0.10.0 tranche-1 bugs):
    path (the Python-side registry cannot reach it -- its comm is dead);
 2. NO SQUEEZE -- the default ``mode="tab-after"`` docks the explorer as a
    background main-area tab, so running the notebook never narrows its
-   cells (``split-right`` used to steal half the width at dock time).
+   cells (``split-right`` used to steal half the width at dock time);
+3. FULL PANE -- once the tab is opened, the diagram FILLS the pane
+   vertically (the layout chain flex-grows the diagram box) instead of
+   rendering as a ~400px strip above dead space.
 
 The restart is driven through the real command registry
 (``notebook:restart-run-all`` -- the id JupyterLab 4.6 registers, verified
@@ -18,6 +21,7 @@ confirmation dialog exactly like a user would.
 Evidence screenshots land in ``build/evidence/``.
 """
 
+import time
 from pathlib import Path
 
 import pytest
@@ -54,9 +58,49 @@ _PANEL_DIAGRAM_VISIBLE_JS = """() => {
     return rect.width > 10 && rect.height > 10;
 }"""
 
+#: the docked pane must FILL the tab: the sprotty svg's rendered height
+#: against the panel's content height (the pre-0.10.0 bug rendered a
+#: ~400px strip -- the diagram box did not flex-grow, so the widget's
+#: min-height floor acted as its height)
+_PANEL_FILL_JS = """() => {
+    const panel = document.querySelector('.lgx-explorer.lgx-explorer-dock-demo');
+    if (!panel) return null;
+    const svg = panel.querySelector('.sprotty svg.sprotty-graph');
+    if (!svg) return null;
+    return {
+        panel: panel.getBoundingClientRect().height,
+        svg: svg.getBoundingClientRect().height,
+    };
+}"""
+
 
 def _tab_stamps(page) -> list[str]:
     return list(page.eval_on_selector_all(TAB, "tabs => tabs.map(t => t.dataset.lgxstamp)"))
+
+
+def _swept_checker(lab, *, timeout: float = 90.0) -> dict:
+    """The checker JSON once ``swept >= 1`` has propagated (or the last state).
+
+    The sweep happens BROWSER-side and reaches the kernel as a trait
+    sync; under CI load the checker cell can execute before that comm
+    message lands and read a stale 0. Re-running the (print-only,
+    idempotent) checker keeps the assertion about WHETHER the sweep
+    fired, not about how fast comm messages travel on a 2-core runner.
+    """
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            checker = lab.run_cell_json(index=-1)
+        except TimeoutError:
+            # one hosed attempt (execute requests lost in a re-wiring
+            # session) is retryable within the same deadline
+            if time.monotonic() >= deadline:
+                raise
+            continue
+        if checker.get("swept", 0) >= 1 or time.monotonic() >= deadline:
+            return checker
+        time.sleep(2)
 
 
 def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
@@ -81,7 +125,7 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
         label="one docked explorer panel after run-all",
     )
     first_stamps = _tab_stamps(page)
-    checker = lab.run_cell_json(index=-1)
+    checker = _swept_checker(lab)
     assert checker["strategy"] == "lab", checker
     assert checker["mode"] == "tab-after", checker
     assert checker["key"] == "dock-demo", checker
@@ -109,24 +153,46 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
         ".commands.execute('notebook:restart-run-all'); return true; }"
     )
     page.locator(".jp-Dialog .jp-mod-accept.jp-mod-warn").click(timeout=30_000)
+    # restore the conftest belt: any LATER dialog (e.g. a file-changed
+    # prompt racing an autosave) blocks every pointer interaction below
+    page.add_locator_handler(
+        page.locator(".jp-Dialog .jp-mod-reject"),
+        lambda button: button.click(),
+    )
 
     # the run has re-docked when a tab with a NEWER stamp appears; requiring
     # EXACTLY one tab + one panel (two stable polls) proves replacement --
-    # a pile-up would hold two tabs, a sweep failure the old stamp
-    lab.wait_until(
-        lambda s: (
-            page.locator(PANEL).count() == 1
-            and _tab_stamps(page) != first_stamps
-            and len(_tab_stamps(page)) == 1
-        ),
-        timeout=240,
-        label="exactly one live explorer panel after restart + run-all",
-    )
+    # a pile-up would hold two tabs, a sweep failure the old stamp.
+    # restart-run-all's run-all half can be LOST outright on a loaded
+    # runner (cells pinned at [*] with an idle kernel: the execute requests
+    # went into the dying session; seen on CI and under local load), so
+    # between bounded waits RE-FIRE run-all -- safe by the feature's own
+    # contract (docking is idempotent per model: REPLACE, never stack)
+    deadline = time.monotonic() + 240
+    while True:
+        try:
+            lab.wait_until(
+                lambda s: (
+                    page.locator(PANEL).count() == 1
+                    and _tab_stamps(page) != first_stamps
+                    and len(_tab_stamps(page)) == 1
+                ),
+                timeout=max(min(80.0, deadline - time.monotonic()), 10.0),
+                label="exactly one live explorer panel after restart + run-all",
+            )
+            break
+        except TimeoutError:
+            if time.monotonic() >= deadline:
+                raise
+            page.evaluate(
+                "() => { void (window.jupyterapp || window.jupyterlab)"
+                ".commands.execute('notebook:run-all-cells'); return true; }"
+            )
     lab.wait_settled(timeout=180)
     second_stamps = _tab_stamps(page)
     assert len(second_stamps) == 1 and second_stamps != first_stamps
 
-    checker = lab.run_cell_json(index=-1)
+    checker = _swept_checker(lab)
     assert checker["strategy"] == "lab", checker
     assert checker["swept"] >= 1, checker  # the sweep fired again post-restart
 
@@ -147,6 +213,13 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
         lambda s: page.evaluate(_PANEL_DIAGRAM_VISIBLE_JS),
         timeout=60,
         label="diagram re-fits on the panel's first reveal",
+    )
+    # the diagram must FILL the pane vertically (>= 80% of the panel's
+    # content height), not render as a ~400px strip above dead space
+    fill = page.evaluate(_PANEL_FILL_JS)
+    assert fill is not None and fill["panel"] > 300, fill
+    assert fill["svg"] >= 0.8 * fill["panel"], (
+        f"the diagram must fill the docked pane, not a ~400px strip: {fill}"
     )
     page.screenshot(path=str(EVIDENCE / "explorer-dock-panel-open.png"))
 
