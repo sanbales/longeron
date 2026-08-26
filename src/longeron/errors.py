@@ -103,6 +103,15 @@ class ResolutionError(SysMLError):
     """Raised when a qualified name cannot be resolved."""
 
 
+class EditError(SysMLError):
+    """Raised when a model edit is invalid or would corrupt references.
+
+    :mod:`longeron.edit` refuses any mutation it cannot prove safe -- a
+    rename that would break or silently re-bind references raises this
+    error (listing the affected sites) instead of corrupting the model.
+    """
+
+
 class EvaluationError(SysMLError):
     """Raised when an expression cannot be evaluated."""
 

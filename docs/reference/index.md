@@ -16,6 +16,7 @@ objects are defined.
 | [Workspaces & caching](workspace.md) | `longeron.workspace` | `load`, multi-file merges, the model cache |
 | [Interpreter](interpreter.md) | `longeron.interpreter` | evaluation, instantiation, actions, states |
 | [Validation](validation.md) | `longeron.validation` | `validate()` / `longeron lint` diagnostics |
+| [Model editing](edit.md) | `longeron.edit` | rename/value/doc mutations with round-trip guarantees, change tracking |
 | [Standard library](stdlib.md) | `longeron.stdlib` | the vendored OMG model library |
 | [M0 interpretations](m0.md) | `longeron.m0` | populations, sequences, roll-ups, trace occurrences |
 | [Interchange](interchange.md) | `longeron.export`, `longeron.importer`, `longeron.kerml`, `longeron.ecore`, `longeron.api`, `longeron.rdf`, `longeron.rag` | JSON/SysML/KerML exports, spec metamodel, API JSON, RDF/SPARQL, LLM retrieval substrate |
@@ -56,6 +57,7 @@ parsing
 workspace
 interpreter
 validation
+edit
 stdlib
 interchange
 m0

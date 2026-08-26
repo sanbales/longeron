@@ -24,10 +24,11 @@ Quick start::
     print(interp.call("Demo::Double", 21)) # 42
 """
 
-from . import ast, m0, model, views
+from . import ast, edit, m0, model, views
 from .builder import build_model, loads, parse_expression
 from .errors import (
     BuildError,
+    EditError,
     EvaluationError,
     ExecutionError,
     ParseError,
@@ -111,11 +112,13 @@ __all__ = [
     "ParseError",
     "SyntaxIssue",
     "BuildError",
+    "EditError",
     "ResolutionError",
     "EvaluationError",
     "ExecutionError",
     # modules
     "ast",
+    "edit",
     "m0",
     "model",
     "views",

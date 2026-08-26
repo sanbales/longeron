@@ -1,0 +1,858 @@
+"""Model editing: small mutations with round-trip guarantees.
+
+This is the seam UI inspectors mutate a model through: each operation
+takes the model plus an element (or its ``::``-qualified name), validates
+its input precisely, applies the smallest possible change, and leaves the
+model in a state that still exports to parseable text
+(:func:`longeron.to_sysml`), still resolves, and still validates.  No
+operation inserts or removes siblings of existing elements (``set_doc``
+appends or edits in place), so index-path element ids -- the
+:mod:`longeron.ecore` projection ids derived from member positions --
+stay stable across edits.
+
+The operations::
+
+    import longeron
+    from longeron import edit
+
+    model = longeron.loads("package P { part def Vehicle; part v : Vehicle; }")
+    tracker = edit.track(model)
+    edit.rename(model, "P::Vehicle", "Car")     # cascades into 'v : Car'
+    edit.set_doc(model, "P::v", "The prototype.")
+    tracker.dirty                                # True
+    tracker.changes                              # [(op, qname, detail), ...]
+
+**The honest-refusal rename philosophy.**  Renaming an element changes
+the qualified names of its whole subtree, and every *textual reference*
+in the model that reaches the element -- or its descendants -- through
+the old name must be rewritten with it: typings, subsets, redefines,
+connector ends, satisfy targets, exposes, imports, aliases, dependency
+ends, metadata prefixes, and the name references inside owned
+expressions.  :func:`rename` resolves every reference site through the
+same machinery :func:`longeron.validate` uses, rewrites exactly the
+segments that resolve to the renamed element, and then *re-resolves every
+site* to prove that nothing changed meaning.  Whatever cannot be proven
+safe is refused: references in positions that cannot be statically
+resolved (member access on a computed value, e.g. ``seq#(1).mass``) raise
+:class:`~longeron.errors.EditError` listing the offending sites, and a
+rename that would silently re-bind *any* reference (name capture through
+shadowing) is rolled back and refused.  A rename that silently breaks
+references is worse than no rename.
+
+Known blind spots, matching ``validate``'s own: metadata *value* bodies
+(``level = 3;`` inside ``@Safety``) resolve against the metadata
+definition only one level deep, and references that reach an element
+purely through an :class:`~longeron.model.Alias` are not rewritten when
+the alias itself is renamed (the post-verification refuses such renames
+rather than break them).
+
+**Change tracking.**  :func:`track` registers a :class:`Tracker` in a
+module-level :class:`weakref.WeakKeyDictionary` keyed by the model object
+itself, so trackers die with their models and no wrapper type is needed.
+Every ``edit.*`` operation that mutates a tracked model appends a
+:class:`Change` record and fires the tracker's callbacks; ``dirty`` is
+simply "there are recorded changes since the last :meth:`Tracker.mark_saved`".
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import weakref
+from collections.abc import Callable, Iterator
+from typing import Any, NamedTuple
+
+from . import ast as A
+from . import model as M
+from . import stdlib as stdlib_module
+from .ast import expr_to_text
+from .errors import EditError, ResolutionError, SysMLError
+from .export import doc_comment_body
+from .interpreter import Resolver
+
+__all__ = [
+    "Change",
+    "EditError",
+    "Tracker",
+    "rename",
+    "set_attribute_value",
+    "set_doc",
+    "track",
+    "untrack",
+]
+
+
+# ---------------------------------------------------------------------------
+# change tracking
+# ---------------------------------------------------------------------------
+
+
+class Change(NamedTuple):
+    """One recorded edit: unpacks as ``(op, qname, detail)``."""
+
+    op: str  #: "rename" | "set_value" | "set_doc"
+    qname: str  #: qualified name of the edited element (after the edit)
+    detail: dict[str, Any]  #: op-specific payload (old/new values, ...)
+
+
+class Tracker:
+    """Accumulates :class:`Change` records for one tracked model.
+
+    ``dirty`` is derived: True whenever ``changes`` is non-empty.
+    :meth:`mark_saved` clears both -- ``changes`` is defined as "the edits
+    since the last save", which is exactly what an app needs to decide
+    whether to prompt, and what to write into a commit message.
+    Callbacks registered with :meth:`on_change` fire synchronously, once
+    per change, after the change is appended; exceptions propagate to the
+    caller of the edit operation.
+    """
+
+    def __init__(self) -> None:
+        self.changes: list[Change] = []
+        self._callbacks: list[Callable[[Change], None]] = []
+
+    @property
+    def dirty(self) -> bool:
+        return bool(self.changes)
+
+    def on_change(self, callback: Callable[[Change], None]) -> None:
+        self._callbacks.append(callback)
+
+    def mark_saved(self) -> None:
+        self.changes.clear()
+
+    def _record(self, change: Change) -> None:
+        self.changes.append(change)
+        for callback in list(self._callbacks):
+            callback(change)
+
+
+_TRACKERS: weakref.WeakKeyDictionary[M.Model, Tracker] = weakref.WeakKeyDictionary()
+
+
+def track(model: M.Model) -> Tracker:
+    """Start (or continue) tracking edits to ``model``; returns its tracker.
+
+    Idempotent: repeated calls return the same :class:`Tracker`.  The
+    registry holds the model weakly -- dropping the model drops the
+    tracker.
+    """
+
+    tracker = _TRACKERS.get(model)
+    if tracker is None:
+        tracker = Tracker()
+        _TRACKERS[model] = tracker
+    return tracker
+
+
+def untrack(model: M.Model) -> None:
+    """Stop tracking ``model`` (a no-op when it was never tracked)."""
+
+    _TRACKERS.pop(model, None)
+
+
+def _record(model: M.Model, op: str, qname: str | None, detail: dict[str, Any]) -> None:
+    tracker = _TRACKERS.get(model)
+    if tracker is not None:
+        tracker._record(Change(op, qname or "", detail))
+
+
+# ---------------------------------------------------------------------------
+# shared plumbing
+# ---------------------------------------------------------------------------
+
+
+def _resolver(model: M.Model) -> Resolver:
+    """A stdlib-aware resolver, exactly as ``validate`` builds one."""
+
+    try:
+        library: M.Model | None = stdlib_module.standard_library_model(cache=True)
+    except Exception:
+        library = None  # degrade to resolution without the library
+    return Resolver(model, library=library)
+
+
+def _target(model: M.Model, element_or_qname: M.Element | str, resolver: Resolver) -> M.Element:
+    """Normalize an operation target to an element of ``model``."""
+
+    if isinstance(element_or_qname, M.Element):
+        element = element_or_qname
+    else:
+        try:
+            element = resolver.resolve(element_or_qname)
+        except ResolutionError as err:
+            raise EditError(str(err)) from err
+    node: M.Element = element
+    while node.owner is not None:
+        node = node.owner
+    if node is not model:
+        raise EditError(
+            f"{element.qualified_name or element.label!r} is not part of this model "
+            "(standard-library elements cannot be edited)"
+        )
+    return element
+
+
+def _resolve_or_none(
+    resolver: Resolver, qname: tuple[str, ...], context: M.Element | None
+) -> M.Element | None:
+    try:
+        return resolver.resolve(qname, context)
+    except ResolutionError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# reference sites (the rename cascade's ground truth)
+# ---------------------------------------------------------------------------
+
+#: sentinel targets that are never model references
+_SKIP_TARGETS = frozenset({"", M.ENTRY_SOURCE})
+
+
+@dataclasses.dataclass
+class _Site:
+    """One textual reference: where it is stored and how it resolves.
+
+    ``obj.attr`` (indexed by ``index`` for list fields) holds either a
+    stored reference string (``"P::Vehicle"``, ``"engine.port"``, possibly
+    ``"~"``-prefixed) or a qualified-name tuple on an expression node.
+    ``context`` is the element the first segment resolves from -- the
+    owner scope for stored strings (the ``validate`` idiom), the owning
+    element itself for expression names (so a constraint's own parameters
+    stay visible).  ``base`` carries a :class:`~longeron.ast.ChainAccess`
+    base expression whose static resolution anchors the chain parts.
+    ``lookthrough`` marks ``redefines`` strings, where a same-named
+    redefinition shadows the redefined feature (``attribute mass :>>
+    mass``) and resolution must look through to the inherited member.
+    """
+
+    element: M.Element
+    context: M.Element | None
+    obj: Any
+    attr: str
+    index: int | None
+    role: str
+    base: A.Expr | None = None
+    lookthrough: bool = False
+
+    def value(self) -> str | tuple[str, ...]:
+        holder = getattr(self.obj, self.attr)
+        out = holder[self.index] if self.index is not None else holder
+        return out  # type: ignore[no-any-return]
+
+    def assign(self, new: str | tuple[str, ...]) -> None:
+        if self.index is None:
+            setattr(self.obj, self.attr, new)
+        else:
+            getattr(self.obj, self.attr)[self.index] = new
+
+    def describe(self) -> str:
+        where = self.element.qualified_name or self.element.label
+        value = self.value()
+        text = "::".join(value) if isinstance(value, tuple) else value
+        return f"{where} {self.role} {text!r}"
+
+
+@dataclasses.dataclass
+class _DynamicRef:
+    """A name in a position that cannot be statically resolved."""
+
+    element: M.Element
+    parts: tuple[str, ...]
+    role: str
+
+    def describe(self) -> str:
+        where = self.element.qualified_name or self.element.label
+        return f"{where} {self.role} {'.'.join(self.parts)!r}"
+
+
+def _chains_of(value: str | tuple[str, ...]) -> tuple[list[list[str]], str]:
+    """Split a stored reference into dot-chains of ``::`` parts."""
+
+    if isinstance(value, tuple):
+        return [list(value)], ""
+    prefix = ""
+    text = value
+    while text.startswith("~"):  # conjugated-port typings: ': ~PortDef'
+        prefix += "~"
+        text = text[1:]
+    return [segment.split("::") for segment in text.split(".")], prefix
+
+
+def _rejoin(chains: list[list[str]], prefix: str, as_tuple: bool) -> str | tuple[str, ...]:
+    if as_tuple:
+        return tuple(chains[0])
+    return prefix + ".".join("::".join(parts) for parts in chains)
+
+
+def _collect_sites(model: M.Model, resolver: Resolver) -> tuple[list[_Site], list[_DynamicRef]]:
+    sites: list[_Site] = []
+    dynamic: list[_DynamicRef] = []
+    for element in model.iter_tree():
+        scope = element.owner or model
+        for obj, attr, index, role in _string_refs(element, resolver):
+            holder = getattr(obj, attr)
+            value = holder[index] if index is not None else holder
+            if not value or value in _SKIP_TARGETS:
+                continue
+            context: M.Element | None = scope
+            lookthrough = False
+            if isinstance(element, M.MetadataValue):
+                context = _metadata_context(element, resolver, model)
+                if context is None:
+                    continue  # not statically resolvable; validate skips it too
+            if attr == "redefines":
+                lookthrough = True
+            sites.append(_Site(element, context, obj, attr, index, role, lookthrough=lookthrough))
+        bound = _ambient_locals(element)
+        for expr, role in _element_exprs(element):
+            _walk_expr(expr, element, role, bound, sites, dynamic)
+    return sites, dynamic
+
+
+def _string_refs(
+    element: M.Element, resolver: Resolver
+) -> Iterator[tuple[Any, str, int | None, str]]:
+    """Every stored-string reference field on ``element``: (obj, attr,
+    index, role).  The vocabulary mirrors ``validate``'s reference checks
+    plus the reference fields it leaves to other diagnostics (imports,
+    exposes, state-machine targets, metadata prefixes, ...)."""
+
+    for i in range(len(element.metadata)):
+        yield element, "metadata", i, "metadata prefix"
+    if isinstance(element, M.Definition):
+        for i in range(len(element.supers)):
+            yield element, "supers", i, "specializes"
+    if isinstance(element, M.Usage):
+        for i in range(len(element.types)):
+            yield element, "types", i, "typed by"
+        for i in range(len(element.subsets)):
+            yield element, "subsets", i, "subsets"
+        for i in range(len(element.redefines)):
+            yield element, "redefines", i, "redefines"
+        if element.references:
+            yield element, "references", None, "references"
+        if element.crosses:
+            yield element, "crosses", None, "crosses"
+    if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage, M.AllocationUsage)):
+        for end in element.ends:
+            yield end, "target", None, "connects"
+    if isinstance(element, M.BindingConnector):
+        for bound_end in (element.source_end, element.target_end):
+            if bound_end is not None:
+                yield bound_end, "target", None, "binds"
+    if isinstance(element, M.SatisfyUsage) and element.by:
+        yield element, "by", None, "satisfied by"
+    if isinstance(element, M.FlowUsage):
+        if element.payload:
+            yield element, "payload", None, "flow payload"
+        if element.source:
+            yield element, "source", None, "flow source"
+        if element.target_end:
+            yield element, "target_end", None, "flow target"
+    if isinstance(element, (M.Import, M.Alias, M.Expose)):
+        yield element, "target", None, type(element).__name__.lower()
+    if isinstance(element, M.Dependency):
+        for i in range(len(element.clients)):
+            yield element, "clients", i, "dependency client"
+        for i in range(len(element.suppliers)):
+            yield element, "suppliers", i, "dependency supplier"
+    if isinstance(element, M.Comment):
+        for i in range(len(element.about)):
+            yield element, "about", i, "comment about"
+    if isinstance(element, M.MetadataUsage):
+        if element.typed_by:
+            yield element, "typed_by", None, "metadata typed by"
+        for i in range(len(element.about)):
+            yield element, "about", i, "metadata about"
+    if isinstance(element, M.MetadataValue) and element.redefines:
+        yield element, "redefines", None, "metadata value redefines"
+    if isinstance(element, (M.AssignmentAction, M.InitialNode)):
+        yield element, "target", None, "targets"
+    if isinstance(element, M.PerformAction) and element.target:
+        yield element, "target", None, "performs"
+    if isinstance(element, M.Succession):
+        if element.source:
+            yield element, "source", None, "succession source"
+        yield element, "target", None, "succession target"
+    if isinstance(element, M.TransitionUsage):
+        if element.source:
+            yield element, "source", None, "transition source"
+        yield element, "target", None, "transition target"
+    if isinstance(element, M.AcceptAction):
+        for i in range(len(element.payload_types)):
+            yield element, "payload_types", i, "accepts"
+
+
+def _metadata_context(
+    value: M.MetadataValue, resolver: Resolver, model: M.Model
+) -> M.Element | None:
+    """The metadata definition a top-level metadata value redefines into."""
+
+    owner = value.owner
+    if not isinstance(owner, M.MetadataUsage) or not owner.typed_by:
+        return None  # nested values (or detached ones) are out of static reach
+    return _resolve_or_none(resolver, tuple(owner.typed_by.split("::")), owner.owner or model)
+
+
+def _element_exprs(element: M.Element) -> Iterator[tuple[A.Expr, str]]:
+    """Every owned expression of ``element`` (not of its children)."""
+
+    if isinstance(element, M.Usage):
+        if element.value is not None:
+            yield element.value.expr, "value expression"
+        if element.multiplicity is not None:
+            yield from _mult_exprs(element.multiplicity)
+    if isinstance(element, (M.Definition, M.Usage)) and element.result is not None:
+        yield element.result, "result expression"
+    if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage, M.AllocationUsage)):
+        for end in element.ends:
+            if end.multiplicity is not None:
+                yield from _mult_exprs(end.multiplicity)
+    if isinstance(element, (M.Import, M.Expose)):
+        for expr in element.filters:
+            yield expr, "filter"
+    if isinstance(element, M.ElementFilter):
+        yield element.condition, "filter"
+    if isinstance(element, M.MetadataValue) and element.value is not None:
+        yield element.value.expr, "metadata value"
+    if isinstance(element, M.AssignmentAction):
+        yield element.expr, "assignment"
+    if isinstance(element, M.IfAction):
+        yield element.condition, "condition"
+    if isinstance(element, M.WhileLoop):
+        if element.condition is not None:
+            yield element.condition, "condition"
+        if element.until is not None:
+            yield element.until, "until"
+    if isinstance(element, M.ForLoop):
+        yield element.seq, "loop sequence"
+    if isinstance(element, M.SendAction):
+        yield element.payload, "send payload"
+        if element.via is not None:
+            yield element.via, "send via"
+        if element.to is not None:
+            yield element.to, "send to"
+    if isinstance(element, M.AcceptAction):
+        if element.trigger is not None:
+            yield element.trigger, "trigger"
+        if element.via is not None:
+            yield element.via, "accept via"
+    if isinstance(element, M.TerminateAction) and element.target is not None:
+        yield element.target, "terminates"
+    if isinstance(element, (M.Succession, M.TransitionUsage)) and element.guard is not None:
+        yield element.guard, "guard"
+
+
+def _mult_exprs(mult: M.Multiplicity) -> Iterator[tuple[A.Expr, str]]:
+    if mult.lower is not None:
+        yield mult.lower, "multiplicity"
+    if mult.upper is not None:
+        yield mult.upper, "multiplicity"
+
+
+def _ambient_locals(element: M.Element) -> frozenset[str]:
+    """Names bound by the nearest definition/usage scope (loop variables,
+    accept payload names) -- the ``validate`` idiom, so a loop variable
+    that shadows a model element never triggers a false rewrite."""
+
+    node: M.Element | None = element
+    while node is not None and not isinstance(node, (M.Definition, M.Usage)):
+        node = node.owner
+    if node is None:
+        return frozenset()
+    names: set[str] = set()
+    for item in node.iter_tree():
+        if isinstance(item, M.ForLoop):
+            names.add(item.var)
+        elif isinstance(item, M.AcceptAction) and item.payload_name:
+            names.add(item.payload_name)
+        elif (
+            isinstance(item, M.TransitionUsage)
+            and item.trigger is not None
+            and item.trigger.payload_name
+        ):
+            names.add(item.trigger.payload_name)
+    return frozenset(names)
+
+
+def _walk_expr(
+    expr: A.Expr,
+    element: M.Element,
+    role: str,
+    bound: frozenset[str],
+    sites: list[_Site],
+    dynamic: list[_DynamicRef],
+) -> None:
+    """Collect qualified-name sites (and dynamic names) from one expression."""
+
+    if isinstance(expr, A.FeatureRef):
+        if expr.parts and expr.parts[0] in bound:
+            if len(expr.parts) > 1:  # members of a bound local: dynamic
+                dynamic.append(_DynamicRef(element, expr.parts[1:], role))
+        elif expr.parts:
+            sites.append(_Site(element, element, expr, "parts", None, role))
+        return
+    if isinstance(expr, A.ChainAccess):
+        _walk_expr(expr.base, element, role, bound, sites, dynamic)
+        base = _static_base(expr.base, bound)
+        if base is None:
+            dynamic.append(_DynamicRef(element, expr.parts, role))
+        else:
+            sites.append(_Site(element, element, expr, "parts", None, role, base=base))
+        return
+    if isinstance(expr, (A.Classification, A.Cast, A.AllOf, A.Constructor)):
+        sites.append(_Site(element, element, expr, "type", None, role))
+    elif isinstance(expr, A.Invocation):
+        sites.append(_Site(element, element, expr, "target", None, role))
+    elif isinstance(expr, A.MetadataAccess):
+        sites.append(_Site(element, element, expr, "target", None, role))
+        return
+    elif isinstance(expr, A.ArrowOp):
+        # ArrowOp.name is the collection-operation vocabulary ('select',
+        # 'size', ...), never a user-model reference -- deliberately not a
+        # site.  The function-reference argument form ('->reduce MyAdd') is.
+        if expr.func is not None:
+            sites.append(_Site(element, element, expr, "func", None, role))
+    elif isinstance(expr, A.BodyExpr):
+        inner = bound | {p.name for p in expr.params} | {name for name, _ in expr.lets}
+        for _, let_expr in expr.lets:
+            _walk_expr(let_expr, element, role, inner, sites, dynamic)
+        if expr.result is not None:
+            _walk_expr(expr.result, element, role, inner, sites, dynamic)
+        return
+    # generic recursion into nested expressions
+    for f in dataclasses.fields(expr):
+        value = getattr(expr, f.name)
+        if isinstance(value, A.Expr):
+            _walk_expr(value, element, role, bound, sites, dynamic)
+        elif isinstance(value, tuple):
+            for item in value:
+                if isinstance(item, A.Expr):
+                    _walk_expr(item, element, role, bound, sites, dynamic)
+                elif (
+                    isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], A.Expr)
+                ):  # (name, expr) pairs
+                    _walk_expr(item[1], element, role, bound, sites, dynamic)
+
+
+def _static_base(expr: A.Expr, bound: frozenset[str]) -> A.Expr | None:
+    """The base expression of a chain, when it is statically resolvable."""
+
+    if isinstance(expr, A.FeatureRef):
+        return expr if (expr.parts and expr.parts[0] not in bound) else None
+    if isinstance(expr, A.ChainAccess):
+        return expr if _static_base(expr.base, bound) is not None else None
+    return None
+
+
+def _static_element(
+    expr: A.Expr, context: M.Element | None, resolver: Resolver, model: M.Model
+) -> M.Element | None:
+    """Statically resolve a chain-base expression to a model element."""
+
+    if isinstance(expr, A.FeatureRef):
+        return _resolve_or_none(resolver, expr.parts, context)
+    if isinstance(expr, A.ChainAccess):
+        anchor = _static_element(expr.base, context, resolver, model)
+        for part in expr.parts:
+            if anchor is None:
+                return None
+            anchor = _resolve_or_none(resolver, (part,), anchor)
+        return anchor
+    return None
+
+
+def _site_resolution(
+    site: _Site, resolver: Resolver, model: M.Model
+) -> list[list[M.Element | None]]:
+    """Resolve a site part-by-part; one row of elements per dot-chain.
+
+    Row entries align with the chain's name parts (``None`` from the
+    first unresolvable part onward); comparing two resolutions of the
+    same site is comparing element *identities*, which is exactly the
+    rename post-verification.
+    """
+
+    chains, _ = _chains_of(site.value())
+    rows: list[list[M.Element | None]] = []
+    if site.base is not None:  # chain access on a statically-known base
+        anchor = _static_element(site.base, site.context, resolver, model)
+        row: list[M.Element | None] = []
+        for part in chains[0]:
+            anchor = _resolve_or_none(resolver, (part,), anchor) if anchor is not None else None
+            row.append(anchor)
+        return [row]
+    prev: M.Element | None = None
+    for ci, parts in enumerate(chains):
+        context = site.context if ci == 0 else prev
+        row = []
+        start = 0
+        if parts and parts[0] == "$":  # root-relative reference
+            row.append(model)
+            start = 1
+        ok = context is not None or start > 0
+        for i in range(start + 1, len(parts) + 1):
+            found = _resolve_or_none(resolver, tuple(parts[:i]), context) if ok else None
+            if found is None:
+                ok = False
+            elif (
+                ci == 0
+                and i == start + 1
+                and site.lookthrough
+                and found is site.element
+                and len(parts) == start + 1
+            ):
+                # a same-named redefinition shadows the feature it
+                # redefines; the reference means the inherited member
+                found = _redefined_member(site.element, parts[i - 1], resolver, model)
+            row.append(found)
+        prev = row[-1] if row else None
+        rows.append(row)
+    return rows
+
+
+def _redefined_member(
+    element: M.Element, name: str, resolver: Resolver, model: M.Model
+) -> M.Element:
+    """The inherited member a self-shadowing ``redefines`` points at."""
+
+    owner = element.owner
+    if owner is None:
+        return element
+    general_names: list[str] = []
+    if isinstance(owner, M.Definition):
+        general_names = list(owner.supers)
+    elif isinstance(owner, M.Usage):
+        general_names = [t.lstrip("~") for t in owner.types] + list(owner.subsets)
+    for general_name in general_names:
+        general = _resolve_or_none(resolver, tuple(general_name.split("::")), owner.owner or model)
+        if not isinstance(general, M.Namespace):
+            continue
+        for member in resolver.members_of(general, implied=True):
+            if member is not element and name in (member.name, member.short_name):
+                return member
+    return element
+
+
+# ---------------------------------------------------------------------------
+# rename
+# ---------------------------------------------------------------------------
+
+
+def rename(model: M.Model, element_or_qname: M.Element | str, new_name: str) -> M.Element:
+    """Rename an element, rewriting every textual reference that reaches it.
+
+    Validates that ``new_name`` is a legal name (non-empty, no ``::`` or
+    ``.`` separators, no ``$``, no control characters -- anything else
+    exports through the quoted-name form) and that no sibling already
+    answers to it.  Every reference site in the model is then resolved
+    (with the same stdlib-aware machinery ``validate`` uses), the
+    segments that resolve to the renamed element are rewritten, and the
+    whole model is re-resolved to prove that every site still means what
+    it meant before.  Names in positions that cannot be statically
+    resolved (member access on computed values) are refused up front when
+    they mention the old name, and any silent re-binding (name capture)
+    is rolled back -- both raise :class:`~longeron.errors.EditError`
+    listing the affected references.  See the module docstring for the
+    philosophy.
+
+    Renaming to the current name is a no-op.  Returns the element.
+    """
+
+    resolver = _resolver(model)
+    target = _target(model, element_or_qname, resolver)
+    if target is model:
+        raise EditError("cannot rename the model root")
+    _check_name(new_name)
+    old_name = target.name
+    if new_name == old_name:
+        return target
+    owner = target.owner
+    if isinstance(owner, M.Namespace):
+        for member in owner.members:
+            if member is not target and new_name in (member.name, member.short_name):
+                raise EditError(
+                    f"name {new_name!r} is already used by another member of "
+                    f"{owner.qualified_name or owner.label}"
+                )
+    old_qname = target.qualified_name
+
+    sites, dynamic = _collect_sites(model, resolver)
+    if old_name is not None:
+        broken = [ref.describe() for ref in dynamic if old_name in ref.parts]
+        if broken:
+            raise EditError(
+                f"rename would break {len(broken)} reference(s) that cannot be "
+                "statically rewritten: " + "; ".join(broken)
+            )
+    snapshot: list[list[list[M.Element | None]]] = []
+    plan: list[tuple[_Site, str | tuple[str, ...], str | tuple[str, ...]]] = []
+    for site in sites:
+        rows = _site_resolution(site, resolver, model)
+        snapshot.append(rows)
+        if old_name is None:
+            continue
+        value = site.value()
+        chains, prefix = _chains_of(value)
+        changed = False
+        for ci, parts in enumerate(chains):
+            offset = 1 if (ci == 0 and site.base is None and parts and parts[0] == "$") else 0
+            for pi in range(offset, len(parts)):
+                row = rows[ci]
+                resolved = row[pi] if pi < len(row) else None
+                if resolved is target and parts[pi] == old_name:
+                    parts[pi] = new_name
+                    changed = True
+        if changed:
+            plan.append((site, _rejoin(chains, prefix, isinstance(value, tuple)), value))
+
+    # apply, then prove nothing changed meaning
+    target.name = new_name
+    for site, new_value, _ in plan:
+        site.assign(new_value)
+    post = Resolver(model, library=resolver.library)  # same library: identity-comparable
+    mismatched = [
+        site.describe()
+        for site, rows in zip(sites, snapshot, strict=True)
+        if _site_resolution(site, post, model) != rows
+    ]
+    if mismatched:
+        target.name = old_name
+        for site, _, old_value in plan:
+            site.assign(old_value)
+        raise EditError(
+            f"rename would change what {len(mismatched)} reference(s) resolve to "
+            "(name capture); refusing: " + "; ".join(mismatched)
+        )
+    _record(
+        model,
+        "rename",
+        target.qualified_name,
+        {
+            "old_name": old_name,
+            "new_name": new_name,
+            "old_qname": old_qname,
+            "new_qname": target.qualified_name,
+            "rewritten": len(plan),
+        },
+    )
+    return target
+
+
+def _check_name(new_name: str) -> None:
+    if not isinstance(new_name, str) or not new_name:
+        raise EditError("new name must be a non-empty string")
+    if "::" in new_name or "." in new_name:
+        raise EditError(f"{new_name!r} is not a legal name: '::' and '.' separate name segments")
+    if new_name == "$":
+        raise EditError("'$' is reserved for root-relative references")
+    if any(ch in new_name for ch in "\n\r\t\x00"):
+        raise EditError(f"{new_name!r} is not a legal name: control characters are not allowed")
+
+
+# ---------------------------------------------------------------------------
+# set_attribute_value
+# ---------------------------------------------------------------------------
+
+
+def set_attribute_value(model: M.Model, attr_or_qname: M.Usage | str, text: str | None) -> M.Usage:
+    """Set (or clear) a usage's value from expression text.
+
+    ``text`` is parsed with the package's expression parser
+    (:func:`longeron.parse_expression`); a syntax error raises
+    :class:`~longeron.errors.EditError` carrying the parse diagnostics.
+    The existing value's ``default =`` / ``:=`` flags are preserved; a
+    usage without a value gets a plain ``=`` binding.  ``None`` (or
+    blank text) removes the value entirely.  Returns the usage.
+    """
+
+    resolver = _resolver(model)
+    target = _target(model, attr_or_qname, resolver)
+    if not isinstance(target, M.Usage):
+        raise EditError(
+            f"{target.qualified_name or target.label!r} is a "
+            f"{type(target).__name__}, not a usage that can carry a value"
+        )
+    old = target.value
+    if text is None or not text.strip():
+        target.value = None
+        _record(
+            model,
+            "set_value",
+            target.qualified_name,
+            {"text": None, "previous": expr_to_text(old.expr) if old else None},
+        )
+        return target
+    from .builder import parse_expression
+
+    try:
+        expr = parse_expression(text)
+    except SysMLError as err:
+        raise EditError(f"cannot parse {text!r} as an expression: {err}") from err
+    target.value = M.FeatureValue(
+        expr=expr,
+        is_default=old.is_default if old else False,
+        is_initial=old.is_initial if old else False,
+    )
+    _record(
+        model,
+        "set_value",
+        target.qualified_name,
+        {"text": expr_to_text(expr), "previous": expr_to_text(old.expr) if old else None},
+    )
+    return target
+
+
+# ---------------------------------------------------------------------------
+# set_doc
+# ---------------------------------------------------------------------------
+
+
+def set_doc(
+    model: M.Model, element_or_qname: M.Element | str, text: str | None
+) -> M.Documentation | None:
+    """Create, update, or remove an element's documentation.
+
+    With text: the element's first ``doc`` member is updated in place
+    (keeping its member position, and collapsing any additional ``doc``
+    members into it), or a new one is *appended* -- never inserted -- so
+    existing siblings keep their index-path element ids.  With ``None``
+    or an empty string: the ``doc`` members are removed (the one edit
+    that shrinks a member list; siblings after the doc get new index
+    paths).  Bodies are written in the canonical comment form
+    (:func:`longeron.export.doc_comment_body`), which round-trips
+    multi-line text through export/parse at a fixpoint.  Per the comment
+    convention, leading ``*`` decoration and per-line indentation are not
+    part of the text.  Returns the documentation element (``None`` after
+    a removal).
+    """
+
+    resolver = _resolver(model)
+    target = _target(model, element_or_qname, resolver)
+    if not isinstance(target, M.Namespace):
+        raise EditError(
+            f"{target.qualified_name or target.label!r} is a "
+            f"{type(target).__name__}; only namespaces carry documentation"
+        )
+    docs = [m for m in target.members if isinstance(m, M.Documentation)]
+    previous = target.doc
+    if text is None or text == "":
+        for doc in docs:
+            target.members.remove(doc)
+        if docs:
+            _record(model, "set_doc", target.qualified_name, {"text": None, "previous": previous})
+        return None
+    if "*/" in text:
+        raise EditError("documentation text cannot contain '*/' (it terminates the comment)")
+    body = doc_comment_body(text)
+    if docs:
+        doc = docs[0]
+        doc.body = body
+        for extra in docs[1:]:
+            target.members.remove(extra)
+    else:
+        doc = M.Documentation(body=body)
+        target.add(doc)  # APPEND, never insert (index-path id stability)
+    _record(model, "set_doc", target.qualified_name, {"text": text, "previous": previous})
+    return doc

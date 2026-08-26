@@ -2,6 +2,25 @@
 
 ## 0.10.0 (unreleased)
 
+- **Model editing** (`longeron.edit`): a small, verified mutation API
+  -- the seam UI inspectors change element properties through.
+  `rename` validates the new name, rewrites *every* textual reference
+  that reaches the renamed element or its descendants (typings,
+  subsets, redefines -- including same-named `:>> x` self-shadowing
+  redefinitions -- connector ends, satisfy targets, exposes, imports,
+  aliases, dependency ends, state-machine transitions, and the names
+  inside owned expressions), and then re-resolves the whole model to
+  prove nothing changed meaning; whatever cannot be proven safe
+  (member access on computed values, name capture through shadowing)
+  is refused with an `EditError` listing the sites -- honest refusal
+  over corruption. `set_attribute_value` parses expression text and
+  preserves `default =`/`:=` flags; `set_doc` creates (append-only),
+  updates in place, or removes documentation, with multi-line bodies
+  now exporting in a canonical comment form that round-trips at a
+  fixpoint. No operation reorders siblings, so index-path element ids
+  stay stable. `edit.track(model)` returns a lightweight `Tracker`
+  (`dirty`, `changes`, `on_change`, `mark_saved`) that every edit
+  records into -- the app layer's save-prompt seam
 - **View persistence** (`longeron.views`): diagrams save as SysML v2
   views and restore from them, per the ratified
   [design](design/view-persistence.md). `save_view` appends a

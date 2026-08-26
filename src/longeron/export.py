@@ -57,6 +57,30 @@ def fmt_qname(qname: str) -> str:
     return ".".join(dotted)
 
 
+def doc_comment_body(text: str) -> str:
+    """The canonical ``/* ... */`` body for documentation ``text``.
+
+    Single-line text becomes ``/* text */``; multi-line text uses the
+    conventional ``*``-prefixed continuation lines.  This form is a
+    textual-export *fixpoint*: stripping it back to text
+    (:meth:`~longeron.model.Documentation.text`) and re-rendering yields
+    the identical body, no matter how deeply the owner is indented --
+    which is why :meth:`_Printer.emit_Documentation` re-renders
+    multi-line bodies through it instead of echoing them verbatim
+    (verbatim multi-line bodies accumulate indentation on every
+    parse/print cycle).  :func:`longeron.edit.set_doc` writes bodies in
+    this same form.
+    """
+
+    lines = text.splitlines() or [""]
+    if len(lines) == 1:
+        return f"/* {lines[0]} */" if lines[0] else "/* */"
+    out = [f"/* {lines[0]}" if lines[0] else "/*"]
+    out += [f" * {line}" if line else " *" for line in lines[1:]]
+    out[-1] += " */"
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------------------
 # JSON export
 # ---------------------------------------------------------------------------
@@ -431,7 +455,11 @@ class _Printer:
         if el.locale:
             head += f' locale "{el.locale}"'
         self.line(level, head)
-        self.line(level, el.body)
+        # multi-line bodies are re-rendered in the canonical form (a
+        # verbatim echo would re-absorb this printer's indentation on
+        # every parse/print cycle and never reach a fixpoint)
+        body = doc_comment_body(el.text) if "\n" in el.body else el.body
+        self.line(level, body)
 
     def emit_TextualRepresentation(self, el: M.TextualRepresentation, level: int) -> None:
         head = ""
