@@ -1603,6 +1603,14 @@ def structure_diagram(
         direction=direction,
         height=height,
     )
+    # relationship edges carry SYNTHETIC transport ids (_assign_ids ran in
+    # _finish); this kernel-side seam maps them back to the model elements
+    # they draw, so consumers can select relationship edges (tree -> edge)
+    # and resolve edge clicks (edge -> element) -- qualified-name machinery
+    # cannot: anonymous relationships have no qualified name at all
+    widget._lgn_rel_edges = {
+        str(edge.id): rel for edge, rel in builder.rel_edges if edge.id is not None
+    }
     return _stamp_view_state(widget, element, "structure", options)
 
 
@@ -1730,6 +1738,14 @@ class _StructureBuilder:
         # and the (owning package node, member node) pairs to connect
         self._unnested: list[Node] = []
         self._owned: list[tuple[Node, Node]] = []
+        # every relationship edge paired with the MODEL element it draws
+        # (a connection/binding/flow/satisfy/allocate/dependency/alias):
+        # the seam behind the widget's ``_lgn_rel_edges`` attribute, which
+        # maps the edges' synthetic transport ids back to model elements
+        # so consumers (longeron.explorer) can select edges and resolve
+        # edge clicks -- edge ids are assigned late (_assign_ids), hence
+        # the edge OBJECTS are recorded here and the ids read after
+        self.rel_edges: list[tuple[Edge, M.Element]] = []
 
     def build(self) -> Node:
         root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -2137,6 +2153,7 @@ class _StructureBuilder:
                 _add_end_multiplicity(edge, end_a.multiplicity, "TAIL")
             if end_b.multiplicity is not None:
                 _add_end_multiplicity(edge, end_b.multiplicity, "HEAD")
+            self.rel_edges.append((edge, element))
             root.edges.append(edge)
 
     def _connection_direction(self, element: M.Usage) -> bool:
@@ -2189,11 +2206,13 @@ class _StructureBuilder:
         edge = _edge(first[1], _anchor(junction, "in"), "sysml-edge-connect")
         if first[0].multiplicity is not None:
             _add_end_multiplicity(edge, first[0].multiplicity, "TAIL")
+        self.rel_edges.append((edge, element))
         root.edges.append(edge)
         for end, endpoint in rest:
             edge = _edge(_anchor(junction, "out"), endpoint, "sysml-edge-connect")
             if end.multiplicity is not None:
                 _add_end_multiplicity(edge, end.multiplicity, "HEAD")
+            self.rel_edges.append((edge, element))
             root.edges.append(edge)
 
     def _add_allocate_edges(self, root: Node, alloc: M.AllocationUsage) -> None:
@@ -2212,15 +2231,15 @@ class _StructureBuilder:
                 return
             endpoints.append(anchor)
         for source, target in itertools.pairwise(endpoints):
-            root.edges.append(
-                _edge(
-                    source,
-                    target,
-                    "sysml-edge-allocate",
-                    text="\u00aballocate\u00bb",
-                    text_css="sysml-stereotype",
-                )
+            edge = _edge(
+                source,
+                target,
+                "sysml-edge-allocate",
+                text="\u00aballocate\u00bb",
+                text_css="sysml-stereotype",
             )
+            self.rel_edges.append((edge, alloc))
+            root.edges.append(edge)
 
     def _lookup(self, element: M.Element) -> Node | Port | None:
         """The drawn thing for a model element: its boundary port square
@@ -2329,6 +2348,7 @@ class _StructureBuilder:
         if flow.payload:  # payload item labels near BOTH ends (spec p.81)
             _add_end_label(edge, flow.payload, "TAIL")
             _add_end_label(edge, flow.payload, "HEAD")
+        self.rel_edges.append((edge, flow))
         root.edges.append(edge)
 
     def _add_satisfy_edges(self, root: Node, satisfy: M.SatisfyUsage) -> None:
@@ -2347,15 +2367,15 @@ class _StructureBuilder:
         for name in names:
             target = self._resolve_node(name, satisfy)
             if target is not None and target is not source:
-                root.edges.append(
-                    _edge(
-                        source,
-                        target,
-                        "sysml-edge-satisfies",
-                        text="\u00absatisfy\u00bb",
-                        text_css="sysml-stereotype",
-                    )
+                edge = _edge(
+                    source,
+                    target,
+                    "sysml-edge-satisfies",
+                    text="\u00absatisfy\u00bb",
+                    text_css="sysml-stereotype",
                 )
+                self.rel_edges.append((edge, satisfy))
+                root.edges.append(edge)
 
     def _add_dependency_edges(self, root: Node, dep: M.Dependency) -> None:
         """Dependencies (errata E8): dashed open-V client->supplier with the
@@ -2371,7 +2391,9 @@ class _StructureBuilder:
             return
         label = f"({dep.name})" if dep.name else None
         if len(clients) == 1 and len(suppliers) == 1:
-            root.edges.append(_edge(clients[0], suppliers[0], "sysml-edge-dependency", text=label))
+            edge = _edge(clients[0], suppliers[0], "sysml-edge-dependency", text=label)
+            self.rel_edges.append((edge, dep))
+            root.edges.append(edge)
             return
         junction = _glyph_node(dep, label, "sysml-junction", _JUNCTION_SIZE, _JUNCTION_SIZE)
         _add_center_anchor(junction)
@@ -2380,9 +2402,13 @@ class _StructureBuilder:
         owner_node = self.nodes.get(id(dep.owner)) if dep.owner is not None else None
         (owner_node or root).children.append(junction)
         for client in clients:
-            root.edges.append(_edge(client, _anchor(junction, "in"), "sysml-edge-depclient"))
+            edge = _edge(client, _anchor(junction, "in"), "sysml-edge-depclient")
+            self.rel_edges.append((edge, dep))
+            root.edges.append(edge)
         for supplier in suppliers:
-            root.edges.append(_edge(_anchor(junction, "out"), supplier, "sysml-edge-dependency"))
+            edge = _edge(_anchor(junction, "out"), supplier, "sysml-edge-dependency")
+            self.rel_edges.append((edge, dep))
+            root.edges.append(edge)
 
     def _add_alias_edge(self, root: Node, owner: M.Element, alias: M.Alias) -> None:
         """Membership (unowned/alias member, errata E18 official v2 form):
@@ -2405,7 +2431,9 @@ class _StructureBuilder:
         inside = {id(child) for child in _walk_nodes(owner_node)}
         if id(target) in inside:  # nesting already shows the membership
             return
-        root.edges.append(_edge(owner_node, target, "sysml-edge-alias", text=alias.name))
+        edge = _edge(owner_node, target, "sysml-edge-alias", text=alias.name)
+        self.rel_edges.append((edge, alias))
+        root.edges.append(edge)
 
     # -- annotations (opt-in) --------------------------------------------------
 

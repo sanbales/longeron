@@ -201,14 +201,20 @@ def explorer_notebook() -> dict[str, Any]:
     ``layout="inline"`` keeps the panes in the cell output (no ipylab
     docking), so the test works against a single notebook document.  The
     part names share no substrings ("axle", "hub") because Playwright's
-    ``has_text`` matching is case-insensitive substring matching.  The
+    ``has_text`` matching is case-insensitive substring matching.  (The
+    relationship rows -- ``satisfy massBudget``, ``connect axle to hub``
+    -- do repeat those names, but they are declared AFTER the parts, so
+    ``.first`` in document order still lands on the part rows.)  The
     ``Spin`` state def gives the kind switcher a second applicable kind
     (``state``) and is deliberately WIDE (a chain of states with verbose
     transition labels lays out well past the pane's width), so the test
     can prove a kind switch lands FITTED to the container -- the
     maintainer-reported bug rendered the state kind wider than the pane
     with a horizontal scrollbar -- and that the re-shown cached diagram
-    is re-fitted on the way back.
+    is re-fitted on the way back.  The satisfy and the anonymous connect
+    exercise the relationship tier: tree rows under their owner, the
+    tree-toolbar toggle, and tree -> edge selection through the widget's
+    ``_lgn_rel_edges`` seam.
     """
 
     return _notebook(
@@ -225,6 +231,9 @@ package Rig {
     part hub {
         part bearing;
     }
+    requirement massBudget;
+    satisfy massBudget by axle;
+    connect axle to hub;
     state def Spin {
         entry; then idle;
 
@@ -249,7 +258,13 @@ ex
 print(json.dumps({
     "selected": list(ex.tree.selected),
     "element": ex.element.qualified_name if ex.element is not None else None,
+    "element_type": type(ex.element).__name__ if ex.element is not None else None,
     "kind": ex.kind,
+    "diagram_selection": list(ex.diagram.view.selection.ids),
+    "rel_edges": len(getattr(ex.diagram, "_lgn_rel_edges", {})),
+    "show_relationships": bool(ex.tree.show_relationships),
+    "total_count": ex.tree.total_count,
+    "match_count": ex.tree.match_count,
 }))
 """,
     )

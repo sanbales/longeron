@@ -18,7 +18,15 @@ example stays snappy), roving-focus keyboard navigation (arrows move
 focus, Enter/Space selects), and the toolbar search idiom from
 :mod:`longeron.toolbar`: a live substring filter over names and
 qualified names with a ``matches/total`` count that prunes the tree to
-matches plus their ancestors.
+matches plus their ancestors.  RELATIONSHIPS are first-class rows too:
+connections, bindings, flows, satisfies, allocations, interfaces,
+dependencies, imports, exposes, element filters and aliases appear
+under the element that OWNS them (``kind='relationship'`` at the tree
+seam) with a dim italic label in the satisfy idiom (``satisfy X``,
+``connect a to b``, ``expose P::**``) and a dashed kind chip; a compact
+toggle button beside the search box shows/hides them (the
+``show_relationships`` trait, default ON; the ``matches/total`` counts
+respect it).  Documentation and comments stay out of the tree.
 
 The RIGHT pane shows the selected element through the diagram kind
 picked by a compact toggle switcher that only offers the APPLICABLE
@@ -39,7 +47,15 @@ on_select`) selects and reveals the element in the tree -- ancestors
 expand, the row scrolls into view -- WITHOUT rebuilding the diagram that
 was clicked.  Every hop writes a trait only when the value actually
 changes, so a selection echo dies at its first fixpoint instead of
-ping-ponging.
+ping-ponging.  Relationships join the loop where they are DRAWN: a
+relationship rendered as a diagram EDGE (an anonymous connect / bind /
+flow / satisfy / allocate, a dependency, an alias) is selected through
+its edge's synthetic transport id -- the widget's ``_lgn_rel_edges``
+seam (:func:`longeron.diagrams.structure_diagram`) maps edge ids back
+to model elements, so a tree click highlights the edge and an edge
+click reveals the tree row.  A relationship with no drawn edge (expose,
+import, filter; unresolvable ends) still selects in the tree, shows its
+OWNER's diagram, and highlights the nearest drawn ancestor.
 
 Composed strictly from public surfaces: the diagram constructors and
 ``on_select`` from :mod:`longeron.diagrams`, the model vocabulary, and
@@ -129,6 +145,7 @@ except ImportError as _err:  # pragma: no cover - exercised without anywidget
 
 from . import diagrams
 from . import model as M
+from .ast import expr_to_text
 from .interpreter import Interpreter, Resolver
 from .toolbar import SEARCH_HIT_COLOR
 
@@ -194,6 +211,31 @@ _KIND_FAMILIES = {
 #: kinds whose declaration keyword contains an underscore (display form)
 _KIND_DISPLAY = {"use_case": "use case", "enum_literal": "literal", "event_occurrence": "event"}
 
+#: element TYPES that are relationships without being usages; annotations
+#: (Documentation, Comment, MetadataUsage) are deliberately NOT here --
+#: they annotate, they do not relate, and they stay out of the tree
+_RELATIONSHIP_TYPES = (M.Import, M.Alias, M.Expose, M.Dependency, M.ElementFilter)
+
+#: usage ``kind`` values that declare relationships BETWEEN other
+#: elements: the connector family plus the requirement-link keywords
+_RELATIONSHIP_USAGE_KINDS = frozenset(
+    {"connection", "binding", "interface", "allocation", "flow", "message", "satisfy", "verify"}
+)
+
+
+def _is_relationship(element: M.Element) -> bool:
+    """Whether ``element`` RELATES other elements rather than owning
+    structure: connector-family usages (connections, bindings, flows,
+    messages, interfaces, allocations), requirement links (satisfy,
+    verify) and the non-usage relationship elements (imports, aliases,
+    exposes, dependencies, element filters).  Documentation, comments
+    and metadata are annotations, not relationships -- they never enter
+    the tree at all."""
+
+    if isinstance(element, _RELATIONSHIP_TYPES):
+        return True
+    return isinstance(element, M.Usage) and element.kind in _RELATIONSHIP_USAGE_KINDS
+
 
 # ---------------------------------------------------------------------------
 # the tree-engine seam: TreeNode + TreeView
@@ -203,7 +245,8 @@ _KIND_DISPLAY = {"use_case": "use case", "enum_literal": "literal", "event_occur
 class _TreeNodeBase(TypedDict):
     id: str  # unique node id (a qualified name, or a '~N' synthetic)
     label: str  # display name
-    kind: str  # styling family: package/structure/behavior/data/connector/requirement
+    kind: str  # styling family: package/structure/behavior/data/
+    #           connector/requirement/relationship
     badge: str  # type-badge text ('part def', 'state', 'pkg', ...)
     has_children: bool  # lazy-loading hint (True iff 'children' is present)
 
@@ -214,7 +257,10 @@ class TreeNode(_TreeNodeBase, total=False):
     ``children`` nests the owned members (engines that lazy-load may key
     off ``has_children`` instead of materializing them up front);
     ``suffix`` is an optional dim tail (``: Type`` for typed usages).
-    Engines must ignore keys they do not understand.
+    ``kind`` value ``relationship`` marks relationship rows (the built-in
+    engine dims them and offers a show/hide toggle; an engine that does
+    not style them may treat the value like any other family).  Engines
+    must ignore keys they do not understand.
     """
 
     children: list[TreeNode]
@@ -263,6 +309,8 @@ class TreeView(Protocol):
 
 
 def _family(element: M.Element) -> str:
+    if _is_relationship(element):
+        return "relationship"
     if isinstance(element, (M.Package, M.Model)):
         return "package"
     kind = getattr(element, "kind", "")
@@ -276,11 +324,89 @@ def _chip(element: M.Element) -> str:
         return "model"
     if isinstance(element, M.Package):
         return "pkg"
+    if isinstance(element, M.ElementFilter):
+        return "filter"  # the declaration keyword, not the class name
     kind = getattr(element, "kind", None) or type(element).__name__.lower()
     text = _KIND_DISPLAY.get(kind, kind)
     if isinstance(element, M.Definition):
         return f"{text} def"
     return text
+
+
+def _short(name: str) -> str:
+    """The last ``::`` segment (dotted feature paths keep their dots)."""
+
+    return name.split("::")[-1]
+
+
+def _import_shape(element: M.Import | M.Expose) -> str:
+    """The target with its ``::*`` / ``::**`` form, the exporter's spelling."""
+
+    target = element.target
+    if element.is_namespace:
+        target += "::*"
+    if element.is_recursive:
+        target += "::**"
+    return target
+
+
+def _relationship_label(element: M.Element) -> str | None:
+    """A short label for an ANONYMOUS relationship, in the satisfy idiom:
+    ``satisfy X``, ``connect a to b``, ``expose P::**``, ``dependency to
+    X`` -- derived from the dataclass fields, target paths shortened to
+    their last segment.  The full declaration rides the row tooltip
+    (:func:`_relationship_detail`).  ``None`` for everything else."""
+
+    if isinstance(element, M.SatisfyUsage):
+        target = element.subsets[0] if element.subsets else (element.references or element.by)
+        if target:
+            return f"satisfy {_short(target)}"
+    elif isinstance(element, M.BindingConnector):
+        ends = [end.target for end in (element.source_end, element.target_end) if end is not None]
+        if len(ends) == 2:
+            return f"bind {_short(ends[0])} = {_short(ends[1])}"
+    elif isinstance(element, M.AllocationUsage) and element.ends:
+        return f"allocate {' to '.join(_short(end.target) for end in element.ends)}"
+    elif isinstance(element, (M.ConnectionUsage, M.InterfaceUsage)) and element.ends:
+        targets = [_short(end.target) for end in element.ends]
+        if len(targets) > 2:  # the n-ary junction form
+            return f"connect ({', '.join(targets)})"
+        return f"connect {' to '.join(targets)}"
+    elif isinstance(element, M.FlowUsage) and element.source and element.target_end:
+        keyword = "message" if element.kind == "message" else "flow"
+        return f"{keyword} {_short(element.source)} to {_short(element.target_end)}"
+    elif isinstance(element, M.Import):
+        return f"import {_import_shape(element)}"
+    elif isinstance(element, M.Expose):
+        return f"expose {_import_shape(element)}"
+    elif isinstance(element, M.Dependency):
+        if element.suppliers:
+            return f"dependency to {_short(element.suppliers[0])}"
+        return "dependency"
+    elif isinstance(element, M.ElementFilter):
+        return f"filter {expr_to_text(element.condition)}"
+    elif isinstance(element, M.Usage) and element.kind == "verify":
+        target = element.subsets[0] if element.subsets else element.references
+        if target:
+            return f"verify {_short(target)}"
+    return None
+
+
+def _relationship_detail(element: M.Element) -> str | None:
+    """A relationship row's tooltip: its full declaration line, straight
+    from the exporter (one textual truth; bodied declarations keep only
+    their head line)."""
+
+    if not _is_relationship(element):
+        return None
+    from .export import to_sysml
+
+    try:
+        text = to_sysml(element).strip()
+    except Exception:  # pragma: no cover - defensive: tooltips are chrome
+        return None
+    first = text.splitlines()[0].rstrip("{ ") if text else ""
+    return first or None
 
 
 def _display_name(element: M.Element) -> str:
@@ -293,10 +419,9 @@ def _display_name(element: M.Element) -> str:
         return source
     if element.name or element.short_name:
         return str(element.name or element.short_name)
-    if isinstance(element, M.SatisfyUsage):
-        target = element.subsets[0] if element.subsets else (element.references or element.by)
-        if target:
-            return f"satisfy {target.split('::')[-1]}"
+    label = _relationship_label(element)
+    if label:
+        return label
     if isinstance(element, M.Usage) and element.types:
         return f": {element.types[0].split('::')[-1]}"
     return f"anonymous {_chip(element)}"
@@ -311,7 +436,7 @@ def _suffix(element: M.Element) -> str:
 
 
 def _in_tree(element: M.Element) -> bool:
-    return isinstance(element, (M.Package, M.Definition, M.Usage))
+    return isinstance(element, (M.Package, M.Definition, M.Usage)) or _is_relationship(element)
 
 
 def _tree_data(
@@ -343,6 +468,10 @@ def _tree_data(
             # the root's id is a synthetic ~N (useless as a tooltip); the
             # full source path is what the shortened label elides
             node["tooltip"] = element.source_name
+        elif _is_relationship(element):
+            detail = _relationship_detail(element)
+            if detail:  # the full declaration; the label stays short
+                node["tooltip"] = detail
         suffix = _suffix(element)
         if suffix:
             node["suffix"] = suffix
@@ -383,9 +512,33 @@ function render({ model, el }) {
   input.placeholder = "filter\\u2026";
   input.className = "lgx-tree-search";
   input.setAttribute("aria-label", "Filter the model tree");
+  // the relationship toggle: a compact icon button beside the search box
+  // (two dots joined by a dashed line -- the row chips' dashed idiom);
+  // pressed = relationships shown (the default)
+  const relBtn = document.createElement("button");
+  relBtn.type = "button";
+  relBtn.className = "lgx-tree-relbtn";
+  relBtn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+    '<circle cx="3.5" cy="12.5" r="2.2" fill="currentColor"/>' +
+    '<circle cx="12.5" cy="3.5" r="2.2" fill="currentColor"/>' +
+    '<path d="M5 11 L11 5" stroke="currentColor" stroke-width="1.6"' +
+    ' stroke-dasharray="2 1.4" fill="none"/>' +
+    "</svg>";
+  const relsOn = () => model.get("show_relationships") !== false;
+  const syncRelBtn = () => {
+    relBtn.setAttribute("aria-pressed", relsOn() ? "true" : "false");
+    relBtn.title = relsOn() ? "Hide relationships" : "Show relationships";
+    relBtn.setAttribute("aria-label", relBtn.title);
+  };
+  syncRelBtn();
+  relBtn.addEventListener("click", () => {
+    model.set("show_relationships", !relsOn());
+    model.save_changes();
+  });
   const count = document.createElement("span");
   count.className = "lgx-tree-count";
-  bar.append(input, count);
+  bar.append(input, relBtn, count);
 
   const tree = document.createElement("div");
   tree.className = "lgx-tree";
@@ -431,8 +584,13 @@ function render({ model, el }) {
     }
     return out;
   }
+  // the relationship toggle prunes BEFORE the search filter: a hidden
+  // relationship row neither renders nor counts
+  function nodeShown(n) {
+    return relsOn() || n.kind !== "relationship";
+  }
   function visibleKids(n) {
-    const kids = n.children || [];
+    const kids = (n.children || []).filter(nodeShown);
     return filtered ? kids.filter((k) => filtered.has(k.id)) : kids;
   }
 
@@ -463,6 +621,7 @@ function render({ model, el }) {
     name.className = "lgx-name";
     name.textContent = n.label;
     name.title = n.tooltip || n.id;
+    if (n.kind === "relationship") row.classList.add("lgx-rel");
     if (hits.has(n.id)) row.classList.add("lgx-hit");
     row.append(twist, chip, name);
     if (n.suffix) {
@@ -487,6 +646,7 @@ function render({ model, el }) {
     const frag = document.createDocumentFragment();
     const emit = (nodes, depth) => {
       for (const n of nodes) {
+        if (!nodeShown(n)) continue;
         if (filtered && !filtered.has(n.id)) continue;
         frag.append(rowFor(n, depth));
         visibleIds.push(n.id);
@@ -570,7 +730,12 @@ function render({ model, el }) {
       count.classList.remove("lgx-zero");
     } else {
       hits = new Set();
-      for (const [id, n] of byId) if (n._hay.includes(q)) hits.add(id);
+      let universe = 0; // hidden relationship rows count in NEITHER number
+      for (const [id, n] of byId) {
+        if (!nodeShown(n)) continue;
+        universe += 1;
+        if (n._hay.includes(q)) hits.add(id);
+      }
       filtered = new Set(hits);
       for (const id of hits) {
         for (const a of ancestorsOf(id)) {
@@ -578,7 +743,7 @@ function render({ model, el }) {
           expanded.add(a); // matches auto-reveal
         }
       }
-      count.textContent = `${hits.size}/${byId.size}`;
+      count.textContent = `${hits.size}/${universe}`;
       count.classList.toggle("lgx-zero", hits.size === 0);
     }
     renderTree();
@@ -592,6 +757,10 @@ function render({ model, el }) {
   model.on("change:query", () => {
     if (input.value !== model.get("query")) input.value = model.get("query");
     applyFilter();
+  });
+  model.on("change:show_relationships", () => {
+    syncRelBtn();
+    applyFilter(); // re-derives rows + counts over the visible universe
   });
 
   // ---- keyboard (roving focus; Enter/Space selects) --------------------------
@@ -682,6 +851,17 @@ _TREE_CSS = """
   color: inherit; outline: none;
 }
 .lgx-tree-search:focus { border-color: var(--jp-brand-color1, #1976d2); }
+.lgx-tree-relbtn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--jp-border-color2, #d4d4d4);
+  background: transparent; color: var(--jp-ui-font-color3, #9e9e9e);
+}
+.lgx-tree-relbtn:hover { background: var(--jp-layout-color2, #f2f2f2); }
+.lgx-tree-relbtn[aria-pressed="true"] {
+  color: var(--jp-brand-color1, #1976d2);
+  border-color: var(--jp-brand-color1, #1976d2);
+}
 .lgx-tree-count {
   font-size: 11px; color: var(--jp-ui-font-color2, #666666);
   font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -717,11 +897,20 @@ _TREE_CSS = """
 .lgx-chip-data      { color: #3f7a1f; background: rgba(63, 122, 31, 0.14); }
 .lgx-chip-connector { color: #b07a26; background: rgba(176, 122, 38, 0.16); }
 .lgx-chip-requirement { color: #b0413e; background: rgba(176, 65, 62, 0.14); }
+.lgx-chip-relationship {
+  color: var(--jp-ui-font-color2, #777777); background: transparent;
+  border: 1px dashed var(--jp-border-color1, #bdbdbd); line-height: 1.45;
+}
 .lgx-row.lgx-selected .lgx-chip {
   color: var(--jp-ui-inverse-font-color1, #ffffff);
   background: rgba(255, 255, 255, 0.22);
 }
+.lgx-row.lgx-selected .lgx-chip-relationship { border-color: transparent; }
 .lgx-name { overflow: hidden; text-overflow: ellipsis; }
+.lgx-row.lgx-rel .lgx-name {
+  font-style: italic; color: var(--jp-ui-font-color2, #777777);
+}
+.lgx-row.lgx-rel.lgx-selected .lgx-name { color: inherit; }
 .lgx-row.lgx-hit .lgx-name { color: %HIT%; font-weight: 600; }
 .lgx-row.lgx-selected.lgx-hit .lgx-name { color: inherit; }
 .lgx-suffix { color: var(--jp-ui-font-color2, #888888); font-size: 11.5px; }
@@ -729,13 +918,15 @@ _TREE_CSS = """
 
 
 class _SearchEntry:
-    """One searchable tree node: pre-lowered name and qualified-name."""
+    """One searchable tree node: pre-lowered name and qualified-name,
+    plus whether the node is a relationship row (the toggle's universe)."""
 
-    __slots__ = ("name", "qname")
+    __slots__ = ("name", "qname", "rel")
 
-    def __init__(self, name: str, qname: str) -> None:
+    def __init__(self, name: str, qname: str, rel: bool = False) -> None:
         self.name = name
         self.qname = qname
+        self.rel = rel
 
 
 class ModelTree(anywidget.AnyWidget):
@@ -750,7 +941,11 @@ class ModelTree(anywidget.AnyWidget):
     search (case-insensitive substring over label and qualified name);
     ``match_count`` / ``total_count`` mirror its ``matches/total``
     counter and are computed kernel-side too, so headless tests see the
-    same numbers the browser shows.
+    same numbers the browser shows.  ``show_relationships`` (default
+    True) is the tree-toolbar toggle's trait: False hides every
+    ``kind='relationship'`` row -- they drop out of the rendered tree
+    AND out of both counts -- so kernels and notebooks can drive the
+    toggle programmatically.
     """
 
     _esm = _TREE_ESM
@@ -759,8 +954,11 @@ class ModelTree(anywidget.AnyWidget):
     nodes_json = T.Unicode("[]").tag(sync=True)
     selected = T.List(T.Unicode(), help="selected node ids; [] = no selection").tag(sync=True)
     query = T.Unicode("", help="live filter text; empty shows the whole tree").tag(sync=True)
-    match_count = T.Int(0, help="how many nodes match the query").tag(sync=True)
-    total_count = T.Int(0, help="how many nodes the tree has").tag(sync=True)
+    show_relationships = T.Bool(True, help="whether relationship rows are shown (and counted)").tag(
+        sync=True
+    )
+    match_count = T.Int(0, help="how many visible nodes match the query").tag(sync=True)
+    total_count = T.Int(0, help="how many nodes the tree shows").tag(sync=True)
 
     def __init__(self, nodes: Sequence[TreeNode] = (), **kwargs: Any) -> None:
         # set BEFORE super().__init__: trait kwargs may fire the observers
@@ -777,7 +975,6 @@ class ModelTree(anywidget.AnyWidget):
         materialized = list(nodes)
         self._entries = tuple(self._flatten(materialized))
         self.nodes_json = json.dumps(materialized)
-        self.total_count = len(self._entries)
         self._recount()
 
     def on_select(self, callback: Callable[[list[str]], None]) -> None:
@@ -801,7 +998,11 @@ class ModelTree(anywidget.AnyWidget):
     @staticmethod
     def _flatten(nodes: Sequence[TreeNode]) -> Iterator[_SearchEntry]:
         for node in nodes:
-            yield _SearchEntry(str(node.get("label", "")).lower(), str(node["id"]).lower())
+            yield _SearchEntry(
+                str(node.get("label", "")).lower(),
+                str(node["id"]).lower(),
+                node.get("kind") == "relationship",
+            )
             yield from ModelTree._flatten(node.get("children", []))
 
     @T.observe("selected")
@@ -811,15 +1012,17 @@ class ModelTree(anywidget.AnyWidget):
             callback(ids)
 
     def _recount(self) -> None:
+        # hidden relationship rows are in NEITHER count: the kernel-side
+        # numbers mirror exactly what the browser's matches/total shows
+        shown = [entry for entry in self._entries if self.show_relationships or not entry.rel]
+        self.total_count = len(shown)
         query = self.query.strip().lower()
         if not query:
             self.match_count = 0
             return
-        self.match_count = sum(
-            1 for entry in self._entries if query in entry.name or query in entry.qname
-        )
+        self.match_count = sum(1 for entry in shown if query in entry.name or query in entry.qname)
 
-    @T.observe("query")
+    @T.observe("query", "show_relationships")
     def _on_query(self, change: Any) -> None:
         self._recount()
 
@@ -1287,6 +1490,10 @@ class Explorer(W.HBox):
 
         self._diagrams: dict[tuple[int, str], Any] = {}
         self._diagram_ids: dict[int, frozenset[str]] = {}
+        # per widget: model element id -> the transport ids of the edge(s)
+        # drawing that relationship (the widget's _lgn_rel_edges seam,
+        # inverted; empty for widgets without the seam)
+        self._rel_edge_ids: dict[int, dict[int, tuple[str, ...]]] = {}
         self._req_cache: dict[int, bool] = {}
         self._element: M.Element | None = None
         self._kind: str = "structure"
@@ -1544,6 +1751,28 @@ class Explorer(W.HBox):
             return  # unknown element, or already selected: the echo stops here
         self._apply_selection(node_id, origin="diagram")
 
+    def _from_diagram_edges(self, widget: Any, ids: list[str]) -> None:
+        """An edge click: relationship edges select and reveal their rows.
+
+        The complement of :meth:`_from_diagram` for RELATIONSHIP edges:
+        their transport ids are synthetic (anonymous relationships have
+        no qualified name), so ``on_select``'s resolution skips them --
+        the widget's ``_lgn_rel_edges`` seam maps them back to the model
+        elements they draw.  Same idempotence discipline as every other
+        hop: act only on a real change, on the shown diagram.
+        """
+
+        if self._syncing or widget is not self.diagram or not ids:
+            return
+        rel = getattr(widget, "_lgn_rel_edges", {})
+        element = next((rel[i] for i in ids if i in rel), None)
+        if element is None:
+            return
+        node_id = self._ids.get(id(element))
+        if node_id is None or [node_id] == list(self.tree.selected):
+            return
+        self._apply_selection(node_id, origin="diagram")
+
     def _apply_selection(self, node_id: str, origin: str) -> None:
         element = self._index.get(node_id)
         if element is None:
@@ -1587,7 +1816,10 @@ class Explorer(W.HBox):
                 node = node.owner
             return scope
         if kind == "structure" and self._structure_scope == "element":
-            if isinstance(element, M.Namespace):
+            # a relationship is not a scope: it RELATES siblings, so its
+            # owner's diagram is the one that can draw it (spec: selecting
+            # a relationship shows the owner's diagram)
+            if isinstance(element, M.Namespace) and not _is_relationship(element):
                 return element
         return _nearest_container(element)
 
@@ -1605,11 +1837,23 @@ class Explorer(W.HBox):
             widget.layout.min_height = "0"
             self._diagrams[key] = widget
             self._diagram_ids[id(widget)] = _diagram_node_ids(widget)
+            # the relationship-edge seam, inverted for tree -> edge
+            # selection (structure widgets stamp _lgn_rel_edges; state and
+            # action widgets have no seam and fall back to ancestors)
+            by_element: dict[int, tuple[str, ...]] = {}
+            for edge_id, rel in getattr(widget, "_lgn_rel_edges", {}).items():
+                by_element[id(rel)] = (*by_element.get(id(rel), ()), edge_id)
+            self._rel_edge_ids[id(widget)] = by_element
 
             def deliver(els: list[M.Element], w: Any = widget) -> None:
                 self._from_diagram(w, els)
 
             diagrams.on_select(widget, self.model, deliver)
+
+            def deliver_edges(change: Any, w: Any = widget) -> None:
+                self._from_diagram_edges(w, [str(i) for i in change["new"]])
+
+            widget.view.selection.observe(deliver_edges, "ids")
         # built widgets ACCUMULATE as persistent children; showing one is a
         # display toggle, never a children swap.  Swapping would DESTROY
         # the outgoing browser view, and the vendored jupyter-elk view
@@ -1636,13 +1880,18 @@ class Explorer(W.HBox):
             self._refit_current()
         if not highlight:
             return
-        # highlight the element (or its nearest drawn ancestor) through the
-        # diagram's own selection tool; write the trait only on change
+        # highlight the element through the diagram's own selection tool;
+        # a relationship DRAWN AS AN EDGE selects its edge id(s) (synthetic
+        # transport ids -- they never collide with qualified names), and
+        # anything else (or an undrawn relationship) falls back to the
+        # nearest drawn ancestor; write the trait only on change
         drawn = self._diagram_ids[id(widget)]
-        target: M.Element | None = element
-        while target is not None and (target.qualified_name or "") not in drawn:
-            target = target.owner
-        want = (target.qualified_name,) if target is not None else ()
+        want = self._rel_edge_ids.get(id(widget), {}).get(id(element), ())
+        if not want:
+            target: M.Element | None = element
+            while target is not None and (target.qualified_name or "") not in drawn:
+                target = target.owner
+            want = (target.qualified_name,) if target is not None else ()
         selection = widget.view.selection
         if tuple(selection.ids) != want:
             self._syncing = True

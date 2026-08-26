@@ -2,6 +2,7 @@
 
 import sys
 import types
+import typing
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,39 @@ package Plain {
 }
 """
 
+# one of every relationship kind the tree classifies (satisfy, verify,
+# connections in every arity, interface, dependency, allocate, binding,
+# flow, message, import, filter, expose, alias) plus documentation --
+# which must stay OUT of the tree
+RELATIONSHIPS_MODEL = """
+package Rels {
+    part def A { attribute x : Real; }
+    part a1 : A;
+    part b1 : A;
+    part c1 : A;
+    requirement massBudget;
+    satisfy massBudget by a1;
+    verification def CheckMass {
+        subject rig : A;
+        objective { verify massBudget; }
+    }
+    connect a1 to b1;
+    connection namedConn connect (a1, b1, c1);
+    interface plug connect a1 to b1;
+    dependency Dep from a1 to b1;
+    allocate a1 to b1;
+    bind a1.x = b1.x;
+    flow from a1.x to b1.x;
+    message msg from a1 to b1;
+    import Other::*;
+    filter @Safety;
+    view rig { expose Rels::**; }
+    alias also for a1;
+    doc /* documentation stays out */
+}
+package Other { part def C; metadata def Safety; }
+"""
+
 
 @pytest.fixture(scope="module")
 def drone_model():
@@ -72,8 +106,22 @@ def _reference_count(namespace) -> int:
 
     total = 0
     for member in namespace.members:
-        if isinstance(member, (M.Package, M.Definition, M.Usage)):
-            total += 1 + _reference_count(member)
+        if isinstance(
+            member,
+            (
+                M.Package,
+                M.Definition,
+                M.Usage,
+                M.Import,
+                M.Alias,
+                M.Expose,
+                M.Dependency,
+                M.ElementFilter,
+            ),
+        ):
+            total += 1
+            if isinstance(member, M.Namespace):
+                total += _reference_count(member)
     return total
 
 
@@ -166,7 +214,7 @@ class TestTreeData:
         satisfy = next(el for el in index.values() if isinstance(el, M.SatisfyUsage))
         node = _find(nodes, next(nid for nid, el in index.items() if el is satisfy))
         assert node["label"] == "satisfy requirement1"
-        assert node["kind"] == "requirement"
+        assert node["kind"] == "relationship"
 
     def test_single_package_model_flattens_to_the_package(self, drone_model):
         # the language has no model-level name: the lone top-level
@@ -239,6 +287,253 @@ class TestTreeSearch:
         small = tree.total_count
         tree.set_nodes(_tree_data(uav_model)[0])
         assert tree.total_count > small
+
+
+# ---------------------------------------------------------------------------
+# relationships: classification, the toggle, and selection mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def rels_model():
+    return longeron.loads(RELATIONSHIPS_MODEL, source_name="rels.sysml")
+
+
+def _node_for(nodes, index, predicate):
+    element = next(el for el in index.values() if predicate(el))
+    return _find(nodes, next(nid for nid, el in index.items() if el is element)), element
+
+
+class TestRelationshipClassification:
+    """The classification table: every relationship kind is a tree row
+    under its owner, kind='relationship', with the pinned chip + label."""
+
+    #: (finder, expected label, expected badge) -- the classification table
+    TABLE: typing.ClassVar[dict] = {
+        "satisfy": (lambda el: isinstance(el, M.SatisfyUsage), "satisfy massBudget", "satisfy"),
+        "verify": (
+            lambda el: isinstance(el, M.Usage) and el.kind == "verify",
+            "verify massBudget",
+            "verify",
+        ),
+        "connection (anonymous)": (
+            lambda el: isinstance(el, M.ConnectionUsage) and not el.name,
+            "connect a1 to b1",
+            "connection",
+        ),
+        "connection (named, n-ary)": (
+            lambda el: isinstance(el, M.ConnectionUsage) and el.name == "namedConn",
+            "namedConn",
+            "connection",
+        ),
+        "interface": (lambda el: isinstance(el, M.InterfaceUsage), "plug", "interface"),
+        "dependency": (lambda el: isinstance(el, M.Dependency), "Dep", "dependency"),
+        "allocation": (
+            lambda el: isinstance(el, M.AllocationUsage),
+            "allocate a1 to b1",
+            "allocation",
+        ),
+        "binding": (
+            lambda el: isinstance(el, M.BindingConnector),
+            "bind a1.x = b1.x",
+            "binding",
+        ),
+        "flow": (
+            lambda el: isinstance(el, M.FlowUsage) and el.kind == "flow",
+            "flow a1.x to b1.x",
+            "flow",
+        ),
+        "message": (
+            lambda el: isinstance(el, M.FlowUsage) and el.kind == "message",
+            "msg",
+            "message",
+        ),
+        "import": (lambda el: isinstance(el, M.Import), "import Other::*", "import"),
+        "filter": (lambda el: isinstance(el, M.ElementFilter), "filter @Safety", "filter"),
+        "expose": (lambda el: isinstance(el, M.Expose), "expose Rels::**", "expose"),
+        "alias": (lambda el: isinstance(el, M.Alias), "also", "alias"),
+    }
+
+    def test_every_relationship_kind_is_classified(self, rels_model):
+        nodes, index = _tree_data(rels_model)
+        for name, (finder, label, badge) in self.TABLE.items():
+            node, _ = _node_for(nodes, index, finder)
+            assert node is not None, name
+            assert node["kind"] == "relationship", name
+            assert node["label"] == label, name
+            assert node["badge"] == badge, name
+
+    def test_relationships_sit_under_their_owner(self, rels_model):
+        nodes, index = _tree_data(rels_model)
+        rels = _find(nodes, "Rels")
+        satisfy_node, satisfy = _node_for(nodes, index, lambda el: isinstance(el, M.SatisfyUsage))
+        assert satisfy.owner is rels_model.find("Rels")
+        assert any(child is satisfy_node for child in rels["children"])
+        # the expose is owned by the VIEW usage, so it nests under it
+        view = _find(nodes, "Rels::rig")
+        expose_node, expose = _node_for(nodes, index, lambda el: isinstance(el, M.Expose))
+        assert expose.owner is rels_model.find("Rels::rig")
+        assert any(child is expose_node for child in view["children"])
+
+    def test_relationship_tooltips_carry_the_full_declaration(self, rels_model):
+        nodes, index = _tree_data(rels_model)
+        cases = {
+            M.SatisfyUsage: "satisfy massBudget by a1;",
+            M.Expose: "expose Rels::**;",
+            M.Import: "import Other::*;",
+            M.Dependency: "dependency Dep from a1 to b1;",
+        }
+        for cls, expected in cases.items():
+            node, _ = _node_for(nodes, index, lambda el, c=cls: isinstance(el, c))
+            assert node["tooltip"] == expected, cls.__name__
+
+    def test_documentation_and_comments_stay_out(self, rels_model):
+        _nodes, index = _tree_data(rels_model)
+        assert not any(isinstance(el, (M.Documentation, M.Comment)) for el in index.values())
+
+    def test_annotations_are_not_relationships(self, rels_model):
+        # metadata / documentation annotate, they do not relate
+        doc = next(el for el in rels_model.iter_tree() if isinstance(el, M.Documentation))
+        assert not explorer_module._is_relationship(doc)
+        safety = rels_model.find("Other::Safety")
+        assert not explorer_module._is_relationship(safety)
+
+    def test_non_relationship_families_are_untouched(self, rels_model):
+        nodes, _ = _tree_data(rels_model)
+        assert _find(nodes, "Rels::a1")["kind"] == "structure"
+        assert _find(nodes, "Rels::massBudget")["kind"] == "requirement"
+        assert _find(nodes, "Rels::rig")["kind"] == "structure"  # the view usage
+
+
+class TestRelationshipToggle:
+    """ModelTree.show_relationships: the tree-toolbar toggle's trait."""
+
+    def test_defaults_on(self, rels_model):
+        tree = ModelTree(_tree_data(rels_model)[0])
+        assert tree.show_relationships is True
+
+    def test_toggle_off_drops_relationships_from_the_total(self, rels_model):
+        nodes, index = _tree_data(rels_model)
+        tree = ModelTree(nodes)
+        every = tree.total_count
+        rels = sum(1 for el in index.values() if explorer_module._is_relationship(el))
+        assert rels == len(TestRelationshipClassification.TABLE)
+        tree.show_relationships = False
+        assert tree.total_count == every - rels
+        tree.show_relationships = True
+        assert tree.total_count == every
+
+    def test_match_count_respects_the_toggle(self, rels_model):
+        tree = ModelTree(_tree_data(rels_model)[0])
+        tree.query = "satisfy massBudget"
+        assert tree.match_count == 1
+        tree.show_relationships = False
+        assert tree.match_count == 0
+        # non-relationship matches are untouched by the toggle
+        tree.query = "massBudget"
+        assert tree.match_count == 1  # the requirement row itself
+        tree.show_relationships = True
+        assert tree.match_count == 3  # ... plus the satisfy and verify rows
+
+    def test_toggle_filters_presentation_not_payload(self, rels_model):
+        # rows vanish browser-side; the nodes payload keeps them, so
+        # flipping the trait back never rebuilds the tree data
+        import json as json_module
+
+        tree = ModelTree(_tree_data(rels_model)[0])
+        payload = tree.nodes_json
+        tree.show_relationships = False
+        assert tree.nodes_json == payload
+        assert "satisfy massBudget" in json_module.dumps(json_module.loads(payload))
+
+
+class TestRelationshipSelection:
+    """Tree <-> diagram selection for relationship rows: drawn edges map
+    both ways through the widget's ``_lgn_rel_edges`` seam; undrawn
+    relationships fall back to the owner's diagram + nearest drawn
+    ancestor."""
+
+    @pytest.fixture()
+    def rex(self, rels_model):
+        return explore(rels_model, layout="inline")
+
+    def _element(self, rex, predicate):
+        return next(el for el in rex._index.values() if predicate(el))
+
+    def test_structure_widgets_carry_the_edge_seam(self, rex):
+        rex.select("Rels")
+        seam = rex.diagram._lgn_rel_edges
+        assert seam  # satisfy + connections + dependency + allocate + ...
+        for edge_id, element in seam.items():
+            assert edge_id.startswith("__lgn__:")  # synthetic transport ids
+            assert explorer_module._is_relationship(element)
+
+    def test_tree_selection_highlights_the_drawn_edge(self, rex, rels_model):
+        satisfy = self._element(rex, lambda el: isinstance(el, M.SatisfyUsage))
+        rex.select(satisfy)
+        assert rex.element is satisfy
+        ids = tuple(rex.diagram.view.selection.ids)
+        assert len(ids) == 1
+        assert rex.diagram._lgn_rel_edges[ids[0]] is satisfy
+
+    def test_nary_connection_selects_every_leg(self, rex):
+        nary = self._element(
+            rex, lambda el: isinstance(el, M.ConnectionUsage) and el.name == "namedConn"
+        )
+        rex.select(nary)
+        ids = tuple(rex.diagram.view.selection.ids)
+        assert len(ids) == 3  # a junction edge per end
+        assert all(rex.diagram._lgn_rel_edges[i] is nary for i in ids)
+
+    def test_edge_click_selects_and_reveals_the_row(self, rex):
+        rex.select("Rels")
+        widget = rex.diagram
+        connect = self._element(rex, lambda el: isinstance(el, M.ConnectionUsage) and not el.name)
+        edge_id = next(i for i, el in widget._lgn_rel_edges.items() if el is connect)
+        widget.view.selection.ids = [edge_id]  # a browser edge click
+        assert rex.element is connect
+        assert rex.tree.selected == [rex._ids[id(connect)]]
+        assert rex.diagram is widget  # the clicked diagram is NOT rebuilt
+
+    def test_edge_click_echo_settles(self, rex):
+        rex.select("Rels")
+        widget = rex.diagram
+        satisfy = self._element(rex, lambda el: isinstance(el, M.SatisfyUsage))
+        edge_id = next(i for i, el in widget._lgn_rel_edges.items() if el is satisfy)
+        tree_writes: list = []
+        diagram_writes: list = []
+        rex.tree.observe(lambda ch: tree_writes.append(ch["new"]), "selected")
+        widget.view.selection.observe(lambda ch: diagram_writes.append(ch["new"]), "ids")
+        widget.view.selection.ids = [edge_id]
+        assert tree_writes == [[rex._ids[id(satisfy)]]]
+        assert diagram_writes == [(edge_id,)]  # only the click itself
+
+    def test_undrawn_relationship_falls_back_to_the_ancestor(self, rex, rels_model):
+        expose = self._element(rex, lambda el: isinstance(el, M.Expose))
+        rex.select(expose)
+        assert rex.element is expose
+        assert rex.kind == "structure"
+        # the owning view usage is the nearest DRAWN ancestor
+        assert tuple(rex.diagram.view.selection.ids) == ("Rels::rig",)
+
+    def test_relationship_scope_is_the_owning_package(self, rex, rels_model):
+        # spec: selecting a relationship shows the OWNER's diagram
+        rex.select("Rels")
+        package_widget = rex.diagram
+        satisfy = self._element(rex, lambda el: isinstance(el, M.SatisfyUsage))
+        rex.select(satisfy)
+        assert rex.diagram is package_widget  # same scope: cached widget
+
+    def test_relationship_scope_pins_to_owner_in_element_mode(self, rels_model):
+        rex = explore(rels_model, layout="inline", structure_scope="element")
+        connect = next(
+            el for el in rex._index.values() if isinstance(el, M.ConnectionUsage) and not el.name
+        )
+        rex.select(connect)
+        ids = _diagram_node_ids(rex.diagram)
+        # the OWNER package is the scope (a connection usage is a
+        # namespace, but it is not a drawable scope of its own)
+        assert {"Rels::a1", "Rels::b1"} <= ids
 
 
 # ---------------------------------------------------------------------------

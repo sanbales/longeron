@@ -185,3 +185,82 @@ def test_reshown_cached_diagram_is_refitted_after_kind_switch(lab):
     assert checker["kind"] == "state", checker
 
     lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+
+
+def test_relationship_rows_toggle_and_edge_selection(lab):
+    """Relationships are first-class tree rows: visible by default under
+    their owner (dim italic + dashed chip), selectable -- a tree click on
+    the anonymous satisfy selects its DRAWN edge through the widget's
+    ``_lgn_rel_edges`` seam (the kernel truth is the diagram selection
+    holding the edge's synthetic transport id) -- and the tree-toolbar
+    toggle hides the rows and shrinks the ``matches/total`` counts."""
+
+    lab.open_notebook(NOTEBOOK)
+    lab.run_all()
+    lab.wait_settled(min_widgets=1, timeout=180)
+    page = lab.page
+    page.wait_for_selector(".lgx-row", state="attached", timeout=60_000)
+
+    # -- relationships are VISIBLE by default, under their owning package
+    page.wait_for_selector(".lgx-row.lgx-rel", state="attached", timeout=30_000)
+    assert page.locator(".lgx-row.lgx-rel").count() == 2  # satisfy + connect
+    relbtn = page.locator(".lgx-tree-relbtn")
+    assert relbtn.get_attribute("aria-pressed") == "true"
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(EVIDENCE / "explorer-relationships-1-rows-visible.png"))
+
+    # -- tree -> edge: click the satisfy row; the kernel maps it to the
+    # drawn satisfy edge (a synthetic transport id, never a qname)
+    page.locator(".lgx-row.lgx-rel", has_text="satisfy massBudget").first.click()
+    # the breadcrumb (kernel-side HTML) is the round trip's browser echo;
+    # anonymous relationships have no qname, so it shows the display label
+    lab.wait_until(
+        lambda s: page.locator(".widget-html", has_text="satisfy massBudget").count() >= 1,
+        timeout=60,
+        label="breadcrumb after relationship tree click",
+    )
+    # the kernel-initiated SelectAction repaints sprotty: the satisfy edge
+    # carries .selected (bounded wait -- the repaint is a browser render)
+    lab.wait_until(
+        lambda s: page.locator(".sprotty .elkedge.selected").count() >= 1,
+        timeout=60,
+        label="the satisfy edge repainted as selected",
+    )
+    # evidence BEFORE the checker runs (running a cell scrolls the widget
+    # out of the viewport); the pane is the screenshot's subject
+    page.locator(".lgx-diagram-box").first.scroll_into_view_if_needed()
+    page.screenshot(path=str(EVIDENCE / "explorer-relationships-2-edge-selected.png"))
+    checker = lab.run_cell_json(index=-1)
+    assert checker["element_type"] == "SatisfyUsage", checker
+    assert any(i.startswith("__lgn__:") for i in checker["diagram_selection"]), checker
+
+    # -- the toggle: rows vanish and the matches/total counts shrink
+    search = page.locator(".lgx-tree-search")
+    search.fill("massBudget")
+    lab.wait_until(
+        lambda s: page.locator(".lgx-tree-count").text_content() == "2/13",
+        timeout=30,
+        label="filter counts the requirement + the satisfy row",
+    )
+    relbtn.click()
+    lab.wait_until(
+        lambda s: page.locator(".lgx-row.lgx-rel").count() == 0,
+        timeout=30,
+        label="relationship rows vanish on toggle-off",
+    )
+    lab.wait_until(
+        lambda s: page.locator(".lgx-tree-count").text_content() == "1/11",
+        timeout=30,
+        label="counts respect the toggle (relationships out of both numbers)",
+    )
+    assert relbtn.get_attribute("aria-pressed") == "false"
+    page.screenshot(path=str(EVIDENCE / "explorer-relationships-3-toggled-off.png"))
+
+    # the trait round-trips to the kernel (notebooks can drive the toggle)
+    checker = lab.run_cell_json(index=-1)
+    assert checker["show_relationships"] is False, checker
+    assert checker["total_count"] == 11, checker
+    assert checker["match_count"] == 1, checker
+    assert checker["rel_edges"] >= 2, checker  # the seam rode the widget
+
+    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
