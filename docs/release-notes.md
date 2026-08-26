@@ -62,6 +62,28 @@
   two-way traits; zoom and depth are view state, never scoring
   state); unmeasured
   requirements render hatched grey. Tutorial 13 walks it end to end
+- **Mission flight replay on a globe**
+  (`longeron.analysis.mission3d`): the model's mission flies on a real
+  CesiumJS globe. `mission_track` turns explicit `(lat, lon, alt[, t])`
+  waypoints (or `model_waypoints`, read off a mission part's children
+  through the interpreter) into a timestamped geodetic track;
+  `from_replay` drives the same synthesis from the state machine's
+  ACTUAL execution -- the replay recorder's timeline maps each leaf
+  state onto a motion segment (takingOff = vertical climb, flying and
+  loiter share the waypoint route proportionally to their time,
+  landing = descent, everything else holds position), so durations,
+  interleavings, and reentries paint straight onto the flight path.
+  `mission_viewer` plays the track's CZML document on a Cesium
+  `Viewer`: planned-route polyline, waypoint pins, a drone entity with
+  a trail whose label follows the active state name, camera tracking
+  with a route-sized offset, and Cesium's native timeline + animation
+  dial as the playback UI (plus a bidirectional `time` trait and a
+  `picked_json` click seam, viewer3d idiom). No Cesium ion token is
+  required -- the default globe is OpenStreetMap tiles on the plain
+  ellipsoid; `ion_token=` unlocks Cesium World Terrain/imagery.
+  CesiumJS (~6 MB) loads from a pinned jsDelivr CDN URL at view time
+  (the viewer3d tradeoff, a fortiori) and degrades to an honest
+  offline notice without it
 
 ## 0.9.1
 

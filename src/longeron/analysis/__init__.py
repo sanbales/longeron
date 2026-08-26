@@ -23,6 +23,11 @@ third-party dependencies):
   parametric to-scale meshes for architecture mixes (stdlib only) and a
   small three.js anywidget that renders them (``viz`` extra; CAD-solid
   export needs ``pip install "longeron[cad]"``).
+* :mod:`longeron.analysis.mission3d` -- mission flight replay on a
+  CesiumJS globe: waypoint- or state-machine-timeline-driven track
+  synthesis and an anywidget that flies a drone entity over real
+  imagery with Cesium's native timeline as the playback UI (``viz``
+  extra; no Cesium ion token required).
 * :mod:`longeron.analysis.dashboard` -- the linked mission-compromise
   dashboard composing the widgets above with ipywidgets (``viz`` extra).
 * :mod:`longeron.analysis.link` -- linked selection between the
@@ -43,6 +48,7 @@ __all__ = [
     "geometry",
     "link",
     "mdao",
+    "mission3d",
     "scoreboard",
     "smt",
     "structure",
