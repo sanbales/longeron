@@ -410,6 +410,56 @@ print(json.dumps({
     )
 
 
+def app_notebook() -> dict[str, Any]:
+    """Scenario: the sidebar model app (longeron.app).
+
+    Cell 1 opens the app; cell 2 RE-opens it, so every run-all exercises
+    the same-kernel replace path (the test asserts exactly ONE left tab
+    carries the ``longeron-app`` dock key).  The test then drives the
+    LIVE panel -- types a path, clicks Load, clicks Explore -- and the
+    checker cell reports the kernel-side truth: the entries list, the
+    current model, and the inspector-seam element the launched explorer
+    delivered.
+    """
+
+    return _notebook(
+        """
+import json
+from pathlib import Path
+
+import longeron
+from longeron import app as app_module
+
+application = app_module.open(layout="lab")
+print(type(application).__name__)
+""",
+        """
+# re-open: the same-kernel registry must REPLACE the sidebar panel
+# (the browser test counts exactly one longeron-app tab)
+application = app_module.open(layout="lab")
+print("reopened")
+""",
+        """
+element = application.current_element
+current = next(
+    (
+        Path(entry.source).name
+        for entry in application.entries
+        if entry.model is application.current_model
+    ),
+    None,
+)
+print(json.dumps({
+    "models": [Path(entry.source).name for entry in application.entries],
+    "origins": [entry.origin for entry in application.entries],
+    "current": current,
+    "explorers": len(application.explorers),
+    "element": element.qualified_name if element is not None else None,
+}))
+""",
+    )
+
+
 #: filename -> builder; the session fixture writes these into the lab root
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
@@ -419,4 +469,5 @@ SCENARIO_NOTEBOOKS = {
     "explorer_dock_scenario.ipynb": explorer_dock_notebook,
     "hbox_fit_scenario.ipynb": hbox_fit_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,
+    "app_scenario.ipynb": app_notebook,
 }
