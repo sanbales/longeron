@@ -56,7 +56,7 @@
   fallback. Replace `import sysml2` with `import longeron`, the
   `sysml2` command with `longeron`, and `$SYSML2_CACHE_DIR` with
   `$LONGERON_CACHE_DIR`
-- Note: 0.9.0 shipped wheel-only on PyPI
+- Note: 0.9.0 shipped wheel-only on PyPI (since yanked)
 
 ## 0.9.0
 
