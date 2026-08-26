@@ -154,6 +154,33 @@ def _wait_http_ready(server: LabServer, timeout: float = 120.0) -> None:
     pytest.fail(f"jupyter lab not ready after {timeout}s ({last_error}); see {server.log_path}")
 
 
+def _shutdown_sessions(server: LabServer) -> None:
+    """Close every kernel session (best effort) so the NEXT test's open
+    starts a fresh kernel exactly like a first open.
+
+    Reopening a notebook whose session still holds a live kernel makes
+    JupyterLab REPLACE that kernel during page init (the 5ee3aee CI
+    server log shows a started/shutdown pair on every rerun's reopen) --
+    a moving target for the page's widget manager wiring.  Left alone,
+    kernels also ACCUMULATE for the whole session (8 live ipykernels by
+    suite end in the CI artifacts), pure memory pressure on a 2-core
+    runner.  Best effort: cleanup failure must never mask a test result.
+    """
+
+    base = f"{server.base_url}/api/sessions"
+    try:
+        with urllib.request.urlopen(f"{base}?token={server.token}", timeout=10) as response:
+            sessions = json.loads(response.read().decode("utf-8"))
+        for session in sessions:
+            request = urllib.request.Request(
+                f"{base}/{session['id']}?token={server.token}", method="DELETE"
+            )
+            with urllib.request.urlopen(request, timeout=10):
+                pass
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        sys.stderr.write(f"session cleanup failed (non-fatal): {err}\n")
+
+
 @pytest.fixture(scope="session")
 def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     """One headless JupyterLab for the whole session."""
@@ -204,6 +231,22 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         ),
         encoding="utf-8",
     )
+    # autosave OFF: the tier shares one lab root across tests and rerun
+    # attempts.  On a slow CI runner a single test can outlive JupyterLab's
+    # 120s autosave interval, which then writes that run's OUTPUTS into the
+    # shared notebook file; every later open of the file replays the stale
+    # widget-view outputs ('Error displaying widget: model not found'
+    # console storms) and shows stale [n] prompts.  That poisoning turned
+    # ONE slow first attempt into deterministic 3-minute failures for every
+    # rerun and follow-up test of the same notebook (the 5ee3aee CI run's
+    # artifact anatomy: 'Saving file at /explorer_scenario.ipynb' at t+120s,
+    # then model-not-found on all three later opens of that file).  Tests
+    # never need the file mutated -- reruns WANT the pristine copy.
+    docmanager = settings / "@jupyterlab" / "docmanager-extension"
+    docmanager.mkdir(parents=True)
+    (docmanager / "plugin.jupyterlab-settings").write_text(
+        json.dumps({"autosave": False}), encoding="utf-8"
+    )
     env = dict(
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
@@ -246,6 +289,10 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
                 "--ServerApp.password=",
                 f"--ServerApp.root_dir={root}",
                 "--ServerApp.disable_check_xsrf=True",
+                # skip jupyter_lsp's language-server detection sweep (a ~20s
+                # background probe of ~19 servers in the 5ee3aee CI log,
+                # right under the first test's cold start); no test uses LSP
+                "--LanguageServerManager.autodetect=False",
             ],
             cwd=root,
             env=env,
@@ -294,6 +341,31 @@ def browser(_playwright: Any) -> Any:
     chromium.close()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _warm_lab(browser: Browser, lab_server: LabServer) -> None:
+    """One throwaway page load before the first test runs.
+
+    The first Lab page of a fresh server pays every cold-start cost at
+    once: federated extension asset serving, jupyter_lsp's server
+    detection sweep, chromium's first paint.  On a 2-core CI runner that
+    bill otherwise lands on the first TEST's clock -- and on its widget
+    comm traffic (the 5ee3aee CI run failed ONLY the first scenario's
+    attempts; every later widget test in the same session passed).
+    Costs a few seconds locally; buys the first test the same warm
+    server every other test gets.
+    """
+
+    page = browser.new_page()
+    try:
+        page.goto(
+            f"{lab_server.base_url}/lab?token={lab_server.token}",
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_selector("#jp-main-dock-panel", state="attached", timeout=120_000)
+    finally:
+        page.close()
+
+
 # ---------------------------------------------------------------------------
 # the page driver
 # ---------------------------------------------------------------------------
@@ -324,9 +396,11 @@ _SNAPSHOT_JS = """() => {
     const elknodes = document.querySelectorAll('.sprotty svg .elknode').length;
     const loading = [...document.querySelectorAll('.jp-OutputArea-output')].filter(
         (el) => el.textContent.trim() === 'Loading widget...').length;
+    const werrors = [...document.querySelectorAll('.jp-OutputArea-output')].filter(
+        (el) => (el.textContent || '').includes('Error displaying widget')).length;
     const kernel = document.querySelector('.jp-Notebook-ExecutionIndicator')
         ?.getAttribute('data-status') || 'missing';
-    return {rendered, busy, bars, fitted, elknodes, loading, kernel};
+    return {rendered, busy, bars, fitted, elknodes, loading, werrors, kernel};
 }"""
 
 _CELL_STATE_JS = """(index) => {
@@ -336,8 +410,14 @@ _CELL_STATE_JS = """(index) => {
     const prompt = cell.querySelector('.jp-InputArea-prompt');
     const out = [...cell.querySelectorAll('.jp-OutputArea-output')]
         .map((el) => el.textContent).join('\\n');
-    return {prompt: prompt ? prompt.textContent.trim() : '', out};
+    const kernel = document.querySelector('.jp-Notebook-ExecutionIndicator')
+        ?.getAttribute('data-status') || 'missing';
+    return {prompt: prompt ? prompt.textContent.trim() : '', out, kernel};
 }"""
+
+#: every input prompt's text, in document order (run_all's started check)
+_PROMPTS_JS = """() => [...document.querySelectorAll('.jp-InputArea-prompt')]
+    .map((el) => el.textContent.trim())"""
 
 
 class LabPage:
@@ -393,9 +473,19 @@ class LabPage:
         )
 
     def run_all(self, attempts: int = 5) -> None:
-        """Run all cells via the command registry; confirm execution started."""
+        """Run all cells via the command registry; confirm execution started.
+
+        Started means BROWSER-VISIBLE evidence relative to a pre-fire
+        snapshot: a live ``[*]`` marker, or any prompt text that CHANGED.
+        Comparing against the snapshot (rather than accepting any ``[n]``)
+        keeps prompts restored from a previously-saved copy of the file
+        from faking a start -- the 5ee3aee CI reruns opened an
+        autosave-poisoned notebook whose stale ``[1]`` prompts satisfied
+        the old check, so a swallowed run-all was never re-fired.
+        """
 
         self.wait_kernel_idle()
+        before = list(self.page.evaluate(_PROMPTS_JS))
         for _attempt in range(attempts):
             # fire-and-forget: commands.execute returns a promise that only
             # resolves when the WHOLE run finishes, and page.evaluate awaits
@@ -406,14 +496,13 @@ class LabPage:
                 "() => { void (window.jupyterapp || window.jupyterlab)"
                 ".commands.execute('notebook:run-all-cells'); return true; }"
             )
-            time.sleep(4)
-            started = self.page.evaluate(
-                "() => [...document.querySelectorAll('.jp-InputArea-prompt')]"
-                ".some((el) => el.textContent.includes('[*]') || /\\[\\d+\\]/.test(el.textContent))"
-            )
-            if started:
-                return
-        raise TimeoutError(f"run-all never started after {attempts} attempts")
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                prompts = list(self.page.evaluate(_PROMPTS_JS))
+                if any("*" in prompt for prompt in prompts) or prompts != before:
+                    return
+                time.sleep(0.25)
+        raise TimeoutError(f"run-all never started after {attempts} attempts; prompts: {before}")
 
     # -- settle polling ------------------------------------------------------
 
@@ -428,14 +517,60 @@ class LabPage:
         poll_s: float = 2.0,
         stable_polls: int = 2,
         label: str = "condition",
+        refire_run_on_stall: bool = False,
     ) -> dict[str, Any]:
-        """Poll snapshots until the predicate holds ``stable_polls`` in a row."""
+        """Poll snapshots until the predicate holds ``stable_polls`` in a row.
+
+        ``refire_run_on_stall`` (used by :meth:`wait_settled`, whose callers
+        just ran the whole notebook) recovers a DEAD RUN: cells pinned at
+        ``[*]`` while the kernel reports idle means the execute requests
+        were swallowed by a half-rewired session -- JupyterLab can replace
+        a session's kernel during page init (double kernel start in the
+        server log) and a post-restart session drops requests; both were
+        artifact-verified (gallery cells at ``[ ]``/``[*]`` + kernel idle
+        for the full 480s budget).  A dead run never heals by waiting, so
+        after ~12s of that state run-all is re-fired (bounded) -- safe
+        because every scenario notebook in this tier is idempotent by
+        convention (the docking test refires on the same contract).
+        """
 
         deadline = time.monotonic() + timeout
         streak = 0
         state: dict[str, Any] = {}
+        stalled_since: float | None = None
+        refires = 0
         while time.monotonic() < deadline:
             state = self.snapshot()
+            # a widget output rendering as 'Error displaying widget' NEVER
+            # self-heals -- the frontend widget manager has no model for it
+            # (a lost comm_open, or a dead kernel's saved output).  Waiting
+            # out the full timeout on it burned 3 minutes per CI attempt;
+            # fail fast and NAME it so --reruns 1 retries on fresh state.
+            if state.get("werrors"):
+                raise AssertionError(
+                    f"{label}: {state['werrors']} widget output(s) render as "
+                    "'Error displaying widget' (frontend widget manager has no "
+                    "model: lost comm_open or a dead kernel's saved output); "
+                    f"this never self-heals, failing fast. Last state: {state}"
+                )
+            if refire_run_on_stall:
+                now = time.monotonic()
+                if not (state["busy"] > 0 and state["kernel"] == "idle"):
+                    stalled_since = None
+                elif stalled_since is None:
+                    stalled_since = now
+                elif now - stalled_since >= 12.0 and refires < 3:
+                    refires += 1
+                    stalled_since = None
+                    sys.stderr.write(
+                        f"{label}: dead run detected ({state['busy']} cell(s) pinned "
+                        f"at [*] with an idle kernel); re-firing run-all "
+                        f"({refires}/3)\n"
+                    )
+                    self.page.evaluate(
+                        "() => { void (window.jupyterapp || window.jupyterlab)"
+                        ".commands.execute('notebook:run-all-cells'); return true; }"
+                    )
             streak = streak + 1 if predicate(state) else 0
             if streak >= stable_polls:
                 return state
@@ -461,6 +596,9 @@ class LabPage:
             ),
             timeout=timeout,
             label=f"settle (min_widgets={min_widgets}, min_fitted={min_fitted})",
+            # wait_settled's callers just ran the notebook: recover a dead
+            # run (cells pinned at [*], kernel idle) instead of timing out
+            refire_run_on_stall=True,
         )
 
     # -- kernel round trips ---------------------------------------------------
@@ -485,6 +623,14 @@ class LabPage:
         documents). The bounded poll below owns the waiting; every caller
         re-runs an idempotent print-only checker cell, so an occasional
         double execution is harmless.
+
+        A ``[*]`` prompt is trusted only while the KERNEL is actually
+        working: a cell pinned at ``[*]`` with an idle kernel means the
+        execute request itself was swallowed (artifact-verified after
+        restart-run-all: checker at ``[*]``, kernel idle, and the old
+        unconditional running-check suppressed every re-fire for the
+        full 60s budget), so after a ~10s grace the command is re-fired
+        anyway -- the fresh request replaces the dead one.
         """
 
         before = self.page.evaluate(_CELL_STATE_JS, index)
@@ -502,6 +648,7 @@ class LabPage:
         time.sleep(0.5)
         deadline = time.monotonic() + timeout
         refire_at = time.monotonic()  # first fire happens immediately
+        pinned_since: float | None = None
         while time.monotonic() < deadline:
             state = self.page.evaluate(_CELL_STATE_JS, index)
             if (
@@ -511,13 +658,25 @@ class LabPage:
                 and re.search(r"\[\d+\]", state["prompt"])
             ):
                 return str(state["out"])
+            now = time.monotonic()
             running = state is not None and "*" in state["prompt"]
-            if not running and time.monotonic() >= refire_at:
+            if running and state is not None and state["kernel"] == "idle":
+                pinned_since = pinned_since if pinned_since is not None else now
+            else:
+                pinned_since = None
+            dead = pinned_since is not None and now - pinned_since >= 10.0
+            if (not running or dead) and now >= refire_at:
+                if dead:
+                    sys.stderr.write(
+                        f"run_cell({index}): prompt pinned at [*] with an idle "
+                        "kernel (swallowed execute); re-firing\n"
+                    )
                 self.page.evaluate(
                     "() => { void (window.jupyterapp || window.jupyterlab)"
                     ".commands.execute('notebook:run-cell'); return true; }"
                 )
-                refire_at = time.monotonic() + 15.0
+                refire_at = now + 15.0
+                pinned_since = None
             time.sleep(0.5)
         raise TimeoutError(f"cell {index} did not finish re-running within {timeout}s")
 
@@ -590,3 +749,7 @@ def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest)
             driver.save_artifacts(ARTIFACTS, request.node.name)
     finally:
         page.close()
+        # hermetic teardown: every test (and every rerun attempt) hands the
+        # next one a server with NO live kernel sessions -- see
+        # _shutdown_sessions for the CI evidence this encodes
+        _shutdown_sessions(lab_server)

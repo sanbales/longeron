@@ -2164,3 +2164,46 @@ class TestUniversalFitMachinery:
             kind = type(sentinel).__name__
             same_kind = [c for c in widget.children if type(c).__name__ == kind]
             assert len(same_kind) == 1
+
+
+class TestBuilderHeight:
+    """The builders' height story: bare cells keep the 400px minimum
+    floor; an explicit ``height=`` is honored exactly (plumbed to
+    ``result.layout`` in ``_finish``), even below the floor -- so inline
+    compositions can match a neighbor (NB10's 480px 3D viewer)."""
+
+    def test_default_keeps_the_bare_cell_floor(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        assert widget.layout.min_height == "400px"
+        assert widget.layout.height == "100%"  # ipyelk default: fill what the cell gives
+
+    def test_explicit_height_is_exact_for_every_builder(self, drone_model):
+        for widget in (
+            diagrams.structure_diagram(drone_model, height="480px"),
+            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), height="480px"),
+            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), height="480px"),
+        ):
+            assert widget.layout.height == "480px"
+            # the floor must NOT fight the request (CSS min-height wins
+            # over height, so an explicit height drops it)
+            assert widget.layout.min_height == "0"
+
+    def test_explicit_height_wins_below_the_floor(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model, height="300px")
+        assert widget.layout.height == "300px"
+        assert widget.layout.min_height == "0"
+
+    def test_requirements_view_passes_height_through(self, drone_model):
+        from longeron.explorer import requirements_view
+
+        widget = requirements_view(drone_model, height="480px")
+        assert widget.layout.height == "480px"
+
+    def test_height_is_presentation_not_a_stamped_option(self, drone_model):
+        # view persistence stores builder OPTIONS; height is live layout
+        widget = diagrams.structure_diagram(drone_model, height="480px")
+        assert "height" not in widget._lgn_view_state["options"]
+
+    def test_non_string_height_is_rejected(self, drone_model):
+        with pytest.raises(ValueError, match="CSS length"):
+            diagrams.structure_diagram(drone_model, height=480)

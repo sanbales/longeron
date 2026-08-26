@@ -1363,6 +1363,7 @@ def _finish(
     toolbar: bool = True,
     layout: dict[str, str] | None = None,
     routing: str = "orthogonal",
+    height: str | None = None,
 ) -> Any:
     root.layoutOptions = dict(_ROOT_LAYOUT)
     if layout:
@@ -1405,7 +1406,20 @@ def _finish(
             pipe.timeout = roundtrip_timeout
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
-    result.layout.min_height = "400px"
+    if height is None:
+        # bare-cell default: the widget's own height is 100% of an
+        # auto-height output area (which computes to auto), so a minimum
+        # floor gives plain display(widget) a usable canvas
+        result.layout.min_height = "400px"
+    else:
+        # an explicit height is a contract: honor it exactly, even below
+        # the default floor (CSS min-height would win over height), so
+        # inline layouts can match a neighbor -- NB10 sits a diagram
+        # beside a 480px 3D viewer
+        if not isinstance(height, str):
+            raise ValueError(f"height must be a CSS length string or None, not {height!r}")
+        result.layout.height = height
+        result.layout.min_height = "0"
     # EVERY widget fits-and-centers itself: once when its first layout
     # arrives, and again whenever its own fit sentinel reports a fresh
     # view, a first reveal, or an untouched-viewport resize (registered
@@ -1466,6 +1480,7 @@ def structure_diagram(
     routing: str = "orthogonal",
     direction: str = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
+    height: str | None = None,
 ) -> Any:
     """Containment structure with specialization/typing/connection edges.
 
@@ -1530,6 +1545,13 @@ def structure_diagram(
     the usual offenders -- are end-ellipsized with the FULL text on the
     row's hover tooltip, so one absurd expression no longer makes the
     whole node absurd.  ``None`` lifts the cap (every row at full width).
+
+    ``height`` pins the widget's rendered height to a CSS length (e.g.
+    ``"480px"``) so inline compositions can match a neighbor exactly --
+    tutorial 10 sits a diagram beside a 480px 3D viewer in an HBox.  The
+    default ``None`` keeps the bare-cell behavior: content-driven height
+    with a 400px minimum floor.  An explicit height always wins, even
+    below that floor.
     """
 
     if max_label_width is not None and max_label_width <= 0:
@@ -1579,6 +1601,7 @@ def structure_diagram(
         layout={"elk.spacing.labelNode": "0"},
         routing=routing,
         direction=direction,
+        height=height,
     )
     return _stamp_view_state(widget, element, "structure", options)
 
@@ -2625,6 +2648,7 @@ def state_diagram(
     routing: str = "orthogonal",
     direction: str = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
+    height: str | None = None,
 ) -> Any:
     """A hierarchical state machine: states, entry markers, transitions.
 
@@ -2643,7 +2667,9 @@ def state_diagram(
     ``direction`` the layout flow (``"right"`` or ``"down"``);
     ``max_label_width`` caps compartment-row display width exactly like
     :func:`structure_diagram` (state boxes carry no rows today, so the
-    cap is future-proofing).
+    cap is future-proofing); ``height`` pins the widget's rendered height
+    to a CSS length exactly like :func:`structure_diagram` (default: the
+    400px-floor bare-cell behavior).
 
     Expanded substate ids are instance-qualified
     (``…::swapSource::swap::evaluating``) so they stay unique per
@@ -2662,7 +2688,7 @@ def state_diagram(
     _fill_states(root, machine, root, resolver, base, submachine_depth, frozenset({id(machine)}))
     if max_label_width is not None:
         _ellipsize_rows(root, max_label_width)
-    widget = _finish(root, toolbar=toolbar, routing=routing, direction=direction)
+    widget = _finish(root, toolbar=toolbar, routing=routing, direction=direction, height=height)
     options: dict[str, Any] = (
         {} if submachine_depth is None else {"submachine_depth": submachine_depth}
     )
@@ -2812,6 +2838,7 @@ def action_diagram(
     routing: str = "orthogonal",
     direction: str = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
+    height: str | None = None,
 ) -> Any:
     """The succession control-flow graph the interpreter executes.
 
@@ -2838,7 +2865,9 @@ def action_diagram(
     (``"right"``, the flow-reading default, or ``"down"``).
     ``max_label_width`` caps compartment-row display width exactly like
     :func:`structure_diagram` (behavior boxes carry no rows today, so
-    the cap is future-proofing).
+    the cap is future-proofing); ``height`` pins the widget's rendered
+    height to a CSS length exactly like :func:`structure_diagram`
+    (default: the 400px-floor bare-cell behavior).
     """
 
     root = Node(properties=NodeProperties(cssClasses="sysml-root"))
@@ -2922,7 +2951,9 @@ def action_diagram(
 
     if max_label_width is not None:
         _ellipsize_rows(root, max_label_width)
-    widget = _finish(root, direction=direction, toolbar=toolbar, layout=layout, routing=routing)
+    widget = _finish(
+        root, direction=direction, toolbar=toolbar, layout=layout, routing=routing, height=height
+    )
     options: dict[str, Any] = (
         {} if lanes is None else {"lanes": dict(lanes) if isinstance(lanes, Mapping) else lanes}
     )
