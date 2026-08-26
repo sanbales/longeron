@@ -21,8 +21,8 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 QUAD_MAP = {
     "frame": "Drone::QuadCopter::chassis",
-    "motors": "Drone::QuadCopter::rotors",
-    "props": "Drone::QuadCopter::rotors",
+    "motors": "Drone::QuadCopter::motors",
+    "props": "Drone::QuadCopter::propellers",
     "battery": "Drone::QuadCopter::battery",
 }
 
@@ -51,12 +51,13 @@ def linked(drone_model):
 
 # per-individual keying: the M0 ids of Drone::QuadCopter's population
 # (see longeron.m0.interpret) as stamped on a split-instance mesh
-ROTOR_IDS = [f"Drone::QuadCopter#0.rotors#{i}" for i in range(4)]
+MOTOR_IDS = [f"Drone::QuadCopter#0.motors#{i}" for i in range(4)]
+PROP_IDS = [f"Drone::QuadCopter#0.propellers#{i}" for i in range(4)]
 INDIVIDUAL_MAP = {
     "frame": "Drone::QuadCopter#0.chassis",
     "battery": "Drone::QuadCopter#0.battery",
-    **{f"motor{i + 1}": ROTOR_IDS[i] for i in range(4)},
-    **{f"prop{i + 1}": ROTOR_IDS[i] for i in range(4)},
+    **{f"motor{i + 1}": MOTOR_IDS[i] for i in range(4)},
+    **{f"prop{i + 1}": PROP_IDS[i] for i in range(4)},
 }
 INDIVIDUAL_KEYS = [*INDIVIDUAL_MAP.values(), "esc"]
 
@@ -80,8 +81,8 @@ class TestSelectionKeys:
         return link.selection_keys(model, elements, SCENE_KEYS)
 
     def test_usage_matches_its_own_key(self, drone_model):
-        assert self.resolve(drone_model, ["Drone::QuadCopter::rotors"]) == {
-            "Drone::QuadCopter::rotors"
+        assert self.resolve(drone_model, ["Drone::QuadCopter::motors"]) == {
+            "Drone::QuadCopter::motors"
         }
 
     def test_container_matches_the_nested_keys(self, drone_model):
@@ -89,9 +90,9 @@ class TestSelectionKeys:
         assert self.resolve(drone_model, ["Drone"]) == set(ALL_KEYS)
 
     def test_definition_matches_every_usage_typed_by_it(self, drone_model):
-        assert self.resolve(drone_model, ["Drone::Rotor"]) == {"Drone::QuadCopter::rotors"}
+        assert self.resolve(drone_model, ["Drone::Motor"]) == {"Drone::QuadCopter::motors"}
         assert self.resolve(drone_model, ["Drone::Frame"]) == {"Drone::QuadCopter::chassis"}
-        assert isinstance(drone_model.find("Drone::Rotor"), M.Definition)
+        assert isinstance(drone_model.find("Drone::Motor"), M.Definition)
 
     def test_unrelated_selection_matches_nothing(self, drone_model):
         assert self.resolve(drone_model, ["Drone::HoverTime"]) == set()
@@ -113,17 +114,17 @@ class TestLinkSelection:
 
     def test_selection_drives_the_highlight(self, linked):
         structure, viewer, _unlink = linked
-        structure.view.selection.ids = ["Drone::Rotor"]
-        assert json.loads(viewer.highlight_json) == ["Drone::QuadCopter::rotors"]
+        structure.view.selection.ids = ["Drone::Motor"]
+        assert json.loads(viewer.highlight_json) == ["Drone::QuadCopter::motors"]
         structure.view.selection.ids = ["Drone::QuadCopter"]
         assert json.loads(viewer.highlight_json) == ALL_KEYS
 
     def test_no_match_clears_instead_of_dimming_everything(self, linked):
         structure, viewer, _unlink = linked
-        structure.view.selection.ids = ["Drone::Rotor"]
+        structure.view.selection.ids = ["Drone::Motor"]
         structure.view.selection.ids = ["Drone::HoverTime"]
         assert viewer.highlight_json == "[]"
-        structure.view.selection.ids = ["Drone::Rotor"]
+        structure.view.selection.ids = ["Drone::Motor"]
         structure.view.selection.ids = []
         assert viewer.highlight_json == "[]"
 
@@ -143,12 +144,12 @@ class TestLinkSelection:
 
     def test_unlink_stops_both_directions(self, linked):
         structure, viewer, unlink = linked
-        structure.view.selection.ids = ["Drone::Rotor"]
+        structure.view.selection.ids = ["Drone::Motor"]
         unlink()
         assert viewer.highlight_json == "[]"  # cleared on disposal
         structure.view.selection.ids = ["Drone::QuadCopter::battery"]
         assert viewer.highlight_json == "[]"
-        viewer.picked_json = json.dumps(["Drone::QuadCopter::rotors"])
+        viewer.picked_json = json.dumps(["Drone::QuadCopter::motors"])
         assert list(structure.view.selection.ids) == ["Drone::QuadCopter::battery"]
         unlink()  # idempotent
 
@@ -178,8 +179,8 @@ class TestIndividualQname:
     join with ``::`` -- an individual belongs to its usage."""
 
     def test_indexed_individual_derives_its_usage(self):
-        assert link.individual_qname("Drone::QuadCopter#0.rotors#2") == (
-            "Drone::QuadCopter::rotors"
+        assert link.individual_qname("Drone::QuadCopter#0.motors#2") == (
+            "Drone::QuadCopter::motors"
         )
 
     def test_singleton_and_root_derive_too(self):
@@ -194,7 +195,7 @@ class TestIndividualQname:
 
     def test_plain_keys_are_not_individual_ids(self):
         # pure-qname and bare-name keys keep their exact semantics
-        assert link.individual_qname("Drone::QuadCopter::rotors") is None
+        assert link.individual_qname("Drone::QuadCopter::motors") is None
         assert link.individual_qname("esc") is None
 
 
@@ -209,10 +210,12 @@ class TestSelectionKeysOverIndividuals:
         return link.selection_keys(model, elements, INDIVIDUAL_KEYS)
 
     def test_usage_matches_all_four_individuals(self, drone_model):
-        assert self.resolve(drone_model, ["Drone::QuadCopter::rotors"]) == set(ROTOR_IDS)
+        assert self.resolve(drone_model, ["Drone::QuadCopter::motors"]) == set(MOTOR_IDS)
+        assert self.resolve(drone_model, ["Drone::QuadCopter::propellers"]) == set(PROP_IDS)
 
     def test_definition_matches_through_the_usage(self, drone_model):
-        assert self.resolve(drone_model, ["Drone::Rotor"]) == set(ROTOR_IDS)
+        assert self.resolve(drone_model, ["Drone::Motor"]) == set(MOTOR_IDS)
+        assert self.resolve(drone_model, ["Drone::Propeller"]) == set(PROP_IDS)
 
     def test_container_matches_the_whole_population(self, drone_model):
         assert self.resolve(drone_model, ["Drone::QuadCopter"]) == set(INDIVIDUAL_MAP.values())
@@ -238,18 +241,18 @@ class TestPerIndividualLink:
 
     def test_m1_usage_click_lights_all_four_instances(self, individual_linked):
         structure, viewer, _picks, _unlink = individual_linked
-        structure.view.selection.ids = ["Drone::QuadCopter::rotors"]
-        assert json.loads(viewer.highlight_json) == sorted(ROTOR_IDS)
+        structure.view.selection.ids = ["Drone::QuadCopter::motors"]
+        assert json.loads(viewer.highlight_json) == sorted(MOTOR_IDS)
 
     def test_pick_projects_to_the_usage_and_surfaces_the_individual(self, individual_linked):
         structure, viewer, picks, _unlink = individual_linked
-        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.rotors#2"])
+        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.motors#2"])
         # M0 -> M1 is many-to-one: the diagram selects the one usage ...
-        assert list(structure.view.selection.ids) == ["Drone::QuadCopter::rotors"]
+        assert list(structure.view.selection.ids) == ["Drone::QuadCopter::motors"]
         # ... whose fan-out re-lights all four instance meshes ...
-        assert json.loads(viewer.highlight_json) == sorted(ROTOR_IDS)
+        assert json.loads(viewer.highlight_json) == sorted(MOTOR_IDS)
         # ... while on_pick preserves which individual was hit
-        assert picks == [["Drone::QuadCopter#0.rotors#2"]]
+        assert picks == [["Drone::QuadCopter#0.motors#2"]]
 
     def test_background_pick_reports_empty_and_clears(self, individual_linked):
         structure, viewer, picks, _unlink = individual_linked
@@ -271,13 +274,13 @@ class TestPerIndividualLink:
             bidirectional=False,
             on_pick=picks.append,
         )
-        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.rotors#0"])
-        assert picks == [["Drone::QuadCopter#0.rotors#0"]]
+        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.motors#0"])
+        assert picks == [["Drone::QuadCopter#0.motors#0"]]
         assert list(structure.view.selection.ids) == []  # projection stays off
         unlink()
 
     def test_unlink_silences_on_pick(self, individual_linked):
         _structure, viewer, picks, unlink = individual_linked
         unlink()
-        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.rotors#1"])
+        viewer.picked_json = json.dumps(["Drone::QuadCopter#0.motors#1"])
         assert picks == []

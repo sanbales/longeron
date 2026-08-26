@@ -437,7 +437,7 @@ class TestSvg:
         assert "circle-plus" not in body  # glyph never referenced
         assert "sysml-edge-owned" not in body
         # members still NEST: the QuadCopter usages sit inside their box
-        assert 'data-qname="Drone::QuadCopter::rotors"' in body
+        assert 'data-qname="Drone::QuadCopter::motors"' in body
 
     def test_portion_membership_ball(self):
         """Portion membership (errata new row): timeslice/snapshot usages

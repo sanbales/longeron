@@ -559,6 +559,33 @@ class TestValuesInjection:
         with pytest.raises(AnalysisError, match="metrics"):
             architecture_values(object())
 
+    def test_unvalued_measure_is_unmeasured_until_injected(self):
+        # the measured-elsewhere seam of examples/drone.sysml: the measure
+        # reads a DECLARED but unvalued attribute (so the model validates
+        # clean), stays honestly unmeasured bare, and values= injects the
+        # kernel-side reading (here: the geometry checks' occludedFraction)
+        model = longeron.loads(
+            """
+            package P {
+                requirement installation {
+                    attribute occludedFraction : Real;
+                    requirement clearView {
+                        attribute utility : String = "smaller-is-better";
+                        attribute ramp0 : Real = 0.25;
+                        attribute ramp1 : Real = 0.0;
+                        attribute measure : Real = occludedFraction;
+                        require constraint { occludedFraction <= 0.05 }
+                    }
+                }
+            }
+            """
+        )
+        bare = rows_by_name(scoreboard(model))["clearView"]
+        assert bare.raw is None and math.isnan(bare.utility)
+        measured = rows_by_name(scoreboard(model, values={"occludedFraction": 0.05}))["clearView"]
+        assert measured.raw == 0.05
+        assert measured.utility == pytest.approx(0.8)
+
 
 # ---------------------------------------------------------------------------
 # scope resolution and the table

@@ -16,8 +16,8 @@ CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, 
 
 QUAD_MAP = {
     "frame": "Drone::QuadCopter::chassis",
-    "motors": "Drone::QuadCopter::rotors",
-    "props": "Drone::QuadCopter::rotors",
+    "motors": "Drone::QuadCopter::motors",
+    "props": "Drone::QuadCopter::propellers",
     "battery": "Drone::QuadCopter::battery",
 }
 
@@ -233,14 +233,192 @@ class TestSplitInstances:
     def test_instances_tag_to_m0_individual_ids(self):
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         mapping = {
-            f"{kind}{i + 1}": f"Drone::QuadCopter#0.rotors#{i}"
-            for kind in ("motor", "prop")
-            for i in range(4)
+            **{f"motor{i + 1}": f"Drone::QuadCopter#0.motors#{i}" for i in range(4)},
+            **{f"prop{i + 1}": f"Drone::QuadCopter#0.propellers#{i}" for i in range(4)},
         }
         tagged = geometry.tag_parts(mesh, mapping)
         keys = {p["name"]: p.get("key") for p in tagged["parts"]}
-        assert keys["motor3"] == keys["prop3"] == "Drone::QuadCopter#0.rotors#2"
+        assert keys["motor3"] == "Drone::QuadCopter#0.motors#2"
+        assert keys["prop3"] == "Drone::QuadCopter#0.propellers#2"
         assert keys["frame"] is None  # unmapped parts stay untagged
+
+
+#: the stock examples/drone.sysml design point (see the model's defaults)
+STOCK = {"prop_diameter_in": 10.0, "motor_mass": 0.048, "battery_mass": 0.38, "esc_mass": 0.012}
+STOCK_CAMERA = {
+    "x": 0.06,
+    "y": 0.0,
+    "z": 0.0,
+    "azimuth": 0.0,
+    "elevation": -15.0,
+    "fieldOfView": 50.0,
+}
+
+
+def _plate_mesh(*, sx=0.1, sy=20.0, sz=20.0, cx=1.0, cy=0.0, cz=0.0, name="plate"):
+    """A single-box mesh dict for closed-form check cases."""
+
+    vertices, faces = geometry._box(sx, sy, sz, cx=cx, cy=cy, cz=cz)
+    return {
+        "unit": "m",
+        "parts": [
+            {"name": name, "color": "#000000", "opacity": 1.0, "vertices": vertices, "faces": faces}
+        ],
+    }
+
+
+class TestCameraOcclusion:
+    """Closed-form frustum cases + the stock drone design point."""
+
+    CAM: ClassVar[dict[str, float]] = {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0,
+        "azimuth": 0.0,
+        "elevation": 0.0,
+        "fieldOfView": 60.0,
+    }
+
+    def test_unobstructed_view_is_zero(self):
+        # the only geometry sits BEHIND the camera
+        mesh = _plate_mesh(cx=-1.0)
+        assert geometry.camera_occlusion(mesh, self.CAM) == 0.0
+
+    def test_plate_dead_ahead_blocks_everything(self):
+        mesh = _plate_mesh(cx=1.0)  # 20 m x 20 m wall, 1 m ahead
+        assert geometry.camera_occlusion(mesh, self.CAM) == 1.0
+
+    def test_half_plane_blocks_the_upper_rows_exactly(self):
+        # a wall whose bottom edge sits just above the boresight: of the
+        # 15 elevation rows (grid-cell centres) exactly the 7 above the
+        # boresight hit it -> 7/15, pinning the deterministic ray grid
+        mesh = _plate_mesh(cx=1.0, cy=10.0 + 0.001, sy=20.0)
+        assert geometry.camera_occlusion(mesh, self.CAM) == pytest.approx(7.0 / 15.0)
+
+    def test_report_names_the_offenders(self):
+        mesh = _plate_mesh(cx=1.0)
+        report = geometry.occlusion_report(mesh, self.CAM, rays=5)
+        assert report == {"occludedFraction": 1.0, "rays": 25, "hits": {"plate": 25}}
+
+    def test_camera_body_is_excluded_from_its_own_view(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        report = geometry.occlusion_report(mesh)
+        assert "camera" not in report["hits"]
+
+    def test_stock_drone_meets_the_clear_view_budget(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        fraction = geometry.camera_occlusion(mesh)
+        assert 0.0 <= fraction <= 0.05  # the clearView requirement's budget
+
+    def test_backward_camera_is_blinded_by_the_airframe(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        report = geometry.occlusion_report(mesh, camera={**STOCK_CAMERA, "azimuth": 180.0})
+        assert report["occludedFraction"] > 0.5
+        assert "battery" in report["hits"]  # the pack is the big offender
+
+    def test_missing_camera_fails_loudly(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True)
+        with pytest.raises(AnalysisError, match="camera"):
+            geometry.camera_occlusion(mesh)
+        with pytest.raises(AnalysisError, match="missing"):
+            geometry.camera_occlusion(mesh, {"x": 0.0})
+
+
+class TestDiscClearance:
+    """Closed-form disc cases + the stock and prop-swap design points."""
+
+    @staticmethod
+    def _disc_mesh(part_mesh, *, center=(0.0, 0.0, 0.0), radius=0.1):
+        mesh = dict(part_mesh)
+        mesh["discs"] = [
+            {
+                "part": "disc",
+                "center": list(center),
+                "normal": [0.0, 1.0, 0.0],
+                "radius": radius,
+                "exclude": [],
+            }
+        ]
+        return mesh
+
+    def test_axial_gap_is_exact(self):
+        # a 0.2 m cube whose top face sits 0.4 m below the disc plane:
+        # the disc centre projects straight onto the face -> exactly 0.4
+        mesh = self._disc_mesh(_plate_mesh(sx=0.2, sy=0.2, sz=0.2, cx=0.0, cy=-0.5))
+        assert geometry.disc_clearance(mesh) == pytest.approx(0.4)
+
+    def test_lateral_gap_is_exact(self):
+        # a box face 0.15 m from the disc axis in-plane: the rim sample at
+        # angle 0 (radius 0.1) leaves exactly 0.05 m
+        mesh = self._disc_mesh(_plate_mesh(sx=0.2, sy=0.2, sz=0.2, cx=0.25))
+        assert geometry.disc_clearance(mesh) == pytest.approx(0.05)
+
+    def test_symmetric_stations_report_symmetric_clearances(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True)
+        rows = geometry.clearance_report(mesh)
+        assert [row["disc"] for row in rows] == ["prop1", "prop2", "prop3", "prop4"]
+        clearances = {round(row["clearance"], 9) for row in rows}
+        assert len(clearances) == 1  # four identical stations
+
+    def test_stock_drone_clearance_is_the_designed_tip_gap(self):
+        # the frame derivation spaces motors one prop diameter + 0.02 m
+        # apart, so the tightest gap IS the 0.02 m disc-to-disc clearance
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True)
+        rows = geometry.clearance_report(mesh)
+        assert geometry.disc_clearance(mesh) == pytest.approx(0.02, abs=1e-9)
+        assert all(row["nearest"].startswith("prop") for row in rows)
+
+    def test_oversized_prop_on_the_stock_frame_violates(self):
+        # a 12" prop bolted onto the frame sized for 10" props: discs
+        # overlap, clearance collapses below the 0.01 m requirement floor
+        stock_spacing = 10.0 * geometry.IN + 0.02
+        mesh = geometry.drone_geometry(
+            **{**STOCK, "prop_diameter_in": 12.0},
+            split_instances=True,
+            motor_spacing=stock_spacing,
+        )
+        assert geometry.disc_clearance(mesh) < 0.01
+
+    def test_merged_mesh_fails_loudly(self):
+        mesh = geometry.drone_geometry(**STOCK)  # no split: no per-station discs
+        with pytest.raises(AnalysisError, match="split_instances"):
+            geometry.disc_clearance(mesh)
+
+
+class TestGeometryChecks:
+    def test_both_measures_keyed_for_the_scoreboard(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        checks = geometry.geometry_checks(mesh)
+        assert set(checks) == {"occludedFraction", "minDiscClearance"}
+        assert checks["occludedFraction"] == geometry.camera_occlusion(mesh)
+        assert checks["minDiscClearance"] == geometry.disc_clearance(mesh)
+
+    def test_deterministic(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        assert geometry.geometry_checks(mesh) == geometry.geometry_checks(mesh)
+
+    def test_stock_drone_satisfies_both_requirements(self):
+        # the requirement bodies of examples/drone.sysml at the stock point
+        checks = geometry.geometry_checks(
+            geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        )
+        assert checks["occludedFraction"] <= 0.05  # clearView
+        assert checks["minDiscClearance"] >= 0.01  # propClearance
+
+
+class TestMotorSpacingOverride:
+    def test_default_spacing_is_derived_from_the_prop(self):
+        derived = geometry.drone_geometry(**STOCK, split_instances=True)
+        fixed = geometry.drone_geometry(
+            **STOCK, split_instances=True, motor_spacing=10.0 * geometry.IN + 0.02
+        )
+        assert derived["discs"] == fixed["discs"]
+
+    def test_spacing_moves_the_stations(self):
+        wide = geometry.drone_geometry(**STOCK, split_instances=True, motor_spacing=0.5)
+        assert wide["discs"][0]["center"][0] == pytest.approx(0.25)
+        with pytest.raises(AnalysisError):
+            geometry.drone_geometry(**STOCK, motor_spacing=0.0)
 
 
 class TestNewPrimitives:
@@ -832,8 +1010,8 @@ class TestTagParts:
         tagged = geometry.tag_parts(mesh, QUAD_MAP)
         assert [p.get("key") for p in tagged["parts"]] == [
             "Drone::QuadCopter::chassis",
-            "Drone::QuadCopter::rotors",
-            "Drone::QuadCopter::rotors",
+            "Drone::QuadCopter::motors",
+            "Drone::QuadCopter::propellers",
             "Drone::QuadCopter::battery",
             None,  # esc has no model part: identity stays its name
         ]
@@ -848,7 +1026,7 @@ class TestTagParts:
     def test_typos_fail_loudly_unless_relaxed(self):
         mesh = geometry.drone_geometry(**RACER)
         with pytest.raises(AnalysisError, match="rotor"):
-            geometry.tag_parts(mesh, {"rotor": "Drone::QuadCopter::rotors"})
+            geometry.tag_parts(mesh, {"rotor": "Drone::QuadCopter::motors"})
         # one shared map across families: unknown names are ignored
         relaxed = geometry.tag_parts(mesh, {"wing": "X::wing"}, strict=False)
         assert all("key" not in p for p in relaxed["parts"])
@@ -857,7 +1035,7 @@ class TestTagParts:
         tagged = geometry.tag_parts(geometry.drone_geometry(**RACER), QUAD_MAP)
         scene = geometry.lineup([tagged, geometry.drone_geometry(**CRUISER)], labels=["a", "b"])
         by_name = {p["name"]: p.get("key") for p in scene["parts"]}
-        assert by_name["a:motors"] == "Drone::QuadCopter::rotors"
+        assert by_name["a:motors"] == "Drone::QuadCopter::motors"
         assert by_name["a:esc"] is None  # untagged part stays untagged
         assert by_name["b:motors"] is None  # the untagged mesh is inert
 

@@ -31,6 +31,16 @@ convention the SysML part usage's qualified name) stamped by
 (:mod:`longeron.analysis.link`); untagged parts fall back to their
 ``name``.
 
+The same mesh doubles as the input to the GEOMETRIC REQUIREMENT CHECKS:
+:func:`camera_occlusion` casts a deterministic ray grid over a mounted
+camera's field of view and reports the fraction blocked by own-airframe
+triangles, and :func:`disc_clearance` measures the tightest gap between
+each propeller disc (stamped analytically by :func:`drone_geometry` in
+``split_instances`` mode) and every other component's triangles.  Both
+are pure stdlib math, deterministic, and keyed by
+:func:`geometry_checks` to feed ``examples/drone.sysml``'s
+``installation`` requirements through the scoreboard's ``values=`` seam.
+
 House pattern: geometry is baked in Python once per configuration (a
 millisecond or so -- no CAD kernel in the loop); the front-end never
 recomputes it.  Y is up, +X is forward, one unit is one metre, and every
@@ -48,7 +58,7 @@ deliberately does not need the ~1 GB OCC kernel.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from math import atan, atan2, ceil, cos, floor, pi, sin, sqrt
+from math import atan, atan2, ceil, cos, floor, pi, radians, sin, sqrt
 from typing import Any
 
 from ..errors import MissingExtraError
@@ -58,12 +68,17 @@ from .trades import Architecture, TradeStudy
 __all__ = [
     "architecture_geometry",
     "architecture_params",
+    "camera_occlusion",
+    "clearance_report",
+    "disc_clearance",
     "drone_geometry",
+    "geometry_checks",
     "interceptor_geometry",
     "lineup",
     "mission_geometry",
     "mission_params",
     "naca4_profile",
+    "occlusion_report",
     "tag_parts",
     "teardrop_quad_geometry",
     "to_cadquery",
@@ -95,6 +110,7 @@ COLORS = {
     "esc": "#a58a4d",  # ochre
     "wing": "#6f8f6a",  # sage
     "tail": "#8a8f98",  # light gray (stabilizers)
+    "camera": "#7a5d8c",  # violet (the mission camera body)
 }
 
 
@@ -365,12 +381,18 @@ def drone_geometry(
     arm_width: float = _ARM_WIDTH,
     segments: int = 24,
     split_instances: bool = False,
+    motor_spacing: float | None = None,
+    camera: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """A to-scale quad-copter mesh dict from catalog attribute values.
 
     The frame is *derived*: adjacent motors sit one prop diameter plus
     ``_PROP_CLEARANCE`` apart, so a 10-inch cruiser genuinely dwarfs a
-    5-inch racer.  ``arm_thickness``/``arm_width`` default to the demo
+    5-inch racer.  ``motor_spacing`` overrides that derivation with a
+    FIXED motor-to-motor distance -- a real frame does not grow when a
+    bigger prop is bolted onto it, so a prop-swap what-if passes the
+    stock spacing and lets :func:`disc_clearance` judge the result.
+    ``arm_thickness``/``arm_width`` default to the demo
     heuristics; callers with load-sized arm tubes (see
     :func:`mission_geometry`) pass the sized outer diameter so heavier-
     loaded designs genuinely look beefier.  Parts of one kind merge into
@@ -383,11 +405,25 @@ def drone_geometry(
     see :func:`tag_parts`) for per-instance linked selection.  The
     geometry is a pure re-partition: concatenating the instance parts
     reproduces the merged part exactly, and the default (``False``)
-    output is unchanged.
+    output is unchanged.  Split mode additionally stamps the analytic
+    propeller discs onto the mesh (``mesh["discs"]``: centre, normal,
+    radius, owning part, and the same-station parts a clearance check
+    must ignore) -- the input :func:`disc_clearance` consumes.
+
+    ``camera`` mounts the mission camera: a mapping with the placement
+    and boresight attribute names of ``examples/drone.sysml``'s
+    ``Camera`` part (``x``/``y``/``z`` metres from the top-plate centre,
+    ``azimuth``/``elevation``/``fieldOfView`` degrees), typically the
+    slot dict of an instantiated/interpreted camera individual.  It adds
+    a violet ``camera`` body part (a small box, yawed to the azimuth)
+    and stamps the parameters on ``mesh["camera"]`` for
+    :func:`camera_occlusion`.
     """
 
     prop_d = prop_diameter_in * IN
-    spacing = prop_d + _PROP_CLEARANCE  # adjacent motor-to-motor
+    spacing = prop_d + _PROP_CLEARANCE if motor_spacing is None else motor_spacing
+    if spacing <= 0:
+        raise AnalysisError(f"motor spacing must be positive (got {spacing!r})")
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
@@ -411,6 +447,17 @@ def drone_geometry(
     battery = _box(bat_l, bat_w, bat_h, cy=-(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2))
     esc = _box(_BOARD_SIDE, esc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t / 2)
 
+    camera_part: list[tuple[str, Mesh, float]] = []
+    if camera is not None:
+        params = _camera_params(camera)
+        body = _box(0.020, 0.016, 0.016)  # a 20 x 16 x 16 mm camera pod
+        body = (_rotate_y(body[0], radians(params["azimuth"])), body[1])
+        body = (_translate(body[0], params["x"], params["y"], params["z"]), body[1])
+        camera_part.append(("camera", body, 1.0))
+
+    stations = [
+        (mx * spacing / 2, mz * spacing / 2) for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1))
+    ]
     if split_instances:
         parts: list[tuple[str, Mesh, float]] = [
             ("frame", frame, 1.0),
@@ -418,19 +465,392 @@ def drone_geometry(
             *((f"prop{i + 1}", prop, 0.55) for i, prop in enumerate(props)),
             ("battery", battery, 1.0),
             ("esc", esc, 1.0),
+            *camera_part,
         ]
         instance_colors = {
             f"{kind}{i + 1}": COLORS[f"{kind}s"] for kind in ("motor", "prop") for i in range(4)
         }
-        return _pack(parts, colors=instance_colors)
+        mesh = _pack(parts, colors=instance_colors)
+        mesh["discs"] = [
+            {
+                "part": f"prop{i + 1}",
+                "center": [round(x, 5), round(prop_y, 5), round(z, 5)],
+                "normal": [0.0, 1.0, 0.0],
+                "radius": round(prop_d / 2, 5),
+                "exclude": [f"motor{i + 1}", f"prop{i + 1}"],
+            }
+            for i, (x, z) in enumerate(stations)
+        ]
+        if camera is not None:
+            mesh["camera"] = _camera_params(camera)
+        return mesh
     parts = [
         ("frame", frame, 1.0),
         ("motors", _merge(*motors), 1.0),
         ("props", _merge(*props), 0.55),
         ("battery", battery, 1.0),
         ("esc", esc, 1.0),
+        *camera_part,
     ]
-    return _pack(parts)
+    mesh = _pack(parts)
+    if camera is not None:
+        mesh["camera"] = _camera_params(camera)
+    return mesh
+
+
+# ---------------------------------------------------------------------------
+# geometric requirement checks (camera line of sight, prop-disc clearance)
+# ---------------------------------------------------------------------------
+
+#: the camera parameter names -- exactly the attribute names of
+#: ``examples/drone.sysml``'s ``Camera`` part, so an instantiated /
+#: M0-interpreted camera's slot dict wires straight through
+_CAMERA_KEYS = ("x", "y", "z", "azimuth", "elevation", "fieldOfView")
+
+
+def _camera_params(camera: Mapping[str, Any]) -> dict[str, float]:
+    """Validate/normalize a camera mapping (see :data:`_CAMERA_KEYS`)."""
+
+    missing = [k for k in _CAMERA_KEYS if k not in camera]
+    if missing:
+        raise AnalysisError(
+            f"camera mapping is missing {missing} (needs the Camera part's "
+            f"attributes: {list(_CAMERA_KEYS)})"
+        )
+    params = {k: float(camera[k]) for k in _CAMERA_KEYS}
+    if not 0.0 < params["fieldOfView"] < 180.0:
+        raise AnalysisError(
+            f"fieldOfView must be in (0, 180) degrees (got {params['fieldOfView']!r})"
+        )
+    return params
+
+
+def _boresight(azimuth_deg: float, elevation_deg: float) -> Vec:
+    """The unit view direction: +x forward, +y up; azimuth is a right-hand
+    rotation about +y (positive yaws +x toward -z), elevation pitches
+    above the horizon."""
+
+    az, el = radians(azimuth_deg), radians(elevation_deg)
+    return (cos(el) * cos(az), sin(el), -cos(el) * sin(az))
+
+
+def _part_triangles(part: Mapping[str, Any]) -> list[tuple[Vec, Vec, Vec]]:
+    v, f = part["vertices"], part["faces"]
+    tris = []
+    for i in range(0, len(f), 3):
+        a, b, c = f[i] * 3, f[i + 1] * 3, f[i + 2] * 3
+        tris.append(
+            (
+                (v[a], v[a + 1], v[a + 2]),
+                (v[b], v[b + 1], v[b + 2]),
+                (v[c], v[c + 1], v[c + 2]),
+            )
+        )
+    return tris
+
+
+def _part_aabb(part: Mapping[str, Any]) -> tuple[Vec, Vec]:
+    v = part["vertices"]
+    return (
+        (min(v[0::3]), min(v[1::3]), min(v[2::3])),
+        (max(v[0::3]), max(v[1::3]), max(v[2::3])),
+    )
+
+
+def _ray_hits_aabb(origin: Vec, direction: Vec, lo: Vec, hi: Vec) -> bool:
+    """Slab test: does the ray (t >= 0) touch the axis-aligned box?"""
+
+    t0, t1 = 0.0, float("inf")
+    for o, d, a, b in zip(origin, direction, lo, hi, strict=True):
+        if abs(d) < 1e-12:
+            if o < a or o > b:
+                return False
+            continue
+        ta, tb = (a - o) / d, (b - o) / d
+        if ta > tb:
+            ta, tb = tb, ta
+        t0, t1 = max(t0, ta), min(t1, tb)
+        if t0 > t1:
+            return False
+    return True
+
+
+def _ray_hits_triangle(origin: Vec, direction: Vec, tri: tuple[Vec, Vec, Vec]) -> bool:
+    """Moller-Trumbore, no backface culling, hits strictly ahead only."""
+
+    (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+    e1 = (bx - ax, by - ay, bz - az)
+    e2 = (cx - ax, cy - ay, cz - az)
+    px = direction[1] * e2[2] - direction[2] * e2[1]
+    py = direction[2] * e2[0] - direction[0] * e2[2]
+    pz = direction[0] * e2[1] - direction[1] * e2[0]
+    det = e1[0] * px + e1[1] * py + e1[2] * pz
+    if abs(det) < 1e-14:
+        return False
+    inv = 1.0 / det
+    tx, ty, tz = origin[0] - ax, origin[1] - ay, origin[2] - az
+    u = (tx * px + ty * py + tz * pz) * inv
+    if u < 0.0 or u > 1.0:
+        return False
+    qx = ty * e1[2] - tz * e1[1]
+    qy = tz * e1[0] - tx * e1[2]
+    qz = tx * e1[1] - ty * e1[0]
+    v = (direction[0] * qx + direction[1] * qy + direction[2] * qz) * inv
+    if v < 0.0 or u + v > 1.0:
+        return False
+    t = (e2[0] * qx + e2[1] * qy + e2[2] * qz) * inv
+    return t > 1e-9
+
+
+def occlusion_report(
+    mesh: Mapping[str, Any],
+    camera: Mapping[str, Any] | None = None,
+    *,
+    rays: int = 15,
+    exclude: tuple[str, ...] = ("camera",),
+) -> dict[str, Any]:
+    """How much of the camera frustum the airframe blocks, and by what.
+
+    Casts a deterministic ``rays x rays`` grid of rays (cell centres of a
+    uniform angular grid spanning ``fieldOfView`` degrees in both the
+    local azimuth and elevation axes around the boresight) from the
+    camera position and tests every triangle of every mesh part except
+    ``exclude`` (the camera's own body by default).  Returns::
+
+        {"occludedFraction": blocked / (rays * rays),
+         "rays": rays * rays,
+         "hits": {part_name: rays_blocked_by_it, ...}}   # offenders
+
+    ``camera`` defaults to the parameters stamped on ``mesh["camera"]``
+    by :func:`drone_geometry`; pass an explicit mapping (the ``Camera``
+    part's attribute names) for what-ifs -- e.g. the same camera yawed
+    ``azimuth=180`` to look back through the airframe.  A ray counts as
+    blocked when it hits ANY non-excluded triangle ahead of the camera;
+    each blocked ray is attributed to its nearest-listed part in
+    ``hits`` (first part in mesh order that intersects it).  Pure
+    stdlib math, no randomness: equal inputs give equal fractions.
+    """
+
+    if rays < 1:
+        raise AnalysisError(f"rays must be >= 1 (got {rays!r})")
+    source = camera if camera is not None else mesh.get("camera")
+    if source is None:
+        raise AnalysisError(
+            "no camera parameters: pass camera=... or build the mesh with "
+            "drone_geometry(camera=...)"
+        )
+    params = _camera_params(source)
+    origin: Vec = (params["x"], params["y"], params["z"])
+    fov_deg = params["fieldOfView"]
+
+    parts = [p for p in mesh["parts"] if p["name"] not in exclude]
+    boxes = [_part_aabb(p) for p in parts]
+    triangles = [_part_triangles(p) for p in parts]
+
+    hits: dict[str, int] = {}
+    blocked = 0
+    for i in range(rays):
+        for j in range(rays):
+            du = fov_deg * ((i + 0.5) / rays - 0.5)
+            dv = fov_deg * ((j + 0.5) / rays - 0.5)
+            direction = _boresight(params["azimuth"] + du, params["elevation"] + dv)
+            for part, (lo, hi), tris in zip(parts, boxes, triangles, strict=True):
+                if not _ray_hits_aabb(origin, direction, lo, hi):
+                    continue
+                if any(_ray_hits_triangle(origin, direction, tri) for tri in tris):
+                    blocked += 1
+                    hits[part["name"]] = hits.get(part["name"], 0) + 1
+                    break
+    return {
+        "occludedFraction": blocked / (rays * rays),
+        "rays": rays * rays,
+        "hits": dict(sorted(hits.items(), key=lambda kv: -kv[1])),
+    }
+
+
+def camera_occlusion(
+    mesh: Mapping[str, Any],
+    camera: Mapping[str, Any] | None = None,
+    *,
+    rays: int = 15,
+    exclude: tuple[str, ...] = ("camera",),
+) -> float:
+    """The blocked fraction of the camera frustum, in [0, 1].
+
+    The scalar measure behind the ``clearView`` requirement of
+    ``examples/drone.sysml`` (\"occludedFraction\"): 0.0 is a perfectly
+    clear view, 1.0 a fully blinded camera.  See :func:`occlusion_report`
+    for the sampling contract and the per-part offender breakdown.
+    """
+
+    return float(occlusion_report(mesh, camera, rays=rays, exclude=exclude)["occludedFraction"])
+
+
+def _point_triangle_distance(p: Vec, tri: tuple[Vec, Vec, Vec]) -> float:
+    """Exact 3D point-to-triangle distance (Ericson, RTCD 5.1.5)."""
+
+    a, b, c = tri
+    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    ac = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+    ap = (p[0] - a[0], p[1] - a[1], p[2] - a[2])
+    d1 = ab[0] * ap[0] + ab[1] * ap[1] + ab[2] * ap[2]
+    d2 = ac[0] * ap[0] + ac[1] * ap[1] + ac[2] * ap[2]
+
+    def dist(q: Vec) -> float:
+        return sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
+
+    if d1 <= 0.0 and d2 <= 0.0:
+        return dist(a)
+    bp = (p[0] - b[0], p[1] - b[1], p[2] - b[2])
+    d3 = ab[0] * bp[0] + ab[1] * bp[1] + ab[2] * bp[2]
+    d4 = ac[0] * bp[0] + ac[1] * bp[1] + ac[2] * bp[2]
+    if d3 >= 0.0 and d4 <= d3:
+        return dist(b)
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+        t = d1 / (d1 - d3)
+        return dist((a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]))
+    cp = (p[0] - c[0], p[1] - c[1], p[2] - c[2])
+    d5 = ab[0] * cp[0] + ab[1] * cp[1] + ab[2] * cp[2]
+    d6 = ac[0] * cp[0] + ac[1] * cp[1] + ac[2] * cp[2]
+    if d6 >= 0.0 and d5 <= d6:
+        return dist(c)
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+        t = d2 / (d2 - d6)
+        return dist((a[0] + t * ac[0], a[1] + t * ac[1], a[2] + t * ac[2]))
+    va = d3 * d6 - d5 * d4
+    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+        t = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return dist((b[0] + t * (c[0] - b[0]), b[1] + t * (c[1] - b[1]), b[2] + t * (c[2] - b[2])))
+    denom = 1.0 / (va + vb + vc)
+    v = vb * denom
+    w = vc * denom
+    return dist(
+        (
+            a[0] + ab[0] * v + ac[0] * w,
+            a[1] + ab[1] * v + ac[1] * w,
+            a[2] + ab[2] * v + ac[2] * w,
+        )
+    )
+
+
+def _point_aabb_distance(p: Vec, lo: Vec, hi: Vec) -> float:
+    dx = max(lo[0] - p[0], 0.0, p[0] - hi[0])
+    dy = max(lo[1] - p[1], 0.0, p[1] - hi[1])
+    dz = max(lo[2] - p[2], 0.0, p[2] - hi[2])
+    return sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def _disc_points(disc: Mapping[str, Any], samples: int) -> list[Vec]:
+    """Deterministic sample points on a disc: centre + half-radius ring
+    (``samples // 2`` points) + rim (``samples`` points)."""
+
+    cx, cy, cz = disc["center"]
+    nx, ny, nz = disc["normal"]
+    norm = sqrt(nx * nx + ny * ny + nz * nz)
+    if norm <= 0:
+        raise AnalysisError("disc normal must be non-zero")
+    nx, ny, nz = nx / norm, ny / norm, nz / norm
+    # any unit vector perpendicular to n
+    ux, uy, uz = (1.0, 0.0, 0.0) if abs(nx) < 0.9 else (0.0, 1.0, 0.0)
+    vx, vy, vz = ny * uz - nz * uy, nz * ux - nx * uz, nx * uy - ny * ux
+    vn = sqrt(vx * vx + vy * vy + vz * vz)
+    vx, vy, vz = vx / vn, vy / vn, vz / vn
+    wx, wy, wz = ny * vz - nz * vy, nz * vx - nx * vz, nx * vy - ny * vx
+    radius = float(disc["radius"])
+    points: list[Vec] = [(cx, cy, cz)]
+    for r, count in ((radius / 2, max(samples // 2, 4)), (radius, max(samples, 8))):
+        for k in range(count):
+            angle = 2 * pi * k / count
+            points.append(
+                (
+                    cx + r * (cos(angle) * vx + sin(angle) * wx),
+                    cy + r * (cos(angle) * vy + sin(angle) * wy),
+                    cz + r * (cos(angle) * vz + sin(angle) * wz),
+                )
+            )
+    return points
+
+
+def clearance_report(mesh: Mapping[str, Any], *, samples: int = 48) -> list[dict[str, Any]]:
+    """Per-disc clearance: how close each propeller disc comes to what.
+
+    Consumes the analytic discs :func:`drone_geometry` stamps on
+    ``mesh["discs"]`` in ``split_instances`` mode (a disc knows which
+    same-station parts -- its own prop mesh and motor can -- to ignore).
+    Each disc is sampled deterministically (centre + half-radius ring +
+    rim, see ``samples``) and every sample point's exact distance to
+    every other part's triangles is minimized, with a per-part
+    bounding-box lower-bound prune.  Returns one row per disc, ordered
+    as stamped::
+
+        {"disc": "prop1", "clearance": 0.02, "nearest": "prop2"}
+
+    Interpenetrating geometry reports the distance to the offending
+    SURFACE (a point inside a solid is still positive-distance from its
+    boundary), so an overlapping disc pair reads as near-zero clearance,
+    never negative.
+    """
+
+    discs = mesh.get("discs")
+    if not discs:
+        raise AnalysisError(
+            "no propeller discs on this mesh: build it with drone_geometry(split_instances=True)"
+        )
+    rows: list[dict[str, Any]] = []
+    for disc in discs:
+        excluded = set(disc.get("exclude", ())) | {disc["part"]}
+        points = _disc_points(disc, samples)
+        best, nearest = float("inf"), None
+        for part in mesh["parts"]:
+            if part["name"] in excluded:
+                continue
+            lo, hi = _part_aabb(part)
+            if min(_point_aabb_distance(p, lo, hi) for p in points) >= best:
+                continue
+            tris = _part_triangles(part)
+            for p in points:
+                if _point_aabb_distance(p, lo, hi) >= best:
+                    continue
+                for tri in tris:
+                    d = _point_triangle_distance(p, tri)
+                    if d < best:
+                        best, nearest = d, part["name"]
+        rows.append({"disc": disc["part"], "clearance": best, "nearest": nearest})
+    return rows
+
+
+def disc_clearance(mesh: Mapping[str, Any], *, samples: int = 48) -> float:
+    """The tightest propeller-disc-to-anything gap, in metres.
+
+    The scalar measure behind the ``propClearance`` requirement of
+    ``examples/drone.sysml`` (\"minDiscClearance\"): the minimum over
+    every disc of :func:`clearance_report`'s per-disc clearance.
+    """
+
+    return min(float(row["clearance"]) for row in clearance_report(mesh, samples=samples))
+
+
+def geometry_checks(
+    mesh: Mapping[str, Any], *, rays: int = 15, samples: int = 48
+) -> dict[str, float]:
+    """Both geometric requirement measures, keyed for the scoreboard.
+
+    Returns ``{"occludedFraction": ..., "minDiscClearance": ...}`` --
+    exactly the free names the ``installation`` requirements of
+    ``examples/drone.sysml`` measure, so the result feeds
+    ``scoreboard(model, values=geometry_checks(mesh))`` directly (the
+    lightest honest wiring: the measures are computed kernel-side from
+    the same mesh the 3D viewer paints, then injected as evaluation-
+    frame bindings; nothing is baked into the model file).  Needs a
+    mesh built with ``drone_geometry(split_instances=True, camera=...)``.
+    """
+
+    return {
+        "occludedFraction": camera_occlusion(mesh, rays=rays),
+        "minDiscClearance": disc_clearance(mesh, samples=samples),
+    }
 
 
 #: cruciform tail-sitter proportions (documented heuristics): the
@@ -1017,12 +1437,10 @@ def tag_parts(
     component renders, or, for per-instance parts (see
     :func:`drone_geometry`'s ``split_instances``), the **M0 individual
     id** from :func:`longeron.m0.interpret` (``Drone::QuadCopter#0.
-    rotors#2``), whose dotted path derives the owning usage for linked
+    motors#2``), whose dotted path derives the owning usage for linked
     selection (:func:`longeron.analysis.link.individual_qname`).
-    Several mesh parts may share one key (a quad's ``motors`` and
-    ``props`` both render the ``rotors`` usage; a ``motor``/``prop``
-    pair renders one rotor individual); parts not named keep no key and
-    fall back to their ``name`` as their identity in
+    Several mesh parts may share one key, and parts not named keep no
+    key and fall back to their ``name`` as their identity in
     :mod:`longeron.analysis.viewer3d`.  Vertex and face arrays are
     shared with the input, not copied.
 

@@ -432,10 +432,12 @@ def app_notebook() -> dict[str, Any]:
     the same-kernel replace path for BOTH panels (the tests assert
     exactly ONE left tab carries the ``longeron-app`` dock key and ONE
     right tab carries ``longeron-inspector``).  Cell 3 adds a SCOREABLE
-    in-memory model (ScoutMini: requirement usages, all unmeasured) so
-    the tests can prove the Score button splits honestly -- live for
-    ScoutMini, disabled with a tooltip for drone.sysml (requirement DEF
-    only) -- and that a launched scoreboard tab actually RENDERS its
+    in-memory model (ScoutMini: requirement usages, all unmeasured) and
+    a DEFS-ONLY one (a requirement def, no usages) so the tests can
+    prove the Score button splits honestly -- live for ScoutMini and
+    for drone.sysml (whose geometric installation requirements are
+    usages), disabled with a tooltip for the defs-only model -- and
+    that a launched scoreboard tab actually RENDERS its
     hatched cells (the maintainer's empty-tab finding).  The tests then
     drive the LIVE panels -- load a model, launch tabs, click a tree
     row, edit through the inspector's sheet -- and the checker cell
@@ -464,8 +466,9 @@ print("reopened")
         '''
 # a SCOREABLE model beside the file-loaded one: ScoutMini carries real
 # requirement usages (all unmeasured -- the scoreboard must still render
-# hatched cells, maintainer QA), so its row's Score button is live while
-# drone.sysml's (requirement def only) stays honestly disabled
+# hatched cells, maintainer QA), so its row's Score button is live;
+# the defs-only model (a requirement DEF, no usages) keeps the honestly
+# disabled Score button + tooltip under test
 scored = longeron.loads(
     """
 package ScoutMini {
@@ -480,7 +483,17 @@ package ScoutMini {
     source_name="scout mini",
 )
 application.add_model(scored, source="inline demo text")
-print("scored model added")
+defs_only = longeron.loads(
+    """
+package BareDefs {
+    part sys;
+    requirement def Envelope { require constraint { true } }
+}
+""",
+    source_name="bare defs",
+)
+application.add_model(defs_only, source="defs only text")
+print("scored + defs-only models added")
 ''',
         """
 element = application.current_element

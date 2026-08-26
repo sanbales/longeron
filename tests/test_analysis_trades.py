@@ -1,5 +1,6 @@
 """Spike tests: variation/variant catalogs -> CP-SAT architecture trades."""
 
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -46,11 +47,18 @@ class TestEnumeration:
     def test_feasible_count(self, study):
         archs = study.enumerate()
         # hand check: tmotorF60 fails endurance; emax needs esc45 + 5" props;
-        # sunnySky pairs with any prop and either ESC -> 2 + 6 of 54 combos
-        assert len(archs) == 8
+        # sunnySky lifts only with the 10" apc1045 (a 5" prop on the 920
+        # rpm/V cruiser makes ~1 N/rotor) and takes either ESC -> 2 + 2 of 54
+        assert len(archs) == 4
         assert all(a.verified for a in archs)
         motors = {a.selection["motors"] for a in archs}
         assert motors == {"emax2306", "sunnySky2212"}
+        # thrust is motor x prop: every sunnySky mix flies the big slow-fly
+        assert all(
+            a.selection["props"] == "apc1045"
+            for a in archs
+            if a.selection["motors"] == "sunnySky2212"
+        )
 
     def test_compatibility_rules_hold(self, study):
         for a in study.enumerate():
@@ -65,23 +73,25 @@ class TestEnumeration:
             sorted(
                 {
                     "motors": "sunnySky2212",
-                    "props": "hq5x43",
+                    "props": "apc1045",
                     "battery": "lipo3s2200",
                     "esc": "esc20",
                 }.items()
             )
         )
         a = archs[key]
-        assert a.metrics["totalCost"] == pytest.approx(118.0)
-        assert a.metrics["totalMass"] == pytest.approx(0.979)
+        assert a.metrics["totalCost"] == pytest.approx(122.0)
+        assert a.metrics["totalMass"] == pytest.approx(1.019)
         assert a.metrics["hoverMinutes"] == pytest.approx(15.0)
+        # thrust through the motor x prop parametric: 4 * kt * term * d^4
+        assert a.metrics["totalThrust"] == pytest.approx(4.0 * 0.1 * 0.0083 * 10.0**4)
 
 
 class TestOptimization:
     def test_minimize_cost(self, study):
         best = study.minimize("totalCost")
         assert best is not None
-        assert best.metrics["totalCost"] == pytest.approx(118.0)
+        assert best.metrics["totalCost"] == pytest.approx(122.0)
         assert best.selection["motors"] == "sunnySky2212"
         assert best.selection["esc"] == "esc20"
 
@@ -95,7 +105,7 @@ class TestOptimization:
             study.enumerate(), minimize=("totalCost", "totalMass"), maximize=("hoverMinutes",)
         )
         picks = {(a.selection["motors"], a.selection["props"], a.selection["esc"]) for a in front}
-        assert ("sunnySky2212", "hq5x43", "esc20") in picks  # cheapest
+        assert ("sunnySky2212", "apc1045", "esc20") in picks  # cheapest
         assert ("emax2306", "hq5x43", "esc45") in picks  # lightest
         assert len(front) == 2
 
@@ -103,7 +113,7 @@ class TestOptimization:
         """Regression: the 2D (min cost, max hover) front of the catalog.
 
         The cheapest feasible mix also hovers longest, so the cost-hover
-        front is a *single* point -- the $118 cruiser.  The 0.9 kg racer
+        front is a *single* point -- the $122 cruiser.  The 0.9 kg racer
         is Pareto-optimal only once mass counts as a third objective; a
         3-objective front projected onto these two axes would wrongly
         include it (that projection was notebook 07's original bug).
@@ -127,11 +137,11 @@ class TestOptimization:
         assert len(front) == 1
         assert front[0].selection == {
             "motors": "sunnySky2212",
-            "props": "hq5x43",
+            "props": "apc1045",
             "battery": "lipo3s2200",
             "esc": "esc20",
         }
-        assert front[0].metrics["totalCost"] == pytest.approx(118.0)
+        assert front[0].metrics["totalCost"] == pytest.approx(122.0)
         assert front[0].metrics["hoverMinutes"] == pytest.approx(15.0)
 
     def test_pareto_keeps_equal_key_duplicates(self):
@@ -175,10 +185,21 @@ class TestExactEvaluation:
 
     def test_evaluate_feasible_mix(self, study):
         arch = study.evaluate(
-            {"motors": "sunnySky2212", "props": "hq5x43", "battery": "lipo3s2200", "esc": "esc20"}
+            {"motors": "sunnySky2212", "props": "apc1045", "battery": "lipo3s2200", "esc": "esc20"}
         )
         assert arch.verified
-        assert arch.metrics["totalCost"] == pytest.approx(118.0)
+        assert arch.metrics["totalCost"] == pytest.approx(122.0)
+
+    def test_evaluate_mismatched_motor_prop_mix(self, study):
+        # the point of the motor x prop split: a cruiser motor swinging a
+        # 5" racing prop produces ~1 N per rotor and fails thrustMargin,
+        # where the old per-motor thrust rating called it feasible
+        arch = study.evaluate(
+            {"motors": "sunnySky2212", "props": "hq5x43", "battery": "lipo3s2200", "esc": "esc20"}
+        )
+        assert not arch.verified
+        assert "thrustMargin" in arch.violations
+        assert arch.metrics["totalThrust"] == pytest.approx(4.0 * 0.21 * 0.0083 * 5.0**4)
 
     def test_evaluate_infeasible_mix(self, study):
         arch = study.evaluate(
@@ -209,7 +230,7 @@ class TestExactEvaluation:
         archs = study.all_architectures()
         assert len(archs) == 54  # 3 * 3 * 3 * 2
         feasible = [a for a in archs if a.verified]
-        assert len(feasible) == 8  # matches enumerate()
+        assert len(feasible) == 4  # matches enumerate()
         enumerated = {tuple(sorted(a.selection.items())) for a in study.enumerate()}
         assert {tuple(sorted(a.selection.items())) for a in feasible} == enumerated
 
@@ -331,3 +352,90 @@ class TestEncodingEdges:
     def test_non_part_assembly_rejected(self, mini2):
         with pytest.raises(longeron.analysis.AnalysisError, match="is not a part definition"):
             trades.TradeStudy(mini2, "Mini2")
+
+
+POWER_CATALOG = """
+package PowerCatalog {
+    part def Prop { attribute d : Real; }
+    part def Small :> Prop { attribute d : Real = 2.0; }
+    part def Big :> Prop { attribute d : Real = 3.0; }
+    variation part def PropChoice :> Prop {
+        variant part small : Small;
+        variant part big : Big;
+    }
+    part def Rig {
+        part prop : PropChoice;
+        attribute quartic : Real = 0.5 * prop.d ** 4.0;
+        constraint fits { quartic <= 41.0 }
+    }
+    part def BadRig {
+        part prop : PropChoice;
+        attribute root : Real = prop.d ** 0.5;
+        constraint c { root >= 0.0 }
+    }
+}
+"""
+
+
+class TestConstantExponent:
+    """`d ** 4.0` unrolls to exact fixed-point multiplication; anything
+    that is not a constant non-negative integer exponent is refused."""
+
+    @pytest.fixture(scope="class")
+    def power(self):
+        return longeron.loads(POWER_CATALOG)
+
+    def test_integer_exponent_unrolls_exactly(self, power):
+        rig = trades.TradeStudy(power, "PowerCatalog::Rig")
+        archs = {a.selection["prop"]: a for a in rig.enumerate()}
+        assert set(archs) == {"small", "big"}
+        assert archs["small"].metrics["quartic"] == pytest.approx(8.0)
+        assert archs["big"].metrics["quartic"] == pytest.approx(40.5)
+
+    def test_fractional_exponent_is_refused(self, power):
+        rig = trades.TradeStudy(power, "PowerCatalog::BadRig")
+        with pytest.raises(longeron.analysis.AnalysisError, match="exponent"):
+            rig.enumerate()
+
+
+class TestThrustParametric:
+    """The motor x propeller thrust model, across the shipped examples."""
+
+    @pytest.fixture(scope="class")
+    def drone_interp(self):
+        drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
+        return longeron.Interpreter(drone)
+
+    def thrust(self, interp, **kwargs):
+        return interp.call("Drone::PropThrust", **kwargs)
+
+    def test_stock_design_point_matches_the_old_lumped_rating(self, drone_interp):
+        # within 2% of the pre-split model's 9.0 N per rotor
+        stock = self.thrust(drone_interp, kV=920.0, voltage=11.1, diameter=0.254)
+        assert stock == pytest.approx(9.139, abs=1e-3)
+        assert stock == pytest.approx(9.0, rel=0.02)
+
+    def test_monotonic_in_diameter_over_the_catalog_range(self, drone_interp):
+        # 5" .. 12" props at the stock motor: strictly increasing, d^4-fast
+        diameters = [n * 0.0254 for n in (5.0, 6.0, 8.0, 10.0, 12.0)]
+        values = [self.thrust(drone_interp, kV=920.0, voltage=11.1, diameter=d) for d in diameters]
+        assert all(a < b for a, b in pairwise(values))
+        assert values[-1] / values[0] == pytest.approx((12.0 / 5.0) ** 4)
+
+    def test_monotonic_in_kv_over_the_catalog_range(self, drone_interp):
+        kvs = [700.0, 920.0, 1750.0, 2400.0]
+        values = [self.thrust(drone_interp, kV=kv, voltage=11.1, diameter=0.127) for kv in kvs]
+        assert all(a < b for a, b in pairwise(values))
+        assert values[-1] / values[1] == pytest.approx((2400.0 / 920.0) ** 2)
+
+    def test_catalog_thrust_terms_match_the_parametric(self, catalog, drone_interp):
+        # the catalog's per-motor thrustTerm is PropThrust with Ct factored
+        # out to the propeller's kt, precomputed to 4 significant digits
+        interp = longeron.Interpreter(catalog)
+        for motor, kv in (("Emax2306", 2400.0), ("TMotorF60", 1750.0), ("SunnySky2212", 920.0)):
+            inst = interp.instantiate(f"DroneCatalog::{motor}")
+            expected = (
+                self.thrust(drone_interp, kV=kv, voltage=inst.slots["voltage"], diameter=0.0254)
+                / 0.11
+            )
+            assert inst.slots["thrustTerm"] == pytest.approx(expected, rel=5e-3), motor

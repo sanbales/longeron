@@ -428,8 +428,9 @@ class TestRows:
         assert name.description == "drone.sysml"
         assert str(ROOT / "examples" / "drone.sysml") in name.tooltip
         assert explore_btn.description == "Explore"
-        # drone.sysml has a requirement DEF but no usages: not scoreable
-        assert score_btn.disabled
+        # drone.sysml carries the geometric-installation requirement
+        # usages (tutorial 10): its Score button is live
+        assert not score_btn.disabled
         # Save is dirty-gated: a freshly loaded model has nothing to save
         assert save_btn.description == "Save" and save_btn.disabled
         assert "No unsaved edits" in save_btn.tooltip

@@ -692,7 +692,7 @@ class TestExplorer:
     def test_diagrams_are_cached_per_scope_and_kind(self, ex):
         ex.select("Drone::Battery")
         first = ex.diagram
-        ex.select("Drone::Rotor")
+        ex.select("Drone::Motor")
         assert ex.diagram is first  # same package scope, same widget
 
     def test_diagram_click_selects_and_reveals_in_the_tree(self, ex):

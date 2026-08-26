@@ -80,7 +80,8 @@ class TestDesignSpace:
         bound, result = system.maximize("payloadMass", exclude=("QuadCopter::takeoffMassLimit",))
         assert result.status == "sat"
         assert "epsilon" in bound
-        assert bound.startswith(str(Fraction(7166, 2725)))  # ~2.6297 kg
+        # 4 * thrustPerRotor / 9.81 - 1.04, interpreter-exact: ~2.6865 kg
+        assert bound.startswith(str(Fraction(6588538914198359, 2452500000000000)))
 
     def test_witness_respects_free_variable(self, drone):
         system = smt.to_smt(drone, "Drone::QuadCopter", free=("payloadMass",))

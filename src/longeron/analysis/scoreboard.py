@@ -111,7 +111,7 @@ from typing import Any, Protocol
 from .. import model as M
 from ..errors import MissingExtraError, SysMLError
 from ..interpreter import Interpreter
-from ._expr import AnalysisError
+from ._expr import AnalysisError, is_scalar
 
 __all__ = [
     "AGGREGATORS",
@@ -476,9 +476,13 @@ class Scoreboard:
         measure = self._attr_expr(req, MEASURE_ATTR)
         if measure is not None:
             try:
-                return self.interp.evaluate(measure, req, **self._frame)
+                value = self.interp.evaluate(measure, req, **self._frame)
             except (SysMLError, TypeError, ValueError):
                 return None
+            # an unvalued attribute (a measured-elsewhere seam, e.g. the
+            # geometry checks) evaluates to its type, not a number: that
+            # leaf is honestly UNMEASURED until values= injects a reading
+            return value if is_scalar(value) or isinstance(value, bool) else None
         if shape == "step":
             try:
                 result = self.interp.check_requirement(req, **self._frame)

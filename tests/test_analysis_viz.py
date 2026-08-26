@@ -66,7 +66,7 @@ class TestMixTable:
     def test_full_candidate_space(self, study):
         rows = viz.mix_table(study)
         assert len(rows) == 54
-        assert sum(r["feasible"] for r in rows) == 8
+        assert sum(r["feasible"] for r in rows) == 4
         assert {"motors", "props", "battery", "esc", "totalCost", "feasible"} <= set(rows[0])
 
     def test_derived_columns(self, study):
@@ -241,7 +241,7 @@ class TestFigures:
 
     def test_pareto_figure_catalog_front_matches_brute_force(self, study):
         """Regression on the shipped catalog: the drawn cost-hover front
-        is the brute-force 2D non-dominated set -- one mix, the $118
+        is the brute-force 2D non-dominated set -- one mix, the $122
         cruiser (cheapest AND longest-hovering)."""
 
         archs = study.all_architectures()
@@ -262,7 +262,7 @@ class TestFigures:
         fig = viz.pareto_figure(
             archs, x="totalCost", y="hoverMinutes", sense=("min", "max"), panel_y="totalMass"
         )
-        assert set(self._front_points(fig)) == brute == {(118.0, 15.0)}
+        assert set(self._front_points(fig)) == brute == {(122.0, 15.0)}
         import matplotlib.pyplot as plt
 
         plt.close(fig)

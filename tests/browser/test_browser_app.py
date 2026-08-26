@@ -8,9 +8,11 @@ an svg glyph sized like the builtin tabs, NO visible text label
 must stay one); the ``longeron:open-app`` palette command reveals the
 live panel (finding 2's honest launcher alternative); the path field +
 Load button load ``examples/drone.sysml`` through the kernel; the Score
-button splits honestly -- disabled with a tooltip for drone.sysml
-(requirement def, no usages) and LIVE for the notebook's ScoutMini
-model, whose launched tab must actually RENDER its hatched treemap
+button splits honestly -- live for drone.sysml (its geometric
+installation requirements are usages) and for the notebook's ScoutMini
+model, disabled with a tooltip for the notebook's defs-only model
+(requirement def, no usages); the ScoutMini scoreboard tab
+must actually RENDER its hatched treemap
 cells (finding 3: the pre-activated dock left the panel 0x0, an empty
 tab); and the row's Explore button docks a real explorer tab.  The
 checker cell closes the browser -> kernel loop.
@@ -44,6 +46,7 @@ EXPLORER_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="drone-sysml"]'
 SCOREBOARD_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="scoreboard-scout-mini"]'
 DRONE_ROW = '.lgx-app-row:has-text("drone.sysml")'
 SCOUT_ROW = '.lgx-app-row:has-text("scout mini")'
+DEFS_ROW = '.lgx-app-row:has-text("bare defs")'
 
 #: same known vendored-frontend page error the explorer scenarios allow:
 #: kernel-initiated selection can trip setSelectedNodes before the sprotty
@@ -144,9 +147,11 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
 
     # -- the panel reveals itself (the sweeper clicks its own tab) ---------
     _reveal_app_panel(lab)
-    # cell 3 added ScoutMini: one models-list row, no empty hint
+    # cell 3 added ScoutMini + the defs-only model: two models-list rows,
+    # no empty hint
     assert page.locator(".lgx-app-empty").count() == 0
     assert page.locator(SCOUT_ROW).count() == 1
+    assert page.locator(DEFS_ROW).count() == 1
     # maintainer QA chrome: NO wordmark row (the tab icon is the identity)
     assert page.locator(".lgx-app-brand").count() == 0
 
@@ -154,11 +159,14 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
     page.fill(".lgx-app-path input", str(DRONE))
     page.click("button.lgx-app-load")
     page.wait_for_selector(DRONE_ROW, state="attached", timeout=60_000)
-    # drone.sysml carries a requirement DEF but no usages: Score disabled
-    # WITH the honest tooltip; ScoutMini's requirement usages keep its live
+    # drone.sysml's geometric installation requirements are USAGES: its
+    # Score button is live, like ScoutMini's; the defs-only model (a
+    # requirement def, no usages) keeps the honest disabled tooltip
     drone_score = page.locator(f"{DRONE_ROW} button.lgx-app-score")
-    assert drone_score.is_disabled()
-    assert drone_score.get_attribute("title") == "No requirement usages in this model"
+    assert not drone_score.is_disabled()
+    defs_score = page.locator(f"{DEFS_ROW} button.lgx-app-score")
+    assert defs_score.is_disabled()
+    assert defs_score.get_attribute("title") == "No requirement usages in this model"
     scout_score = page.locator(f"{SCOUT_ROW} button.lgx-app-score")
     assert not scout_score.is_disabled()
     # Save is dirty-gated -- a freshly loaded model has nothing to save
@@ -205,8 +213,8 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
 
     # -- the kernel-side truth (entries, current model, inspector seam) ----
     checker = lab.run_cell_json(index=-1)
-    assert checker["models"] == ["inline demo text", "drone.sysml"], checker
-    assert checker["origins"] == ["text", "file"], checker
+    assert checker["models"] == ["inline demo text", "defs only text", "drone.sysml"], checker
+    assert checker["origins"] == ["text", "text", "file"], checker
     assert checker["current"] == "drone.sysml", checker
     assert checker["explorers"] == 1, checker
     # the explorer's initial selection (the flattened root package) already

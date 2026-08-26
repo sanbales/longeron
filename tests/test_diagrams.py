@@ -115,8 +115,8 @@ class TestStructure:
 
     def test_multiplicity_shown(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        rotors = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter::rotors")
-        assert any("rotors : Rotor [4]" in label.text for label in rotors.labels)
+        motors = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter::motors")
+        assert any("motors : Motor [4]" in label.text for label in motors.labels)
 
     def test_parameter_rows(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)

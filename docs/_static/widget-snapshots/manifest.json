@@ -128,6 +128,27 @@
     "output_index": 0,
     "alt": "HBox",
     "image": "10_diagram_3d_link/cell-04.png"
+   },
+   {
+    "nb_cell_index": 16,
+    "code_cell_index": 7,
+    "output_index": 1,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "10_diagram_3d_link/cell-07.png"
+   },
+   {
+    "nb_cell_index": 18,
+    "code_cell_index": 8,
+    "output_index": 1,
+    "alt": "longeron.analysis.scoreboard._widget_class",
+    "image": "10_diagram_3d_link/cell-08.png"
+   },
+   {
+    "nb_cell_index": 20,
+    "code_cell_index": 9,
+    "output_index": 1,
+    "alt": "longeron.analysis.mission3d._viewer_class",
+    "image": "10_diagram_3d_link/cell-09.png"
    }
   ],
   "11_notation_gallery": [

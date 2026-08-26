@@ -18,11 +18,11 @@ Selections resolve to keys with containment-and-typing semantics (see
   under it, so selecting an assembly highlights all of its rendered
   children;
 * a **definition** additionally matches every usage *directly typed* by
-  it (``part rotors : Rotor`` lights up for ``Rotor``) -- one def, all
+  it (``part motors : Motor`` lights up for ``Motor``) -- one def, all
   its occurrences; specializations of the def do not count;
-* an **M0 individual id** key (``Drone::QuadCopter#0.rotors#2``)
+* an **M0 individual id** key (``Drone::QuadCopter#0.motors#2``)
   belongs to the usage its dotted path derives from
-  (:func:`individual_qname` -- here ``Drone::QuadCopter::rotors``), so
+  (:func:`individual_qname` -- here ``Drone::QuadCopter::motors``), so
   selecting the one M1 usage lights up every rendered individual;
 * a selection that touches nothing in the scene **clears** the
   highlight rather than dimming the whole craft -- only affirmative
@@ -46,7 +46,7 @@ from .geometry import tag_parts
 
 __all__ = ["individual_qname", "link_selection", "selection_keys"]
 
-#: an M0 instance-index suffix on one dotted id segment (``rotors#2``)
+#: an M0 instance-index suffix on one dotted id segment (``motors#2``)
 _INSTANCE_INDEX = re.compile(r"#\d+$")
 
 
@@ -55,11 +55,11 @@ def individual_qname(key: str) -> str | None:
 
     :func:`longeron.m0.interpret` ids are dotted feature paths whose
     segments optionally carry a ``#index`` -- ``Drone::QuadCopter#0.
-    rotors#2`` is the third rotor individual of the root ``QuadCopter``.
+    motors#2`` is the third motor individual of the root ``QuadCopter``.
     The derivation strips each segment's instance index and joins the
     segments with ``::`` (the first segment is already a qualified
-    name), so that id derives ``Drone::QuadCopter::rotors`` -- the one
-    usage all four rotor individuals belong to.  Returns ``None`` for a
+    name), so that id derives ``Drone::QuadCopter::motors`` -- the one
+    usage all four motor individuals belong to.  Returns ``None`` for a
     key that carries no instance index (a plain qualified name or a
     bare part name), so pure-qname keys keep their exact semantics.
     """
@@ -108,8 +108,8 @@ def selection_keys(
     :class:`~longeron.model.Definition` also matches through every
     usage directly typed by it.  A key that is an **M0 individual id**
     additionally matches through the usage qualified name it derives
-    (see :func:`individual_qname`), so selecting the one ``rotors``
-    usage matches every ``rotors#i`` individual key.  Untagged keys
+    (see :func:`individual_qname`), so selecting the one ``motors``
+    usage matches every ``motors#i`` individual key.  Untagged keys
     (bare part names) only ever match themselves, so an untagged scene
     stays inert.
     """

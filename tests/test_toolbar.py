@@ -670,14 +670,14 @@ class TestSearchMatching:
 
     def test_qualified_name_match(self, widget):
         search = _search(widget)
-        search.query = "quadcopter::rotors"  # no title contains this
-        assert search.hit_ids == {"Drone::QuadCopter::rotors"}
+        search.query = "quadcopter::motors"  # no title contains this
+        assert search.hit_ids == {"Drone::QuadCopter::motors"}
 
     def test_usage_titles_include_their_type(self, widget):
         search = _search(widget)
-        search.query = "rotor"
-        # the def by title, the usage via 'rotors : Rotor [4]' / its qname
-        assert search.hit_ids == {"Drone::Rotor", "Drone::QuadCopter::rotors"}
+        search.query = "motor"
+        # the def by title, the usage via 'motors : Motor [4]' / its qname
+        assert search.hit_ids == {"Drone::Motor", "Drone::QuadCopter::motors"}
 
     def test_count_is_displayed(self, widget):
         search = _search(widget)
@@ -836,7 +836,7 @@ class TestHighlightApplication:
         with Registry():
             widget.view.source.value = convert_elkjson(widget.source.value.dict())
         search = _search(widget)
-        search.query = "rotor"
+        search.query = "motor"
         for tree in (widget.source.value, widget.view.source.value):
             ids = {n.id for n in _iter_nodes(tree) if SEARCH_HIT_CSS in _classes(n)}
-            assert ids == {"Drone::Rotor", "Drone::QuadCopter::rotors"}
+            assert ids == {"Drone::Motor", "Drone::QuadCopter::motors"}

@@ -37,6 +37,11 @@ class TestCalcComponent:
             mdao.calc_component(interp, "Drone::QuadCopter")
 
 
+#: per-rotor static thrust of the stock motor + propeller (PropThrust at
+#: kV=920, V=11.1, d=0.254 -- see examples/drone.sysml)
+THRUST_PER_ROTOR = 0.11 * 1.225 * (0.75 * 920.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
+
+
 @pytest.fixture(scope="module")
 def build(drone):
     build = mdao.build_problem(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
@@ -52,11 +57,13 @@ class TestBuildProblem:
     def test_constraint_margins(self, build):
         p = build.problem
         assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(0.26)
-        assert p.get_val("canHover_margin")[0] == pytest.approx(36.0 - 1.24 * 9.81)
+        assert p.get_val("canHover_margin")[0] == pytest.approx(
+            4.0 * THRUST_PER_ROTOR - 1.24 * 9.81
+        )
 
     def test_requirement_margin(self, build):
-        # ThrustToWeight(36, 1.24) - 1.8, computed through the calc def
-        expected = 36.0 / (1.24 * 9.81) - 1.8
+        # ThrustToWeight(4 * thrustPerRotor, 1.24) - 1.8, through the calc def
+        expected = 4.0 * THRUST_PER_ROTOR / (1.24 * 9.81) - 1.8
         assert build.problem.get_val("hoverMargin_margin")[0] == pytest.approx(expected)
         assert "FlightEnvelope::hoverMargin" in build.constraints
 
@@ -72,7 +79,14 @@ class TestBuildProblem:
         assert "payloadMass" in build.independents
         assert "battery.mass" in build.independents
         assert "totalMass" in build.derived
-        assert build.gaps == []
+        # thrustPerRotor reads the homogeneous [4] populations per-unit
+        # (motors.kV->head()): honestly recorded as the documented
+        # phase-2 sequence-connection gap, while the value itself is
+        # computed correctly through the interpreter
+        assert build.gaps == [
+            "motors: references into sequence parts are not connected (phase 2: arrays)",
+            "propellers: references into sequence parts are not connected (phase 2: arrays)",
+        ]
 
 
 @pytest.fixture(scope="module")

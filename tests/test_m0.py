@@ -47,9 +47,9 @@ def fleet():
 class TestNominalPopulation:
     def test_multiplicity_expands_with_identities(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        rotors = it.root.slots["rotors"]
-        assert [r.id for r in rotors] == [f"Drone::QuadCopter#0.rotors#{i}" for i in range(4)]
-        assert len({id(r) for r in rotors}) == 4  # distinct objects, not copies
+        motors = it.root.slots["motors"]
+        assert [r.id for r in motors] == [f"Drone::QuadCopter#0.motors#{i}" for i in range(4)]
+        assert len({id(r) for r in motors}) == 4  # distinct objects, not copies
 
     def test_singleton_features_omit_the_index(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
@@ -58,13 +58,16 @@ class TestNominalPopulation:
 
     def test_attributes_evaluated_per_individual(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        assert all(r.slots["mass"] == 0.06 for r in it.root.slots["rotors"])
+        assert all(r.slots["mass"] == 0.048 for r in it.root.slots["motors"])
+        assert all(r.slots["mass"] == 0.012 for r in it.root.slots["propellers"])
         assert it.root.slots["totalMass"] == 1.24  # same value instantiate computes
 
     def test_individuals_filter_by_classifier(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        assert len(it.individuals()) == 7  # quad + chassis + battery + 4 rotors
-        assert len(it.individuals("Drone::Rotor")) == 4
+        # quad + chassis + battery + camera + 4 motors + 4 propellers
+        assert len(it.individuals()) == 12
+        assert len(it.individuals("Drone::Motor")) == 4
+        assert len(it.individuals("Drone::Propeller")) == 4
 
     def test_bindings_override_root_features(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter", bindings={"payloadMass": 0.5})
@@ -102,23 +105,25 @@ class TestNominalPopulation:
 class TestSequences:
     def test_part_feature_sequences(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        seqs = it.sequences("rotors")
+        seqs = it.sequences("motors")
         assert len(seqs) == 4
         assert all(seq[0] is it.root and len(seq) == 2 for seq in seqs)
 
     def test_nested_features_are_longer_sequences(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        seqs = it.sequences("rotors.mass")
+        seqs = it.sequences("motors.mass")
         assert len(seqs) == 4
-        assert all(len(seq) == 3 and seq[2] == 0.06 for seq in seqs)
-        assert {seq[1].id for seq in seqs} == {r.id for r in it.root.slots["rotors"]}
+        assert all(len(seq) == 3 and seq[2] == 0.048 for seq in seqs)
+        assert {seq[1].id for seq in seqs} == {r.id for r in it.root.slots["motors"]}
 
 
 class TestRollup:
     def test_aggregates_over_actual_individuals(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        # drone.sysml hardcodes '4.0 * 0.06' at M1; M0 sums the real rotors
-        assert it.rollup("sum(rotors.mass)") == pytest.approx(0.24, rel=1e-12)
+        # drone.sysml hardcodes '4.0 * 0.048 + 4.0 * 0.012' at M1; M0 sums
+        # the real motor and propeller individuals
+        assert it.rollup("sum(motors.mass)") == pytest.approx(0.192, rel=1e-12)
+        assert it.rollup("sum(propellers.mass)") == pytest.approx(0.048, rel=1e-12)
 
     def test_feature_name_evaluates_its_declared_expression(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
@@ -222,12 +227,17 @@ class TestTradesRegression:
     sums the *actual* individuals.  Both must report the same numbers.
     """
 
-    #: metric name -> the M0 roll-up over the actual population
+    #: metric name -> the M0 roll-up over the actual population.  Thrust
+    #: is per-station motor x prop (kt * thrustTerm * d^4); the roll-up
+    #: mini-language aggregates one feature path per sum(), so the
+    #: per-unit factors read as population means (sum / 4) -- exact for
+    #: the homogeneous populations from_architecture builds.
     ROLLUPS: ClassVar[dict[str, str]] = {
         "totalMass": "frameMass + payloadMass + battery.mass + esc.mass"
         " + sum(motors.mass) + sum(props.mass)",
         "totalCost": "battery.cost + esc.cost + sum(motors.cost) + sum(props.cost)",
-        "totalThrust": "sum(motors.maxThrust)",
+        "totalThrust": "0.25 * sum(motors.thrustTerm) * sum(props.kt)"
+        " * (0.25 * sum(props.diameterIn)) ** 4.0",
         "hoverMinutes": "battery.capacity / sum(motors.hoverCurrent) * 60.0",
     }
 
@@ -299,7 +309,7 @@ class TestToDict:
         data = it.to_dict()
         assert data["source"] == "Drone::QuadCopter"
         assert data["root"]["@id"] == "Drone::QuadCopter#0"
-        assert data["root"]["rotors"][2]["@id"] == "Drone::QuadCopter#0.rotors#2"
+        assert data["root"]["motors"][2]["@id"] == "Drone::QuadCopter#0.motors#2"
         import json
 
         json.dumps(data)  # JSON-able all the way down

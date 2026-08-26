@@ -166,7 +166,7 @@ checks every constraint and requirement against it:
 $ longeron check examples/drone.sysml Drone::QuadCopter payloadMass=0.9
 { ... the instance, as JSON ... }
 [FAIL] assert takeoffMassLimit: totalMass <= maxTakeoffMass
-[PASS] assert canHover: 4.0 * 9.0 > totalMass * 9.81
+[PASS] assert canHover: 4.0 * thrustPerRotor > totalMass * 9.81
 $ echo $?
 1
 ```

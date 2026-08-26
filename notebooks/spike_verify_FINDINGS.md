@@ -7,6 +7,15 @@
 > docs, tutorials, or tests. Seed:
 > `.handoff/merge-queue-2026-08-25.md`, "FUTURE DESIGN SEED ...
 > violation hunting".
+>
+> **Staleness note (drone-example overhaul, 2026-08-26):** the drone
+> model has since split its lumped `Rotor` into `Motor` + `Propeller`
+> with a real thrust parametric (`PropThrust`). The committed spike
+> outputs and the numbers below reflect the OLD model: the canHover
+> edge moved from 2.6297 kg to ~2.6865 kg (thrust 36.0 -> 36.56 N),
+> `rotors` is now `motors`/`propellers`, and the exact Z3 rationals
+> differ. The all-constraints payload bound (0.46 kg, takeoffMassLimit)
+> is unchanged. Re-run the spike notebook to regenerate.
 
 ## Reproduction
 

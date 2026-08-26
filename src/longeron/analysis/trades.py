@@ -180,6 +180,21 @@ class _Encoder:
             if expr.op == "*":
                 return self.mul(left, right)
             return self.div(left, right)
+        if isinstance(expr, A.Binary) and expr.op == "**":
+            # constant non-negative integer exponent: unrolled multiplication
+            # (d ** 4.0 stays exact fixed-point; anything else is refused)
+            if isinstance(expr.right, A.Literal) and is_scalar(expr.right.value):
+                exponent = Fraction(_frac(expr.right.value))
+                if exponent.denominator == 1 and exponent >= 0:
+                    base = self.value(expr.left)
+                    out = _Val(const=Fraction(1))
+                    for _ in range(int(exponent)):
+                        out = self.mul(out, base)
+                    return out
+            raise AnalysisError(
+                f"cannot encode exponent '{expr.to_text()}' for CP-SAT "
+                "(only constant non-negative integer exponents unroll)"
+            )
         raise AnalysisError(
             f"cannot encode expression '{expr.to_text()}' ({type(expr).__name__}) for CP-SAT"
         )
