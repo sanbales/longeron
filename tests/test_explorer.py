@@ -935,36 +935,47 @@ class TestPaneFill:
 
 
 # ---------------------------------------------------------------------------
-# the fit sentinel: cached widgets refit on re-show; guarded resize refits
+# fit plumbing: the widgets' own sentinels do the work; the explorer only
+# adds the kind-switch re-show refit (and the docked panel's first reveal)
 # ---------------------------------------------------------------------------
 
 
 class TestFitSentinel:
-    def test_sentinel_rides_hidden_beside_the_diagram_box(self, ex):
-        sentinel = ex._fit_sentinel
-        assert sentinel in ex._pane.children  # ships in BOTH layouts
-        assert sentinel.layout.display == "none"
-        assert (sentinel.fresh, sentinel.resized, sentinel.fit_stamp) == (0, 0, 0)
+    def test_explorer_attaches_no_pane_sentinel(self, ex):
+        # the fit machinery moved to the SOURCE (diagrams._finish mounts
+        # a sentinel inside every built widget): the explorer must not
+        # double-attach its own pane-level reporter
+        assert not hasattr(ex, "_fit_sentinel")
+        kinds = {type(child).__name__ for child in ex._pane.children}
+        assert "_FitSentinel" not in kinds
 
-    def test_fresh_view_report_refits_the_current_diagram(self, ex):
+    def test_shown_widget_carries_its_own_sentinel(self, ex):
+        from longeron.toolbar import AutoFitTool
+
+        ex.select("Drone::QuadCopter")
+        tool = ex.diagram.get_tool(AutoFitTool)
+        assert tool.sentinel is not None
+        assert tool.sentinel in ex.diagram.children  # INSIDE the widget's DOM
+
+    def test_fresh_view_report_refits_the_widget(self, ex):
         from longeron.toolbar import AutoFitTool
 
         ex.select("Drone::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         before = tool.fit_count
-        stamp = ex._fit_sentinel.fit_stamp
-        ex._fit_sentinel.fresh += 1  # what the browser reports on a view swap
+        stamp = tool.sentinel.fit_stamp
+        tool.sentinel.fresh += 1  # what the browser reports on a view swap
         assert tool.fit_count == before + 1
         # every auto-fit clears the browser's user-interaction latch
-        assert ex._fit_sentinel.fit_stamp == stamp + 1
+        assert tool.sentinel.fit_stamp == stamp + 1
 
-    def test_resize_report_refits_the_current_diagram(self, ex):
+    def test_resize_report_refits_the_widget(self, ex):
         from longeron.toolbar import AutoFitTool
 
         ex.select("Drone::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         before = tool.fit_count
-        ex._fit_sentinel.resized += 1  # a debounced, latch-guarded resize
+        tool.sentinel.resized += 1  # a debounced, latch-guarded resize
         assert tool.fit_count == before + 1
 
     def test_reshow_refit_targets_the_reshown_widget(self, ex, monkeypatch):
@@ -1018,11 +1029,10 @@ class TestFitSentinel:
         ex.kind = "state"  # builds the state widget
         assert ex.diagram not in fitted
 
-    def test_sentinel_reports_are_safe_without_a_diagram(self, drone_model):
+    def test_refits_are_safe_without_a_diagram(self, drone_model):
         ex = Explorer(drone_model, tree=StubTree(), layout="inline")
         ex._diagram_box.children = ()  # no visible diagram
-        ex._fit_sentinel.fresh += 1  # must not raise
-        ex._fit_sentinel.resized += 1
+        ex._refit_current()  # must not raise
 
 
 # ---------------------------------------------------------------------------

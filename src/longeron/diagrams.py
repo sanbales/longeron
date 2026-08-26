@@ -1406,10 +1406,24 @@ def _finish(
     result.symbols = _symbols()
     result.style = dict(SYSML_STYLE if style is None else style)
     result.layout.min_height = "400px"
-    # EVERY widget fits-and-centers itself once, when its first layout
-    # arrives (later relayouts keep the user's viewport); registered
-    # before the toolbar upgrade so the DirectionTool can queue re-fits
-    result.register_tool(AutoFitTool(result))
+    # EVERY widget fits-and-centers itself: once when its first layout
+    # arrives, and again whenever its own fit sentinel reports a fresh
+    # view, a first reveal, or an untouched-viewport resize (registered
+    # before the toolbar upgrade so the DirectionTool can queue re-fits)
+    fit_tool = AutoFitTool(result)
+    result.register_tool(fit_tool)
+    # the sentinel rides INSIDE the widget's own DOM, a hidden child
+    # beside the view + toolbar: plain display(widget) is self-fitting
+    # with zero consumer wiring -- first reveal (background tab,
+    # display:none lifted, lazy output rendering) and container resizes
+    # (an HBox squeeze, a dock drag) re-fit, always respecting the
+    # user's pan/zoom latch (longeron.toolbar._SENTINEL_ESM).  The
+    # lgx-diagram class is the sentinel's DOM handle to the box it
+    # measures.  Without anywidget the sentinel is None and the widget
+    # keeps the first-layout fit only (graceful degradation).
+    result.add_class("lgx-diagram")
+    if fit_tool.sentinel is not None:
+        result.children = (*result.children, fit_tool.sentinel)
     if toolbar:  # compact icon toolbar + search (longeron.toolbar)
         upgrade_toolbar(result)
     return result

@@ -2125,3 +2125,42 @@ class TestMaxLabelWidth:
             drone_model.find("Drone::PlanBattery"), max_label_width=200
         )
         assert widget._lgn_view_state["options"]["max_label_width"] == 200
+
+
+class TestUniversalFitMachinery:
+    """EVERY built diagram is self-fitting: the builder funnel (_finish)
+    registers the AutoFitTool and mounts its fit sentinel INSIDE the
+    widget's own DOM, so plain display(widget) gets fit-on-first-reveal
+    and fit-on-resize with zero consumer wiring -- the explorer's pane,
+    an HBox beside a 3D viewer, a bare notebook cell: same machinery."""
+
+    def _builders(self, drone_model):
+        from longeron.explorer import requirements_view
+
+        yield diagrams.structure_diagram(drone_model)
+        yield diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        yield diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
+        yield requirements_view(drone_model)
+
+    def test_every_builder_mounts_the_sentinel(self, drone_model):
+        from longeron.toolbar import AutoFitTool
+
+        for widget in self._builders(drone_model):
+            tool = widget.get_tool(AutoFitTool)
+            assert tool.sentinel is not None, widget
+            assert tool.sentinel in widget.children, widget
+            assert tool.sentinel.layout.display == "none", widget
+            assert "lgx-diagram" in widget._dom_classes, widget
+
+    def test_one_sentinel_per_widget(self, drone_model):
+        # the notation gallery renders ~24 diagrams in one notebook: one
+        # (hidden, observer-based) sentinel per widget is the whole cost
+        from longeron.toolbar import AutoFitTool
+
+        for widget in self._builders(drone_model):
+            sentinel = widget.get_tool(AutoFitTool).sentinel
+            mounted = [child for child in widget.children if child is sentinel]
+            assert len(mounted) == 1
+            kind = type(sentinel).__name__
+            same_kind = [c for c in widget.children if type(c).__name__ == kind]
+            assert len(same_kind) == 1

@@ -255,6 +255,70 @@ print(json.dumps({
     )
 
 
+def hbox_fit_notebook() -> dict[str, Any]:
+    """Scenario: a plain inline diagram inside a narrow HBox self-fits.
+
+    The NB10 shape (diagram beside a 3D viewer, squeezed to a fraction
+    of the cell): NO explorer, NO consumer wiring -- just
+    ``display(HBox([widget, filler]))``.  The widget's own fit sentinel
+    (mounted by the builder, ``diagrams._finish``) must report the fresh
+    view and answer container resizes, so the diagram lands FITTED to
+    its box instead of cropped at sprotty's identity transform (the
+    maintainer-reported bug).  The state machine is the explorer
+    scenario's deliberately WIDE one: it only fits its 55% column with
+    ``scale < 1``, so a fitted transform is unambiguous proof.  The
+    checker prints the kernel-side sentinel counters, closing the
+    browser -> kernel loop (``fresh``/``resized`` reports really
+    arrived).
+    """
+
+    return _notebook(
+        '''
+import json
+
+import ipywidgets as W
+
+import longeron
+from longeron import diagrams
+from longeron.toolbar import AutoFitTool
+
+model = longeron.loads("""
+package Rig {
+    state def Spin {
+        entry; then idle;
+
+        state idle;
+        transition first idle accept spin_up_commanded then accelerating;
+
+        state accelerating;
+        transition first accelerating accept nominal_rotation_speed_reached then turning;
+
+        state turning;
+        transition first turning accept controlled_slow_down_commanded then braking;
+
+        state braking;
+        transition first braking accept rotor_stopped then idle;
+    }
+}
+""")
+widget = diagrams.state_diagram(model.find("Rig::Spin"))
+widget.layout.width = "55%"
+widget.layout.height = "420px"
+filler = W.Box(layout=W.Layout(width="45%", height="420px"))
+W.HBox([widget, filler], layout=W.Layout(align_items="stretch"))
+''',
+        """
+tool = widget.get_tool(AutoFitTool)
+print(json.dumps({
+    "fresh": tool.sentinel.fresh,
+    "resized": tool.sentinel.resized,
+    "fit_count": tool.fit_count,
+    "fit_stamp": tool.sentinel.fit_stamp,
+}))
+""",
+    )
+
+
 def layout_failure_notebook() -> dict[str, Any]:
     """Scenario: a deliberately-broken graph must fail loudly (F10).
 
@@ -353,5 +417,6 @@ SCENARIO_NOTEBOOKS = {
     "label_fit_scenario.ipynb": label_fit_notebook,
     "explorer_scenario.ipynb": explorer_notebook,
     "explorer_dock_scenario.ipynb": explorer_dock_notebook,
+    "hbox_fit_scenario.ipynb": hbox_fit_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,
 }

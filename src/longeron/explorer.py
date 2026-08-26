@@ -68,16 +68,19 @@ height and the diagram box flex-grows to every remaining pixel (the
 inline layout instead stays bounded at the ``height`` parameter -- it
 lives in a notebook cell).  Because a background tab renders hidden,
 the panel's FIRST reveal triggers one diagram re-fit (the initial
-auto-fit aimed at a zero-sized viewport); a hidden
-:class:`_FitSentinel` beside the diagram box keeps the framing honest
-afterwards -- a newly built diagram is fitted the moment its view
-actually renders (the first-layout auto-fit can be dropped mid view
-construction: wide diagrams used to come up unfitted, overflowing the
-pane), a cached diagram re-entering the box is re-fitted against its
-current rendered size (built widgets stay in the box as persistent,
-display-toggled children, so their live views hear the fit), and a
-pane resize re-fits the visible diagram unless the user has panned or
-zoomed since the last auto-fit (their viewport is theirs).  Second,
+auto-fit aimed at a zero-sized viewport).  Everything else about
+keeping the framing honest is the DIAGRAM WIDGET'S OWN job now: every
+widget built by :mod:`longeron.diagrams` carries a hidden fit sentinel
+inside its own DOM (see :class:`longeron.toolbar.AutoFitTool`), so a
+newly built diagram is fitted the moment its view actually renders
+(the first-layout auto-fit can be dropped mid view construction: wide
+diagrams used to come up unfitted, overflowing the pane), and a pane
+resize re-fits the visible diagram unless the user has panned or
+zoomed since the last auto-fit (their viewport is theirs).  The
+explorer adds only what the sentinel cannot know: a cached diagram
+re-entering the box on a kind switch is re-fitted against its current
+rendered size (built widgets stay in the box as persistent,
+display-toggled children, so their live views hear the fit).  Second,
 docking is IDEMPOTENT per model: re-running the
 cell -- or restarting the kernel and running all cells -- REPLACES the
 model's panel instead of stacking a new one.  Two mechanisms cooperate,
@@ -1103,164 +1106,6 @@ class _DockSweeper(anywidget.AnyWidget):
     shown = T.Bool(False, help="whether the panel has ever been visible").tag(sync=True)
 
 
-# The fit sentinel: a hidden sibling of the diagram box (BOTH layout
-# strategies) that reports the two browser-side moments a kernel-side
-# re-fit must answer, extending the sweeper's observer seam:
-#
-# * ``fresh`` -- a NEW sprotty view materialized as the box's VISIBLE
-#   diagram.  A fresh view paints at sprotty's identity transform
-#   (top-left, 1:1), and the kernel-side auto-fit that answers the first
-#   layout arrival can be DROPPED: the viewer view registers its message
-#   handler asynchronously (initSprotty), after the layout pipe has
-#   already reported back, so a wide diagram built on a kind switch used
-#   to come up unfitted, overflowing the pane.  Watching the DOM for the
-#   new view's laid-out nodes is the reliable signal that the handler
-#   exists and a fit will land.  Detection: the visible sprotty host
-#   div's id changed (each view mints ``sprotty_N``) and it holds
-#   ``.elknode``s; hidden persistent siblings (display:none) are skipped.
-# * ``resized`` -- the diagram box changed size while visible (the dock
-#   split handle dragged, the panel resized, a hidden tab re-revealed),
-#   debounced, and ONLY while the user has not panned or zoomed since
-#   the last kernel-side auto-fit: the viewport is the user's the moment
-#   they touch it (wheel = zoom, pointer drag = pan; plain clicks are
-#   selection, not panning, and do not latch).  The kernel bumps
-#   :attr:`fit_stamp` after every auto-fit, which clears the latch --
-#   an untouched-since-fit viewport is exactly the fitted one, so
-#   re-fitting it on resize corrects the frame without fighting anyone.
-_SENTINEL_ESM = """
-function render({ model, el }) {
-  el.style.display = "none";
-  let box = null;
-  let sprottyId = "";
-  let interacted = false;
-  let baseline = null; // last acknowledged {w, h} of the visible box
-  let hidden = false; // the box was 0x0 on the previous observation
-  let debounce = null;
-  let retry = null;
-  let mutations = null;
-  let sizer = null;
-  let downAt = null;
-
-  const bump = (name) => {
-    model.set(name, model.get(name) + 1);
-    model.save_changes();
-  };
-
-  // -- fresh: the VISIBLE sprotty view is a new one, with laid-out nodes
-  // (div.sprotty is the view's HOST node -- its sprotty-root CHILD
-  // shares the id prefix, so the class guard keeps the match unique)
-  const checkFresh = () => {
-    for (const div of box.querySelectorAll('div.sprotty[id^="sprotty"]')) {
-      if (!div.querySelector(".elknode")) continue; // not laid out yet
-      const rect = div.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue; // hidden sibling
-      if (div.id !== sprottyId) {
-        sprottyId = div.id;
-        bump("fresh");
-      }
-      return; // exactly one child is displayed at a time
-    }
-  };
-
-  // -- resized: debounced, guarded by the user-viewport latch ----------
-  const onResize = () => {
-    const rect = box.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      hidden = true; // a hidden tab: nothing to fit against
-      return;
-    }
-    const first = baseline === null;
-    const changed =
-      first ||
-      hidden ||
-      Math.abs(rect.width - baseline.w) >= 2 ||
-      Math.abs(rect.height - baseline.h) >= 2;
-    baseline = { w: rect.width, h: rect.height };
-    hidden = false;
-    if (first || !changed) return; // the initial observation is a baseline
-    clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      if (!interacted) bump("resized");
-    }, 200);
-  };
-
-  // -- the user's viewport is theirs: wheel = zoom, drag = pan ---------
-  const onWheel = () => {
-    interacted = true;
-  };
-  const onDown = (ev) => {
-    downAt = { x: ev.clientX, y: ev.clientY };
-  };
-  const onMove = (ev) => {
-    if (downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 3) {
-      interacted = true; // moved while down: a pan, not a click
-    }
-  };
-  const onUp = () => {
-    downAt = null;
-  };
-  model.on("change:fit_stamp", () => {
-    interacted = false; // the viewport is the fitted one again
-  });
-
-  const attach = () => {
-    box = el.parentElement && el.parentElement.querySelector(":scope > .lgx-diagram-box");
-    if (!box) {
-      retry = setTimeout(attach, 200); // sibling views render asynchronously
-      return;
-    }
-    mutations = new MutationObserver(checkFresh);
-    mutations.observe(box, { childList: true, subtree: true });
-    sizer = new ResizeObserver(onResize);
-    sizer.observe(box);
-    box.addEventListener("wheel", onWheel, { capture: true, passive: true });
-    box.addEventListener("pointerdown", onDown, true);
-    box.addEventListener("pointermove", onMove, true);
-    box.addEventListener("pointerup", onUp, true);
-    checkFresh();
-    onResize();
-  };
-  attach();
-  return () => {
-    clearTimeout(debounce);
-    clearTimeout(retry);
-    if (mutations) mutations.disconnect();
-    if (sizer) sizer.disconnect();
-    if (box) {
-      box.removeEventListener("wheel", onWheel, { capture: true });
-      box.removeEventListener("pointerdown", onDown, true);
-      box.removeEventListener("pointermove", onMove, true);
-      box.removeEventListener("pointerup", onUp, true);
-    }
-  };
-}
-export default { render };
-"""
-
-
-class _FitSentinel(anywidget.AnyWidget):
-    """A hidden fit reporter beside the diagram box (see :data:`_SENTINEL_ESM`).
-
-    Frontend -> kernel: :attr:`fresh` counts new sprotty views
-    materializing as the box's visible diagram -- the moment a newly
-    BUILT widget needs a fit against its real rendered size (the
-    kernel's first-layout auto-fit can be dropped by the asynchronous
-    view construction; the wide-diagram-overflows-the-pane bug);
-    :attr:`resized` counts debounced box resizes that happened while the
-    user had NOT panned/zoomed since the last auto-fit.  The explorer
-    answers both with one :meth:`~longeron.toolbar.AutoFitTool.refit_now`
-    on the visible diagram.  Kernel -> frontend: :attr:`fit_stamp` is
-    bumped after every kernel-side auto-fit and clears the browser's
-    user-interaction latch.
-    """
-
-    _esm = _SENTINEL_ESM
-
-    fresh = T.Int(0, help="how many fresh diagram views appeared in the box").tag(sync=True)
-    resized = T.Int(0, help="debounced box resizes with an untouched viewport").tag(sync=True)
-    fit_stamp = T.Int(0, help="bumped per kernel auto-fit; clears the user latch").tag(sync=True)
-
-
 # ---------------------------------------------------------------------------
 # the explorer widget
 # ---------------------------------------------------------------------------
@@ -1419,13 +1264,15 @@ class Explorer(W.HBox):
         self._diagram_box = W.Box(
             layout=W.Layout(width="100%", flex="1 1 0%", min_height="0", overflow="hidden")
         )
-        self._diagram_box.add_class("lgx-diagram-box")  # the sentinel's DOM handle
-        self._fit_sentinel = _FitSentinel(layout=W.Layout(display="none"))
-        self._fit_sentinel.observe(self._on_sentinel_event, ["fresh", "resized"])
+        self._diagram_box.add_class("lgx-diagram-box")  # a stable DOM handle (tests)
+        # NO pane-level fit machinery: every diagram widget the builders
+        # produce carries its own fit sentinel inside its own DOM
+        # (longeron.diagrams._finish), so fresh-view / reveal / resize
+        # re-fits arrive per widget with zero wiring here
         # the right pane is built ONCE, strategy-independently; the layout
         # strategy below only composes it (asserted by the test suite)
         self._pane = W.VBox(
-            [header, self._diagram_box, self._fit_sentinel],
+            [header, self._diagram_box],
             layout=W.Layout(flex="1 1 auto"),
         )
 
@@ -1535,8 +1382,12 @@ class Explorer(W.HBox):
         Under the default background-tab docking the initial auto-fit
         runs while the panel is HIDDEN -- a zero-sized viewport -- so the
         diagram would look blank until the user clicked Fit.  One re-fit
-        on the first reveal corrects it.  Later reveals and resizes are
-        the fit sentinel's job (:class:`_FitSentinel`), guarded by the
+        on the first reveal corrects it, immediately and deterministically
+        (the widget's own fit sentinel also notices the reveal, but only
+        after its debounce; answering the sweeper's ``shown`` report here
+        keeps the dock's first paint snappy).  Later reveals and resizes
+        are the widget's own sentinel's job
+        (:class:`longeron.toolbar.AutoFitTool`), guarded by the
         user-viewport latch -- a viewport the user has touched is theirs.
         """
 
@@ -1547,9 +1398,10 @@ class Explorer(W.HBox):
     def _refit_current(self) -> None:
         """Fit the visible diagram to its CURRENT rendered size, now.
 
-        The one funnel for every explorer-driven fit (first reveal, a
-        widget (re)entering the box, a pane resize).  Bumping the
-        sentinel's ``fit_stamp`` afterwards clears the browser-side
+        The one funnel for every explorer-driven fit (the docked panel's
+        first reveal, a cached widget re-entering the box on a kind
+        switch).  :meth:`~longeron.toolbar.AutoFitTool.refit_now` bumps
+        the widget's own sentinel ``fit_stamp``, clearing the browser-side
         user-interaction latch: the viewport is the fitted one again, so
         a later resize may re-frame it without fighting the user.
         """
@@ -1560,20 +1412,6 @@ class Explorer(W.HBox):
         from .toolbar import AutoFitTool
 
         diagram.get_tool(AutoFitTool).refit_now()
-        self._fit_sentinel.fit_stamp += 1
-
-    def _on_sentinel_event(self, change: Any) -> None:
-        """A browser report from the pane: re-fit the visible diagram.
-
-        ``fresh``: a newly built diagram view materialized in the box
-        with its layout rendered -- the reliable moment to fit it (the
-        first-layout auto-fit can be dropped while the view is still
-        constructing).  ``resized``: the box changed size and the user
-        has not panned/zoomed since the last auto-fit (guarded
-        browser-side).
-        """
-
-        self._refit_current()
 
     # -- public surface ------------------------------------------------------
 

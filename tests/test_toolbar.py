@@ -531,10 +531,14 @@ class TestCompoundLabelFit:
 
 
 class TestAutoFit:
-    """The one-shot initial fit: the first layout arrival from the
-    browser answers with exactly one fit-to-screen request (small
-    padding, zoom capped at 1:1, no animation); later relayouts keep the
-    user's viewport unless a re-fit was explicitly queued."""
+    """The initial fit plus the widget's own fit sentinel: the first
+    layout arrival from the browser answers with exactly one
+    fit-to-screen request (small padding, zoom capped at 1:1, no
+    animation); later relayouts keep the user's viewport unless a re-fit
+    was explicitly queued.  The sentinel -- a hidden anywidget the
+    builder mounts INSIDE the widget's own DOM -- reports fresh views,
+    first reveals, and untouched-viewport resizes, each answered with an
+    immediate re-fit that clears the browser-side user latch."""
 
     @staticmethod
     def _capture(widget) -> list:
@@ -588,6 +592,69 @@ class TestAutoFit:
         sent = self._capture(widget)
         render.to_svg(widget, tmp_path / "out.svg")
         assert sent == []
+
+    # -- the fit sentinel: universal fit-on-reveal/resize ------------------
+
+    def test_builder_mounts_the_sentinel_inside_the_widget(self, widget):
+        # the sentinel rides INSIDE the widget's own DOM (a hidden child
+        # beside the view + toolbar): plain display(widget) gets
+        # fit-on-reveal/resize with ZERO consumer wiring
+        tool = widget.get_tool(AutoFitTool)
+        assert tool.sentinel is not None
+        assert tool.sentinel in widget.children
+        assert tool.sentinel.layout.display == "none"
+        assert (tool.sentinel.fresh, tool.sentinel.resized, tool.sentinel.fit_stamp) == (0, 0, 0)
+        # the widget's root node carries the sentinel's DOM handle
+        assert "lgx-diagram" in widget._dom_classes
+
+    def test_sentinel_is_not_toolbar_chrome(self, drone_model):
+        # toolbar=False keeps the stock ipyelk toolbar but never loses
+        # the self-fitting machinery
+        classic = diagrams.structure_diagram(drone_model, toolbar=False)
+        tool = classic.get_tool(AutoFitTool)
+        assert tool.sentinel is not None and tool.sentinel in classic.children
+        assert "lgx-diagram" in classic._dom_classes
+
+    def test_fresh_view_report_refits_immediately(self, widget):
+        # a new sprotty view materialized with laid-out nodes: the moment
+        # a fit is deliverable (the first-layout fit can be dropped while
+        # the view is still constructing -- the cropped-diagram bug)
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        before = tool.fit_count
+        tool.sentinel.fresh += 1  # what the browser reports
+        assert tool.fit_count == before + 1 and len(sent) == 1
+
+    def test_resize_report_refits_immediately(self, widget):
+        # a debounced, latch-guarded resize (HBox squeeze, dock drag,
+        # reveal of a widget born hidden): re-fit against the new size
+        tool = widget.get_tool(AutoFitTool)
+        sent = self._capture(widget)
+        before = tool.fit_count
+        tool.sentinel.resized += 1
+        assert tool.fit_count == before + 1 and len(sent) == 1
+
+    def test_every_kernel_fit_clears_the_user_latch(self, widget):
+        # fit_stamp is the kernel -> browser latch-clear signal: bumped
+        # per auto-fit, whatever triggered it (first layout, sentinel
+        # report, an explicit refit_now)
+        tool = widget.get_tool(AutoFitTool)
+        self._capture(widget)
+        assert tool.sentinel.fit_stamp == 0
+        widget.view.source.value = widget.source.value  # first layout lands
+        assert tool.sentinel.fit_stamp == 1
+        tool.refit_now()
+        assert tool.sentinel.fit_stamp == 2
+        tool.sentinel.resized += 1
+        assert tool.sentinel.fit_stamp == 3
+
+    def test_sentinel_reports_are_safe_without_a_view(self, widget):
+        # refit_now degrades gracefully when the fit message has nowhere
+        # to go (no frontend view yet): never an exception in the
+        # sentinel's observer chain
+        tool = widget.get_tool(AutoFitTool)
+        tool.sentinel.fresh += 1  # must not raise (headless: no view)
+        tool.sentinel.resized += 1
 
 
 class TestSearchMatching:

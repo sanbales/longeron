@@ -19,9 +19,17 @@ buttons).  It reworks ipyelk's hover-revealed toolbar in place:
   kwarg), and the flip queues a one-shot re-fit so the new aspect ratio
   lands centered instead of keeping a viewport framed for the old one;
 * an (invisible) :class:`AutoFitTool` fits-and-centers the diagram
-  exactly once, when its FIRST layout arrives from the browser, with a
-  small padding and never zooming past 1:1 -- later relayouts
-  (collapse, routing) keep the user's viewport;
+  when its FIRST layout arrives from the browser, with a small padding
+  and never zooming past 1:1 -- later relayouts (collapse, routing)
+  keep the user's viewport.  Its hidden :class:`_FitSentinel` companion
+  rides INSIDE the widget's own DOM and reports the browser-side
+  moments a kernel-side re-fit must answer -- a fresh sprotty view
+  materializing (the first-layout fit can be dropped while the view is
+  still constructing: the cropped-diagram bug), the widget's first
+  reveal (background tab, ``display:none`` lifted, lazy output
+  rendering), and container resizes (an HBox squeeze, a dock drag) --
+  always respecting the user's pan/zoom latch, so a viewport the user
+  has touched is never re-framed behind their back;
 * a :class:`DiagramSearch` tool is registered: typing in its text box
   live-highlights every diagram node whose *title* or *qualified name*
   contains the query (case-insensitive), shows a ``matches/total``
@@ -656,9 +664,207 @@ class EdgeRoutingTool(Tool):
         )
 
 
+# The fit sentinel: a hidden child INSIDE every built diagram widget's
+# own DOM (mounted by ``diagrams._finish`` beside the view + toolbar, so
+# plain ``display(widget)`` gets it with zero consumer wiring).  It
+# reports the browser-side moments a kernel-side re-fit must answer:
+#
+# * ``fresh`` -- a NEW sprotty view materialized as the widget's visible
+#   diagram, with its layout rendered.  A fresh view paints at sprotty's
+#   identity transform (top-left, 1:1), and the kernel-side auto-fit
+#   that answers the first layout arrival can be DROPPED: the viewer
+#   view registers its message handler asynchronously (initSprotty),
+#   after the layout pipe has already reported back, so a wide diagram
+#   used to come up unfitted -- CROPPED to its top-left corner.
+#   Watching the DOM for the view's laid-out nodes is the reliable
+#   signal that the handler exists and a fit will land.  Detection: the
+#   visible sprotty host div's id changed (each view mints
+#   ``sprotty_N``) and it holds ``.elknode``s; a hidden widget
+#   (display:none, a background tab) is skipped until it can be
+#   measured.
+# * ``resized`` -- the widget changed size while visible (an HBox
+#   squeezed, a dock split handle dragged, a hidden tab re-revealed,
+#   lazy output rendering), debounced, and ONLY while the user has not
+#   panned or zoomed since the last kernel-side auto-fit: the viewport
+#   is the user's the moment they touch it (wheel = zoom, pointer drag
+#   = pan; plain clicks are selection, not panning, and do not latch).
+#   The kernel bumps ``fit_stamp`` after every auto-fit, which clears
+#   the latch -- an untouched-since-fit viewport is exactly the fitted
+#   one, so re-fitting it on resize corrects the frame without fighting
+#   anyone.  A widget FIRST observed hidden re-fits on its reveal (any
+#   fit that ran while it was hidden aimed at a zero-sized viewport);
+#   a widget first observed visible treats that observation as the
+#   baseline, not a resize.
+#
+# One ResizeObserver + one MutationObserver per widget -- no polling
+# loops, so a notebook full of diagrams (the notation gallery renders
+# ~24) stays cheap.
+_SENTINEL_ESM = """
+function render({ model, el }) {
+  el.style.display = "none";
+  let box = null;
+  let sprottyId = "";
+  let interacted = false;
+  let baseline = null; // last acknowledged {w, h} of the visible widget
+  let hidden = false; // the widget was 0x0 on the previous observation
+  let debounce = null;
+  let retry = null;
+  let mutations = null;
+  let sizer = null;
+  let downAt = null;
+
+  const bump = (name) => {
+    model.set(name, model.get(name) + 1);
+    model.save_changes();
+  };
+
+  // -- fresh: the widget's VISIBLE sprotty view is a new one, with
+  // laid-out nodes (div.sprotty is the view's HOST node -- its
+  // sprotty-root CHILD shares the id prefix, so the class guard keeps
+  // the match unique)
+  const checkFresh = () => {
+    for (const div of box.querySelectorAll('div.sprotty[id^="sprotty"]')) {
+      if (!div.querySelector(".elknode")) continue; // not laid out yet
+      const rect = div.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue; // hidden widget
+      if (div.id !== sprottyId) {
+        sprottyId = div.id;
+        bump("fresh");
+      }
+      return; // one visible host per widget
+    }
+  };
+
+  // -- resized: debounced, guarded by the user-viewport latch ----------
+  const onResize = () => {
+    const rect = box.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      hidden = true; // display:none / a background tab: nothing to fit
+      return;
+    }
+    const revealed = hidden;
+    const first = baseline === null;
+    const changed =
+      revealed ||
+      first ||
+      Math.abs(rect.width - baseline.w) >= 2 ||
+      Math.abs(rect.height - baseline.h) >= 2;
+    baseline = { w: rect.width, h: rect.height };
+    hidden = false;
+    // the initial VISIBLE observation is a baseline, not a resize; but a
+    // widget first seen HIDDEN re-fits on its reveal -- any fit that ran
+    // while it was hidden aimed at a zero-sized viewport
+    if ((first && !revealed) || !changed) return;
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      if (!interacted) bump("resized");
+    }, 200);
+  };
+
+  // -- the user's viewport is theirs: wheel = zoom, drag = pan ---------
+  const onWheel = () => {
+    interacted = true;
+  };
+  const onDown = (ev) => {
+    downAt = { x: ev.clientX, y: ev.clientY };
+  };
+  const onMove = (ev) => {
+    if (downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 3) {
+      interacted = true; // moved while down: a pan, not a click
+    }
+  };
+  const onUp = () => {
+    downAt = null;
+  };
+  model.on("change:fit_stamp", () => {
+    interacted = false; // the viewport is the fitted one again
+  });
+
+  const attach = () => {
+    box = el.closest(".lgx-diagram");
+    if (!box) {
+      retry = setTimeout(attach, 200); // widget views attach asynchronously
+      return;
+    }
+    mutations = new MutationObserver(checkFresh);
+    mutations.observe(box, { childList: true, subtree: true });
+    sizer = new ResizeObserver(onResize);
+    sizer.observe(box);
+    box.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    box.addEventListener("pointerdown", onDown, true);
+    box.addEventListener("pointermove", onMove, true);
+    box.addEventListener("pointerup", onUp, true);
+    checkFresh();
+    onResize();
+  };
+  attach();
+  return () => {
+    clearTimeout(debounce);
+    clearTimeout(retry);
+    if (mutations) mutations.disconnect();
+    if (sizer) sizer.disconnect();
+    if (box) {
+      box.removeEventListener("wheel", onWheel, { capture: true });
+      box.removeEventListener("pointerdown", onDown, true);
+      box.removeEventListener("pointermove", onMove, true);
+      box.removeEventListener("pointerup", onUp, true);
+    }
+  };
+}
+export default { render };
+"""
+
+#: the lazily defined :class:`_FitSentinel` (anywidget is optional)
+_SENTINEL_CLS: type | None = None
+
+
+def _sentinel_class() -> type | None:
+    """The ``_FitSentinel`` anywidget class, or ``None`` without anywidget.
+
+    Defined lazily because anywidget is an optional extra (``replay``)
+    and diagram building must keep working without it: the widgets then
+    simply lose the browser-side fit-on-reveal/resize reports (the
+    first-layout auto-fit still runs) -- graceful degradation, never an
+    ImportError.
+
+    Frontend -> kernel traits: ``fresh`` counts new sprotty views
+    materializing as the widget's visible diagram; ``resized`` counts
+    debounced widget resizes (including the first reveal of a widget
+    born hidden) that happened while the user had NOT panned/zoomed
+    since the last auto-fit.  :class:`AutoFitTool` answers both with one
+    :meth:`AutoFitTool.refit_now`.  Kernel -> frontend: ``fit_stamp`` is
+    bumped after every kernel-side auto-fit and clears the browser's
+    user-interaction latch.  See :data:`_SENTINEL_ESM`.
+    """
+
+    global _SENTINEL_CLS
+    if _SENTINEL_CLS is not None:
+        return _SENTINEL_CLS
+    try:
+        import anywidget
+    except ImportError:  # pragma: no cover - exercised without anywidget
+        return None
+
+    class _FitSentinel(anywidget.AnyWidget):
+        """A hidden fit reporter inside the diagram widget's own DOM
+        (see :func:`_sentinel_class` and :data:`_SENTINEL_ESM`)."""
+
+        _esm = _SENTINEL_ESM
+
+        fresh = T.Int(0, help="how many fresh diagram views appeared in the widget").tag(sync=True)
+        resized = T.Int(0, help="debounced widget resizes with an untouched viewport").tag(
+            sync=True
+        )
+        fit_stamp = T.Int(0, help="bumped per kernel auto-fit; clears the user latch").tag(
+            sync=True
+        )
+
+    _SENTINEL_CLS = _FitSentinel
+    return _FitSentinel
+
+
 class AutoFitTool(Tool):
-    """Fit-and-center the diagram exactly once, when its FIRST layout
-    arrives from the browser.
+    """Keep the diagram fitted-and-centered until the user takes over.
 
     Diagrams used to first paint at 1:1 anchored top-left, so anything
     larger than the viewport started half off-screen until the user
@@ -669,16 +875,24 @@ class AutoFitTool(Tool):
     zoom capped at :attr:`max_zoom` (small diagrams center at natural
     size instead of blowing up), no animation (a snap, not a glide).
 
-    It fires ONCE: collapse/routing relayouts keep the user's viewport.
-    :meth:`request_refit` queues exactly one more fit for the NEXT layout
-    arrival -- the direction toggle uses it, because a viewport framed
-    for a left-to-right layout reads wrong on the top-to-bottom flip.
+    The layout watcher fires ONCE: collapse/routing relayouts keep the
+    user's viewport.  :meth:`request_refit` queues exactly one more fit
+    for the NEXT layout arrival -- the direction toggle uses it, because
+    a viewport framed for a left-to-right layout reads wrong on the
+    top-to-bottom flip.
 
-    Headless renders never construct tools, so they are unaffected.  The
-    fit request is a widget message: if a frontend view does not exist
-    yet when the first layout lands (a slow display), the message is
-    dropped and the diagram simply renders as before -- a graceful
-    degradation, never an error.
+    The first-layout fit request is a widget message: if a frontend view
+    does not exist yet when the first layout lands (a slow display, a
+    lazily rendered output), the message is dropped.  That is what the
+    tool's :attr:`sentinel` exists for -- a hidden anywidget the builder
+    mounts INSIDE the diagram widget's own DOM whose browser half
+    reports ``fresh`` views, first reveals, and untouched-viewport
+    resizes (see :func:`_sentinel_class`); each report is answered with
+    :meth:`refit_now`, which also bumps the sentinel's ``fit_stamp`` to
+    clear the browser-side user-interaction latch.  Without anywidget
+    the sentinel is ``None`` and only the first-layout fit remains.
+
+    Headless renders never construct tools, so they are unaffected.
     """
 
     padding = T.Float(FIT_PADDING, help="viewport margin (px) around the fitted diagram")
@@ -693,6 +907,14 @@ class AutoFitTool(Tool):
         # viewer's source; its kernel-side sync is the 'first layout
         # settled' signal (the same event DiagramSearch re-applies on)
         diagram.view.source.observe(self._on_view_tree, "value")
+        # the browser-side reporter (mounted into the widget's DOM by
+        # diagrams._finish); None without anywidget -- degrade gracefully
+        sentinel_cls = _sentinel_class()
+        self.sentinel: Any = (
+            None if sentinel_cls is None else sentinel_cls(layout=W.Layout(display="none"))
+        )
+        if self.sentinel is not None:
+            self.sentinel.observe(self._on_sentinel_report, ["fresh", "resized"])
 
     async def run(self) -> None:  # Tool protocol; the tool is event-driven
         pass
@@ -705,10 +927,13 @@ class AutoFitTool(Tool):
     def refit_now(self) -> None:
         """Fit immediately, without waiting for a layout arrival.
 
-        For fits that happened into a USELESS viewport: the explorer's
-        docked panel defaults to a background tab, so the first auto-fit
-        runs while the panel is hidden (a zero-sized viewport) and the
-        diagram looks blank until re-fitted on the panel's first reveal.
+        For fits that happened into a USELESS viewport (a hidden widget
+        has a zero-sized one: a docked background tab, a display:none'd
+        cached diagram) or that were dropped outright (no frontend view
+        yet).  Bumping the sentinel's ``fit_stamp`` afterwards clears the
+        browser-side user-interaction latch: the viewport is the fitted
+        one again, so a later resize may re-frame it without fighting
+        anyone.
         """
 
         self.fit_count += 1
@@ -716,6 +941,21 @@ class AutoFitTool(Tool):
             self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
         except Exception:  # never break the caller's observer chain
             self.log.exception("refit request failed")
+        if self.sentinel is not None:
+            self.sentinel.fit_stamp += 1
+
+    def _on_sentinel_report(self, change: Any) -> None:
+        """A browser report from the widget's own DOM: re-fit, now.
+
+        ``fresh``: a newly built diagram view materialized with its
+        layout rendered -- the reliable moment to fit it (the
+        first-layout auto-fit can be dropped while the view is still
+        constructing).  ``resized``: the widget changed size -- or was
+        revealed -- and the user has not panned/zoomed since the last
+        auto-fit (guarded browser-side).
+        """
+
+        self.refit_now()
 
     def _on_view_tree(self, change: Any) -> None:
         if change["new"] is None or not self.pending:
