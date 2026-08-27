@@ -75,6 +75,30 @@ interpreter-backed body for the component. Everything else in the
 problem is untouched, so a lo-fi/hi-fi comparison is one keyword
 argument.
 
+### Objects across the bridge
+
+Scalars are not the only things that cross
+([design](../design/mdao-objects.md)). A part/item member typed by a
+`variation` definition becomes one **discrete input** carrying the
+configured M0 individual -- the case being evaluated is an
+{func}`~longeron.m0.interpret` interpretation (passed as
+`build_problem(..., interpretation=...)`, or materialized implicitly
+when the model has variation points). Swap the case with
+{func}`~longeron.analysis.mdao.bind_entity`, enumerate a catalog as DOE
+cases with {func}`~longeron.analysis.mdao.entity_cases`, and freeze each
+evaluated case as an immutable interpretation snapshot with
+{func}`~longeron.analysis.mdao.record_case` (the snapshot feeds the
+scoreboard through {func}`~longeron.analysis.mdao.case_values`).
+Structured payloads (mesh dicts, cadquery *recipes* -- never live
+kernel solids) flow between components as discrete values keyed by M0
+individual id; files cross as a
+{class}`~longeron.analysis.mdao.FileArtifact` (path + sha256, the
+caching identity) while the bytes stay on disk; and
+{func}`~longeron.analysis.mdao.derive_flows` /
+{func}`~longeron.analysis.mdao.apply_flows` turn the model's
+`flow of Payload from a.out to b.in` usages into proposed OpenMDAO
+connections -- propose + apply, never silent magic.
+
 ## SMT: guard the requirement set
 
 Use {mod}`~longeron.analysis.smt` before spending solver time on an

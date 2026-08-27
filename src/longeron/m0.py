@@ -72,6 +72,18 @@ class Individual(Instance):
     def to_dict(self) -> dict[str, Any]:
         return {"@id": self.id, **super().to_dict()}
 
+    def to_json(self) -> dict[str, Any]:
+        """Alias for :meth:`to_dict` -- the lossless case-recorder seam.
+
+        OpenMDAO's ``make_serializable`` tries ``to_json`` first when a
+        recorded value is not JSON-native; without this hook a recorded
+        entity case silently degrades to the class-name string
+        ``'Individual'`` (see the mdao-objects design, finding 2).  Equal
+        individuals produce equal dicts, so recorded cases compare stably.
+        """
+
+        return self.to_dict()
+
     def __repr__(self) -> str:
         return f"<{self.id}: {self.type_name}>"
 

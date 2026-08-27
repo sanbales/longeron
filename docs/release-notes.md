@@ -2,6 +2,50 @@
 
 ## 0.11.0 (unreleased)
 
+- **Object-valued analysis I/O in the OpenMDAO bridge**
+  ([design doc](design/mdao-objects.md), all seven open questions
+  ratified): objects -- not just scalars -- cross `build_problem`, on
+  OpenMDAO's stock discrete-variable machinery (no fork)
+  - **Entity binding**: variation-typed part/item members become
+    discrete inputs carrying the configured **M0 individual** instead
+    of a scalar shred. The case being evaluated is an
+    `m0.interpret(...)` interpretation (`build_problem(...,
+    interpretation=...)`; models with variation points materialize the
+    implicit anonymous point lazily -- scalar-only models pay nothing
+    and behave exactly as before). `bind_entity()` swaps cases
+    (qname-resolved, conformance- and pickle-checked); `entity_cases()`
+    turns a trade study's catalog into `DOEDriver`-ready cases of
+    individuals (variant body redefinitions honored, riding the 0.11
+    variant-bundle fix)
+  - **Result recording**: `record_case()` freezes each evaluated case
+    as a NEW immutable interpretation snapshot -- outputs land as
+    attribute values on the case's individuals (stable
+    `qname#index` ids, JSON-clean `to_dict()`, `rollup()` over the
+    recorded population); the input interpretation stays pristine.
+    `case_values()` feeds a snapshot straight into the scoreboard's
+    `values=` seam. `Individual` gained the `to_json` recorder hook, so
+    a recorded entity case reads back as its full bundle, never as the
+    class-name string `'Individual'`
+  - **The file boundary**: `FileArtifact` (path + sha256 + media type)
+    flows as ~200 bytes of discrete value while the bytes stay on disk
+    -- `ExternalCodeComp`-compatible, hash as caching identity,
+    `to_json` as the lossless recorder seam. `write_artifact()` /
+    `file_artifact()` build one; `artifact_component()` wraps a writer
+    callable as a boundary component. The matching SysML convention
+    ships as `examples/analysis_conventions.sysml`
+    (`item def FileArtifact`), so flows can be typed by it
+  - **Item-flow wiring derivation**: `derive_flows()` resolves a
+    part's `flow of Payload from a.out to b.in` usages into proposed
+    OpenMDAO connections -- the same resolution semantics as the new
+    `dangling-flow`/`flow-payload-mismatch` validation (plus
+    direction checking, which a `connect()` needs) -- and
+    `apply_flows()` wires them. Propose + apply, never silent magic
+  - Picklability is asserted at bind time with an error naming the
+    offender (the recipes-not-solids rule enforced); serial discrete
+    transfers alias by reference, so payloads stay frozen by
+    convention. Tutorial 07 closes with a discrete motor-entity case
+    swap and a `FileArtifact` roundtrip
+
 - **Units, tiers 2 and 3 of the ratified design**
   ([design doc](design/units.md)): models with `[SI::kg]`-style
   measurement annotations now get a real dimensional lint, and an
