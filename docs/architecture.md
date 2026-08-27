@@ -88,6 +88,7 @@ Deeper design rationale for major subsystems:
 ```{toctree}
 :maxdepth: 1
 
+design/conformance
 design/m0-interpretations
 design/mdao-objects
 design/ocl-stance
