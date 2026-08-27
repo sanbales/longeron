@@ -37,11 +37,6 @@ PANEL = ".lgx-explorer.lgx-explorer-dock-demo"
 #: lowercased by setAttribute -- hence the flat spelling)
 TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="dock-demo"]'
 
-#: kernel-initiated selection trips setSelectedNodes in the vendored
-#: jupyter-elk frontend before the sprotty model index exists -- same
-#: known vendor issue tests/browser/test_browser_explorer.py documents
-KNOWN_VENDOR_PAGE_ERRORS = ("Cannot read properties of undefined (reading 'getById')",)
-
 _CELL_WIDTH_JS = """() => {
     const cell = document.querySelector('.jp-Notebook .jp-Cell');
     return cell ? cell.getBoundingClientRect().width : 0;
@@ -234,4 +229,4 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
     )
     page.screenshot(path=str(EVIDENCE / "explorer-dock-panel-open.png"))
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()

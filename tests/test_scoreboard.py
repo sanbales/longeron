@@ -796,6 +796,23 @@ class TestWidget:
         for token in ("lgn-sb-cell", "lgn-sb-selected", "lgn-sb-tip", "--jp-brand-color1"):
             assert token in widget._css, token
 
+    def test_esm_legend_contract(self, widget):
+        # the honest-unmeasured footer (maintainer QA: an all-hatched board
+        # read as broken): one line naming what hatching means, shown only
+        # when MORE THAN HALF of the tree's leaves are unmeasured, counted
+        # over the FULL tree so navigation never flickers it
+        assert "renderLegend" in widget._esm
+        assert "unmeasured * 2 > total" in widget._esm
+        assert "hatched = unmeasured" in widget._esm
+        assert "measure attribute or values= entry" in widget._esm
+        assert "})(root);" in widget._esm  # counted over the full tree
+
+    def test_css_legend_contract(self, widget):
+        # the swatch restates the hatch look in CSS (the svg pattern id is
+        # per-instance, so the footer cannot reference it)
+        for token in ("lgn-sb-legend", "lgn-sb-legend-swatch", "repeating-linear-gradient"):
+            assert token in widget._css, token
+
     def test_widget_payload_is_deterministic(self, uav_model):
         pytest.importorskip("anywidget")
         one = scoreboard(uav_model).widget().nodes_json

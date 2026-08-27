@@ -1372,6 +1372,24 @@ class _DockSweeper(anywidget.AnyWidget):
 #: the layout strategies :func:`explore` accepts
 _LAYOUTS = ("auto", "inline", "lab")
 
+#: callbacks invoked with every newly constructed :class:`Explorer` --
+#: the seam :mod:`longeron.app` uses to ADOPT direct ``explore()`` calls
+#: (their tree selections then feed the app's inspector seam exactly like
+#: app-launched tabs; see the app module docstring, THE INSPECTOR SEAM)
+_EXPLORER_CREATED_CALLBACKS: list[Callable[[Explorer], None]] = []
+
+
+def _on_explorer_created(callback: Callable[[Explorer], None]) -> None:
+    """Register ``callback(explorer)`` for every Explorer construction.
+
+    The registration surface is module-level and append-only (the app
+    module registers ONE adapter at import; it resolves the live app
+    itself).  Callbacks fire at the very end of ``__init__``; a raising
+    callback is swallowed -- app chrome must never break exploring.
+    """
+
+    _EXPLORER_CREATED_CALLBACKS.append(callback)
+
 
 def _lab_frontend_detected() -> bool:
     """Best-effort, synchronous: is a jupyter-server frontend hosting us?
@@ -1558,6 +1576,14 @@ class Explorer(W.HBox):
         engine.on_select(self._on_tree_select)
         self.kind_switcher.observe(self._on_kind, "value")
         self._apply_selection(self._root_id, origin="init")
+
+        # last, on a fully-built explorer: let registered consumers adopt
+        # it (the model app's inspector seam; see _on_explorer_created)
+        for callback in list(_EXPLORER_CREATED_CALLBACKS):
+            try:
+                callback(self)
+            except Exception:
+                pass  # chrome must never break exploring
 
     # -- layout strategies (panes are shared; only composition differs) -------
 

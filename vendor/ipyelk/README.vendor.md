@@ -155,3 +155,37 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    `<title>` headlessly). Bundles rebuilt as in patch 7 (same toolchain,
    node 22.9.0): only the `elkdisplay` chunk, `remoteEntry` and the
    labextension `package.json` `_build` pointer changed.
+11. **Early kernel selections queue instead of crashing the view**
+   (`js/display_widget.ts`; bundles rebuilt as in patch 7, node 26.6.0 +
+   jlpm from the longeron pixi env -- only the `elkdisplay` chunk,
+   `remoteEntry` and the labextension `package.json` `_build` pointer
+   changed). `JLModelSource.index` is only assigned by the first
+   `doSubmitModel`, but the kernel can set the selection tool's `ids`
+   BEFORE the first layout round-trip completes (a comm `set_state`
+   racing `initSprotty`/`diagramLayout` -- longeron's explorer does
+   exactly this when it builds a diagram with an initial highlight).
+   `updateSelected` then reached `setSelectedNodes`, whose
+   `this.source.index.getById(...)` threw
+   `Uncaught (in promise) TypeError: Cannot read properties of undefined
+   (reading 'getById')` (maintainer trace, live NB14 session; the same
+   zombie-listener family as the `on_source_changed` "TODO disconnect
+   old ones"). Now: `updateSelected` QUEUES the ids on
+   `pendingSelected` when no index exists yet (`ELK_DEBUG` log) and
+   `diagramLayout` replays them (one `SelectAction` + node mapping)
+   right after the first model submit, so the early selection still
+   lands visibly; `setSelectedNodes` itself null-guards the index (a
+   disposed view's zombie listener has nothing to map against). A live
+   selection change supersedes any queued one. Surfaced squarely by the
+   fix: with early selections now LANDING, the renderer's
+   `control_overlay` (a widget-subtype node every viewer renders beside
+   the selection) started attaching during selection-render bursts, and
+   its async snabbdom insert hook (`js/sprotty/renderer.tsx`
+   `renderContent`) could `Widget.attach` onto a container the NEXT
+   render pass had already replaced -- lumino throws `Host is not
+   attached.` on the disconnected host (previously masked because the
+   `getById` crash kept `selectedNodes` empty, so the overlay never
+   rendered for kernel selections). `renderContent` now re-checks
+   `vnode.elm.isConnected` after its awaits and drops the orphan view
+   (`ELK_DEBUG` log) -- the newer insert hook owns the attach. The
+   longeron browser tier drops its `getById` page-error allowance with
+   this patch.

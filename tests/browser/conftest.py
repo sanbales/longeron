@@ -201,6 +201,23 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
             cell["outputs"] = []
             cell["execution_count"] = None
     (root / "11_notation_gallery.ipynb").write_text(json.dumps(gallery, indent=1), encoding="utf-8")
+    # NB14 VERBATIM (maintainer QA: the app/inspector/scoreboard findings
+    # were all reported from live NB14 sessions, so the tier drives the
+    # REAL tutorial, not a paraphrase).  Served from a notebooks/ subdir
+    # with examples/ beside it so cell 3's relative
+    # "../examples/drone.sysml" resolves exactly like in the repo; outputs
+    # stripped for the same autosave-poisoning reasons as the gallery.
+    tutorial = json.loads((REPO / "notebooks" / "14_model_app.ipynb").read_text(encoding="utf-8"))
+    for cell in tutorial.get("cells", []):
+        if cell.get("cell_type") == "code":
+            cell["outputs"] = []
+            cell["execution_count"] = None
+    (root / "notebooks").mkdir()
+    (root / "notebooks" / "14_model_app.ipynb").write_text(
+        json.dumps(tutorial, indent=1), encoding="utf-8"
+    )
+    (root / "examples").mkdir()
+    shutil.copyfile(REPO / "examples" / "drone.sysml", root / "examples" / "drone.sysml")
     for name, build in SCENARIO_NOTEBOOKS.items():
         (root / name).write_text(json.dumps(build(), indent=1), encoding="utf-8")
 
@@ -548,7 +565,16 @@ class LabPage:
         self.console: list[str] = []
         self.page_errors: list[str] = []
         page.on("console", lambda message: self.console.append(f"[{message.type}] {message.text}"))
-        page.on("pageerror", lambda error: self.page_errors.append(str(error)))
+        # page errors KEEP their JS stack: a bare 'Host is not attached.'
+        # is unactionable, while the throwing frame named the vendored
+        # overlay-attach race outright (QA-3); allowance matching is
+        # substring-based, so the suffix costs nothing
+        page.on(
+            "pageerror",
+            lambda error: self.page_errors.append(
+                str(error) + " | STACK: " + str(getattr(error, "stack", ""))
+            ),
+        )
 
     # -- lifecycle -----------------------------------------------------------
 

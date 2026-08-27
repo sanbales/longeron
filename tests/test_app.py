@@ -61,6 +61,7 @@ def _fresh_registries(monkeypatch):
     monkeypatch.setattr(app_module, "_OPEN_APPS", {})
     monkeypatch.setattr(app_module, "_DOCKED_PANELS", {})
     monkeypatch.setattr(app_module, "_PALETTE_ADDED", False)
+    monkeypatch.setattr(app_module, "_ACTIVE_APP", None)
     monkeypatch.setattr(explorer_module, "_DOCKED_PANELS", {})
 
 
@@ -572,6 +573,88 @@ class TestLaunchWiring:
         widget = app.scoreboard_model(req_model)
         assert not app_module._DOCKED_PANELS  # nothing to dock into
         assert type(widget).__name__ == "ScoreboardWidget"
+
+
+class TestExplorerAdoption:
+    """DIRECT ``explore()`` calls feed the app's seam (maintainer QA).
+
+    NB14-style notebooks mix ``explore(...)`` cells with the app: every
+    explorer constructed while an app is open is adopted into the
+    kernel's most recent app (the explorer's construction hook ->
+    :meth:`ModelApp._adopt_explorer`), so the inspector follows BOTH
+    paths.  Adoption is passive and idempotent.
+    """
+
+    def test_direct_explore_is_adopted_and_feeds_the_seam(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch)
+        ex = explorer_module.explore(req_model, layout="inline")
+        assert ex in app.explorers  # adopted, though never launched
+        # adoption is PASSIVE: nothing current until a real selection
+        assert app.current_element is None and app.current_model is None
+        ex.select("Scored::sys")
+        assert app.current_element is not None
+        assert app.current_element.qualified_name == "Scored::sys"
+        assert app.current_model is req_model
+
+    def test_adoption_targets_the_newest_app(self, monkeypatch, req_model):
+        old = _open_lab(monkeypatch)
+        new = _open_lab(monkeypatch)
+        ex = explorer_module.explore(req_model, layout="inline")
+        assert ex in new.explorers
+        assert ex not in old.explorers
+
+    def test_launched_explorers_are_wired_exactly_once(self, monkeypatch, req_model):
+        # explore_model goes through explore() (the hook adopts) AND wires
+        # itself; the identity check must collapse that to ONE delivery
+        app = _open_lab(monkeypatch)
+        app.add_model(req_model)
+        seen = []
+        app.on_element_selected(lambda el: seen.append(el.qualified_name))
+        ex = app.explore_model(req_model)
+        assert app.explorers == (ex,)
+        ex.select("Scored::sys")
+        assert seen == ["Scored", "Scored::sys"]  # the seed, then ONE delivery
+
+    def test_adopted_selection_reveals_the_inspector_once(self, monkeypatch, req_model):
+        app = _open_lab(monkeypatch)
+        sweeper = app.inspector._sweeper
+        ex = explorer_module.explore(req_model, layout="inline")
+        assert sweeper.poke == 0  # adoption alone reveals nothing
+        ex.select("Scored::sys")
+        assert sweeper.activate is True and sweeper.poke == 1
+
+    def test_adopted_explorer_refreshes_on_model_edit(self, monkeypatch, req_model):
+        from longeron import edit
+
+        app = _open_lab(monkeypatch)
+        app.add_model(req_model)  # tracked: edits reach the app's chrome
+        ex = explorer_module.explore(req_model, layout="inline")
+        calls = []
+        monkeypatch.setattr(ex, "refresh", lambda: calls.append(True))
+        edit.rename(req_model, "Scored::sys", "system")
+        assert calls == [True]  # adopted explorers join the edit blast radius
+
+    def test_a_dead_app_never_blocks_exploring(self, monkeypatch, req_model):
+        import weakref
+
+        class _Gone:
+            pass
+
+        token = _Gone()
+        monkeypatch.setattr(app_module, "_ACTIVE_APP", weakref.ref(token))
+        del token  # the weakref goes dead
+        ex = explorer_module.explore(req_model, layout="inline")  # must not raise
+        assert ex.element is not None
+
+    def test_sweeper_esm_reveal_never_toggles(self):
+        # the reveal's two anti-toggle guards (maintainer QA: NB14 cell 12
+        # displayed the inspector inline; that second view's clicks
+        # COLLAPSED the freshly revealed right sidebar): only the DOCKED
+        # view -- the one that can see its own panel -- may click, and a
+        # CURRENT sidebar tab is never clicked (lumino's collapse gesture)
+        esm = app_module._APP_SWEEPER_ESM
+        assert "if (!panel) return;" in esm
+        assert 'own.classList.contains("lm-mod-current")' in esm
 
 
 class TestInspectorReveal:

@@ -61,6 +61,7 @@ def _fresh_registries(monkeypatch):
     monkeypatch.setattr(app_module, "_OPEN_APPS", {})
     monkeypatch.setattr(app_module, "_DOCKED_PANELS", {})
     monkeypatch.setattr(app_module, "_PALETTE_ADDED", False)
+    monkeypatch.setattr(app_module, "_ACTIVE_APP", None)
     monkeypatch.setattr(explorer_module, "_DOCKED_PANELS", {})
     monkeypatch.setattr(inspector_module, "_OPEN_INSPECTORS", {})
 
@@ -292,6 +293,18 @@ class TestSheet:
         assert insp._name_field.value == "axle"
         # the source location rides the header tooltip
         assert 'title="rig demo:' in insp._header.value
+
+    def test_direct_explore_selection_fills_the_sheet(self, monkeypatch, rig_model):
+        # the OTHER explorer path (maintainer QA): a plain explore() call
+        # -- never launched by the app -- is adopted into the newest app,
+        # so its tree selections reach this sheet too
+        app = _open_lab(monkeypatch)
+        ex = explorer_module.explore(rig_model, layout="inline")
+        assert app.inspector.element is None  # adoption alone shows nothing
+        ex.select("Rig::axle")
+        insp = app.inspector
+        assert insp.element is rig_model.find("Rig::axle")
+        assert insp._name_field.value == "axle"
 
     def test_read_only_rows_present_and_styled(self, monkeypatch, rig_model):
         app = _open_lab(monkeypatch)

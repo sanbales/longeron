@@ -94,12 +94,19 @@ RIGHT sidebar -- attaches to, without touching this module's internals):
   change.  App-launched explorer tabs report through the explorer's own
   public tree-selection hook (:meth:`longeron.explorer.TreeView.
   on_select`); scoreboard tabs report through the scoreboard widget's
-  ``selected`` trait.  Element selection also updates
+  ``selected`` trait.  DIRECT :func:`longeron.explorer.explore` calls
+  are covered too: every explorer constructed while an app is open is
+  ADOPTED into the kernel's most recent app (:meth:`ModelApp.
+  _adopt_explorer` via the explorer's construction hook), so a
+  notebook that mixes ``explore(...)`` cells with the app still feeds
+  the inspector -- adoption is passive (nothing changes until a real
+  selection) and joins the explorer to ``app.explorers``.  Element
+  selection also updates
   ``current_model`` to the owning model, so an inspector can always
   pair ``(current_model, current_element)``;
 * ``app.models`` / ``app.entries`` / ``app.explorers`` enumerate the
-  loaded models, their source records, and the launched explorer
-  widgets; :meth:`ModelApp.select_element` is the seam's write half --
+  loaded models, their source records, and the launched/adopted
+  explorer widgets; :meth:`ModelApp.select_element` is the seam's write half --
   programmatic selection that routes through an app-launched explorer
   of the element's model when one exists (tree reveal + diagram
   highlight), else feeds the seam directly (how the inspector's
@@ -130,6 +137,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+import weakref
 from collections.abc import Callable
 from html import escape
 from pathlib import Path
@@ -154,6 +162,7 @@ from .explorer import (
     _dock_key,
     _DockSweeper,
     _lab_frontend_detected,
+    _on_explorer_created,
     explore,
 )
 
@@ -180,6 +189,26 @@ _DOCKED_PANELS: dict[str, Any] = {}
 
 #: palette items are add-only in ipylab; add ours at most once per kernel
 _PALETTE_ADDED = False
+
+#: the kernel's most recently constructed app, as a weakref (or ``None``):
+#: DIRECT :func:`longeron.explorer.explore` calls are adopted into it so
+#: their selections feed its inspector seam too (maintainer QA; see
+#: :meth:`ModelApp._adopt_explorer`).  A weakref: a replaced app must be
+#: collectable, and a dead reference simply ends the adoption.
+_ACTIVE_APP: Any = None
+
+
+def _adopt_into_active_app(ex: Explorer) -> None:
+    """The explorer-construction adapter (``_on_explorer_created``)."""
+
+    app = _ACTIVE_APP() if _ACTIVE_APP is not None else None
+    if app is not None:
+        app._adopt_explorer(ex)
+
+
+# registered ONCE per kernel (module import is cached); the adapter above
+# resolves the live app itself, so the registration never goes stale
+_on_explorer_created(_adopt_into_active_app)
 
 #: the app's sidebar-tab icon: an abstract MODEL-DIAGRAM glyph -- two
 #: part boxes joined by a composition diamond and a routed edge, echoing
@@ -249,7 +278,12 @@ def _resolve_layout(choice: str) -> str:
 # reveals the panel on open: the Lab shell does not activate left-area
 # additions, so the sweeper clicks the app's own tab, retrying from the
 # MutationObserver until the panel measures visible; bumping ``poke``
-# re-runs the reveal (the command palette's hook).
+# re-runs the reveal (the command palette's hook).  Reveal clicks come
+# with two anti-toggle guards (maintainer QA): only the DOCKED view --
+# the one that can see its own panel node -- may click (a second view of
+# the same widget, e.g. the inspector displayed inline in a cell output,
+# would otherwise click too), and a tab that is already CURRENT is never
+# clicked (that is lumino's sidebar collapse gesture).
 _APP_SWEEPER_ESM = """
 function render({ model, el }) {
   el.style.display = "none";
@@ -312,10 +346,20 @@ function render({ model, el }) {
       revealed = true; // already visible: never click (a click would toggle)
       return;
     }
+    // only the DOCKED view (the one that can see its own panel) may click:
+    // a SECOND view of the same widget -- e.g. the inspector displayed
+    // inline in a cell output -- has no panel here and its clicks would
+    // TOGGLE the sidebar shut (maintainer QA: NB14 cell 12 collapsed the
+    // freshly revealed inspector this way)
+    if (!panel) return;
     const own = tabs().find(
       (tab) => tab.dataset.lgxkey === key && tab.dataset.lgxstamp === model.get("stamp"),
     );
     if (!own) return; // the tab attaches after render; retry on mutation
+    if (own.classList.contains("lm-mod-current")) {
+      revealed = true; // already the selected tab: clicking a CURRENT
+      return; // sidebar tab is lumino's collapse gesture, never send it
+    }
     const rect = own.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     revealAttempts += 1;
@@ -597,6 +641,11 @@ class ModelApp(W.VBox):
 
             self.inspector = Inspector(self)
 
+        # the newest app is the kernel's adoption target for DIRECT
+        # explore() calls (module docstring: THE INSPECTOR SEAM)
+        global _ACTIVE_APP
+        _ACTIVE_APP = weakref.ref(self)
+
     # -- content ---------------------------------------------------------------
 
     def _build_content(self) -> list[Any]:
@@ -870,7 +919,14 @@ class ModelApp(W.VBox):
 
     @property
     def explorers(self) -> tuple[Explorer, ...]:
-        """Every explorer this app launched (in launch order)."""
+        """Every explorer this app launched or adopted (in wiring order).
+
+        Launched: :meth:`explore_model` (a row's **Explore** button, a
+        notebook cell).  Adopted: a DIRECT :func:`longeron.explorer.
+        explore` call made while this app was the kernel's most recent
+        one (:meth:`_adopt_explorer`) -- its tree selections feed the
+        inspector seam exactly like a launched tab's.
+        """
 
         return tuple(self._explorers)
 
@@ -991,13 +1047,13 @@ class ModelApp(W.VBox):
         self._refresh_list()
 
     def refresh_explorers(self, model: M.Model) -> None:
-        """Refresh every APP-LAUNCHED explorer tab showing ``model``.
+        """Refresh every explorer in :attr:`explorers` showing ``model``.
 
         The bounded blast radius of a model edit (module docstring):
-        explorers this app launched rebuild their tree payload and the
-        selection's diagram (:meth:`longeron.explorer.Explorer.refresh`);
-        independently-created explorers and scoreboard tabs are left
-        alone.
+        launched AND adopted explorers rebuild their tree payload and
+        the selection's diagram (:meth:`longeron.explorer.Explorer.
+        refresh`); explorers the app never saw (constructed before it
+        opened) and scoreboard tabs are left alone.
         """
 
         for ex in self._explorers:
@@ -1155,13 +1211,42 @@ class ModelApp(W.VBox):
 
         The explorer docks through its own idempotent identity (one tab
         per model, replaced on relaunch).  Its tree selection feeds the
-        inspector seam: every selection in the tab updates
-        :attr:`current_element` (and :attr:`current_model`).
+        inspector seam (:meth:`_adopt_explorer`): every selection in the
+        tab updates :attr:`current_element` (and :attr:`current_model`).
         """
 
         entry = self._entry_for(model)
         layout = "lab" if self.layout_strategy == "lab" else "inline"
         ex = explore(entry.model, layout=layout)
+        # construction already adopted ex into the kernel's ACTIVE app;
+        # wire THIS app too when it is not that one (idempotent)
+        self._adopt_explorer(ex)
+        # the explorer selected its root during construction -- BEFORE the
+        # adoption callback above could hear it; seed the seam so launching
+        # a tab immediately yields a (current_model, current_element) pair
+        if ex.element is not None:
+            self._set_current_element(ex.element, model=entry.model)
+        self._set_current_model(entry.model)
+        self._status(f"explorer opened for {_display_name(entry.model)}", kind="ok")
+        return ex
+
+    def _adopt_explorer(self, ex: Explorer) -> None:
+        """Wire an explorer's tree selection into the seam (idempotent).
+
+        Adoption is how BOTH explorer paths reach the inspector: the
+        app's own launches (:meth:`explore_model`) and DIRECT
+        :func:`longeron.explorer.explore` calls made while this app is
+        the kernel's most recent one (the explorer notifies this module
+        on construction; maintainer QA -- NB14-style notebooks mix both
+        paths).  Adopted explorers join :attr:`explorers`, so model
+        edits refresh them too (:meth:`refresh_explorers`).  Adoption
+        itself is PASSIVE: it never changes ``current_model`` or
+        ``current_element`` -- only a real selection in the adopted
+        explorer does (launches seed the seam separately).
+        """
+
+        if any(existing is ex for existing in self._explorers):
+            return
         self._explorers.append(ex)
 
         def deliver(ids: list[str], ex: Explorer = ex) -> None:
@@ -1172,14 +1257,6 @@ class ModelApp(W.VBox):
                 self._set_current_element(element, model=ex.model)
 
         ex.tree.on_select(deliver)
-        # the explorer selected its root during construction -- BEFORE the
-        # seam callback above could hear it; seed the seam so launching a
-        # tab immediately yields a (current_model, current_element) pair
-        if ex.element is not None:
-            self._set_current_element(ex.element, model=entry.model)
-        self._set_current_model(entry.model)
-        self._status(f"explorer opened for {_display_name(entry.model)}", kind="ok")
-        return ex
 
     def scoreboard_model(self, model: M.Model | ModelEntry) -> Any:
         """Launch a requirements scoreboard tab; returns the widget.

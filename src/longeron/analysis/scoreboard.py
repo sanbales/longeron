@@ -668,7 +668,12 @@ class Scoreboard:
         All navigation state is scriptable: ``selected``,
         ``collapsed``, ``zoom_root``, ``max_depth`` and ``value_format``
         are two-way traits.  None of them affect scoring, which always
-        runs over the full tree.  Needs the ``viz`` extra (anywidget).
+        runs over the full tree.  Unmeasured leaves render HATCHED (the
+        honest no-data state); when MORE THAN HALF of the tree's leaves
+        are unmeasured a one-line footer legend explains the hatching
+        (``hatched = unmeasured (n of m leaves ...)``), so an
+        all-unmeasured board never reads as broken (maintainer QA).
+        Needs the ``viz`` extra (anywidget).
         """
 
         if tessellation not in ("treemap", "voronoi"):
@@ -945,7 +950,18 @@ function render({ model, el }) {
   const tip = document.createElement("div");
   tip.className = "lgn-sb-tip";
   wrap.append(svg, tip);
-  el.append(crumbs, wrap);
+  // the honest-unmeasured hint (maintainer QA: an all-hatched board reads
+  // as broken): a one-line footer naming what hatching means, shown only
+  // when MOST leaves are unmeasured (see renderAll)
+  const legend = document.createElement("div");
+  legend.className = "lgn-sb-legend";
+  legend.style.display = "none";
+  const legendSwatch = document.createElement("span");
+  legendSwatch.className = "lgn-sb-legend-swatch";
+  const legendText = document.createElement("span");
+  legendText.className = "lgn-sb-legend-text";
+  legend.append(legendSwatch, legendText);
+  el.append(crumbs, wrap, legend);
 
   let root = null;
   const parentOf = new Map(); // qname -> parent node (null at the root)
@@ -1189,6 +1205,31 @@ function render({ model, el }) {
     }
   }
 
+  function renderLegend() {
+    // counted over the FULL tree (never the zoom/collapse view): the
+    // legend describes the DATA -- how much of the board is honestly
+    // unmeasured -- and must not flicker with navigation
+    let total = 0;
+    let unmeasured = 0;
+    (function count(node) {
+      if (!node) return;
+      if (!node.children || !node.children.length) {
+        total += 1;
+        if (!node.measured) unmeasured += 1;
+        return;
+      }
+      for (const child of node.children) count(child);
+    })(root);
+    if (total && unmeasured * 2 > total) {
+      legendText.textContent =
+        `hatched = unmeasured (${unmeasured} of ${total} leaves have no ` +
+        "measure attribute or values= entry)";
+      legend.style.display = "flex";
+    } else {
+      legend.style.display = "none";
+    }
+  }
+
   function renderAll() {
     if (!root) return;
     const W = model.get("width_px") || 960;
@@ -1216,6 +1257,7 @@ function render({ model, el }) {
     svg.append(defs);
 
     renderCrumbs();
+    renderLegend();
     const view = viewState();
     assignAreas(view.zoom, W * H, view, 0);
     const cells = [], outlines = [];
@@ -1409,6 +1451,21 @@ button.lgn-sb-crumb:hover {
 .lgn-sb-label-dark { fill: rgba(0, 0, 0, 0.82); }
 .lgn-sb-label-light { fill: rgba(255, 255, 255, 0.94); }
 .lgn-sb-note { font-size: 13px; fill: var(--jp-ui-font-color2, #777777); }
+.lgn-sb-legend {
+  display: flex; align-items: center; gap: 5px; margin-top: 4px;
+  font-size: 11px; line-height: 1.4;
+  color: var(--jp-ui-font-color2, #777777);
+}
+.lgn-sb-legend-swatch {
+  width: 14px; height: 11px; border-radius: 2px; flex: none;
+  border: 1px solid var(--jp-border-color2, #cccccc);
+  /* the hatch cells' look, in CSS (the svg pattern id is per-instance) */
+  background: repeating-linear-gradient(
+    45deg, #d7d7d7, #d7d7d7 3px, #a9a9a9 3px, #a9a9a9 5px);
+}
+.lgn-sb-legend-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .lgn-sb-tip {
   position: absolute; display: none; z-index: 10; pointer-events: none;
   max-width: 320px; padding: 6px 9px; border-radius: 5px;

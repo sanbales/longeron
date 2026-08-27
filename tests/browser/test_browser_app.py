@@ -48,12 +48,6 @@ DRONE_ROW = '.lgx-app-row:has-text("drone.sysml")'
 SCOUT_ROW = '.lgx-app-row:has-text("scout mini")'
 DEFS_ROW = '.lgx-app-row:has-text("bare defs")'
 
-#: same known vendored-frontend page error the explorer scenarios allow:
-#: kernel-initiated selection can trip setSelectedNodes before the sprotty
-#: index exists (see test_browser_explorer.py); the app launches explorers,
-#: so it inherits the allowance
-KNOWN_VENDOR_PAGE_ERRORS = ("Cannot read properties of undefined (reading 'getById')",)
-
 #: one measurement of both sidebar tabs against a builtin one: the svg
 #: identity, rendered svg size, and the label's text/height (icon-only
 #: means EMPTY label text -- JupyterLab renders sidebar labels rotated,
@@ -83,15 +77,18 @@ _TAB_ANATOMY_JS = """() => {
 }"""
 
 #: the scoreboard tab's rendered truth: the host's real geometry (the
-#: maintainer's EMPTY tab was a 0x0 panel with fully-built cells inside)
-#: and the treemap cell count
+#: maintainer's EMPTY tab was a 0x0 panel with fully-built cells inside),
+#: the treemap cell count, and the honest-unmeasured legend footer
 _SCOREBOARD_STATE_JS = """() => {
   const host = document.querySelector('.lgn-sb-host');
   const rect = host ? host.getBoundingClientRect() : {width: 0, height: 0};
+  const legend = document.querySelector('.lgn-sb-legend');
   return {
     hostW: rect.width,
     hostH: rect.height,
     cells: document.querySelectorAll('.lgn-sb-cell').length,
+    legendVisible: Boolean(legend && getComputedStyle(legend).display !== 'none'),
+    legendText: legend ? legend.textContent : '',
   };
 }"""
 
@@ -202,7 +199,16 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
         timeout=120,
         label="the scoreboard tab renders its hatched cells at real size",
     )
+    # the honest-unmeasured legend (maintainer QA: an all-hatched board
+    # read as broken): ScoutMini's leaves are ALL unmeasured here, so the
+    # one-line footer must name what the hatching means
+    board = page.evaluate(_SCOREBOARD_STATE_JS)
+    assert board["legendVisible"] is True, board
+    assert "hatched = unmeasured (2 of 2" in board["legendText"], board
     page.locator(".lgn-sb-host").screenshot(path=str(EVIDENCE / "app-scoreboard-rendered.png"))
+    page.locator(".lgn-sb-legend").screenshot(
+        path=str(EVIDENCE / "app-scoreboard-unmeasured-legend.png")
+    )
 
     # -- launch an explorer tab from the drone row -------------------------
     page.click(f"{DRONE_ROW} button.lgx-app-explore")
@@ -239,7 +245,7 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
     )
     page.wait_for_selector(".lgx-app-host", state="visible", timeout=60_000)
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()
 
 
 def test_inspector_reveals_follows_selection_and_edits(lab):
@@ -354,4 +360,4 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     assert checker["inspector_element"] == "Drone::HexaCopter", checker
     assert checker["dirty"] is True, checker
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()

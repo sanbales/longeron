@@ -26,13 +26,6 @@ pytestmark = pytest.mark.browser
 NOTEBOOK = "explorer_scenario.ipynb"
 EVIDENCE = Path(__file__).resolve().parents[2] / "build" / "evidence"
 
-#: kernel-initiated selection (Explorer -> diagram selection.ids) trips
-#: setSelectedNodes in the vendored jupyter-elk frontend before the sprotty
-#: model index exists (vendor/ipyelk/js/display_widget.ts, `source.index`
-#: undefined). Harmless here -- the selection round trip demonstrably
-#: completes both ways. Remove once the vendored frontend guards the index.
-KNOWN_VENDOR_PAGE_ERRORS = ("Cannot read properties of undefined (reading 'getById')",)
-
 #: the VISIBLE diagram's framing, browser-truth: built widgets persist in
 #: the box as display-toggled children, so measure the one sprotty host
 #: div with a real rect.  ``fitted`` is the conftest snapshot idiom (the
@@ -122,7 +115,7 @@ def test_tree_and_diagram_selection_round_trip(lab):
     assert checker["element"] == "Rig::hub", checker
     assert checker["selected"], checker
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()
 
 
 def test_reshown_cached_diagram_is_refitted_after_kind_switch(lab):
@@ -184,7 +177,7 @@ def test_reshown_cached_diagram_is_refitted_after_kind_switch(lab):
     assert checker["element"] == "Rig::Spin", checker
     assert checker["kind"] == "state", checker
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()
 
 
 def test_relationship_rows_toggle_and_edge_selection(lab):
@@ -263,4 +256,4 @@ def test_relationship_rows_toggle_and_edge_selection(lab):
     assert checker["match_count"] == 1, checker
     assert checker["rel_edges"] >= 2, checker  # the seam rode the widget
 
-    lab.assert_no_errors(allow_page_errors=KNOWN_VENDOR_PAGE_ERRORS)
+    lab.assert_no_errors()

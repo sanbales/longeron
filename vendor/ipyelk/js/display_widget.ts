@@ -37,7 +37,7 @@ import {
 import createContainer from './sprotty/di-config';
 import { JLModelSource } from './sprotty/diagram-server';
 // import { VNode } from 'snabbdom';
-import { ELK_CSS, NAME, TAnyELKMessage, VERSION } from './tokens';
+import { ELK_CSS, ELK_DEBUG, NAME, TAnyELKMessage, VERSION } from './tokens';
 import { NodeExpandTool, NodeSelectTool } from './tools';
 import {
   FeedbackActionDispatcher,
@@ -119,6 +119,10 @@ export class ELKViewerView extends DOMWidgetView {
   // elementRegistry: SModelRegistry;
   currentRoot: SModelRoot;
   was_shown = new PromiseDelegate<void>();
+  // a kernel-side selection that arrived BEFORE the first layout was
+  // submitted (no sprotty model/index exists yet); replayed by
+  // diagramLayout after the first submit
+  pendingSelected: string[] | null = null;
 
   initialize(parameters: any) {
     super.initialize(parameters);
@@ -302,6 +306,17 @@ export class ELKViewerView extends DOMWidgetView {
     let selection = this.model.get('selection');
     if (selection != null) {
       let selected: string[] = selection.get('ids');
+      if (this.source?.index == null) {
+        // the kernel can set selection ids before the first layout has
+        // been submitted (a comm set_state racing initSprotty /
+        // diagramLayout): there is no sprotty model or index to select
+        // against yet. Queue the ids; diagramLayout replays them once
+        // the first model lands.
+        this.pendingSelected = selected;
+        ELK_DEBUG && console.log('ELK queueing selection before first layout', selected);
+        return;
+      }
+      this.pendingSelected = null; // a live selection supersedes any queued one
       let old_selected: string[] = selection.previous('ids');
       let exiting: string[] = difference(old_selected, selected);
       let entering: string[] = difference(selected, old_selected);
@@ -320,9 +335,14 @@ export class ELKViewerView extends DOMWidgetView {
    * Keep reference of the current selected nodes on the selection widget
    */
   async setSelectedNodes(selected: string[]) {
-    this.source.selectedNodes = selected.map(
-      (id) => this.source.index.getById(id) as any,
-    );
+    const index = this.source?.index;
+    if (index == null) {
+      // no model submitted yet (or a disposed view's zombie listener):
+      // there is nothing to map the ids against
+      ELK_DEBUG && console.log('ELK skipping setSelectedNodes: no model index', selected);
+      return;
+    }
+    this.source.selectedNodes = selected.map((id) => index.getById(id) as any);
   }
 
   updateHoverTool() {
@@ -360,6 +380,18 @@ export class ELKViewerView extends DOMWidgetView {
       return null;
     }
     await this.source.updateLayout(layout, symbols, this.div_id);
+    if (this.pendingSelected != null) {
+      // replay the selection that arrived before this first layout
+      const selected = this.pendingSelected;
+      this.pendingSelected = null;
+      await this.actionDispatcher.dispatch(
+        SelectAction.create({
+          selectedElementsIDs: selected,
+          deselectedElementsIDs: [],
+        }),
+      );
+      this.setSelectedNodes(selected);
+    }
     this.model.layoutUpdated.emit();
     this.model.diagramUpdated.emit();
   }
