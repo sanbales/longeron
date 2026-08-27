@@ -42,10 +42,14 @@ docs:  ## build the documentation site (needs the [docs] extra; pixi: `pixi run 
 hooks:  ## enable the repo git hooks (auto-strips staged notebook outputs; blocks >5MB blobs)
 	git config core.hooksPath scripts/git-hooks
 
-sync-labextension:  ## sync the vendored jupyter-elk labextension build into every pixi env (JupyterLab serves the env COPY, not vendor/)
-	@src="vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"; \
-	for dst in .pixi/envs/*/share/jupyter/labextensions/@jupyrdf/jupyter-elk; do \
-		[ -d "$$dst" ] || continue; \
-		diff -rq "$$src" "$$dst" >/dev/null 2>&1 || echo "WARNING: $$dst was serving a STALE jupyter-elk build (differs from the vendor build); syncing"; \
+sync-labextension:  ## sync the repo labextension builds (vendored jupyter-elk + the longeron launcher tile) into every pixi env (JupyterLab serves the env COPY, not the repo build)
+	@sync() { src="$$1"; rel="$$2"; \
+	for root in .pixi/envs/*/share/jupyter/labextensions; do \
+		[ -d "$$root" ] || continue; \
+		dst="$$root/$$rel"; \
+		if [ -d "$$dst" ]; then diff -rq "$$src" "$$dst" >/dev/null 2>&1 || echo "WARNING: $$dst was serving a STALE build (differs from the repo build); syncing"; fi; \
+		mkdir -p "$$dst"; \
 		rsync -a --delete "$$src/" "$$dst/"; \
-	done
+	done; }; \
+	sync "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk" "@jupyrdf/jupyter-elk"; \
+	sync "npm/_d/share/jupyter/labextensions/longeron" "longeron"

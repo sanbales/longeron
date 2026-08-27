@@ -48,6 +48,7 @@ dev = [
     # cadquery mirrors [cad] via PIXI (conda-forge) rather than this pypi
     # extra: cadquery-ocp ships no cp313 wheels on PyPI yet, conda-forge does
     "pint>=0.24",  # mirrors [units] (the conversion facade)
+    "setuptools>=68",  # tests import setup.py (labextension data_files map)
 ]
 docs = [
     # the documentation site (docs/): sphinx-build -W -b html docs build/docs

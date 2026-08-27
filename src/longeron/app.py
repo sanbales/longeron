@@ -119,11 +119,13 @@ stale entry from a dead kernel is replaced (the ipylab frontend disposes
 same-id commands on re-add), and any registration failure is swallowed
 -- the panel itself never depends on it.  A dead kernel's palette ITEM
 can linger until its command is re-registered; ipylab exposes no
-palette-item removal.  (A JupyterLab LAUNCHER tile was investigated and
-is NOT reachable from the kernel: ipylab 1.1 ships no ``ILauncher``
-surface at all -- its frontend plugin depends only on apputils/mainmenu/
-notebook -- so a tile needs a tiny static labextension; see the final
-design notes.)
+palette-item removal.  (The JupyterLab LAUNCHER tile is NOT reachable
+from the kernel -- ipylab 1.1 ships no ``ILauncher`` surface at all, its
+frontend plugin depends only on apputils/mainmenu/notebook -- so the
+tile ships as the tiny static labextension in ``npm/``: its
+``longeron:launch`` command starts/reuses the dedicated ``longeron-app``
+console session and executes ``open(layout="lab")`` there, leaning on
+this module's idempotent docking.  See ``npm/README.md``.)
 
 Headless (``layout='auto'`` outside a Lab frontend, or
 ``layout='inline'``) the SAME widget renders inline in the cell output

@@ -17,6 +17,12 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
+# The labextension's npm build intermediates (npm/_d IS committed)
+npm/node_modules/
+npm/lib/
+npm/tsconfig.tsbuildinfo
+npm/.yarn/
+
 # Private, never-published notebooks (internal explorations)
 notebooks/private/
 

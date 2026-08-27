@@ -50,6 +50,10 @@
   "sideEffects": false,
   "jupyterlab": {
     "extension": true,
-    "outputDir": "_d/share/jupyter/labextensions/longeron"
+    "outputDir": "_d/share/jupyter/labextensions/longeron",
+    "_build": {
+      "load": "static/remoteEntry.0b85544279bede582c04.js",
+      "extension": "./extension"
+    }
   }
 }

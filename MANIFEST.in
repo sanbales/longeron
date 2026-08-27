@@ -1,0 +1,5 @@
+# sdist completeness for the wheel's data files (see setup.py): the
+# committed labextension build plus its install.json ride along so a
+# wheel built FROM the sdist still carries the launcher tile.
+graft npm/_d
+include npm/install.json

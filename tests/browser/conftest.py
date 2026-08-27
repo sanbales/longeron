@@ -47,6 +47,8 @@ REPO = Path(__file__).resolve().parents[2]
 ARTIFACTS = REPO / "build" / "test-artifacts"
 _LABEXT_REL = Path("share/jupyter/labextensions/@jupyrdf/jupyter-elk")
 _VENDOR_BUILD = REPO / "vendor/ipyelk/src/_d" / _LABEXT_REL
+_LONGERON_EXT_REL = Path("share/jupyter/labextensions/longeron")
+_LONGERON_EXT_BUILD = REPO / "npm/_d" / _LONGERON_EXT_REL
 
 #: console error texts to ignore (currently none; grow this ONLY for noise
 #: that is provably unrelated to the widgets under test, and say why)
@@ -95,23 +97,27 @@ def _manifest(root: Path) -> dict[str, int]:
 
 
 def _sync_labextension() -> None:
-    """Copy the vendored jupyter-elk build over the served copy.
+    """Copy the repo's labextension builds over the served copies.
 
     JupyterLab serves ``{sys.prefix}/share/jupyter/labextensions/...`` --
-    a copy made at install time -- so a rebuilt vendor bundle silently
-    keeps serving stale code unless synced (see the ``sync-labextension``
+    a copy made at install time -- so a rebuilt bundle silently keeps
+    serving stale code unless synced (see the ``sync-labextension``
     pixi task, which this mirrors for the interpreter running the tests).
+    Two builds ride this: the vendored jupyter-elk and the longeron
+    launcher tile (npm/_d; editable installs never place data files, so
+    without this sync the tile tier would test NOTHING).
     """
 
-    if not _VENDOR_BUILD.is_dir():
-        pytest.fail(f"vendored labextension build missing: {_VENDOR_BUILD}")
-    served = Path(sys.prefix) / _LABEXT_REL
-    if served.is_dir() and _manifest(served) == _manifest(_VENDOR_BUILD):
-        return
-    if served.is_dir():
-        sys.stderr.write(f"WARNING: {served} was serving a STALE jupyter-elk build; syncing\n")
-        shutil.rmtree(served)
-    shutil.copytree(_VENDOR_BUILD, served)
+    for build, rel in ((_VENDOR_BUILD, _LABEXT_REL), (_LONGERON_EXT_BUILD, _LONGERON_EXT_REL)):
+        if not build.is_dir():
+            pytest.fail(f"labextension build missing: {build}")
+        served = Path(sys.prefix) / rel
+        if served.is_dir() and _manifest(served) == _manifest(build):
+            continue
+        if served.is_dir():
+            sys.stderr.write(f"WARNING: {served} was serving a STALE build; syncing\n")
+            shutil.rmtree(served)
+        shutil.copytree(build, served)
 
 
 @dataclass

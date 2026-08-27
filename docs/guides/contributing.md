@@ -54,8 +54,8 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `capture-widgets` (pixi) | re-capture the tutorial widget snapshots (`docs/_static/widget-snapshots/`) from a headless JupyterLab; run after changing a widget-bearing cell in tutorials 1–11. See below. |
 | `hooks` | point `core.hooksPath` at `scripts/git-hooks`. |
 | `notebooks` (pixi) / `scripts/run_notebooks.py` | execute every tutorial notebook, then strip outputs. |
-| `sync-labextension` (pixi) | copy the vendored jupyter-elk labextension build into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
-| `lab` (pixi) | JupyterLab in `notebooks/`, with the vendored ipyelk extension pre-registered (depends on `sync-labextension`). |
+| `sync-labextension` (pixi) | copy the repo's labextension builds -- the vendored jupyter-elk **and** the longeron launcher tile (`npm/_d`, which editable installs never place) -- into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
+| `lab` (pixi) | JupyterLab in `notebooks/`, with the vendored ipyelk extension and the longeron launcher tile pre-registered (depends on `sync-labextension`). |
 
 Ruff formats and lints the notebooks too (`extend-include = ["*.ipynb"]`
 in `pyproject.toml`), so `lint` gates notebook code cells exactly like
@@ -117,13 +117,16 @@ Some trees are outputs, not sources. Edit the source and regenerate:
 
 One labextension footgun to know about: rebuilding the vendored
 TypeScript (`vendor/ipyelk/js/`) writes the bundles into
-`vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk`,
+`vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk`
+(and rebuilding the launcher tile, `npm/`, writes into
+`npm/_d/share/jupyter/labextensions/longeron` -- see `npm/README.md`),
 but JupyterLab serves the **copy** that `pixi install` made under
 `.pixi/envs/*/share/jupyter/labextensions/` -- so a rebuilt bundle
 silently keeps serving the old code ("the fix didn't take").  `pixi run
 lab` now runs `sync-labextension` first (it prints a warning whenever a
-served copy was stale before syncing); after rebuilding the TS, restart
-lab through `pixi run lab` (or run `make sync-labextension`) and
+served copy was stale before syncing); after rebuilding either
+extension's TS, restart lab through `pixi run lab` (or run `make
+sync-labextension`) and
 hard-refresh the browser.
 
 CI runs a grammar-regen job that fails when the committed parsers drift
