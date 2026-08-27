@@ -419,7 +419,14 @@ public export; it retires in the same change that lands `verify`:
 
 ## Open questions for the maintainer
 
-Recommendations below are the working plan unless overruled.
+All six were ratified by the maintainer on 2026-08-27 -- five as
+recommended, and Q1 AMENDED: the extra is compositional,
+`verify = ["hypothesis>=6.100", "longeron[smt]"]` (reusing smt's z3
+pin), alongside new composite extras `analysis = ["longeron[mdao,
+trades,smt,viz]"]`, `ui = ["longeron[explorer,replay,viz]"]`, and
+`all = ["longeron[analysis,ui,verify,rdf,client,server,ecore]"]` --
+`[cad]` deliberately excluded from `all` (the ~1 GB OCC kernel stays
+an explicit opt-in). The implementation treats these as settled.
 
 1. **Does `[verify]` include `z3-solver`?** Hypothesis alone covers
    `hunt`/`sequences`; `cover` and `prove` want Z3. *Recommendation:*
