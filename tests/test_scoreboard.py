@@ -919,3 +919,141 @@ class TestZoomNavigation:
     def test_crumb_and_twist_css_contracts(self, widget):
         for token in ("lgn-sb-crumbs", "lgn-sb-crumb-here", "lgn-sb-crumb-sep", "lgn-sb-twist"):
             assert token in widget._css, token
+
+
+# ---------------------------------------------------------------------------
+# group-membership legibility (maintainer polish: 'not clear which ones
+# are with the parent')
+# ---------------------------------------------------------------------------
+
+
+class TestGroupLegibility:
+    """Three affordances off the outline geometry the renderer already
+    computes: an always-on two-tone boundary tier (dark core over the
+    white casing), a perimeter label (name + aggregate) on groups with
+    room, and hover-the-twist/label spotlighting the group's full
+    extent.  All hover-only or passive -- the ratified gestures
+    (double-click zooms, twist collapses, Esc backs out) are untouched."""
+
+    def test_esm_boundary_tier(self, widget):
+        # every group outline draws a thin dark core OVER the white
+        # casing (heavier when shallower): group perimeters read as a
+        # distinct border tier against the hairline leaf borders
+        assert "lgn-sb-outline-core" in widget._esm
+        assert '"lgn-sb-outline"' in widget._esm  # the casing stays
+
+    def test_css_boundary_tier_is_theme_aware(self, widget):
+        # the core contrasts with the casing in BOTH lab themes: the
+        # casing is the layout background, the core the UI font color
+        assert "lgn-sb-outline-core" in widget._css
+        assert "--jp-ui-font-color2" in widget._css
+
+    def test_esm_extent_spotlight_on_hover(self, widget):
+        # hovering a group's twist (or perimeter label) spotlights its
+        # full extent: an inverted mask washes out everything OUTSIDE
+        # the group, so exactly the member cells pop inside a brand rim
+        for token in (
+            "addExtent",
+            "hoverExtent",
+            "lgn-sb-extent-wash",
+            "lgn-sb-extent-rim",
+            "pointerenter",
+            "pointerleave",
+        ):
+            assert token in widget._esm, token
+
+    def test_extent_mask_ids_are_per_instance(self, widget):
+        # same windowed-notebook trap as the hatch pattern: a duplicated
+        # mask id would resolve into another widget's detached <defs>
+        assert "`${iid}-ext-${" in widget._esm
+
+    def test_extent_covers_expanded_and_collapsed_groups(self, widget):
+        assert "addExtent(outline.node, outline.d)" in widget._esm
+        assert "addExtent(node, cell.d)" in widget._esm  # aggregate cells too
+
+    def test_css_extent_is_hover_only(self, widget):
+        assert ".lgn-sb-extent { visibility: hidden;" in widget._css
+        assert "lgn-sb-extent-on" in widget._css
+
+    def test_esm_group_perimeter_label(self, widget):
+        # name + aggregate pinned next to the twist, on groups with room
+        assert "addGroupLabel" in widget._esm
+        assert "lgn-sb-gl" in widget._esm
+        assert "fmtScore(node.aggregate)" in widget._esm
+
+    def test_group_label_is_inert(self, widget):
+        # the label highlights on hover but never selects nor zooms --
+        # legibility only, NO new gestures
+        assert 'label.addEventListener("click", swallow)' in widget._esm
+        assert 'label.addEventListener("dblclick", swallow)' in widget._esm
+
+    def test_css_group_label(self, widget):
+        assert "lgn-sb-gl" in widget._css
+
+    def test_ratified_gestures_survive(self, widget):
+        # the maintainer's 0.10 gestures, verbatim: double-click zooms,
+        # the twist collapses in place, Esc steps out one level
+        assert "double-click to zoom" in widget._esm
+        assert "toggle(node)" in widget._esm
+        assert "Escape" in widget._esm
+
+
+# ---------------------------------------------------------------------------
+# the selection treatment (maintainer polish: 'it just draws one blue
+# line, it's weird and not very intuitive')
+# ---------------------------------------------------------------------------
+
+
+class TestSelectionTreatment:
+    """The old centered 3px stroke clipped at the canvas edge and
+    vanished under neighbors' strokes -- on a voronoi polygon it read
+    as one stray blue line.  Now: an INSET ring (the cell's own
+    perimeter stroked wide but clipped to the cell) plus a
+    hue-preserving fill lift, identical across both tessellations and
+    on hatched unmeasured cells."""
+
+    def test_esm_ring_is_clipped_inset(self, widget):
+        # the ring re-uses the cell's own path, stroked wide and clipped
+        # to the cell: fully inside the perimeter, so it can neither
+        # clip at the canvas edge nor hide under a neighbor's stroke
+        assert "lgn-sb-ring" in widget._esm
+        assert "clipPath" in widget._esm
+        assert 'ring.setAttribute("clip-path"' in widget._esm
+        assert 'ring.setAttribute("d", path.getAttribute("d"))' in widget._esm
+
+    def test_ring_clip_ids_are_per_instance(self, widget):
+        assert "`${iid}-sel-${" in widget._esm  # like the hatch pattern id
+
+    def test_ring_works_for_hatched_cells(self, widget):
+        # the ring is a SEPARATE path over the cell, independent of its
+        # fill -- a hatched (unmeasured) cell shows selection exactly
+        # like a colored one; restyle() builds it per selected cell
+        assert '.querySelectorAll(".lgn-sb-cell")' in widget._esm
+        assert "ringLayer" in widget._esm
+
+    def test_old_raise_hack_is_gone(self, widget):
+        # selected cells no longer jump over their siblings to rescue a
+        # centered stroke -- the ring lives in its own layer
+        assert "path.parentNode.append(path)" not in widget._esm
+
+    def test_css_ring(self, widget):
+        assert "lgn-sb-ring" in widget._css
+        assert "--jp-brand-color1" in widget._css
+
+    def test_css_fill_lift_preserves_hue(self, widget):
+        # color = utility must survive selection: the fill treatment is
+        # a brightness/saturation lift, never a hue shift ...
+        assert "saturate" in widget._css
+        # ... and the old centered stroke rule is gone for good
+        assert "stroke: var(--jp-brand-color1, #1976d2); stroke-width: 3;\n}" not in widget._css
+
+    def test_selection_trait_roundtrip_is_unchanged(self, uav):
+        # the automation surface is untouched: selected stays a two-way
+        # list trait with the observer idiom
+        pytest.importorskip("anywidget")
+        widget = uav.widget()
+        seen = []
+        widget.on_select(seen.append)
+        widget.selected = ["ScoutUAV::mission::performance::endurance"]
+        widget.selected = []
+        assert seen == [["ScoutUAV::mission::performance::endurance"], []]

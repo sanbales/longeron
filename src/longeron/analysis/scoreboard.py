@@ -74,7 +74,21 @@ always computed over the full tree.  Hover shows qualified name,
 weight and share, raw value (with its declared ``unit``), and utility;
 click writes the ``selected`` trait
 (the same observer idiom as the other longeron widgets, ready for
-linked selection).  Utilities and aggregates render through ONE
+linked selection).  Group MEMBERSHIP is legible without interaction
+(maintainer QA: the twist alone never said which cells belong to the
+group, especially in the Voronoi): every expanded group's perimeter --
+the union of its member cells' edges -- draws as a two-tone boundary
+tier (a thin dark core over the white casing, heavier when shallower),
+groups with enough room pin a small ``name / aggregate`` label at
+their perimeter, and hovering a group's twist (or that label) spotlights
+the group's full extent -- a translucent wash covers everything
+outside the group, so its member cells pop at their exact utility
+colors inside a brand-colored rim.  Selection renders as an inset ring -- the cell's own
+perimeter stroked wide but clipped to the cell, so it never clips at
+the canvas edge nor vanishes under a neighbor's stroke (maintainer QA:
+the old centered stroke read as one stray blue line) -- plus a
+hue-preserving brightness/saturation lift; hatched unmeasured cells
+show both.  Utilities and aggregates render through ONE
 consistent format everywhere (cell labels, tooltips, the text table):
 percent with one decimal by default, or three-decimal floats under
 ``value_format="float"``.  Unmeasured cells are grey and hatched.  The color
@@ -654,6 +668,15 @@ class Scoreboard:
           expands that group IN PLACE, at any depth: a collapsed group
           renders as one cell occupying its subtree's total area,
           colored by the subtree aggregate.
+        * group MEMBERSHIP affordances (hover-only -- no new gestures):
+          every expanded group's perimeter draws as an always-on
+          two-tone boundary tier over exactly its member cells, groups
+          with enough room pin a ``name / aggregate`` label at their
+          perimeter, and HOVERING a group's twist or perimeter label
+          SPOTLIGHTS the group's full extent (everything outside it
+          washes out; member cells keep their exact utility colors).
+          Selection is an inset ring plus a hue-preserving fill lift,
+          identical across both tessellations and on hatched cells.
 
         ``collapsed`` pre-collapses subtrees by qualified name;
         ``zoom_root`` starts zoomed into one (``""`` is the tree root);
@@ -974,6 +997,8 @@ function render({ model, el }) {
   el.append(crumbs, wrap, legend);
 
   let root = null;
+  let defsEl = null; // the current render's <defs> (selection clips live here)
+  let ringLayer = null; // the selection rings' layer (above the boundary lines)
   const parentOf = new Map(); // qname -> parent node (null at the root)
   const byQname = new Map();
   function rebuild() {
@@ -1041,7 +1066,9 @@ function render({ model, el }) {
                    area: rect.w * rect.h, width: rect.w, twist });
       return;
     }
-    if (depth > 0) outlines.push({ node, d, depth, area: rect.w * rect.h, twist });
+    if (depth > 0) {
+      outlines.push({ node, d, depth, area: rect.w * rect.h, width: rect.w, twist });
+    }
     const rects = lgnSbSquarify(kids.map((k) => k._area), rect);
     kids.forEach((k, i) => treemapCells(k, rects[i], view, cells, outlines, depth + 1));
   }
@@ -1078,8 +1105,9 @@ function render({ model, el }) {
       const twist = lgnSbTwistAnchor(n.polygon);
       if (n.children) {
         if (n.depth > 0) {
-          outlines.push({ node: n.data.node, d, depth: n.depth,
-                          area: lgnSbPolyArea(n.polygon), twist });
+          const area = lgnSbPolyArea(n.polygon);
+          outlines.push({ node: n.data.node, d, depth: n.depth, area,
+                          width: Math.sqrt(area) * 1.15, twist });
         }
         continue;
       }
@@ -1207,11 +1235,31 @@ function render({ model, el }) {
   }
 
   function restyle() {
+    // selection: a hue-preserving fill lift (the class) plus an INSET
+    // ring -- the cell's own perimeter stroked wide but clipped to the
+    // cell, so it never clips at the canvas edge nor vanishes under a
+    // neighbor's stroke (maintainer QA: the old centered 3px stroke did
+    // both and read as one stray blue line); hatched cells show it too
     const selected = selectedSet();
+    if (ringLayer) ringLayer.textContent = "";
+    if (defsEl) for (const clip of defsEl.querySelectorAll("clipPath")) clip.remove();
+    let seq = 0;
     for (const path of svg.querySelectorAll(".lgn-sb-cell")) {
       const hit = selected.has(path.dataset.qname);
       path.classList.toggle("lgn-sb-selected", hit);
-      if (hit) path.parentNode.append(path); // over its siblings' strokes
+      if (!hit || !ringLayer || !defsEl) continue;
+      const clip = document.createElementNS(NS, "clipPath");
+      clip.setAttribute("id", `${iid}-sel-${seq}`); // per-instance, like the hatch
+      const shape = document.createElementNS(NS, "path");
+      shape.setAttribute("d", path.getAttribute("d"));
+      clip.append(shape);
+      defsEl.append(clip);
+      const ring = document.createElementNS(NS, "path");
+      ring.setAttribute("d", path.getAttribute("d"));
+      ring.setAttribute("class", "lgn-sb-ring");
+      ring.setAttribute("clip-path", `url(#${iid}-sel-${seq})`);
+      ringLayer.append(ring);
+      seq += 1;
     }
   }
 
@@ -1265,6 +1313,7 @@ function render({ model, el }) {
     pattern.append(back, line);
     defs.append(pattern);
     svg.append(defs);
+    defsEl = defs; // restyle() parks the selection clipPaths here
 
     renderCrumbs();
     renderLegend();
@@ -1287,9 +1336,54 @@ function render({ model, el }) {
 
     const cellLayer = document.createElementNS(NS, "g");
     const lineLayer = document.createElementNS(NS, "g");
+    ringLayer = document.createElementNS(NS, "g"); // selection rings over the lines
+    const extentLayer = document.createElementNS(NS, "g"); // hover-the-twist overlays
     const textLayer = document.createElementNS(NS, "g");
     const twistLayer = document.createElementNS(NS, "g");
-    svg.append(cellLayer, lineLayer, textLayer, twistLayer);
+    svg.append(cellLayer, lineLayer, ringLayer, extentLayer, textLayer, twistLayer);
+
+    const extents = new Map(); // group qname -> its extent overlay <g>
+    let extentSeq = 0;
+    function addExtent(node, d) {
+      // the group's full extent -- exactly its member cells: the voronoi
+      // group perimeter is the union of member cell edges, the treemap
+      // one the enclosing rect -- SPOTLIT while its twist or perimeter
+      // label is hovered (maintainer QA: the twist alone never said
+      // WHICH cells belong to the group).  A translucent wash covers
+      // everything OUTSIDE the group (an inverted mask, per-instance id
+      // like the hatch), so member cells pop at their exact utility
+      // colors inside a brand-colored rim.
+      const maskId = `${iid}-ext-${extentSeq++}`;
+      const mask = document.createElementNS(NS, "mask");
+      mask.setAttribute("id", maskId);
+      const keep = document.createElementNS(NS, "rect");
+      keep.setAttribute("width", W);
+      keep.setAttribute("height", H);
+      keep.setAttribute("fill", "white");
+      const cut = document.createElementNS(NS, "path");
+      cut.setAttribute("d", d);
+      cut.setAttribute("fill", "black");
+      mask.append(keep, cut);
+      defsEl.append(mask);
+      const group = document.createElementNS(NS, "g");
+      group.setAttribute("class", "lgn-sb-extent");
+      group.dataset.qname = node.qname;
+      const wash = document.createElementNS(NS, "rect");
+      wash.setAttribute("class", "lgn-sb-extent-wash");
+      wash.setAttribute("width", W);
+      wash.setAttribute("height", H);
+      wash.setAttribute("mask", `url(#${maskId})`);
+      const rim = document.createElementNS(NS, "path");
+      rim.setAttribute("class", "lgn-sb-extent-rim");
+      rim.setAttribute("d", d);
+      group.append(wash, rim);
+      extentLayer.append(group);
+      extents.set(node.qname, group);
+    }
+    function hoverExtent(node, on) {
+      const group = extents.get(node.qname);
+      if (group) group.classList.toggle("lgn-sb-extent-on", on);
+    }
 
     const placedTwists = [];
     function addTwist(node, at, open) {
@@ -1311,20 +1405,67 @@ function render({ model, el }) {
       const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
       glyph.addEventListener("dblclick", swallow); // the twist never zooms
       glyph.addEventListener("click", (ev) => { swallow(ev); toggle(node); }); // never selects
+      glyph.addEventListener("pointerenter", () => hoverExtent(node, true));
+      glyph.addEventListener("pointerleave", () => hoverExtent(node, false));
       twistLayer.append(glyph);
+      return [x, y]; // the nudged anchor (the group label sits just right of it)
+    }
+
+    function addGroupLabel(node, at, width) {
+      // the group's name + aggregate pinned at its perimeter, next to
+      // the twist (groups with enough room only): which region is whose,
+      // without hovering anything
+      const [x, y] = at;
+      const score = fmtScore(node.aggregate);
+      let name = node.label;
+      const maxChars = Math.max(4, Math.floor(width / 6.4) - score.length - 4);
+      if (name.length > maxChars) name = `${name.slice(0, Math.max(1, maxChars - 1))}\u2026`;
+      const label = document.createElementNS(NS, "text");
+      label.setAttribute("x", x + 9);
+      label.setAttribute("y", y);
+      label.setAttribute("class", "lgn-sb-gl");
+      label.dataset.qname = node.qname;
+      label.textContent = `${name} \u00b7 ${score}`;
+      const title = document.createElementNS(NS, "title");
+      title.textContent = `${node.qname}\n${node.leaves} leaves`;
+      label.append(title);
+      // hover highlights the extent, like the twist; otherwise INERT --
+      // the ratified gestures stay exactly as they are
+      label.addEventListener("pointerenter", () => hoverExtent(node, true));
+      label.addEventListener("pointerleave", () => hoverExtent(node, false));
+      const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      label.addEventListener("click", swallow); // labels never select ...
+      label.addEventListener("dblclick", swallow); // ... nor zoom
+      twistLayer.append(label);
+      // block later twists from nudging underneath the label's footprint
+      const px = (name.length + score.length + 3) * 6.4;
+      for (let bx = x + 14; bx < x + 9 + px; bx += 14) placedTwists.push({ x: bx, y });
     }
 
     // outlines (and their twists) first: parents claim their corner
     // before their descendants' twists get nudged aside
     for (const outline of outlines.sort((a, b) => a.depth - b.depth)) {
-      const path = document.createElementNS(NS, "path");
-      path.setAttribute("d", outline.d);
-      path.setAttribute("class", "lgn-sb-outline");
-      path.setAttribute("stroke-width", Math.max(1, 4 - outline.depth).toFixed(1));
-      lineLayer.append(path);
+      const casing = document.createElementNS(NS, "path");
+      casing.setAttribute("d", outline.d);
+      casing.setAttribute("class", "lgn-sb-outline");
+      casing.setAttribute("stroke-width", Math.max(1, 4 - outline.depth).toFixed(1));
+      lineLayer.append(casing);
+      // the always-on boundary tier: a thin dark core over the white
+      // casing (heavier when shallower), so group perimeters read as a
+      // distinct border tier against the hairline leaf borders and the
+      // voronoi shows which cells belong together without interaction
+      const core = document.createElementNS(NS, "path");
+      core.setAttribute("d", outline.d);
+      core.setAttribute("class", "lgn-sb-outline-core");
+      core.setAttribute("stroke-width", Math.max(0.7, 2.1 - 0.5 * outline.depth).toFixed(1));
+      lineLayer.append(core);
+      addExtent(outline.node, outline.d);
       // every expanded group collapses in place from its own twist --
       // including one whose children are all groups
-      if (outline.area >= W * H * 0.004) addTwist(outline.node, outline.twist, true);
+      if (outline.area >= W * H * 0.004) {
+        const anchor = addTwist(outline.node, outline.twist, true);
+        if (outline.area >= W * H * 0.02) addGroupLabel(outline.node, anchor, outline.width);
+      }
     }
     for (const cell of cells) {
       const node = cell.node;
@@ -1350,7 +1491,10 @@ function render({ model, el }) {
 
       if (cell.area >= W * H * 0.004) {
         const group = node.children && node.children.length;
-        if (group) addTwist(node, cell.twist, false); // aggregate cell: closed twist
+        if (group) {
+          addExtent(node, cell.d); // a collapsed group's extent IS its cell
+          addTwist(node, cell.twist, false); // aggregate cell: closed twist
+        }
         const size = Math.min(15, Math.max(9, 0.14 * Math.sqrt(cell.area)));
         const dark = measured ? color.dark : true;
         const label = document.createElementNS(NS, "text");
@@ -1441,12 +1585,41 @@ button.lgn-sb-crumb:hover {
 }
 .lgn-sb-cell:hover { filter: brightness(1.07); }
 .lgn-sb-cell.lgn-sb-selected {
-  stroke: var(--jp-brand-color1, #1976d2); stroke-width: 3;
+  /* the fill treatment: a hue-preserving lift (color = utility must
+     survive selection); the inset ring (.lgn-sb-ring) does the rest */
+  filter: brightness(1.08) saturate(1.3);
+}
+.lgn-sb-ring {
+  fill: none; stroke: var(--jp-brand-color1, #1976d2);
+  /* stroked wide, clipped to the cell: a 3px ring fully INSIDE it */
+  stroke-width: 6; pointer-events: none;
 }
 .lgn-sb-outline {
   fill: none; stroke: var(--jp-layout-color1, #ffffff);
   pointer-events: none; opacity: 0.9;
 }
+.lgn-sb-outline-core {
+  fill: none; stroke: var(--jp-ui-font-color2, #616161);
+  pointer-events: none; opacity: 0.55; stroke-linejoin: round;
+}
+.lgn-sb-extent { visibility: hidden; pointer-events: none; }
+.lgn-sb-extent.lgn-sb-extent-on { visibility: visible; }
+.lgn-sb-extent-wash {
+  /* washes out everything OUTSIDE the hovered group (inverted mask):
+     member cells keep their exact utility colors and pop as one region */
+  fill: var(--jp-layout-color1, #ffffff); fill-opacity: 0.62;
+}
+.lgn-sb-extent-rim {
+  fill: none; stroke: var(--jp-brand-color1, #1976d2);
+  stroke-width: 3; stroke-linejoin: round;
+}
+.lgn-sb-gl {
+  cursor: default; user-select: none;
+  text-anchor: start; dominant-baseline: middle; font-size: 10px;
+  paint-order: stroke; stroke: var(--jp-layout-color1, #ffffff);
+  stroke-width: 3px; stroke-linejoin: round; fill: rgba(0, 0, 0, 0.72);
+}
+.lgn-sb-gl:hover { fill: var(--jp-brand-color1, #1976d2); }
 .lgn-sb-twist {
   cursor: pointer; user-select: none;
   text-anchor: middle; dominant-baseline: middle; font-size: 12px;
