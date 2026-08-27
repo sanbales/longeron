@@ -443,7 +443,12 @@ def app_notebook() -> dict[str, Any]:
     row, edit through the inspector's sheet -- and the checker cell
     reports the kernel-side truth: the entries list, the current model,
     the inspector-seam element, the inspector's own element, and the
-    current model's tracker dirtiness.
+    current model's tracker dirtiness.  Cell 3 also adds a small
+    RELATIONSHIPS model (a satisfy + an anonymous connect) so the
+    browser can prove the relationship rows show in an app-launched
+    tree and that clicking one renders the inspector's relationship
+    sheet (endpoints + declaration -- the maintainer's 'I can't inspect
+    relationships' finding).
     """
 
     return _notebook(
@@ -493,7 +498,23 @@ package BareDefs {
     source_name="bare defs",
 )
 application.add_model(defs_only, source="defs only text")
-print("scored + defs-only models added")
+# a RELATIONSHIPS model: satisfy + anonymous connect, for the inspector's
+# relationship sheet (endpoints, declaration) and the tree's rel rows
+rels = longeron.loads(
+    """
+package RigDemo {
+    part def Chassis;
+    part axle : Chassis;
+    part hub;
+    requirement massBudget;
+    satisfy massBudget by axle;
+    connect axle to hub;
+}
+""",
+    source_name="rels demo",
+)
+application.add_model(rels, source="rels demo text")
+print("scored + defs-only + rels models added")
 ''',
         """
 element = application.current_element

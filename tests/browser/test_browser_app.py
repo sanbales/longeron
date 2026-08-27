@@ -22,8 +22,12 @@ contract): launching an explorer feeds the app's selection seam, whose
 FIRST element now auto-reveals the inspector tab once (finding 4 -- the
 collapsed-by-design docking failed discoverability); clicking a tree
 row fills the sheet (screenshotted with the right sidebar EXPANDED);
-a unit-bearing attribute shows its bracket unit in the value field;
-typing a new name + Enter commits through ``longeron.edit.rename`` --
+a unit-bearing attribute shows its unit FIRST-CLASS (the compact
+``1.5 kg`` value plus the dedicated ``kg \u2014 mass`` unit row);
+clicking a relationship row renders the relationship sheet (clickable
+endpoints + the full declaration -- the maintainer's 'I can't inspect
+relationships' finding); typing a new name + Enter commits through
+``longeron.edit.rename`` --
 the explorer tree relabels and the models-list row grows its dirty dot
 -- and a colliding rename surfaces the honest-refusal error strip with
 the field reverted.
@@ -47,6 +51,8 @@ SCOREBOARD_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="scoreboard-sco
 DRONE_ROW = '.lgx-app-row:has-text("drone.sysml")'
 SCOUT_ROW = '.lgx-app-row:has-text("scout mini")'
 DEFS_ROW = '.lgx-app-row:has-text("bare defs")'
+RELS_ROW = '.lgx-app-row:has-text("rels demo")'
+RELS_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="rels-demo"]'
 
 #: one measurement of both sidebar tabs against a builtin one: the svg
 #: identity, rendered svg size, and the label's text/height (icon-only
@@ -219,8 +225,13 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
 
     # -- the kernel-side truth (entries, current model, inspector seam) ----
     checker = lab.run_cell_json(index=-1)
-    assert checker["models"] == ["inline demo text", "defs only text", "drone.sysml"], checker
-    assert checker["origins"] == ["text", "text", "file"], checker
+    assert checker["models"] == [
+        "inline demo text",
+        "defs only text",
+        "rels demo text",
+        "drone.sysml",
+    ], checker
+    assert checker["origins"] == ["text", "text", "text", "file"], checker
     assert checker["current"] == "drone.sysml", checker
     assert checker["explorers"] == 1, checker
     # the explorer's initial selection (the flattened root package) already
@@ -298,7 +309,9 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     # EXPANDED, sheet showing the element selected in the explorer tab
     page.screenshot(path=str(EVIDENCE / "inspector-selection-from-explorer.png"))
 
-    # -- finding 5: a quantity-valued attribute shows its bracket unit ------
+    # -- finding 5: units are FIRST-CLASS -- the value field shows the
+    # compact magnitude + symbol, and the dedicated unit row names the
+    # symbol + dimension from the derived unit table
     # (attribute rows render lazily: expand QuadCopter's subtree first --
     # the twist toggles expansion without touching the selection)
     page.locator('.lgx-explorer .lgx-row:has-text("QuadCopter") .lgx-twist').first.click()
@@ -308,10 +321,14 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     page.locator('.lgx-explorer .lgx-row:has-text("maxTakeoffMass")').first.click()
     value_input = page.locator(".lgx-insp-host .lgx-insp-valuefield input")
     lab.wait_until(
-        lambda s: value_input.input_value() == "1.5 [SI::kg]",
+        lambda s: value_input.input_value() == "1.5 kg",
         timeout=60,
-        label="inspector value field renders the SI::kg bracket unit",
+        label="inspector value field renders the compact magnitude + unit",
     )
+    unit_row = page.locator('.lgx-insp-host .lgx-insp-row:has-text("unit")')
+    assert "kg \u2014 mass" in (unit_row.first.text_content() or "")
+    typed_row = page.locator('.lgx-insp-host .lgx-insp-row:has-text("typed by")')
+    assert "Real [kg]" in (typed_row.first.text_content() or "")
     page.locator(".lgx-insp-host").screenshot(path=str(EVIDENCE / "inspector-value-units.png"))
 
     # -- rename: type + Enter commits through edit.rename -------------------
@@ -359,5 +376,83 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     assert checker["element"] == "Drone::HexaCopter", checker
     assert checker["inspector_element"] == "Drone::HexaCopter", checker
     assert checker["dirty"] is True, checker
+
+    lab.assert_no_errors()
+
+
+def test_inspector_relationship_sheet(lab):
+    """Relationship rows show in an app-launched tree (toggle ON by
+    default) and clicking one renders the inspector's relationship
+    sheet: clickable ENDPOINT rows that navigate the selection, plus
+    the full declaration in a read-only block (the maintainer's 'I
+    can't inspect relationships' finding)."""
+
+    lab.open_notebook(NOTEBOOK)
+    lab.run_all()
+    lab.wait_settled(timeout=180)
+    page = lab.page
+
+    # -- launch the explorer for the notebook's RELATIONSHIPS model --------
+    _reveal_app_panel(lab)
+    page.click(f"{RELS_ROW} button.lgx-app-explore")
+    page.wait_for_selector(RELS_TAB, state="attached", timeout=120_000)
+    page.locator(RELS_TAB).first.click()  # background tab: reveal it
+    page.wait_for_selector(".lgx-explorer .lgx-row", state="attached", timeout=60_000)
+
+    # -- the relationship rows are VISIBLE (toggle defaults ON) ------------
+    page.wait_for_selector(".lgx-explorer .lgx-row.lgx-rel", state="attached", timeout=30_000)
+    assert page.locator(".lgx-explorer .lgx-row.lgx-rel").count() == 2  # satisfy + connect
+    relbtn = page.locator(".lgx-explorer .lgx-tree-relbtn")
+    assert relbtn.get_attribute("aria-pressed") == "true"
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    page.locator(".lgx-explorer").first.screenshot(
+        path=str(EVIDENCE / "inspector-rels-1-tree-rows.png")
+    )
+
+    # -- click the connect row: the sheet shows both ends, clickable -------
+    page.locator(".lgx-explorer .lgx-row.lgx-rel", has_text="connect axle to hub").first.click()
+    page.wait_for_selector(".lgx-insp-host", state="visible", timeout=60_000)
+    endpoints = page.locator(".lgx-insp-host .lgx-insp-endpoint button")
+    lab.wait_until(
+        lambda s: (
+            endpoints.count() == 2
+            and [(endpoints.nth(i).text_content() or "").strip() for i in range(2)]
+            == ["axle", "hub"]
+        ),
+        timeout=60,
+        label="connection sheet shows both endpoint rows",
+    )
+    declaration = page.locator(".lgx-insp-host .lgx-insp-decl")
+    assert "connect axle to hub;" in (declaration.first.text_content() or "")
+    page.locator(".lgx-insp-host").screenshot(
+        path=str(EVIDENCE / "inspector-rels-2-connection-sheet.png")
+    )
+
+    # -- the satisfy: requirement + satisfier endpoints + declaration ------
+    page.locator(".lgx-explorer .lgx-row.lgx-rel", has_text="satisfy massBudget").first.click()
+    lab.wait_until(
+        lambda s: (
+            endpoints.count() == 2
+            and [(endpoints.nth(i).text_content() or "").strip() for i in range(2)]
+            == ["massBudget", "axle"]
+        ),
+        timeout=60,
+        label="satisfy sheet shows the requirement + the satisfier",
+    )
+    assert "satisfy massBudget by axle;" in (declaration.first.text_content() or "")
+    page.locator(".lgx-insp-host").screenshot(
+        path=str(EVIDENCE / "inspector-rels-3-satisfy-sheet.png")
+    )
+
+    # -- an endpoint click NAVIGATES: the tree follows to the satisfier ----
+    endpoints.nth(1).click()
+    lab.wait_until(
+        lambda s: (
+            "axle"
+            in (page.locator(".lgx-explorer .lgx-row.lgx-selected").first.text_content() or "")
+        ),
+        timeout=60,
+        label="endpoint click reveals the target in the tree",
+    )
 
     lab.assert_no_errors()

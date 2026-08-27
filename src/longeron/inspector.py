@@ -34,11 +34,25 @@ The sheet, top to bottom:
   and re-normalized through it after a commit;
 * **read-only rows**, styled distinctly and OMITTED when absent (never
   blank): kind, typed by / specializes / subsets / redefines /
-  references, multiplicity, direction -- plus relationship endpoints
-  (connection/interface/allocation ends, binding ends, satisfy targets,
-  flow source/target) as CLICKABLE rows that navigate the selection
-  through :meth:`longeron.app.ModelApp.select_element` (an app-launched
-  explorer of the same model follows: tree reveal + diagram highlight).
+  references, multiplicity, direction.  Units are FIRST-CLASS
+  (maintainer finding): a value carrying a bracket unit shows compactly
+  in the value field (``1.5 kg``, committed back with the reference
+  intact), the typed-by row keeps the TYPE but names the unit beside it
+  (``Real [kg]`` -- type and unit are different facts, both visible,
+  neither masquerading as the other), and a dedicated **unit** row gives
+  the symbol + dimension (``kg \u2014 mass``) from the model's derived
+  unit table (:func:`longeron.units.unit_table`);
+* **relationship rows**: every relationship kind the explorer's tree
+  admits (connections, bindings, interfaces, allocations, flows,
+  messages, satisfies, verifies, imports, exposes, aliases,
+  dependencies, element filters) renders a meaningful sheet -- the
+  relationship chip + derived label in the header, its ENDPOINTS as
+  CLICKABLE rows that navigate the selection through
+  :meth:`longeron.app.ModelApp.select_element` (an app-launched explorer
+  of the same model follows: tree reveal + diagram highlight), and the
+  full declaration (the exporter's one textual truth) in a read-only
+  block.  The name field appears only where the element HAS a name --
+  an anonymous ``satisfy`` is a declaration, not a nameable thing.
 
 Edits flow into the app's dirty/save chrome with no wiring here: every
 ``edit.*`` operation records on the model's :func:`longeron.edit.track`
@@ -70,6 +84,7 @@ displayed.
 
 from __future__ import annotations
 
+import re
 import time
 from html import escape
 from typing import Any
@@ -85,10 +100,11 @@ except ImportError as _err:  # pragma: no cover - exercised without anywidget
 from . import edit
 from . import model as M
 from .app import _TAB_ICON_CSS, _AppSweeper
-from .ast import expr_to_text
+from .ast import QuantityOp, expr_to_text
 from .errors import EditError
-from .explorer import _chip, _display_name, _family
+from .explorer import _chip, _display_name, _family, _import_shape, _is_relationship
 from .interpreter import Interpreter
+from .units import Dim, UnitTable, unit_table
 
 __all__ = ["Inspector"]
 
@@ -158,6 +174,10 @@ _INSPECTOR_CSS = (
 .lgx-insp-chip.lgx-chip-data      { color: #3f7a1f; background: rgba(63, 122, 31, 0.14); }
 .lgx-insp-chip.lgx-chip-connector { color: #b07a26; background: rgba(176, 122, 38, 0.16); }
 .lgx-insp-chip.lgx-chip-requirement { color: #b0413e; background: rgba(176, 65, 62, 0.14); }
+.lgx-insp-chip.lgx-chip-relationship {
+  color: var(--jp-ui-font-color2, #777777); background: transparent;
+  border: 1px dashed var(--jp-border-color1, #bdbdbd); line-height: 1.45;
+}
 .lgx-insp-name-hdr {
   font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,6 +222,15 @@ _INSPECTOR_CSS = (
   font-size: 11.5px; color: var(--jp-ui-font-color2, #888888);
   font-style: italic; padding: 4px 0;
 }
+.lgx-insp-decl {
+  font-size: 11px; line-height: 1.5;
+  font-family: var(--jp-code-font-family, monospace);
+  color: var(--jp-ui-font-color1, #444444);
+  background: var(--jp-layout-color2, #f5f5f5);
+  border-left: 3px solid var(--jp-border-color1, #bdbdbd);
+  padding: 4px 6px; margin: 2px 0;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 """
 )
 
@@ -229,6 +258,41 @@ def _mult_text(mult: M.Multiplicity) -> str:
     core = upper if lower is None else f"{lower}..{upper if upper is not None else '*'}"
     flags = ("ordered" if mult.is_ordered else "") + (" nonunique" if mult.is_nonunique else "")
     return f"[{core}]{' ' + flags.strip() if flags.strip() else ''}"
+
+
+def _bracket_unit(element: M.Element) -> str | None:
+    """The value's measurement reference text (``SI::kg``) when the
+    element's value is a ``magnitude [unit]`` quantity, else ``None``."""
+
+    if isinstance(element, M.Usage) and element.value is not None:
+        expr = element.value.expr
+        if isinstance(expr, QuantityOp):
+            return expr_to_text(expr.unit)
+    return None
+
+
+def _dim_label(table: UnitTable, dim: Dim) -> str:
+    """A human dimension name (``mass``) from the table's quantity
+    vocabulary (the bare lowercase-first keys are the quantity
+    attributes: ``mass``, ``temperatureDifference``); the SI-base
+    formula when no quantity names the dimension."""
+
+    for key, quantity_dim in table._quantities.items():
+        if "::" not in key and key[:1].islower() and quantity_dim == dim:
+            return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", key).lower()
+    return table.format_dim(dim)
+
+
+def _declaration_text(element: M.Element) -> str | None:
+    """A relationship's full declaration, straight from the exporter (one
+    textual truth -- the same source the tree tooltip's first line uses)."""
+
+    from .export import to_sysml
+
+    try:
+        return to_sysml(element).strip() or None
+    except Exception:  # pragma: no cover - defensive: the block is chrome
+        return None
 
 
 class Inspector(W.VBox):
@@ -367,17 +431,15 @@ class Inspector(W.VBox):
             return
         self._header.value = self._header_html(element)
         rows: list[Any] = []
-        if not isinstance(element, M.Model):  # the root cannot be renamed
+        # editable name only where the element HAS a name: the root cannot
+        # be renamed, and an anonymous relationship (a bare ``satisfy``)
+        # is a declaration, not a nameable thing
+        if not isinstance(element, M.Model) and (element.name or not _is_relationship(element)):
             self._assign(self._name_field, element.name or "")
             rows += [self._key("name"), self._name_field]
         rows += self._static_rows(element)
         if self._value_editable(element):
-            current = (
-                expr_to_text(element.value.expr)
-                if isinstance(element, M.Usage) and element.value is not None
-                else ""
-            )
-            self._assign(self._value_field, current)
+            self._assign(self._value_field, self._value_text(element))
             rows += [self._key("value"), self._value_field]
         if isinstance(element, M.Namespace):
             self._assign(self._doc_field, element.doc or "")
@@ -411,16 +473,17 @@ class Inspector(W.VBox):
             f'<span class="lgx-insp-static">{escape(value)}</span></div>'
         )
 
-    def _link_row(self, key: str, reference: str) -> Any:
-        label = W.HTML(f'<span class="lgx-insp-key">{escape(key)}</span>')
+    def _link_row(self, key: str, reference: str, label: str | None = None) -> Any:
+        shown = label or reference
+        head = W.HTML(f'<span class="lgx-insp-key">{escape(key)}</span>')
         button = W.Button(
-            description=reference,
+            description=shown,
             tooltip=f"Select {reference} (reveals it in the model's explorer tab)",
             layout=W.Layout(width="auto"),
         )
         button.add_class("lgx-insp-link")
         button.on_click(lambda _b, ref=reference: self._navigate(ref))
-        row = W.HBox([label, button], layout=W.Layout(width="100%", align_items="center"))
+        row = W.HBox([head, button], layout=W.Layout(width="100%", align_items="center"))
         row.add_class("lgx-insp-endpoint")
         return row
 
@@ -431,13 +494,24 @@ class Inspector(W.VBox):
         if isinstance(element, M.Definition) and element.supers:
             rows.append(self._static_row("specializes", ", ".join(element.supers)))
         if isinstance(element, M.Usage):
+            # satisfy/verify targets render as ENDPOINT links, not as the
+            # generic subsets/references rows
+            links_own_targets = isinstance(element, M.SatisfyUsage) or element.kind == "verify"
+            unit_label, unit_row = self._unit_facts(element)
             if element.types:
-                rows.append(self._static_row("typed by", ", ".join(element.types)))
-            if element.subsets and not isinstance(element, M.SatisfyUsage):
+                typed = ", ".join(element.types)
+                # the type row IS the typing; the unit rides beside it
+                # ('Real [kg]') -- different facts, both visible
+                rows.append(
+                    self._static_row("typed by", f"{typed} [{unit_label}]" if unit_label else typed)
+                )
+            if unit_row:
+                rows.append(self._static_row("unit", unit_row))
+            if element.subsets and not links_own_targets:
                 rows.append(self._static_row("subsets", ", ".join(element.subsets)))
             if element.redefines:
                 rows.append(self._static_row("redefines", ", ".join(element.redefines)))
-            if element.references and not isinstance(element, M.SatisfyUsage):
+            if element.references and not links_own_targets:
                 rows.append(self._static_row("references", element.references))
             if element.multiplicity is not None:
                 text = _mult_text(element.multiplicity)
@@ -466,7 +540,80 @@ class Inspector(W.VBox):
                 rows.append(self._link_row("flow to", element.target_end))
             if element.payload:
                 rows.append(self._static_row("payload", element.payload))
+        if isinstance(element, M.Usage) and element.kind == "verify":
+            targets = element.subsets or ([element.references] if element.references else [])
+            for target in targets:
+                rows.append(self._link_row("verifies", target))
+        if isinstance(element, (M.Import, M.Expose)):
+            key = "imports" if isinstance(element, M.Import) else "exposes"
+            rows.append(self._link_row(key, element.target, label=_import_shape(element)))
+        if isinstance(element, M.Alias):
+            rows.append(self._link_row("alias for", element.target))
+        if isinstance(element, M.Dependency):
+            for client in element.clients:
+                rows.append(self._link_row("from", client))
+            for supplier in element.suppliers:
+                rows.append(self._link_row("to", supplier))
+        if isinstance(element, M.ElementFilter):
+            rows.append(self._static_row("condition", expr_to_text(element.condition)))
+        if _is_relationship(element):
+            declaration = _declaration_text(element)
+            if declaration:
+                block = W.HTML(f'<div class="lgx-insp-decl">{escape(declaration)}</div>')
+                rows += [self._key("declaration"), block]
         return rows
+
+    def _unit_facts(self, element: M.Usage) -> tuple[str | None, str | None]:
+        """The usage's unit, as ``(value-suffix symbol, unit-row text)``.
+
+        A bracket-united value (``1.5 [SI::kg]``) yields both: the symbol
+        the value field appends (``kg``) and the unit row's ``symbol
+        \u2014 dimension`` text (``kg \u2014 mass``), resolved against the
+        model's derived unit table.  A quantity-typed but unvalued
+        attribute yields only the row (its SI-base unit + dimension).
+        ``(None, None)`` when the usage carries no unit fact.
+        """
+
+        table = unit_table(self._model_of(element))
+        reference = _bracket_unit(element)
+        if reference is not None:
+            info = table.lookup(reference)
+            if info is None:
+                return None, reference  # honest: the unresolved reference
+            return info.label, f"{info.label} \u2014 {_dim_label(table, info.dim)}"
+        for name in (*element.types, *element.subsets):
+            dim = table.quantity_dimension(name)
+            if dim is not None:
+                return None, f"{table.format_dim(dim)} \u2014 {_dim_label(table, dim)}"
+        return None, None
+
+    def _value_text(self, element: M.Element) -> str:
+        """The value field's text: ``1.5 kg`` -- magnitude + unit symbol,
+        compactly -- when the value carries a RESOLVABLE bracket unit
+        (units are first-class, maintainer finding); the full house
+        expression rendering otherwise."""
+
+        if not (isinstance(element, M.Usage) and element.value is not None):
+            return ""
+        expr = element.value.expr
+        if isinstance(expr, QuantityOp):
+            label, _ = self._unit_facts(element)
+            if label:
+                return f"{expr_to_text(expr.base)} {label}"
+        return expr_to_text(expr)
+
+    def _compact_to_bracket(self, element: M.Element, text: str) -> str:
+        """``0.4 kg`` -> ``0.4 [SI::kg]``: a committed compact value keeps
+        the CURRENT measurement reference (the parser's spelling is the
+        bracket form); anything else passes through verbatim."""
+
+        reference = _bracket_unit(element)
+        if reference is None:
+            return text
+        label, _ = self._unit_facts(element)  # type: ignore[arg-type]
+        if label and text.endswith(f" {label}"):
+            return f"{text[: -len(label) - 1].rstrip()} [{reference}]"
+        return text
 
     @staticmethod
     def _value_editable(element: M.Element) -> bool:
@@ -548,30 +695,22 @@ class Inspector(W.VBox):
         if self._syncing or element is None:
             return
         text = str(change["new"])
-        current = (
-            expr_to_text(element.value.expr)
-            if isinstance(element, M.Usage) and element.value is not None
-            else ""
-        )
+        current = self._value_text(element)
         if text == current:
             return
         model = self._model_of(element)
         if model is None:
             self._fail(self._value_field, current, "the element is not part of a model")
             return
+        committed = self._compact_to_bracket(element, text)
         try:
-            edit.set_attribute_value(model, element, text or None)  # type: ignore[arg-type]
+            edit.set_attribute_value(model, element, committed or None)  # type: ignore[arg-type]
         except EditError as err:
             self._fail(self._value_field, current, str(err))
             return
         self._clear_error()
-        # normalize what the user typed to the house expression rendering
-        normalized = (
-            expr_to_text(element.value.expr)
-            if isinstance(element, M.Usage) and element.value is not None
-            else ""
-        )
-        self._assign(self._value_field, normalized)
+        # normalize what the user typed to the sheet's own rendering
+        self._assign(self._value_field, self._value_text(element))
 
     # -- endpoint navigation --------------------------------------------------------
 

@@ -405,6 +405,36 @@ class TestRelationshipClassification:
         assert _find(nodes, "Rels::rig")["kind"] == "structure"  # the view usage
 
 
+def test_relationships_present_in_tree_REGRESSION_GUARD(rels_model):
+    """THE TRIPWIRE: relationship rows must never silently vanish from
+    the tree again.
+
+    Forensic note (2026-08-30): a 'tree relationships vanished' regression
+    was reported against the drone example.  The feature (6ca066f) was in
+    fact INTACT -- ``examples/drone.sysml`` simply declares no
+    relationships (no satisfy/connect/import/... statements), so its tree
+    honestly shows none.  This guard pins the feature itself, loudly, on
+    a model that HAS one of every kind: if a merge ever drops the
+    ``_is_relationship`` / ``_in_tree`` / ``_tree_data`` hunks, this
+    fails by NAME.  If the drone tree is expected to show relationships,
+    the fix belongs in drone.sysml (add the declarations), not here.
+    """
+
+    nodes, _index = _tree_data(rels_model)
+
+    def walk(items):
+        for node in items:
+            yield node
+            yield from walk(node.get("children", []))
+
+    rows = [node for node in walk(nodes) if node["kind"] == "relationship"]
+    assert len(rows) > 0, "the tree-relationships feature is GONE (see 6ca066f)"
+    # ...and the WHOLE classification table is present, kind by kind
+    badges = {node["badge"] for node in rows}
+    expected = {badge for _f, _l, badge in TestRelationshipClassification.TABLE.values()}
+    assert badges == expected, f"missing relationship kinds: {expected - badges}"
+
+
 class TestRelationshipToggle:
     """ModelTree.show_relationships: the tree-toolbar toggle's trait."""
 

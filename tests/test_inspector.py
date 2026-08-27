@@ -33,6 +33,7 @@ RIG_MODEL = """
 package Rig {
     part def Chassis {
         attribute mass : Real = 10.0;
+        attribute payload : MassValue;
     }
     part def Wheel;
     part axle : Chassis {
@@ -54,6 +55,34 @@ package Rig {
 @pytest.fixture()
 def rig_model():
     return longeron.loads(RIG_MODEL, source_name="rig demo")
+
+
+# one of every relationship kind the inspector must render a meaningful
+# sheet for (the explorer's classification model, verbatim shape)
+REL_KINDS_MODEL = """
+package Rels {
+    part def A { attribute x : Real; }
+    part a1 : A;
+    part b1 : A;
+    requirement massBudget;
+    satisfy massBudget by a1;
+    verification def CheckMass {
+        subject rig : A;
+        objective { verify massBudget; }
+    }
+    dependency Dep from a1 to b1;
+    import Other::*;
+    filter @Safety;
+    view scene { expose Rels::**; }
+    alias also for a1;
+}
+package Other { part def C; metadata def Safety; }
+"""
+
+
+@pytest.fixture()
+def rels_model():
+    return longeron.loads(REL_KINDS_MODEL, source_name="rels demo")
 
 
 @pytest.fixture(autouse=True)
@@ -344,29 +373,58 @@ class TestSheet:
         # the house expression rendering (ast.expr_to_text) fills the field
         assert app.inspector._value_field.value == "10.0"
 
-    def test_value_field_shows_bracket_units(self, monkeypatch):
-        # maintainer QA: a quantity value's measurement reference (the
-        # bracket unit) must SHOW in the sheet -- expr_to_text renders the
-        # QuantityOp annotation, and the examples now carry real SI units
+    def test_value_field_shows_compact_units(self, monkeypatch):
+        # maintainer QA: units are FIRST-CLASS in the sheet -- the value
+        # field shows the magnitude + unit symbol compactly ('0.38 kg',
+        # never the raw '0.38 [SI::kg]' expression), the typed-by row
+        # keeps the TYPE but names the unit beside it ('Real [kg]'), and
+        # a dedicated unit row gives the symbol + dimension
         app = _open_lab(monkeypatch)
         model = app.load_path(ROOT / "examples" / "drone.sysml")
         ex = app.explore_model(model)
         ex.select("Drone::Battery::mass")
-        assert app.inspector._value_field.value == "0.38 [SI::kg]"
+        assert app.inspector._value_field.value == "0.38 kg"
+        rows = _static_rows(app.inspector)
+        assert ("typed by", "Real [kg]") in rows
+        assert ("unit", "kg \u2014 mass") in rows
+
+    def test_unit_row_for_quantity_typed_attribute(self, monkeypatch, rig_model):
+        # no bracket value, but the unit table derives the dimension from
+        # the quantity typing (MassValue): the unit row still shows
+        app = _open_lab(monkeypatch)
+        app.add_model(rig_model)
+        ex = app.explore_model(rig_model)
+        ex.select("Rig::Chassis::payload")
+        rows = _static_rows(app.inspector)
+        assert ("unit", "kg \u2014 mass") in rows
+        assert ("typed by", "MassValue") in rows  # no bracket: type stays bare
+
+    def test_unitless_value_keeps_the_plain_rendering(self, monkeypatch, rig_model):
+        app = _open_lab(monkeypatch)
+        app.add_model(rig_model)
+        ex = app.explore_model(rig_model)
+        ex.select("Rig::Chassis::mass")
+        assert app.inspector._value_field.value == "10.0"
+        assert not any(key == "unit" for key, _ in _static_rows(app.inspector))
 
     def test_value_edit_keeps_bracket_units(self, monkeypatch):
-        # committing a unit-bearing value goes through longeron.edit and
-        # re-normalizes through expr_to_text WITH the annotation intact
+        # committing a unit-bearing value goes through longeron.edit; the
+        # compact 'magnitude symbol' spelling re-attaches the CURRENT
+        # measurement reference, and the field re-normalizes compactly
         app = _open_lab(monkeypatch)
         model = app.load_path(ROOT / "examples" / "drone.sysml")
         ex = app.explore_model(model)
         ex.select("Drone::Battery::mass")
-        app.inspector._value_field.value = "0.4 [SI::kg]"
+        app.inspector._value_field.value = "0.4 kg"
         element = model.find("Drone::Battery::mass")
-        assert app.inspector._value_field.value == "0.4 [SI::kg]"
+        assert app.inspector._value_field.value == "0.4 kg"
         from longeron.ast import expr_to_text
 
         assert expr_to_text(element.value.expr) == "0.4 [SI::kg]"
+        # the explicit bracket spelling commits too, and normalizes back
+        app.inspector._value_field.value = "0.45 [SI::kg]"
+        assert app.inspector._value_field.value == "0.45 kg"
+        assert expr_to_text(element.value.expr) == "0.45 [SI::kg]"
 
     def test_sheet_clears_when_the_list_empties(self, monkeypatch, rig_model):
         app = _open_lab(monkeypatch)
@@ -608,3 +666,96 @@ class TestNavigation:
         app.select_element(target)
         assert app.current_element is target
         assert app.inspector.element is target
+
+
+# ---------------------------------------------------------------------------
+# the relationship sheet (maintainer finding: 'I can't inspect relationships')
+# ---------------------------------------------------------------------------
+
+
+def _select(app, model, predicate):
+    element = next(el for el in model.iter_tree() if predicate(el))
+    app.select_element(element)
+    return element
+
+
+class TestRelationshipSheet:
+    """Every relationship kind renders a meaningful sheet: the
+    relationship chip + derived label in the header, ENDPOINTS as
+    clickable navigation rows, the full declaration in a read-only
+    block, and a name field only where the element HAS a name."""
+
+    def test_anonymous_satisfy_sheet_shape(self, monkeypatch, rig_model):
+        app = _open_lab(monkeypatch)
+        app.add_model(rig_model)
+        insp = app.inspector
+        _select(app, rig_model, lambda el: isinstance(el, M.SatisfyUsage))
+        # the relationship chip + the derived label head the sheet
+        assert "lgx-chip-relationship" in insp._header.value
+        assert "satisfy r" in insp._header.value
+        assert ("kind", "satisfy") in _static_rows(insp)
+        # anonymous: a declaration is not a nameable thing -- no name field
+        assert insp._name_field not in insp._body.children
+        # the full declaration, in the read-only block
+        blocks = [
+            c.value
+            for c in insp._body.children
+            if isinstance(c, W.HTML) and "lgx-insp-decl" in getattr(c, "value", "")
+        ]
+        assert len(blocks) == 1 and "satisfy r by axle;" in blocks[0]
+
+    def test_named_connection_keeps_the_name_field(self, monkeypatch, rig_model):
+        app = _open_lab(monkeypatch)
+        app.add_model(rig_model)
+        insp = app.inspector
+        app.select_element(rig_model.find("Rig::c"))
+        assert insp._name_field in insp._body.children
+        assert insp._name_field.value == "c"
+        blocks = [
+            c.value
+            for c in insp._body.children
+            if isinstance(c, W.HTML) and "lgx-insp-decl" in getattr(c, "value", "")
+        ]
+        assert len(blocks) == 1 and "connect hub.p to spinner.p" in blocks[0]
+
+    def test_every_restored_kind_shows_its_endpoints(self, monkeypatch, rels_model):
+        # the endpoint table: relationship kind -> the clickable rows'
+        # button texts (qualified paths / the exporter's target shapes)
+        app = _open_lab(monkeypatch)
+        app.add_model(rels_model)
+        insp = app.inspector
+        table = {
+            "satisfy": (lambda el: isinstance(el, M.SatisfyUsage), ["massBudget", "a1"]),
+            "verify": (
+                lambda el: isinstance(el, M.Usage) and el.kind == "verify",
+                ["massBudget"],
+            ),
+            "dependency": (lambda el: isinstance(el, M.Dependency), ["a1", "b1"]),
+            "import": (lambda el: isinstance(el, M.Import), ["Other::*"]),
+            "expose": (lambda el: isinstance(el, M.Expose), ["Rels::**"]),
+            "alias": (lambda el: isinstance(el, M.Alias), ["a1"]),
+        }
+        for kind, (finder, expected) in table.items():
+            _select(app, rels_model, finder)
+            ends = _endpoint_rows(insp)
+            assert [row.children[1].description for row in ends] == expected, kind
+
+    def test_import_endpoint_navigates_to_the_namespace(self, monkeypatch, rels_model):
+        # the shown text is the exporter's shape (Other::*); the CLICK
+        # resolves the bare namespace target and moves the selection
+        app = _open_lab(monkeypatch)
+        app.add_model(rels_model)
+        _select(app, rels_model, lambda el: isinstance(el, M.Import))
+        (row,) = _endpoint_rows(app.inspector)
+        row.children[1].click()
+        assert app.current_element is rels_model.find("Other")
+        assert app.inspector.element is app.current_element
+
+    def test_filter_condition_is_a_read_only_row(self, monkeypatch, rels_model):
+        app = _open_lab(monkeypatch)
+        app.add_model(rels_model)
+        _select(app, rels_model, lambda el: isinstance(el, M.ElementFilter))
+        rows = _static_rows(app.inspector)
+        assert ("kind", "filter") in rows
+        assert ("condition", "@Safety") in rows
+        assert app.inspector._name_field not in app.inspector._body.children
