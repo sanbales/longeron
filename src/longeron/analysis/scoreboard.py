@@ -964,6 +964,65 @@ function lgnSbTwistAnchor(polygon) {
   const t = Math.min(0.5, 13 / dist);
   return [top[0] + (cx - top[0]) * t, top[1] + (cy - top[1]) * t];
 }
+function lgnSbChordAt(polygon, y) {
+  // the polygon's horizontal span at height y ([xLo, xHi], or null when
+  // the row misses it) -- every cell/group polygon here is convex (the
+  // voronoi cells are clipped power-diagram cells, the treemap ones are
+  // rects), so the span is a single chord of interior points
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const [x1, y1] = polygon[i];
+    const [x2, y2] = polygon[(i + 1) % polygon.length];
+    if ((y1 - y) * (y2 - y) > 0) continue; // edge entirely above or below
+    if (y1 === y2) { // horizontal edge lying ON the row
+      lo = Math.min(lo, x1, x2);
+      hi = Math.max(hi, x1, x2);
+    } else {
+      const x = x1 + ((y - y1) / (y2 - y1)) * (x2 - x1);
+      lo = Math.min(lo, x);
+      hi = Math.max(hi, x);
+    }
+  }
+  return lo <= hi ? [lo, hi] : null;
+}
+function lgnSbPlaceTwist(at, poly, taken, needs) {
+  // de-overlap CONSTRAINED to the group's own polygon: candidate spots
+  // march right along the anchor's row, then wrap to the next row down,
+  // and every candidate stays on the polygon's interior chord.  The old
+  // unconstrained `x += 14` nudge could shove a twist across a
+  // neighbour's twist-plus-label footprint into ANOTHER group's region
+  // (maintainer report: NB07's fieldability twist -- whose polygon
+  // shares its topmost corner with affordability's -- landed deep
+  // inside affordability).  needs is a descending list of chord rooms
+  // to hunt for right of the twist (a legible perimeter label, a
+  // minimal one, then the bare twist): a narrow apex -- a group
+  // polygon's topmost vertex can be a spike far from its visual mass --
+  // trades a few rows of descent for a label that stays inside.
+  const busy = (x, y) =>
+    taken.some((p) => Math.abs(p.x - x) < 14 && Math.abs(p.y - y) < 13);
+  const yMax = poly.reduce((m, p) => Math.max(m, p[1]), -Infinity) - 5;
+  for (const wantRoom of needs) {
+    for (let y = at[1]; y <= yMax; y += 13) {
+      const chord = lgnSbChordAt(poly, y);
+      if (!chord) continue;
+      const lo = chord[0] + 7;
+      const hi = chord[1] - 7;
+      if (hi < lo) continue; // row too narrow for the glyph
+      let x = Math.min(Math.max(y === at[1] ? at[0] : lo, lo), hi);
+      for (;;) {
+        if (!busy(x, y) && chord[1] - x >= wantRoom) {
+          return { x, y, room: chord[1] - x };
+        }
+        if (x >= hi) break;
+        x = Math.min(x + 14, hi);
+      }
+    }
+  }
+  // every in-polygon spot is taken (degenerate): overlap at the anchor
+  // beats exile into a neighbour's region
+  return { x: at[0], y: at[1], room: 0 };
+}
 
 function render({ model, el }) {
   // unique across ALL module copies (anywidget loads one module per
@@ -1060,14 +1119,20 @@ function render({ model, el }) {
   function treemapCells(node, rect, view, cells, outlines, depth) {
     const d = `M${rect.x},${rect.y}H${rect.x + rect.w}V${rect.y + rect.h}H${rect.x}Z`;
     const twist = [rect.x + 11, rect.y + 12];
+    const poly = [
+      [rect.x, rect.y],
+      [rect.x + rect.w, rect.y],
+      [rect.x + rect.w, rect.y + rect.h],
+      [rect.x, rect.y + rect.h],
+    ];
     const kids = expandedKids(node, view, depth);
     if (!kids) {
       cells.push({ node, d, cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2,
-                   area: rect.w * rect.h, width: rect.w, twist });
+                   area: rect.w * rect.h, width: rect.w, twist, poly });
       return;
     }
     if (depth > 0) {
-      outlines.push({ node, d, depth, area: rect.w * rect.h, width: rect.w, twist });
+      outlines.push({ node, d, depth, area: rect.w * rect.h, width: rect.w, twist, poly });
     }
     const rects = lgnSbSquarify(kids.map((k) => k._area), rect);
     kids.forEach((k, i) => treemapCells(k, rects[i], view, cells, outlines, depth + 1));
@@ -1084,7 +1149,7 @@ function render({ model, el }) {
       const poly = [[0, 0], [0, H], [W, H], [W, 0]];
       const d = `M${poly.map((p) => `${p[0]},${p[1]}`).join("L")}Z`;
       cells.push({ node: view.zoom, d, cx: W / 2, cy: H / 2, area: W * H,
-                   width: W, twist: [11, 12] });
+                   width: W, twist: [11, 12], poly });
       return true;
     }
     function prune(node, depth) {
@@ -1103,17 +1168,19 @@ function render({ model, el }) {
       if (!n.polygon) continue;
       const d = `M${n.polygon.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join("L")}Z`;
       const twist = lgnSbTwistAnchor(n.polygon);
+      const poly = n.polygon.map((p) => [p[0], p[1]]);
       if (n.children) {
         if (n.depth > 0) {
           const area = lgnSbPolyArea(n.polygon);
           outlines.push({ node: n.data.node, d, depth: n.depth, area,
-                          width: Math.sqrt(area) * 1.15, twist });
+                          width: Math.sqrt(area) * 1.15, twist, poly });
         }
         continue;
       }
       const [cx, cy] = lgnSbPolyCentroid(n.polygon);
       const area = lgnSbPolyArea(n.polygon);
-      cells.push({ node: n.data.node, d, cx, cy, area, width: Math.sqrt(area) * 1.15, twist });
+      cells.push({ node: n.data.node, d, cx, cy, area, width: Math.sqrt(area) * 1.15, twist,
+                   poly });
     }
     return true;
   }
@@ -1387,10 +1454,10 @@ function render({ model, el }) {
 
     const placedTwists = [];
     function addTwist(node, at, open) {
-      // nudge right out of any earlier twist: nested groups share their
-      // top-left corner, especially in the treemap
-      let [x, y] = at;
-      while (placedTwists.some((p) => Math.abs(p.x - x) < 14 && Math.abs(p.y - y) < 13)) x += 14;
+      // `at` was placed by lgnSbPlaceTwist: collision-free AND inside
+      // the group's own polygon (the old right-only nudge could exile a
+      // twist into a neighbouring group's region)
+      const [x, y] = at;
       placedTwists.push({ x, y });
       const glyph = document.createElementNS(NS, "text");
       glyph.setAttribute("x", x);
@@ -1408,17 +1475,25 @@ function render({ model, el }) {
       glyph.addEventListener("pointerenter", () => hoverExtent(node, true));
       glyph.addEventListener("pointerleave", () => hoverExtent(node, false));
       twistLayer.append(glyph);
-      return [x, y]; // the nudged anchor (the group label sits just right of it)
+      return [x, y]; // the placed anchor (the group label sits just right of it)
     }
 
-    function addGroupLabel(node, at, width) {
+    function addGroupLabel(node, at, width, room) {
       // the group's name + aggregate pinned at its perimeter, next to
       // the twist (groups with enough room only): which region is whose,
-      // without hovering anything
+      // without hovering anything.  room is the chord space right of the
+      // twist inside the group's own polygon: the label must stay
+      // attributable to its region, so it never spills past the edge
       const [x, y] = at;
       const score = fmtScore(node.aggregate);
       let name = node.label;
-      const maxChars = Math.max(4, Math.floor(width / 6.4) - score.length - 4);
+      const maxChars = Math.max(
+        4,
+        Math.min(
+          Math.floor(width / 6.4) - score.length - 4,
+          Math.floor((room - 11) / 6.4) - score.length - 3,
+        ),
+      );
       if (name.length > maxChars) name = `${name.slice(0, Math.max(1, maxChars - 1))}\u2026`;
       const label = document.createElementNS(NS, "text");
       label.setAttribute("x", x + 9);
@@ -1463,8 +1538,21 @@ function render({ model, el }) {
       // every expanded group collapses in place from its own twist --
       // including one whose children are all groups
       if (outline.area >= W * H * 0.004) {
-        const anchor = addTwist(outline.node, outline.twist, true);
-        if (outline.area >= W * H * 0.02) addGroupLabel(outline.node, anchor, outline.width);
+        // hunt for a spot with chord room for a legible label (up to 16
+        // name chars + ' \u00b7 ' + score), then a minimal one (4 name
+        // chars), then the bare twist (hover still names the group)
+        const wantLabel = outline.area >= W * H * 0.02;
+        const score = fmtScore(outline.node.aggregate);
+        const chars = (n) => 11 + (n + 3 + score.length) * 6.4;
+        const minNeed = chars(Math.min(outline.node.label.length, 4));
+        const needs = wantLabel
+          ? [chars(Math.min(outline.node.label.length, 16)), minNeed, 0]
+          : [0];
+        const spot = lgnSbPlaceTwist(outline.twist, outline.poly, placedTwists, needs);
+        const anchor = addTwist(outline.node, [spot.x, spot.y], true);
+        if (wantLabel && spot.room >= minNeed) {
+          addGroupLabel(outline.node, anchor, outline.width, spot.room);
+        }
       }
     }
     for (const cell of cells) {
@@ -1493,7 +1581,8 @@ function render({ model, el }) {
         const group = node.children && node.children.length;
         if (group) {
           addExtent(node, cell.d); // a collapsed group's extent IS its cell
-          addTwist(node, cell.twist, false); // aggregate cell: closed twist
+          const spot = lgnSbPlaceTwist(cell.twist, cell.poly, placedTwists, [0]);
+          addTwist(node, [spot.x, spot.y], false); // aggregate cell: closed twist
         }
         const size = Math.min(15, Math.max(9, 0.14 * Math.sqrt(cell.area)));
         const dark = measured ? color.dark : true;

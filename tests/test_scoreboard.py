@@ -1057,3 +1057,340 @@ class TestSelectionTreatment:
         widget.selected = ["ScoutUAV::mission::performance::endurance"]
         widget.selected = []
         assert seen == [["ScoutUAV::mission::performance::endurance"], []]
+
+
+# ---------------------------------------------------------------------------
+# twist placement (maintainer report: 'the NB13 chrome fix put the
+# triangle of one of the groups in a weird place')
+# ---------------------------------------------------------------------------
+
+#: NB07's ISR value hierarchy, weights only -- the geometry that exposed
+#: the bug: fieldability's voronoi polygon shares its topmost corner with
+#: affordability's, so both twist anchors land ~9px apart and the old
+#: unconstrained right-nudge marched fieldability's twist across
+#: affordability's twist-plus-label footprint into affordability's region
+ISR_MODEL = """
+package IsrScoring {
+    requirement isrValue {
+        requirement missionEffectiveness {
+            attribute weight : Real = 3.0;
+            requirement persistence { attribute weight : Real = 2.0; }
+            requirement covertness { attribute weight : Real = 1.0; }
+        }
+        requirement affordability {
+            attribute weight : Real = 2.0;
+            requirement unitCost { attribute weight : Real = 3.0; }
+            requirement repairability { attribute weight : Real = 1.0; }
+        }
+        requirement fieldability {
+            attribute weight : Real = 2.0;
+            requirement portability { attribute weight : Real = 2.0; }
+            requirement packability { attribute weight : Real = 1.0; }
+        }
+        requirement flightRobustness {
+            requirement hoverAuthority;
+            requirement energyReserve;
+        }
+    }
+}
+"""
+
+#: run the widget's REAL render() in node with DOM stubs, then report
+#: every twist / group label position plus each group's polygon (the
+#: extent rim for expanded groups, the cell path for aggregate cells)
+_TWIST_HARNESS_JS = r"""
+"use strict";
+const fs = require("fs");
+const [, , esmPath, nodesPath, paramsJson] = process.argv;
+const esmText = fs.readFileSync(esmPath, "utf8").replace(/export default \{ render \};?/, "");
+const params = JSON.parse(paramsJson);
+class ClassList {
+  constructor() { this.set = new Set(); }
+  add(...names) { names.forEach((n) => this.set.add(n)); }
+  toggle(name, force) {
+    const on = force === undefined ? !this.set.has(name) : !!force;
+    on ? this.set.add(name) : this.set.delete(name);
+    return on;
+  }
+  contains(name) { return this.set.has(name); }
+}
+class Element {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.parent = null;
+    this.attrs = {};
+    this.dataset = {};
+    this.style = {};
+    this.classList = new ClassList();
+    this._text = "";
+    this.title = "";
+    this.tabIndex = 0;
+  }
+  setAttribute(k, v) {
+    this.attrs[k] = String(v);
+    if (k === "class") this.classList.set = new Set(String(v).split(/\s+/).filter(Boolean));
+  }
+  getAttribute(k) {
+    if (k === "class") return [...this.classList.set].join(" ");
+    return k in this.attrs ? this.attrs[k] : null;
+  }
+  append(...nodes) { for (const n of nodes) { n.parent = this; this.children.push(n); } }
+  remove() {
+    if (!this.parent) return;
+    const i = this.parent.children.indexOf(this);
+    if (i >= 0) this.parent.children.splice(i, 1);
+  }
+  addEventListener() {}
+  set textContent(v) { this._text = String(v); this.children = []; }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+  focus() {}
+  *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
+  querySelectorAll(sel) {
+    const out = [];
+    for (const el of this.walk()) {
+      if (sel.startsWith(".") ? el.classList.contains(sel.slice(1)) : el.tagName === sel) {
+        out.push(el);
+      }
+    }
+    return out;
+  }
+}
+const document = {
+  createElement: (t) => new Element(t),
+  createElementNS: (ns, t) => new Element(t),
+};
+const model = {
+  get: (k) => params[k],
+  set: (k, v) => { params[k] = v; },
+  save_changes: () => {},
+  on: () => {},
+};
+params.nodes_json = fs.readFileSync(nodesPath, "utf8");
+const el = new Element("div");
+new Function("document", "model", "el", esmText + "\nrender({ model, el });")(document, model, el);
+function parsePath(d) {
+  const rect = /^M([\d.eE+-]+),([\d.eE+-]+)H([\d.eE+-]+)V([\d.eE+-]+)H[\d.eE+-]+Z$/.exec(d);
+  if (rect) {
+    const [x1, y1, x2, y2] = [+rect[1], +rect[2], +rect[3], +rect[4]];
+    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+  }
+  return [...d.matchAll(/[ML]([\d.eE+-]+),([\d.eE+-]+)/g)].map((m) => [+m[1], +m[2]]);
+}
+const svg = el.querySelectorAll("svg")[0];
+const report = { twists: [], labels: [], extents: {}, cells: {} };
+for (const g of svg.querySelectorAll(".lgn-sb-extent")) {
+  const rim = g.querySelectorAll(".lgn-sb-extent-rim")[0];
+  report.extents[g.dataset.qname] = parsePath(rim.getAttribute("d"));
+}
+for (const p of svg.querySelectorAll(".lgn-sb-cell")) {
+  report.cells[p.dataset.qname] = parsePath(p.getAttribute("d"));
+}
+for (const t of svg.querySelectorAll(".lgn-sb-twist")) {
+  report.twists.push({ qname: t.dataset.qname, x: +t.getAttribute("x"), y: +t.getAttribute("y") });
+}
+for (const t of svg.querySelectorAll(".lgn-sb-gl")) {
+  report.labels.push({ qname: t.dataset.qname, x: +t.getAttribute("x"), y: +t.getAttribute("y"),
+                       text: t._text });
+}
+console.log(JSON.stringify(report));
+"""
+
+
+def _point_in_polygon(x: float, y: float, poly: list[list[float]]) -> bool:
+    inside = False
+    for i in range(len(poly)):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % len(poly)]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def _chord(poly: list[list[float]], y: float) -> tuple[float, float]:
+    """The polygon's horizontal span at height y (mirrors lgnSbChordAt)."""
+
+    lo, hi = math.inf, -math.inf
+    for i in range(len(poly)):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % len(poly)]
+        if (y1 - y) * (y2 - y) > 0:
+            continue
+        if y1 == y2:
+            lo, hi = min(lo, x1, x2), max(hi, x1, x2)
+        else:
+            x = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
+            lo, hi = min(lo, x), max(hi, x)
+    return lo, hi
+
+
+def _render_report(widget, **params):
+    """Drive the widget's real ESM render() headlessly (node + DOM stubs)."""
+
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("node") is None:
+        pytest.skip("node executable not available")
+    defaults = {
+        "tessellation": widget.tessellation,
+        "seed": widget.seed,
+        "width_px": widget.width_px,
+        "height_px": widget.height_px,
+        "zoom_root": widget.zoom_root,
+        "collapsed": list(widget.collapsed),
+        "selected": [],
+        "max_depth": widget.max_depth,
+        "value_format": widget.value_format,
+        "aggregation": widget.aggregation,
+    }
+    defaults.update(params)
+    with tempfile.TemporaryDirectory() as tmp:
+        esm = f"{tmp}/esm.js"
+        nodes = f"{tmp}/nodes.json"
+        harness = f"{tmp}/harness.cjs"
+        with open(esm, "w") as fh:
+            fh.write(widget._esm)
+        with open(nodes, "w") as fh:
+            fh.write(widget.nodes_json)
+        with open(harness, "w") as fh:
+            fh.write(_TWIST_HARNESS_JS)
+        out = subprocess.run(
+            ["node", harness, esm, nodes, json.dumps(defaults)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    return json.loads(out.stdout)
+
+
+def _group_polygons(report) -> dict[str, list[list[float]]]:
+    """qname -> polygon: the extent rim (expanded) or the cell (aggregate)."""
+
+    polys = dict(report["extents"])
+    for qname, poly in report["cells"].items():
+        polys.setdefault(qname, poly)
+    return polys
+
+
+def _assert_anchored_inside(report) -> None:
+    """The placement contract: twist + label sit INSIDE their group."""
+
+    polys = _group_polygons(report)
+    assert report["twists"], "no twists rendered"
+    for twist in report["twists"]:
+        poly = polys[twist["qname"]]
+        assert _point_in_polygon(twist["x"], twist["y"], poly), (
+            f"{twist['qname']} twist at ({twist['x']:.1f}, {twist['y']:.1f}) "
+            f"lies outside its group polygon {poly}"
+        )
+    for label in report["labels"]:
+        poly = polys[label["qname"]]
+        assert _point_in_polygon(label["x"], label["y"], poly), (
+            f"{label['qname']} label anchored outside its group polygon"
+        )
+        # the ESM's own width estimate (6.4 px/char): the text must not
+        # spill past the group's edge on its row
+        _, hi = _chord(poly, label["y"])
+        end = label["x"] + len(label["text"]) * 6.4
+        assert end <= hi + 2.0, (
+            f"{label['qname']} label {label['text']!r} runs to x={end:.1f}, "
+            f"past its group's edge at x={hi:.1f}"
+        )
+
+
+@pytest.fixture(scope="module")
+def isr_widget():
+    pytest.importorskip("anywidget")
+    return scoreboard(longeron.loads(ISR_MODEL)).widget(tessellation="voronoi")
+
+
+#: three group levels (NB13's notebook model shape): zooming into
+#: performance still shows a nested group (endurance) with a twist
+DEEP_NEST_MODEL = """
+package DeepNest {
+    requirement mission {
+        requirement performance {
+            attribute weight : Real = 3.0;
+            requirement endurance {
+                attribute weight : Real = 3.0;
+                requirement hoverEndurance;
+                requirement cruiseEndurance { attribute weight : Real = 2.0; }
+            }
+            requirement radius { attribute weight : Real = 2.0; }
+        }
+        requirement affordability {
+            attribute weight : Real = 2.0;
+            requirement cost;
+            requirement upkeep;
+        }
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def deep_widget():
+    pytest.importorskip("anywidget")
+    return scoreboard(longeron.loads(DEEP_NEST_MODEL)).widget()
+
+
+class TestTwistPlacement:
+    """Maintainer report (NB07 voronoi view): fieldability's collapser
+    triangle rendered over affordability's region.  Its polygon shares
+    the topmost corner with affordability's, and the old de-overlap
+    (nudge right, unbounded) walked the twist across affordability's
+    twist-plus-label footprint and out of its own region.  Placement is
+    now constrained to the group's own polygon: candidates march right
+    along the interior chord, wrap a row down when the row is exhausted,
+    and hunt for label room before settling; the perimeter label is
+    chord-capped so it cannot spill past the group's edge either."""
+
+    def test_esm_constrained_placement_contract(self, isr_widget):
+        # the placement helpers exist and the unbounded nudge is gone
+        assert "lgnSbChordAt" in isr_widget._esm
+        assert "lgnSbPlaceTwist" in isr_widget._esm
+        assert "while (placedTwists.some" not in isr_widget._esm
+
+    def test_voronoi_twists_inside_their_groups(self, isr_widget):
+        # the maintainer's exact view: NB07's hierarchy, voronoi, seed 42
+        report = _render_report(isr_widget)
+        _assert_anchored_inside(report)
+        # and specifically the reported twist: fieldability's sits in
+        # fieldability's region (it rendered deep inside affordability)
+        twists = {t["qname"]: t for t in report["twists"]}
+        twist = twists["IsrScoring::isrValue::fieldability"]
+        poly = report["extents"]["IsrScoring::isrValue::fieldability"]
+        assert _point_in_polygon(twist["x"], twist["y"], poly)
+
+    @pytest.mark.parametrize("seed", [7, 42, 99])
+    def test_voronoi_twists_inside_across_seeds(self, isr_widget, seed):
+        _assert_anchored_inside(_render_report(isr_widget, seed=seed))
+
+    def test_treemap_twists_inside_their_groups(self, isr_widget):
+        _assert_anchored_inside(_render_report(isr_widget, tessellation="treemap"))
+
+    @pytest.mark.parametrize("tessellation", ["voronoi", "treemap"])
+    def test_collapsed_aggregate_twist_inside_its_cell(self, isr_widget, tessellation):
+        # a collapsed group renders as ONE aggregate cell whose closed
+        # twist must sit inside that cell
+        report = _render_report(
+            isr_widget,
+            tessellation=tessellation,
+            collapsed=["IsrScoring::isrValue::fieldability"],
+        )
+        _assert_anchored_inside(report)
+        twists = {t["qname"]: t for t in report["twists"]}
+        assert "IsrScoring::isrValue::fieldability" in twists
+
+    @pytest.mark.parametrize("tessellation", ["voronoi", "treemap"])
+    def test_zoomed_twists_inside_their_groups(self, deep_widget, tessellation):
+        # zoomed: the nested endurance group still anchors inside itself
+        report = _render_report(
+            deep_widget,
+            tessellation=tessellation,
+            zoom_root="DeepNest::mission::performance",
+        )
+        _assert_anchored_inside(report)
+        assert any(t["qname"].endswith("::endurance") for t in report["twists"])
