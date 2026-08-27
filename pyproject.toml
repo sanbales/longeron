@@ -37,6 +37,7 @@ dev = [
     "ipylab>=1",  # mirrors [explorer] (the lab docked layout)
     "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
+    "hypothesis>=6.100",  # mirrors [verify] so NB07's violation hunt executes
     # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
     "rdflib>=7.0",  # mirrors [rdf] so notebook 08 executes in CI
     "fastapi>=0.110", "uvicorn>=0.29",  # mirrors [server] (API server tests)
@@ -357,12 +358,15 @@ env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 
 [tool.pixi.tasks.sync-labextension]
-# rsync the vendored labextension BUILD (vendor/ipyelk/src/_d/...) over the
-# SERVED copies (.pixi/envs/*/share/jupyter/labextensions/...), warning
-# first when a served copy is stale -- the classic "rebuilt the TS but the
-# fix didn't take" footgun (the env copy is made once, at install time)
+# rsync the repo's labextension BUILDS -- the vendored jupyter-elk
+# (vendor/ipyelk/src/_d/...) and the longeron launcher tile (npm/_d/...,
+# which editable installs never place: data_files only ship in wheels) --
+# over the SERVED copies (.pixi/envs/*/share/jupyter/labextensions/...),
+# warning first when a served copy is stale -- the classic "rebuilt the TS
+# but the fix didn't take" footgun (the env copy is made once, at install
+# time)
 cmd = """
-bash -euc 'src="vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"; for dst in .pixi/envs/*/share/jupyter/labextensions/@jupyrdf/jupyter-elk; do [ -d "$dst" ] || continue; diff -rq "$src" "$dst" >/dev/null 2>&1 || echo "WARNING: $dst was serving a STALE jupyter-elk build (differs from the vendor build); syncing" >&2; rsync -a --delete "$src/" "$dst/"; done'
+bash -euc 'sync() { src="$1"; rel="$2"; for root in .pixi/envs/*/share/jupyter/labextensions; do [ -d "$root" ] || continue; dst="$root/$rel"; if [ -d "$dst" ]; then diff -rq "$src" "$dst" >/dev/null 2>&1 || echo "WARNING: $dst was serving a STALE build (differs from the repo build); syncing" >&2; fi; mkdir -p "$dst"; rsync -a --delete "$src/" "$dst/"; done; }; sync "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk" "@jupyrdf/jupyter-elk"; sync "npm/_d/share/jupyter/labextensions/longeron" "longeron"'
 """
 
 [tool.pixi.tasks.parsers]
