@@ -92,5 +92,6 @@ design/m0-interpretations
 design/ocl-stance
 design/openmbee-integration
 design/units
+design/verify
 design/view-persistence
 ```
