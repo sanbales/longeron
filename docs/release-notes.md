@@ -2,6 +2,52 @@
 
 ## 0.11.0 (unreleased)
 
+- **`longeron.analysis.verify`: model-driven requirement-violation
+  hunting** ([design doc](design/verify.md), ratified; supersedes and
+  retires the `_verify_spike` prototype): the model fights back, from
+  nothing but the `.sysml` text. Four tiers over one oracle -- every
+  verdict is the interpreter's, solvers only propose:
+  - **`hunt`** (Hypothesis, `pip install "longeron[verify]"`): sampling +
+    shrinking over strategies *derived from the model* -- attribute
+    types, mined `assert` bodies, and exact Z3 bounds pushed through
+    `smt.py`'s reachability fixed point under the assumption set (bounds
+    living only on derived attributes are found, honestly flagged
+    fallbacks otherwise). The shrunk catch is paired with
+    interpreter-bisected edges per violated check (`report.boundaries`)
+  - **`sequences`**: one generic rule + one invariant over the *real*
+    `StateMachine`; shrinking strips every irrelevant event. The drone
+    example gains a genuinely sequence-sensitive trap (`SortieStates`'
+    go-around path re-enters `airborne` past the launch guard's battery
+    floor; `SafeSortie`), and verify finds the minimal 4-event sortie
+    `launch, goAround, goAround, goAround` on shipped examples only
+  - **`cover`**: in-house IPOG-F t-way covering arrays (t = 2..6, pure
+    stdlib, no new dependency; documented ceilings refuse loudly), Z3 as
+    the constraint engine for `assume=`d build rules through the model's
+    own constraint bodies, every row settled interpreter-exact, and
+    violated-check recall *measured* against exhaustive ground truth
+    while that stays feasible (100% on both shipped catalogs). Validated
+    by an independent coverage checker + generator property tests +
+    published-benchmark size comparisons (TCAS t=2..6 within ~3% of
+    Lei et al.'s IPOG sizes, recorded in `_ipog.py`)
+  - **`prove`**: absence proofs by negating one check at a time under
+    the assumption set (UNSAT = no configuration can violate -- sampling
+    can never say that), SAT witnesses believed only after interpreter
+    re-check, and exact rational bounds attributed to their binding
+    constraint (max drone payload = `23/50` kg, bound by
+    `takeoffMassLimit`)
+  - `verify.verify` dispatches by scope kind; every catch
+    `materialize()`s to identified M0 individuals; vacuous passes
+    (violated assumptions) are recorded, never coerced into failures;
+    every Hypothesis run is derandomized with seeds echoed on the report
+  - the SMT encoder now walks *anonymous* requirement constraints too
+    (an unnamed `assume` was silently dropped -- a latent false-`proven`
+    bug, fixed for `prove` to land)
+  - notebook 07 gains the "find my violations" beat: hunt, the minimal
+    sortie, the covering array with its measured-recall line, and the
+    hoverMargin absence proof, executing with or without the extra
+  - extras restructured (ratified): `verify = ["hypothesis>=6.100",
+    "longeron[smt]"]`, plus composites `analysis`, `ui`, and `all`
+    (`cad` deliberately excluded from `all`)
 - **Object-valued analysis I/O in the OpenMDAO bridge**
   ([design doc](design/mdao-objects.md), all seven open questions
   ratified): objects -- not just scalars -- cross `build_problem`, on

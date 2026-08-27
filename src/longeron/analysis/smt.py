@@ -263,12 +263,25 @@ class _Builder:
             if isinstance(m, M.Usage) and m.kind == "subject" and m.name
         ]
         prefixes = {subjects[0]: ""} if subjects else {}
-        for con in named_members(self.interp, req, ("constraint",)):
-            expr = constraint_expr(self.interp, con)
-            if expr is None:
+        # walk ALL constraint members -- anonymous bodies included.  (An
+        # unnamed `assume constraint { ... }` used to be dropped silently
+        # here because only named members were iterated; the interpreter
+        # checks unnamed constraints fine, so the encoder must too, or a
+        # missing assumption turns an honest UNSAT into a false 'proven'.)
+        seen: dict[str, int] = {}
+        for con in self.interp.resolver.members_of(req):
+            if not (isinstance(con, M.Usage) and con.kind == "constraint"):
                 continue
             kind = con.constraint_kind or "require"
-            label = f"{req.label}::{con.name or con.label} [{kind}]"
+            name = con.name or con.short_name or (con.subsets[0] if con.subsets else f"<{kind}>")
+            seen[name] = seen.get(name, 0) + 1
+            if seen[name] > 1:  # disambiguate anonymous duplicates
+                name = f"{name}#{seen[name]}"
+            label = f"{req.label}::{name} [{kind}]"
+            expr = constraint_expr(self.interp, con)
+            if expr is None:
+                self.system.gaps.append(f"{label}: no evaluable expression")
+                continue
             try:
                 encoded = self._encode(expr, req, "", {}, prefixes)
             except AnalysisError as err:

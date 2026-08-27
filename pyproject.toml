@@ -64,8 +64,22 @@ explorer = ["ipylab>=1"]  # longeron.explorer: the 'lab' docked layout
 mdao = ["openmdao>=3.30"]
 trades = ["ortools>=9.8"]
 smt = ["z3-solver>=4.12"]
+verify = [
+    # longeron.analysis.verify: Hypothesis-driven hunting/shrinking plus the
+    # smt extra's Z3 for covering-array constraints, absence proofs, and the
+    # domain ladder's assumption-derived bounds -- one extra lights the whole
+    # surface (a hypothesis-only install still works for the sampling tiers)
+    "hypothesis>=6.100",
+    "longeron[smt]",
+]
 viz = ["matplotlib>=3.8", "anywidget>=0.9"]
 cad = ["cadquery>=2.5"]
+# composite extras: the analysis stack, the interactive UI stack, and the
+# kitchen sink ([cad] is deliberately excluded from [all] -- the ~1 GB OCC
+# kernel stays an explicit opt-in)
+analysis = ["longeron[mdao,trades,smt,viz]"]
+ui = ["longeron[explorer,replay,viz]"]
+all = ["longeron[analysis,ui,verify,rdf,client,server,ecore]"]
 units = [
     # longeron.units boundary tier: conversion, display, exchange (the
     # dimensional lint in longeron.validation needs NO extra -- it runs
@@ -143,13 +157,6 @@ warn_return_any = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-# EXPERIMENTAL spike helper: depends on hypothesis (not a project dep)
-# and prioritizes readability over annotations; excluded from typecheck
-module = "longeron.analysis._verify_spike"
-ignore_errors = true
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
 module = "longeron._gen.*"
 follow_imports = "skip"
 ignore_errors = true
@@ -186,6 +193,12 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["openmdao.*", "ortools.*", "z3.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# lazy import behind the [verify] extra
+module = "hypothesis.*"
 ignore_missing_imports = true
 follow_imports = "skip"
 

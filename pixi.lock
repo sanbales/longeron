@@ -10465,7 +10465,7 @@ packages:
 - pypi: ./
   name: longeron
   version: 0.10.0
-  sha256: ab5ed26a744b481d8a95ec5006b5172f5bddb79fb3cef83ba09ae2c7b75b4c8e
+  sha256: d1407c0016147ddfac5abaa7809b88c1b0c0e46e980de5d45555aba7396c1ed1
   requires_dist:
   - antlr4-python3-runtime==4.13.2
   - pytest>=8 ; extra == 'dev'
@@ -10504,9 +10504,14 @@ packages:
   - openmdao>=3.30 ; extra == 'mdao'
   - ortools>=9.8 ; extra == 'trades'
   - z3-solver>=4.12 ; extra == 'smt'
+  - hypothesis>=6.100 ; extra == 'verify'
+  - longeron[smt] ; extra == 'verify'
   - matplotlib>=3.8 ; extra == 'viz'
   - anywidget>=0.9 ; extra == 'viz'
   - cadquery>=2.5 ; extra == 'cad'
+  - longeron[mdao,trades,smt,viz] ; extra == 'analysis'
+  - longeron[explorer,replay,viz] ; extra == 'ui'
+  - longeron[analysis,ui,verify,rdf,client,server,ecore] ; extra == 'all'
   - pint>=0.24 ; extra == 'units'
   - pint-pandas>=0.7 ; extra == 'units'
   - playwright>=1.55 ; extra == 'browser-test'

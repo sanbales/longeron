@@ -326,4 +326,38 @@ package Drone {
         state landing;
         transition first landing accept touchdown then idle;
     }
+
+    // ----- sortie planning (sequence-sensitive safety) -------------------
+
+    state def SortieStates {
+        doc /* The sortie-level energy protocol: a launch is only cleared
+               above the 30% battery floor, each climb-out to airborne
+               burns 30%, and a recharge on the ground restores the pack.
+               The go-around path deliberately re-enters airborne WITHOUT
+               passing the launch guard -- the kind of sequence-sensitive
+               trap longeron.analysis.verify.sequences exists to catch
+               (minimal sortie: launch, goAround, goAround, goAround). */
+        attribute battery : Integer := 100;   // % state of charge
+
+        entry; then idle;
+
+        state idle;
+        transition first idle accept launch if battery >= 30 then airborne;
+        transition first idle accept recharge do assign battery := 100 then idle;
+
+        state airborne {
+            entry assign battery := battery - 30;   // each climb-out burns 30%
+        }
+        transition first airborne accept land then idle;
+        // the trap: a go-around re-enters airborne past the launch guard
+        transition first airborne accept goAround then airborne;
+    }
+
+    requirement def SafeSortie {
+        doc /* No sortie event sequence may drive the pack below zero.
+               battery is bound at check time to the live simulation
+               environment (the scoreboard's measured-attribute idiom). */
+        attribute battery : Integer;    // measured: the machine's live charge
+        require constraint noDeepDischarge { battery >= 0 }
+    }
 }

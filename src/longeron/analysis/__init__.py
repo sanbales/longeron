@@ -11,6 +11,13 @@ third-party dependencies):
 * :mod:`longeron.analysis.smt` -- requirement consistency, conflict cores, and
   design-space bounds over the reals on Z3
   (``pip install "longeron[smt]"``).
+* :mod:`longeron.analysis.verify` -- model-driven requirement-violation
+  hunting: Hypothesis strategies derived from the model's own types and
+  constraints (sampling + shrinking), adversarial event sequences against
+  the real state machines, in-house IPOG-F t-way covering arrays with Z3
+  as the constraint engine, Z3 absence proofs with exact bounds, and
+  every catch materialized as re-checkable M0 individuals
+  (``pip install "longeron[verify]"``).
 * :mod:`longeron.analysis.scoreboard` -- a MAUT (multi-attribute utility)
   scoreboard over the requirements hierarchy: model-declared weights and
   utility shapes, pluggable aggregation, and an interactive
@@ -60,6 +67,7 @@ __all__ = [
     "smt",
     "structure",
     "trades",
+    "verify",
     "viewer3d",
     "viz",
 ]
