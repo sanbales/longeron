@@ -78,9 +78,16 @@
   a trail whose label follows the active state name, camera tracking
   with a route-sized offset, and Cesium's native timeline + animation
   dial as the playback UI (plus a bidirectional `time` trait and a
-  `picked_json` click seam, viewer3d idiom). No Cesium ion token is
-  required -- the default globe is OpenStreetMap tiles on the plain
-  ellipsoid; `ion_token=` unlocks Cesium World Terrain/imagery.
+  `picked_json` click seam, viewer3d idiom). Pass `mesh=` (the
+  geometry module's mesh dict) and the drone's own to-scale airframe
+  flies the route nose-first: an in-house, stdlib-only binary glTF
+  exporter (`mesh_to_glb`) embeds the parts -- per-part colors,
+  translucent prop disks, flat shading -- as a `data:` URI whose
+  orientation follows the velocity vector. No Cesium ion token is
+  required -- `imagery=` picks the tokenless base: Esri World Imagery
+  satellite tiles (the default), a plain dark-slate globe, or
+  OpenStreetMap streets, all on the plain ellipsoid; `ion_token=`
+  unlocks Cesium World Terrain/imagery.
   CesiumJS (~6 MB) loads from a pinned jsDelivr CDN URL at view time
   (the viewer3d tradeoff, a fortiori) and degrades to an honest
   offline notice without it

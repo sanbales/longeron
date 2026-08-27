@@ -25,9 +25,10 @@ third-party dependencies):
   export needs ``pip install "longeron[cad]"``).
 * :mod:`longeron.analysis.mission3d` -- mission flight replay on a
   CesiumJS globe: waypoint- or state-machine-timeline-driven track
-  synthesis and an anywidget that flies a drone entity over real
-  imagery with Cesium's native timeline as the playback UI (``viz``
-  extra; no Cesium ion token required).
+  synthesis and an anywidget that flies the drone -- its own to-scale
+  mesh, exported to binary glTF in-house -- over satellite imagery
+  with Cesium's native timeline as the playback UI (``viz`` extra; no
+  Cesium ion token required).
 * :mod:`longeron.analysis.dashboard` -- the linked mission-compromise
   dashboard composing the widgets above with ipywidgets (``viz`` extra).
 * :mod:`longeron.analysis.link` -- linked selection between the

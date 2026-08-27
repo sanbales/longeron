@@ -5,19 +5,23 @@ browser AND the pinned CDN, so there is deliberately no browser-tier
 test here -- a Cesium scene cannot render without live CDN access, and
 the flake policy (tests/browser/README.md) forbids network-dependent
 assertions.  The ESM contracts (CDN URL, offline fallback, control
-wiring) are asserted as structure; rendered-globe evidence is captured
-out-of-band against the same ESM.
+wiring) are asserted as structure; the in-house GLB exporter likewise
+(container layout, scene shape, accessor bounds); rendered-globe and
+rendered-model evidence is captured out-of-band against the same ESM.
 """
 
+import base64
 import json
 import math
+import struct
 from datetime import datetime, timezone
 from itertools import pairwise
+from typing import ClassVar
 
 import pytest
 
 import longeron
-from longeron.analysis import mission3d
+from longeron.analysis import geometry, mission3d
 from longeron.analysis._expr import AnalysisError
 
 WAYPOINTS = [
@@ -69,6 +73,29 @@ def track(interp):
     return mission3d.from_replay(
         interp, "Mission::FlightStates", EVENTS, waypoints=WAYPOINTS, ground_alt=1650.0
     )
+
+
+@pytest.fixture(scope="module")
+def mesh():
+    """A real drone mesh (the geometry module's own dict shape)."""
+
+    return geometry.drone_geometry(
+        prop_diameter_in=10.0, motor_mass=0.048, battery_mass=0.30, esc_mass=0.012
+    )
+
+
+def parse_glb(blob):
+    """(gltf json dict, bin bytes, declared total length) of a GLB."""
+
+    magic, version, length = struct.unpack_from("<III", blob, 0)
+    assert magic == 0x46546C67 and version == 2  # b"glTF", glTF 2.0
+    json_length, json_type = struct.unpack_from("<II", blob, 12)
+    assert json_type == 0x4E4F534A  # b"JSON"
+    document = json.loads(blob[20 : 20 + json_length])
+    bin_length, bin_type = struct.unpack_from("<II", blob, 20 + json_length)
+    assert bin_type == 0x004E4942  # b"BIN\0"
+    binary = blob[28 + json_length : 28 + json_length + bin_length]
+    return document, binary, length
 
 
 def sample_times(track):
@@ -302,6 +329,151 @@ class TestCzml:
             flat.to_czml()
 
 
+# -- the GLB exporter ----------------------------------------------------------
+
+
+class TestMeshToGlb:
+    _COMPONENT_BYTES: ClassVar = {5123: 2, 5125: 4, 5126: 4}
+    _TYPE_COUNTS: ClassVar = {"SCALAR": 1, "VEC3": 3}
+
+    def test_container_layout(self, mesh):
+        """Header + JSON chunk + BIN chunk tile the file exactly, both
+        chunks 4-byte aligned (the glTF 2.0 GLB container contract)."""
+
+        blob = mission3d.mesh_to_glb(mesh)
+        document, binary, length = parse_glb(blob)
+        assert length == len(blob)
+        json_length = struct.unpack_from("<I", blob, 12)[0]
+        assert json_length % 4 == 0 and len(binary) % 4 == 0
+        assert 28 + json_length + len(binary) == len(blob)
+        assert document["asset"]["version"] == "2.0"
+
+    def test_scene_one_node_per_part_under_a_rotated_root(self, mesh):
+        document, _binary, _length = parse_glb(mission3d.mesh_to_glb(mesh))
+        names = [part["name"] for part in mesh["parts"]]
+        nodes = document["nodes"]
+        assert document["scenes"][document["scene"]]["nodes"] == [0]
+        assert nodes[0]["children"] == list(range(1, len(names) + 1))
+        assert [node["name"] for node in nodes[1:]] == names
+        assert [document["meshes"][node["mesh"]]["name"] for node in nodes[1:]] == names
+        # the -90 degree yaw: mesh +X (forward) -> glTF +Z (forward)
+        x, y, z, w = nodes[0]["rotation"]
+        assert (x, z) == (0.0, 0.0)
+        assert y == pytest.approx(-math.sqrt(0.5))
+        assert w == pytest.approx(math.sqrt(0.5))
+
+    def test_accessors_stay_inside_the_buffer(self, mesh):
+        """Every accessor fits its bufferView, every view fits the one
+        buffer, and the buffer's declared length is the BIN chunk's."""
+
+        document, binary, _length = parse_glb(mission3d.mesh_to_glb(mesh))
+        assert len(document["buffers"]) == 1
+        assert document["buffers"][0]["byteLength"] == len(binary)
+        for view in document["bufferViews"]:
+            assert view["buffer"] == 0
+            assert view["byteOffset"] % 4 == 0
+            assert view["byteOffset"] + view["byteLength"] <= len(binary)
+        for accessor in document["accessors"]:
+            view = document["bufferViews"][accessor["bufferView"]]
+            size = self._COMPONENT_BYTES[accessor["componentType"]]
+            span = accessor["count"] * size * self._TYPE_COUNTS[accessor["type"]]
+            assert span <= view["byteLength"]
+
+    def test_position_bounds_match_the_packed_data(self, mesh):
+        document, binary, _length = parse_glb(mission3d.mesh_to_glb(mesh))
+        for gltf_mesh in document["meshes"]:
+            accessor = document["accessors"][gltf_mesh["primitives"][0]["attributes"]["POSITION"]]
+            view = document["bufferViews"][accessor["bufferView"]]
+            floats = struct.unpack_from(f"<{accessor['count'] * 3}f", binary, view["byteOffset"])
+            assert accessor["min"] == [min(floats[i::3]) for i in range(3)]
+            assert accessor["max"] == [max(floats[i::3]) for i in range(3)]
+
+    def test_flat_shading_unwelds_triangles(self, mesh):
+        """Three vertices per face (POSITION == NORMAL == face-index
+        count), trivial indices, unit flat normals."""
+
+        document, binary, _length = parse_glb(mission3d.mesh_to_glb(mesh))
+        for part, gltf_mesh in zip(mesh["parts"], document["meshes"], strict=True):
+            primitive = gltf_mesh["primitives"][0]
+            position = document["accessors"][primitive["attributes"]["POSITION"]]
+            normal = document["accessors"][primitive["attributes"]["NORMAL"]]
+            indices = document["accessors"][primitive["indices"]]
+            assert position["count"] == normal["count"] == indices["count"] == len(part["faces"])
+            view = document["bufferViews"][normal["bufferView"]]
+            nx, ny, nz = struct.unpack_from("<3f", binary, view["byteOffset"])
+            assert math.hypot(nx, ny, nz) == pytest.approx(1.0, abs=1e-5)
+
+    def test_materials_carry_the_part_colors(self, mesh):
+        document, _binary, _length = parse_glb(mission3d.mesh_to_glb(mesh))
+        for part, material in zip(mesh["parts"], document["materials"], strict=True):
+            factor = material["pbrMetallicRoughness"]["baseColorFactor"]
+            assert factor[3] == part["opacity"]
+            # sRGB hex -> linear (the baseColorFactor color space)
+            red = int(part["color"][1:3], 16) / 255.0
+            expected = red / 12.92 if red <= 0.04045 else ((red + 0.055) / 1.055) ** 2.4
+            assert factor[0] == pytest.approx(expected, abs=1e-4)
+            assert material["doubleSided"] is True
+            assert (material.get("alphaMode") == "BLEND") == (part["opacity"] < 1.0)
+
+    def test_validation(self):
+        with pytest.raises(AnalysisError, match="no parts"):
+            mission3d.mesh_to_glb({"parts": []})
+        with pytest.raises(AnalysisError, match="out of range"):
+            mission3d.mesh_to_glb(
+                {
+                    "parts": [
+                        {
+                            "name": "x",
+                            "color": "#333333",
+                            "opacity": 1.0,
+                            "vertices": [0.0] * 9,
+                            "faces": [0, 1, 7],
+                        }
+                    ]
+                }
+            )
+        with pytest.raises(AnalysisError, match="rrggbb"):
+            mission3d.mesh_to_glb(
+                {
+                    "parts": [
+                        {
+                            "name": "x",
+                            "color": "red",
+                            "opacity": 1.0,
+                            "vertices": [0.0] * 9,
+                            "faces": [0, 1, 2],
+                        }
+                    ]
+                }
+            )
+
+
+class TestDroneModelPacket:
+    def test_mesh_swaps_the_point_for_the_model(self, track, mesh):
+        drone = track.to_czml(mesh=mesh, model_scale=2.5)[-1]
+        assert "point" not in drone
+        model = drone["model"]
+        assert model["gltf"].startswith("data:model/gltf-binary;base64,")
+        assert model["scale"] == 2.5
+        assert model["minimumPixelSize"] >= 1  # visible however far the camera
+        # the embedded payload is the mesh's own GLB, byte for byte
+        payload = base64.b64decode(model["gltf"].split(",", 1)[1])
+        assert payload == mission3d.mesh_to_glb(mesh)
+        # nose along the velocity vector (VelocityOrientationProperty)
+        assert drone["orientation"] == {"velocityReference": "#position"}
+        # the state-machine label and the trail survive the swap
+        assert "label" in drone and "path" in drone
+
+    def test_point_is_the_fallback_without_a_mesh(self, track):
+        drone = track.to_czml()[-1]
+        assert "model" not in drone and "orientation" not in drone
+        assert drone["point"]["pixelSize"] == 10
+
+    def test_model_scale_must_be_positive(self, track, mesh):
+        with pytest.raises(AnalysisError, match="model_scale"):
+            track.to_czml(mesh=mesh, model_scale=0.0)
+
+
 # -- the widget ----------------------------------------------------------------
 
 
@@ -313,6 +485,7 @@ class TestMissionViewer:
         assert packets[0]["id"] == "document" and packets[-1]["id"] == "mission-drone"
         assert widget.height_px == 480  # the explicit-height discipline
         assert widget.label == "FlightStates"  # defaults to the track name
+        assert widget.imagery == "satellite"  # keyless Esri World Imagery
         assert widget.ion_token == ""  # no token required, ever
         assert widget.picked_json == "[]"
         assert widget.time == 0.0
@@ -323,6 +496,21 @@ class TestMissionViewer:
         assert widget.label == "sortie 12"
         assert widget.height_px == 560
         assert widget.ion_token == "tok"
+
+    def test_mesh_flies_the_airframe_model(self, track, mesh):
+        pytest.importorskip("anywidget")
+        widget = mission3d.mission_viewer(track, mesh=mesh, model_scale=3.0)
+        drone = json.loads(widget.czml_json)[-1]
+        assert drone["model"]["gltf"].startswith("data:model/gltf-binary;base64,")
+        assert drone["model"]["scale"] == 3.0
+        assert "point" not in drone
+
+    def test_imagery_choices(self, track):
+        pytest.importorskip("anywidget")
+        for base in ("satellite", "plain", "osm"):
+            assert mission3d.mission_viewer(track, imagery=base).imagery == base
+        with pytest.raises(AnalysisError, match="imagery must be one of"):
+            mission3d.mission_viewer(track, imagery="street")
 
     def test_esm_cdn_contract(self, track):
         """The documented offline tradeoff, encoded: the pinned CDN URLs
@@ -344,7 +532,7 @@ class TestMissionViewer:
 
     def test_esm_viewer_contract(self, track):
         """The playback UI, encoded: ion chrome off, timeline + animation
-        dial on, open imagery by default, ion unlocks world terrain, the
+        dial on, tokenless imagery bases, ion unlocks world terrain, the
         camera tracks the drone, and an idle globe renders on demand."""
 
         pytest.importorskip("anywidget")
@@ -352,17 +540,38 @@ class TestMissionViewer:
         for token in (
             "baseLayerPicker: false",
             "geocoder: false",
+            "sceneModePicker: false",
             "timeline: true",
             "animation: true",
             "shouldAnimate: false",
             "requestRenderMode: true",
-            "OpenStreetMapImageryProvider",
             "defaultAccessToken",  # ion_token seam
             "fromWorldTerrain",
             "trackedEntity",
             "CzmlDataSource",
             "change:czml_json",  # in-place mission swap
             "change:height_px",
+        ):
+            assert token in widget._esm, token
+
+    def test_esm_imagery_contract(self, track):
+        """The three tokenless bases, encoded: Esri World Imagery is the
+        satellite default (with its required attribution), plain skips
+        the base layer and paints a dark-slate globe, osm keeps the
+        street tiles."""
+
+        pytest.importorskip("anywidget")
+        widget = mission3d.mission_viewer(track)
+        for token in (
+            "UrlTemplateImageryProvider",
+            "services.arcgisonline.com",
+            "World_Imagery",
+            "Esri, Maxar, Earthstar Geographics",  # the required credit
+            "options.baseLayer = false",  # plain: no imagery at all
+            "globe.baseColor",
+            "fromCssColorString",
+            "showGroundAtmosphere = false",
+            "OpenStreetMapImageryProvider",  # 'osm' stays available
         ):
             assert token in widget._esm, token
 

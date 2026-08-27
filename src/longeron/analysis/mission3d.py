@@ -42,9 +42,21 @@ same :class:`MissionTrack`:
 
 :func:`mission_viewer` renders the track as a CZML document on a Cesium
 ``Viewer``: a grey planned-route polyline, small waypoint pins, and a
-drone point entity that flies the samples with an orange trail, its
-label following the ACTIVE STATE name through the mission (CZML interval
-text -- the state machine is visibly driving the animation).  The camera
+drone entity that flies the samples with an orange trail, its label
+following the ACTIVE STATE name through the mission (CZML interval
+text -- the state machine is visibly driving the animation).  Pass the
+drone's own analysis mesh (``mesh=``, the dict
+:func:`longeron.analysis.geometry.drone_geometry` and its siblings
+build) and the ACTUAL airframe geometry flies the route: the mesh
+exports to a self-contained binary glTF through :func:`mesh_to_glb`
+(in-house, stdlib-only -- see :mod:`longeron.analysis._glb` for the
+exact container), embeds in the CZML as a ``data:`` URI (tens of kB for
+the quad), keeps its nose along the velocity vector (CZML
+``velocityReference`` orientation, Cesium's
+``VelocityOrientationProperty``), and never shrinks below a legible
+pixel size however far the camera sits; ``model_scale`` blows it up
+beyond true scale when the route dwarfs the airframe.  Without a mesh
+the drone stays the point entity.  The camera
 tracks the drone with an offset sized from the route (CZML ``viewFrom``).
 Cesium's native timeline + animation dial are the mission-playback UI
 (play/pause/scrub); the chrome that needs Cesium ion (base-layer picker,
@@ -56,9 +68,16 @@ playhead.  The stage keeps a fixed explicit height (``height_px``,
 default 480) at 98% width, so it never overflows a notebook cell or the
 sidebar.
 
-No Cesium ion token is required: the default globe is OpenStreetMap
-tiles on the plain WGS84 ellipsoid, both tokenless.  Passing
-``ion_token=`` upgrades to Cesium World Terrain + imagery.
+No Cesium ion token is required: every ``imagery`` base is tokenless
+on the plain WGS84 ellipsoid.  The default ``'satellite'`` is Esri
+World Imagery -- the keyless ArcGIS Online ``World_Imagery`` tile
+service, acceptable for light development/demo use with the attribution
+the widget's credit bar shows (heavy or production use should bring an
+ArcGIS API key or a Cesium ion token instead); ``'plain'`` draws no
+imagery at all -- a neutral dark-slate globe on which the route, trail,
+and model read cleanly; ``'osm'`` is OpenStreetMap street tiles.
+Passing ``ion_token=`` upgrades to Cesium World Terrain + imagery
+regardless of ``imagery``.
 
 Offline tradeoff: the front-end loads CesiumJS (~6 MB plus workers and
 assets) from the pinned jsDelivr CDN at view time -- the same judgment
@@ -75,6 +94,7 @@ Requires the ``viz`` extra for anywidget:
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 from dataclasses import dataclass
@@ -84,6 +104,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..errors import MissingExtraError, SysMLError
 from ._expr import AnalysisError
+from ._glb import mesh_to_glb
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -101,10 +122,18 @@ __all__ = [
     "CESIUM_VERSION",
     "MissionTrack",
     "from_replay",
+    "mesh_to_glb",
     "mission_track",
     "mission_viewer",
     "model_waypoints",
 ]
+
+#: the imagery bases mission_viewer accepts (all tokenless)
+_IMAGERY_BASES = ("satellite", "plain", "osm")
+
+#: the drone model never shrinks below this on-screen size, so it stays
+#: findable with the camera zoomed out to frame the whole route
+_MODEL_MIN_PIXELS = 48
 
 #: pinned CDN release (monthly Cesium train); bump deliberately, with the
 #: evidence capture re-run -- never float a `latest` tag
@@ -179,7 +208,9 @@ class MissionTrack:
             return self.phases[-1][1]
         return self.samples[-1][0] if self.samples else 0.0
 
-    def to_czml(self) -> list[dict[str, Any]]:
+    def to_czml(
+        self, *, mesh: Mapping[str, Any] | None = None, model_scale: float = 1.0
+    ) -> list[dict[str, Any]]:
         """The CZML document the widget plays.
 
         Packets: a document packet whose clock spans the mission
@@ -188,7 +219,12 @@ class MissionTrack:
         the ``mission-drone`` entity -- sampled positions with linear
         interpolation, an orange trail, a ``viewFrom`` camera offset
         sized from the route span, and a label whose text follows the
-        active state name through the phases.
+        active state name through the phases.  With ``mesh`` (a
+        geometry-module mesh dict) the drone entity is the airframe's
+        own glTF model -- :func:`mesh_to_glb` output on a ``data:``
+        URI, nose steered along the velocity vector, scaled by
+        ``model_scale`` and clamped to a legible minimum pixel size --
+        instead of the fallback point.
         """
 
         if len(self.samples) < 2:
@@ -258,53 +294,66 @@ class MissionTrack:
         for t, lat, lon, alt in self.samples:
             positions.extend((round(t, 3), round(lon, 6), round(lat, 6), round(alt, 2)))
         offset = self._camera_offset_m()
-        packets.append(
-            {
-                "id": "mission-drone",
-                "name": self.name,
-                "availability": availability,
-                # camera offset for tracked-entity mode: behind (south of)
-                # and above the drone, sized from the route span (ENU meters)
-                "viewFrom": {
-                    "cartesian": [
-                        round(-0.4 * offset),
-                        round(-offset),
-                        round(0.45 * offset),
-                    ]
+        drone: dict[str, Any] = {
+            "id": "mission-drone",
+            "name": self.name,
+            "availability": availability,
+            # camera offset for tracked-entity mode: behind and above the
+            # drone, sized from the route span (with a model, the entity's
+            # velocity orientation makes this a chase-camera offset)
+            "viewFrom": {
+                "cartesian": [
+                    round(-0.4 * offset),
+                    round(-offset),
+                    round(0.45 * offset),
+                ]
+            },
+            "position": {
+                "epoch": start,
+                "cartographicDegrees": positions,
+                "interpolationAlgorithm": "LAGRANGE",
+                "interpolationDegree": 1,
+            },
+            "path": {
+                "leadTime": 0,
+                "trailTime": round(self.duration, 3),
+                "width": 2.5,
+                "material": {
+                    # the replay fired orange: the trail is what has happened
+                    "solidColor": {"color": {"rgba": [224, 90, 0, 200]}}
                 },
-                "position": {
-                    "epoch": start,
-                    "cartographicDegrees": positions,
-                    "interpolationAlgorithm": "LAGRANGE",
-                    "interpolationDegree": 1,
-                },
-                "point": {
-                    "pixelSize": 10,
-                    "color": {"rgba": [63, 122, 31, 255]},  # the replay active green
-                    "outlineColor": {"rgba": [255, 255, 255, 255]},
-                    "outlineWidth": 2,
-                },
-                "path": {
-                    "leadTime": 0,
-                    "trailTime": round(self.duration, 3),
-                    "width": 2.5,
-                    "material": {
-                        # the replay fired orange: the trail is what has happened
-                        "solidColor": {"color": {"rgba": [224, 90, 0, 200]}}
-                    },
-                },
-                "label": {
-                    "text": self._label_text(),
-                    "font": "12px Helvetica, Arial, sans-serif",
-                    "pixelOffset": {"cartesian2": [0, -16]},
-                    "fillColor": {"rgba": [255, 255, 255, 235]},
-                    "outlineColor": {"rgba": [11, 21, 34, 235]},
-                    "outlineWidth": 3,
-                    "style": "FILL_AND_OUTLINE",
-                    "verticalOrigin": "BOTTOM",
-                },
+            },
+            "label": {
+                "text": self._label_text(),
+                "font": "12px Helvetica, Arial, sans-serif",
+                "pixelOffset": {"cartesian2": [0, -16]},
+                "fillColor": {"rgba": [255, 255, 255, 235]},
+                "outlineColor": {"rgba": [11, 21, 34, 235]},
+                "outlineWidth": 3,
+                "style": "FILL_AND_OUTLINE",
+                "verticalOrigin": "BOTTOM",
+            },
+        }
+        if mesh is not None:
+            if model_scale <= 0:
+                raise AnalysisError(f"model_scale must be positive (got {model_scale!r})")
+            glb = mesh_to_glb(mesh)
+            drone["model"] = {
+                "gltf": "data:model/gltf-binary;base64," + base64.b64encode(glb).decode("ascii"),
+                "scale": model_scale,
+                "minimumPixelSize": _MODEL_MIN_PIXELS,
             }
-        )
+            # nose along the velocity vector: Cesium dereferences this to
+            # a VelocityOrientationProperty over the entity's own position
+            drone["orientation"] = {"velocityReference": "#position"}
+        else:
+            drone["point"] = {
+                "pixelSize": 10,
+                "color": {"rgba": [63, 122, 31, 255]},  # the replay active green
+                "outlineColor": {"rgba": [255, 255, 255, 255]},
+                "outlineWidth": 2,
+            }
+        packets.append(drone)
         return packets
 
     def _label_text(self) -> str | list[dict[str, str]]:
@@ -712,12 +761,16 @@ async function render({ model, el }) {
   caption.className = "longeron-mission3d-caption";
   el.append(stage, caption);
 
-  // no ion token required: the default globe is OpenStreetMap tiles on
-  // the plain WGS84 ellipsoid (both tokenless); a token upgrades to
-  // Cesium World Terrain + imagery.  The ion-backed chrome (base-layer
-  // picker, geocoder) stays off either way -- the timeline + animation
-  // dial ARE the mission-playback UI.
+  // no ion token required: every imagery base is tokenless on the
+  // plain WGS84 ellipsoid -- 'satellite' (default) is Esri World
+  // Imagery (keyless ArcGIS Online tile service; the credit bar shows
+  // the required attribution), 'plain' is no imagery at all (a neutral
+  // dark-slate globe), 'osm' is OpenStreetMap streets.  A token
+  // upgrades to Cesium World Terrain + imagery.  The ion-backed chrome
+  // (base-layer picker, geocoder) stays off either way -- the timeline
+  // + animation dial ARE the mission-playback UI.
   const token = model.get("ion_token");
+  const imagery = model.get("imagery") || "satellite";
   if (token) Cesium.Ion.defaultAccessToken = token;
   const options = {
     baseLayerPicker: false,
@@ -737,12 +790,30 @@ async function render({ model, el }) {
   if (token) {
     options.baseLayer = Cesium.ImageryLayer.fromWorldImagery();
     options.terrain = Cesium.Terrain.fromWorldTerrain();
-  } else {
+  } else if (imagery === "plain") {
+    options.baseLayer = false;  // no tiles at all: globe.baseColor shows
+  } else if (imagery === "osm") {
     options.baseLayer = new Cesium.ImageryLayer(
       new Cesium.OpenStreetMapImageryProvider(
         { url: "https://tile.openstreetmap.org/" }));
+  } else {  // "satellite": Esri World Imagery, keyless
+    options.baseLayer = new Cesium.ImageryLayer(
+      new Cesium.UrlTemplateImageryProvider({
+        url: "https://services.arcgisonline.com/ArcGIS/rest/services/" +
+          "World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        credit: "Esri, Maxar, Earthstar Geographics, and the GIS " +
+          "User Community",
+        maximumLevel: 19,
+      }));
   }
   const viewer = new Cesium.Viewer(stage, options);
+  if (!token && imagery === "plain") {
+    // a tasteful dark slate the grey route, orange trail, and drone
+    // model all read against; no atmosphere haze over the bare globe
+    viewer.scene.globe.baseColor =
+      Cesium.Color.fromCssColorString("#2e3440");
+    viewer.scene.globe.showGroundAtmosphere = false;
+  }
 
   const hint = document.createElement("div");
   hint.className = "longeron-mission3d-hint";
@@ -872,6 +943,10 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         #: optional Cesium ion token (world terrain/imagery); applied at
         #: render time -- set it before displaying the widget
         ion_token = traitlets.Unicode("").tag(sync=True)
+        #: tokenless imagery base -- 'satellite' (Esri World Imagery,
+        #: the default), 'plain' (no tiles: a neutral dark globe), or
+        #: 'osm' (OpenStreetMap streets); applied at render time
+        imagery = traitlets.Unicode("satellite").tag(sync=True)
         #: JSON array with the CZML id of the last clicked entity
         #: ("[]" for a background click); written by the front-end
         picked_json = traitlets.Unicode("[]").tag(sync=True)
@@ -885,27 +960,38 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
 def mission_viewer(
     track: MissionTrack,
     *,
+    mesh: Mapping[str, Any] | None = None,
+    model_scale: float = 1.0,
     label: str | None = None,
     height_px: int = 480,
+    imagery: str = "satellite",
     ion_token: str = "",
 ) -> anywidget.AnyWidget:
     """Fly ``track`` on a Cesium globe in the notebook.
 
     The viewer starts paused at the track epoch with the camera
     tracking the drone; Cesium's native timeline and animation dial
-    play, pause, scrub, and re-speed the mission.  Click the drone (or
-    a waypoint pin) to report its CZML id on ``picked_json``; drive or
-    observe the playhead through the bidirectional ``time`` trait.  No
-    Cesium ion token is needed for the default OpenStreetMap globe;
-    pass ``ion_token`` to upgrade to Cesium World Terrain + imagery.
-    Assign a new JSON string to ``czml_json`` to swap the mission in
-    place.
+    play, pause, scrub, and re-speed the mission.  Pass ``mesh`` (a
+    :mod:`longeron.analysis.geometry` mesh dict) to fly the airframe's
+    own geometry as a glTF model, nose along the velocity vector and
+    ``model_scale`` times true size; without it the drone is a point.
+    ``imagery`` picks the tokenless base: ``'satellite'`` (Esri World
+    Imagery, the default), ``'plain'`` (a neutral dark globe, no
+    tiles), or ``'osm'`` (OpenStreetMap streets); ``ion_token``
+    upgrades to Cesium World Terrain + imagery regardless.  Click the
+    drone (or a waypoint pin) to report its CZML id on ``picked_json``;
+    drive or observe the playhead through the bidirectional ``time``
+    trait.  Assign a new JSON string to ``czml_json`` to swap the
+    mission in place.
     """
 
+    if imagery not in _IMAGERY_BASES:
+        raise AnalysisError(f"imagery must be one of {_IMAGERY_BASES} (got {imagery!r})")
     cls = _viewer_class()
     return cls(
-        czml_json=json.dumps(track.to_czml()),
+        czml_json=json.dumps(track.to_czml(mesh=mesh, model_scale=model_scale)),
         label=track.name if label is None else label,
         height_px=height_px,
+        imagery=imagery,
         ion_token=ion_token,
     )
