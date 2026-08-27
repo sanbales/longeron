@@ -8,11 +8,7 @@ nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
 
 ROOT = Path(__file__).resolve().parent.parent
-# spike_* notebooks are exploration artifacts with non-project deps
-# (hypothesis, allpairspy) -- readable, not executable in this env
-NOTEBOOKS = sorted(
-    path for path in (ROOT / "notebooks").glob("*.ipynb") if not path.stem.startswith("spike_")
-)
+NOTEBOOKS = sorted((ROOT / "notebooks").glob("*.ipynb"))
 
 
 def test_notebooks_exist():
