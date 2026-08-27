@@ -1,6 +1,6 @@
 """Spike tests: parametric mix geometry -- mesh sanity and scaling."""
 
-from math import pi
+from math import acos, pi, radians, sqrt, tan
 from pathlib import Path
 from typing import ClassVar
 
@@ -230,6 +230,18 @@ class TestSplitInstances:
             assert _watertight(part["vertices"], part["faces"]), part["name"]
             assert _volume(part["vertices"], part["faces"]) > 0
 
+    def test_split_mode_stamps_the_cad_recipe(self):
+        # the parametric recipe the CAD-native checks rebuild solids from
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        assert mesh["cad"] == {
+            **RACER,
+            "arm_thickness": geometry._ARM_THICKNESS,
+            "arm_width": geometry._ARM_WIDTH,
+            "motor_spacing": None,
+        }
+        assert all(disc["thickness"] == 0.0025 for disc in mesh["discs"])
+        assert "cad" not in geometry.drone_geometry(**RACER)  # merged mode: no recipe
+
     def test_instances_tag_to_m0_individual_ids(self):
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         mapping = {
@@ -268,7 +280,15 @@ def _plate_mesh(*, sx=0.1, sy=20.0, sz=20.0, cx=1.0, cy=0.0, cz=0.0, name="plate
 
 
 class TestCameraOcclusion:
-    """Closed-form frustum cases + the stock drone design point."""
+    """Closed-form view-cone quadrature cases + the stock design point.
+
+    All the cases here run the ``mesh`` engine (the stdlib fallback);
+    the exact-CAD engine is validated against the same closed forms in
+    :class:`TestCadEngine`.  The slab cases align their faces with the
+    quadrature's axial cell edges (multiples of ``length / resolution``)
+    and span the full cone cross-section, so the deterministic grid
+    integrates them EXACTLY, not just approximately.
+    """
 
     CAM: ClassVar[dict[str, float]] = {
         "x": 0.0,
@@ -279,42 +299,85 @@ class TestCameraOcclusion:
         "fieldOfView": 60.0,
     }
 
-    def test_unobstructed_view_is_zero(self):
-        # the only geometry sits BEHIND the camera
+    def test_unobstructed_cone_is_exactly_zero(self):
+        # the only geometry sits BEHIND the camera: nothing in the cone
         mesh = _plate_mesh(cx=-1.0)
-        assert geometry.camera_occlusion(mesh, self.CAM) == 0.0
+        assert geometry.camera_occlusion(mesh, self.CAM, sensing_range=1.0) == 0.0
 
-    def test_plate_dead_ahead_blocks_everything(self):
-        mesh = _plate_mesh(cx=1.0)  # 20 m x 20 m wall, 1 m ahead
-        assert geometry.camera_occlusion(mesh, self.CAM) == 1.0
+    def test_slab_through_the_cone_is_the_analytic_volume(self):
+        # a wall from x = 0.25 to 0.75 covering the whole cross-section:
+        # the cone volume between depths d0..d1 is proportional to
+        # d1^3 - d0^3, so the occluded fraction is exactly that
+        mesh = _plate_mesh(sx=0.5, cx=0.5)
+        fraction = geometry.camera_occlusion(mesh, self.CAM, sensing_range=1.0)
+        assert fraction == pytest.approx(0.75**3 - 0.25**3, rel=1e-9)
 
-    def test_half_plane_blocks_the_upper_rows_exactly(self):
-        # a wall whose bottom edge sits just above the boresight: of the
-        # 15 elevation rows (grid-cell centres) exactly the 7 above the
-        # boresight hit it -> 7/15, pinning the deterministic ray grid
-        mesh = _plate_mesh(cx=1.0, cy=10.0 + 0.001, sy=20.0)
-        assert geometry.camera_occlusion(mesh, self.CAM) == pytest.approx(7.0 / 15.0)
+    def test_half_plane_slab_is_half_the_slab(self):
+        # the same slab cut at the boresight plane (y > 0 only): the
+        # azimuthal cells split evenly, so exactly half the slab counts
+        mesh = _plate_mesh(sx=0.5, cx=0.5, cy=10.0)
+        fraction = geometry.camera_occlusion(mesh, self.CAM, sensing_range=1.0)
+        assert fraction == pytest.approx((0.75**3 - 0.25**3) / 2.0, rel=1e-9)
 
-    def test_report_names_the_offenders(self):
-        mesh = _plate_mesh(cx=1.0)
-        report = geometry.occlusion_report(mesh, self.CAM, rays=5)
-        assert report == {"occludedFraction": 1.0, "rays": 25, "hits": {"plate": 25}}
+    def test_interpenetrating_sub_solids_count_once(self):
+        # a merged part (two boxes sharing x in [0.45, 0.55], like the
+        # frame's plate + arms) occludes its UNION, not its XOR -- the
+        # per-component parity split is what makes this hold
+        blob = geometry._merge(
+            geometry._box(0.3, 20.0, 20.0, cx=0.4), geometry._box(0.3, 20.0, 20.0, cx=0.6)
+        )
+        mesh = {
+            "unit": "m",
+            "parts": [
+                {
+                    "name": "blob",
+                    "color": "#000000",
+                    "opacity": 1.0,
+                    "vertices": blob[0],
+                    "faces": blob[1],
+                }
+            ],
+        }
+        fraction = geometry.camera_occlusion(mesh, self.CAM, sensing_range=1.0)
+        assert fraction == pytest.approx(0.75**3 - 0.25**3, rel=1e-9)
 
-    def test_camera_body_is_excluded_from_its_own_view(self):
+    def test_report_carries_the_full_story(self):
+        mesh = _plate_mesh(sx=0.5, cx=0.5)
+        report = geometry.occlusion_report(mesh, self.CAM, sensing_range=1.0)
+        assert report["engine"] == "mesh"
+        assert report["sensingRange"] == 1.0
+        cone_volume = pi / 3.0 * tan(radians(30.0)) ** 2
+        assert report["coneVolume"] == pytest.approx(cone_volume, rel=1e-12)
+        assert set(report["obstructions"]) == {"plate"}
+        assert report["obstructions"]["plate"] == pytest.approx(report["occludedVolume"])
+        assert report["occludedVolume"] == pytest.approx(
+            report["occludedFraction"] * cone_volume, rel=1e-9
+        )
+
+    def test_stock_drone_cone_is_clear(self):
+        # the stock camera placement genuinely sees past the airframe:
+        # nothing intersects the view cone, so the measure is exactly 0.0
         mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
-        report = geometry.occlusion_report(mesh)
-        assert "camera" not in report["hits"]
+        report = geometry.occlusion_report(mesh, engine="mesh")
+        assert report["occludedFraction"] == 0.0
+        assert report["obstructions"] == {}
 
-    def test_stock_drone_meets_the_clear_view_budget(self):
+    def test_backward_camera_is_blocked_by_the_airframe(self):
+        # the same camera yawed 180 degrees looks straight back through
+        # the stack: the battery is the biggest thing in the cone
         mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
-        fraction = geometry.camera_occlusion(mesh)
-        assert 0.0 <= fraction <= 0.05  # the clearView requirement's budget
+        report = geometry.occlusion_report(
+            mesh, camera={**STOCK_CAMERA, "azimuth": 180.0}, engine="mesh"
+        )
+        assert report["occludedFraction"] > 0.0
+        assert next(iter(report["obstructions"])) == "battery"
+        assert "camera" not in report["obstructions"]  # its own body is excluded
 
-    def test_backward_camera_is_blinded_by_the_airframe(self):
+    def test_deterministic(self):
         mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
-        report = geometry.occlusion_report(mesh, camera={**STOCK_CAMERA, "azimuth": 180.0})
-        assert report["occludedFraction"] > 0.5
-        assert "battery" in report["hits"]  # the pack is the big offender
+        camera = {**STOCK_CAMERA, "azimuth": 180.0}
+        first = geometry.occlusion_report(mesh, camera=camera, engine="mesh")
+        assert first == geometry.occlusion_report(mesh, camera=camera, engine="mesh")
 
     def test_missing_camera_fails_loudly(self):
         mesh = geometry.drone_geometry(**STOCK, split_instances=True)
@@ -323,12 +386,25 @@ class TestCameraOcclusion:
         with pytest.raises(AnalysisError, match="missing"):
             geometry.camera_occlusion(mesh, {"x": 0.0})
 
+    def test_validates_range_and_resolution(self):
+        mesh = _plate_mesh(cx=-1.0)
+        with pytest.raises(AnalysisError, match="range"):
+            geometry.camera_occlusion(mesh, self.CAM, sensing_range=0.0)
+        with pytest.raises(AnalysisError, match="resolution"):
+            geometry.camera_occlusion(mesh, self.CAM, resolution=0)
 
-class TestDiscClearance:
-    """Closed-form disc cases + the stock and prop-swap design points."""
+
+#: the analytic lens: intersection volume of two coplanar discs of
+#: radius r whose centres sit d apart (times the disc thickness)
+def _lens_volume(r, d, thickness):
+    return (2.0 * r * r * acos(d / (2.0 * r)) - (d / 2.0) * sqrt(4.0 * r * r - d * d)) * thickness
+
+
+class TestDiscOverlap:
+    """Closed-form disc-overlap cases + the stock and prop-swap points."""
 
     @staticmethod
-    def _disc_mesh(part_mesh, *, center=(0.0, 0.0, 0.0), radius=0.1):
+    def _disc_mesh(part_mesh, *, center=(0.0, 0.0, 0.0), radius=0.1, thickness=0.0025):
         mesh = dict(part_mesh)
         mesh["discs"] = [
             {
@@ -336,62 +412,207 @@ class TestDiscClearance:
                 "center": list(center),
                 "normal": [0.0, 1.0, 0.0],
                 "radius": radius,
+                "thickness": thickness,
                 "exclude": [],
             }
         ]
         return mesh
 
-    def test_axial_gap_is_exact(self):
-        # a 0.2 m cube whose top face sits 0.4 m below the disc plane:
-        # the disc centre projects straight onto the face -> exactly 0.4
+    def test_clear_disc_is_exactly_zero(self):
         mesh = self._disc_mesh(_plate_mesh(sx=0.2, sy=0.2, sz=0.2, cx=0.0, cy=-0.5))
-        assert geometry.disc_clearance(mesh) == pytest.approx(0.4)
+        assert geometry.disc_overlap(mesh) == 0.0
 
-    def test_lateral_gap_is_exact(self):
-        # a box face 0.15 m from the disc axis in-plane: the rim sample at
-        # angle 0 (radius 0.1) leaves exactly 0.05 m
-        mesh = self._disc_mesh(_plate_mesh(sx=0.2, sy=0.2, sz=0.2, cx=0.25))
-        assert geometry.disc_clearance(mesh) == pytest.approx(0.05)
+    def test_half_disc_through_a_box_is_exact(self):
+        # a box occupying the half-space x > 0 across the disc's whole
+        # thickness: the overlap is exactly half the disc volume, and the
+        # equal-area mid-plane quadrature integrates it exactly
+        mesh = self._disc_mesh(_plate_mesh(sx=10.0, sy=10.0, sz=20.0, cx=5.0))
+        assert geometry.disc_overlap(mesh) == pytest.approx(pi * 0.1**2 * 0.0025 / 2.0, rel=1e-12)
 
-    def test_symmetric_stations_report_symmetric_clearances(self):
+    def test_thickness_scales_the_overlap(self):
+        thin = self._disc_mesh(_plate_mesh(sx=10.0, sy=10.0, sz=20.0, cx=5.0))
+        thick = self._disc_mesh(_plate_mesh(sx=10.0, sy=10.0, sz=20.0, cx=5.0), thickness=0.005)
+        assert geometry.disc_overlap(thick) == pytest.approx(
+            2.0 * geometry.disc_overlap(thin), rel=1e-12
+        )
+
+    def test_stock_drone_discs_are_clear(self):
         mesh = geometry.drone_geometry(**STOCK, split_instances=True)
-        rows = geometry.clearance_report(mesh)
+        rows = geometry.overlap_report(mesh, engine="mesh")
         assert [row["disc"] for row in rows] == ["prop1", "prop2", "prop3", "prop4"]
-        clearances = {round(row["clearance"], 9) for row in rows}
-        assert len(clearances) == 1  # four identical stations
+        assert all(row["overlap"] == 0.0 and row["parts"] == {} for row in rows)
+        assert geometry.disc_overlap(mesh, engine="mesh") == 0.0
 
-    def test_stock_drone_clearance_is_the_designed_tip_gap(self):
-        # the frame derivation spaces motors one prop diameter + 0.02 m
-        # apart, so the tightest gap IS the 0.02 m disc-to-disc clearance
-        mesh = geometry.drone_geometry(**STOCK, split_instances=True)
-        rows = geometry.clearance_report(mesh)
-        assert geometry.disc_clearance(mesh) == pytest.approx(0.02, abs=1e-9)
-        assert all(row["nearest"].startswith("prop") for row in rows)
-
-    def test_oversized_prop_on_the_stock_frame_violates(self):
-        # a 12" prop bolted onto the frame sized for 10" props: discs
-        # overlap, clearance collapses below the 0.01 m requirement floor
+    def test_oversized_prop_on_the_stock_frame_overlaps(self):
+        # 12" props bolted onto the frame sized for 10" props: each disc
+        # cuts a lens into each of its two neighbours -- the quadrature
+        # estimate lands within 2% of the analytic lens volume
         stock_spacing = 10.0 * geometry.IN + 0.02
         mesh = geometry.drone_geometry(
             **{**STOCK, "prop_diameter_in": 12.0},
             split_instances=True,
             motor_spacing=stock_spacing,
         )
-        assert geometry.disc_clearance(mesh) < 0.01
+        rows = geometry.overlap_report(mesh, engine="mesh")
+        lens = _lens_volume(6.0 * geometry.IN, stock_spacing, 0.0025)
+        for row in rows:
+            assert row["overlap"] == pytest.approx(2.0 * lens, rel=0.02)
+            assert all(name.startswith("prop") for name in row["parts"])
+            assert len(row["parts"]) == 2  # the two adjacent stations
+        assert geometry.disc_overlap(mesh, engine="mesh") == pytest.approx(8.0 * lens, rel=0.02)
+        assert geometry.disc_overlap(mesh, engine="mesh") > 0.0  # propClearance violated
+
+    def test_symmetric_stations_report_symmetric_overlaps(self):
+        stock_spacing = 10.0 * geometry.IN + 0.02
+        mesh = geometry.drone_geometry(
+            **{**STOCK, "prop_diameter_in": 12.0},
+            split_instances=True,
+            motor_spacing=stock_spacing,
+        )
+        rows = geometry.overlap_report(mesh, engine="mesh")
+        assert len({round(row["overlap"], 12) for row in rows}) == 1
 
     def test_merged_mesh_fails_loudly(self):
         mesh = geometry.drone_geometry(**STOCK)  # no split: no per-station discs
         with pytest.raises(AnalysisError, match="split_instances"):
-            geometry.disc_clearance(mesh)
+            geometry.disc_overlap(mesh)
+
+    def test_validates_resolution(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True)
+        with pytest.raises(AnalysisError, match="resolution"):
+            geometry.overlap_report(mesh, resolution=0)
+
+
+class TestEngineDispatch:
+    """``auto`` prefers CAD, falls back to the mesh quadrature, and the
+    explicit engines fail loudly when their prerequisites are missing."""
+
+    def test_auto_uses_mesh_without_cadquery(self, monkeypatch):
+        monkeypatch.setattr(geometry, "_cad_available", lambda: False)
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        assert geometry.occlusion_report(mesh)["engine"] == "mesh"
+        assert geometry.overlap_report(mesh)[0]["engine"] == "mesh"
+
+    def test_auto_needs_the_stamped_recipe(self, monkeypatch):
+        # a synthetic mesh carries no parametric recipe: auto stays on
+        # the mesh engine even when cadquery is importable
+        monkeypatch.setattr(geometry, "_cad_available", lambda: True)
+        report = geometry.occlusion_report(
+            _plate_mesh(cx=-1.0), TestCameraOcclusion.CAM, sensing_range=1.0
+        )
+        assert report["engine"] == "mesh"
+
+    def test_explicit_cad_without_the_extra_is_loud(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def no_cadquery(name, *args, **kwargs):
+            if name == "cadquery":
+                raise ImportError("mocked")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_cadquery)
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        with pytest.raises(ImportError, match="longeron\\[cad\\]"):
+            geometry.camera_occlusion(mesh, engine="cad")
+        with pytest.raises(ImportError, match="longeron\\[cad\\]"):
+            geometry.disc_overlap(mesh, engine="cad")
+
+    def test_unknown_engine_is_loud(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        with pytest.raises(AnalysisError, match="engine"):
+            geometry.occlusion_report(mesh, engine="frustum")
+
+
+class TestCadEngine:
+    """Exact CAD booleans (skipped without the ~1 GB ``cad`` extra).
+
+    Mirrors :class:`TestCameraOcclusion` / :class:`TestDiscOverlap`'s
+    closed forms against the OCC kernel: the view cone's volume and
+    slab intersections are analytic, the prop-swap overlap is the
+    analytic two-disc lens, and the stock drone reads exactly clear.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _needs_cadquery(self):
+        pytest.importorskip("cadquery")
+
+    def test_view_cone_volume_is_analytic(self):
+        cone = geometry.view_cone(TestCameraOcclusion.CAM, length=1.0)
+        assert cone.Volume() == pytest.approx(pi / 3.0 * tan(radians(30.0)) ** 2, rel=1e-12)
+
+    def test_view_cone_apex_axis_and_reach(self):
+        camera = {**STOCK_CAMERA, "elevation": 0.0, "azimuth": 180.0}
+        cone = geometry.view_cone(camera, length=1.0)
+        box = cone.BoundingBox()
+        assert box.xmax == pytest.approx(0.06, abs=1e-9)  # apex at the camera
+        assert box.xmin == pytest.approx(0.06 - 1.0, abs=1e-9)  # reaches backward
+        half = tan(radians(camera["fieldOfView"]) / 2.0)
+        assert box.ymax == pytest.approx(half, abs=1e-6)  # base radius at length
+
+    def test_slab_through_the_cone_is_analytic(self):
+        import cadquery as cq
+
+        cone = geometry.view_cone(TestCameraOcclusion.CAM, length=1.0)
+        plate = cq.Solid.makeBox(0.5, 20.0, 20.0, pnt=cq.Vector(0.25, -10.0, -10.0))
+        fraction = cone.intersect(plate).Volume() / cone.Volume()
+        assert fraction == pytest.approx(0.75**3 - 0.25**3, rel=1e-9)
+
+    def test_view_cone_validates(self):
+        with pytest.raises(AnalysisError, match="length"):
+            geometry.view_cone(TestCameraOcclusion.CAM, length=0.0)
+
+    def test_stock_drone_is_exactly_clear(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        report = geometry.occlusion_report(mesh)  # auto picks CAD here
+        assert report["engine"] == "cad"
+        assert report["occludedFraction"] == 0.0 and report["obstructions"] == {}
+        rows = geometry.overlap_report(mesh)
+        assert all(row["engine"] == "cad" and row["overlap"] == 0.0 for row in rows)
+        assert geometry.geometry_checks(mesh) == {
+            "occludedFraction": 0.0,
+            "discOverlapVolume": 0.0,
+        }
+
+    def test_backward_camera_matches_the_mesh_estimate(self):
+        mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        camera = {**STOCK_CAMERA, "azimuth": 180.0}
+        cad = geometry.occlusion_report(mesh, camera=camera, engine="cad")
+        estimate = geometry.occlusion_report(mesh, camera=camera, engine="mesh")
+        assert cad["occludedFraction"] > 0.0
+        assert next(iter(cad["obstructions"])) == "battery"
+        # the quadrature integrates the same measure, to grid accuracy
+        assert estimate["occludedFraction"] == pytest.approx(cad["occludedFraction"], rel=0.5)
+
+    def test_oversized_prop_overlap_is_the_analytic_lens(self):
+        stock_spacing = 10.0 * geometry.IN + 0.02
+        mesh = geometry.drone_geometry(
+            **{**STOCK, "prop_diameter_in": 12.0},
+            split_instances=True,
+            motor_spacing=stock_spacing,
+        )
+        lens = _lens_volume(6.0 * geometry.IN, stock_spacing, 0.0025)
+        rows = geometry.overlap_report(mesh, engine="cad")
+        for row in rows:
+            assert row["overlap"] == pytest.approx(2.0 * lens, rel=1e-6)
+            assert len(row["parts"]) == 2
+        assert geometry.disc_overlap(mesh, engine="cad") == pytest.approx(8.0 * lens, rel=1e-6)
+
+    def test_recipe_less_mesh_is_loud(self):
+        with pytest.raises(AnalysisError, match="recipe"):
+            geometry.occlusion_report(
+                _plate_mesh(cx=1.0), TestCameraOcclusion.CAM, sensing_range=1.0, engine="cad"
+            )
 
 
 class TestGeometryChecks:
     def test_both_measures_keyed_for_the_scoreboard(self):
         mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
-        checks = geometry.geometry_checks(mesh)
-        assert set(checks) == {"occludedFraction", "minDiscClearance"}
-        assert checks["occludedFraction"] == geometry.camera_occlusion(mesh)
-        assert checks["minDiscClearance"] == geometry.disc_clearance(mesh)
+        checks = geometry.geometry_checks(mesh, engine="mesh")
+        assert set(checks) == {"occludedFraction", "discOverlapVolume"}
+        assert checks["occludedFraction"] == geometry.camera_occlusion(mesh, engine="mesh")
+        assert checks["discOverlapVolume"] == geometry.disc_overlap(mesh, engine="mesh")
 
     def test_deterministic(self):
         mesh = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
@@ -402,8 +623,8 @@ class TestGeometryChecks:
         checks = geometry.geometry_checks(
             geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
         )
-        assert checks["occludedFraction"] <= 0.05  # clearView
-        assert checks["minDiscClearance"] >= 0.01  # propClearance
+        assert checks["occludedFraction"] <= 0.0  # clearView
+        assert checks["discOverlapVolume"] <= 0.0  # propClearance
 
 
 class TestMotorSpacingOverride:
@@ -1082,6 +1303,51 @@ class TestCadqueryBridge:
             "battery",
             "esc",
         }
+
+    def test_camera_mounts_as_a_child(self):
+        pytest.importorskip("cadquery")
+        assembly = geometry.to_cadquery(**RACER, camera=STOCK_CAMERA)
+        camera = next(child for child in assembly.children if child.name == "camera")
+        box = geometry._shape(camera.obj).BoundingBox()
+        assert (box.xmin + box.xmax) / 2 == pytest.approx(STOCK_CAMERA["x"], abs=1e-9)
+        assert box.xmax - box.xmin == pytest.approx(0.020, abs=1e-9)  # azimuth 0: length in x
+
+    def test_cylinders_stand_upright(self):
+        # the motors and prop discs spin about +y, exactly like the mesh
+        # (a regression: local-frame cylinder axes laid them on their sides)
+        pytest.importorskip("cadquery")
+        solids = {
+            child.name: geometry._shape(child.obj)
+            for child in geometry.to_cadquery(**RACER).children
+        }
+        _, motor_h = geometry.motor_size(RACER["motor_mass"])
+        motor_box = solids["motor1"].BoundingBox()
+        assert motor_box.ymax - motor_box.ymin == pytest.approx(motor_h, rel=1e-9)
+        prop_box = solids["prop1"].BoundingBox()
+        assert prop_box.ymax - prop_box.ymin == pytest.approx(0.0025, abs=1e-9)
+        assert prop_box.xmax - prop_box.xmin == pytest.approx(
+            RACER["prop_diameter_in"] * geometry.IN, rel=1e-9
+        )
+
+    def test_solids_match_the_mesh_footprint(self):
+        # the CAD twin and the mesh describe the same craft: identical
+        # bounding boxes (the mesh's 32-gon prop rims touch the true
+        # cylinder radius at angle 0, so even x/z extents agree)
+        pytest.importorskip("cadquery")
+        mesh = geometry.drone_geometry(**RACER, split_instances=True)
+        by_name = {part["name"]: part for part in mesh["parts"]}
+        solids = {
+            child.name: geometry._shape(child.obj)
+            for child in geometry.to_cadquery(**RACER).children
+        }
+        for name in ("motor1", "prop1", "esc"):
+            (lo, hi) = geometry._part_aabb(by_name[name])
+            box = solids[name].BoundingBox()
+            for axis, (a, b) in enumerate(
+                ((box.xmin, box.xmax), (box.ymin, box.ymax), (box.zmin, box.zmax))
+            ):
+                assert a == pytest.approx(lo[axis], abs=1e-4), (name, axis)
+                assert b == pytest.approx(hi[axis], abs=1e-4), (name, axis)
 
     def test_missing_extra_is_loud(self, monkeypatch):
         import builtins

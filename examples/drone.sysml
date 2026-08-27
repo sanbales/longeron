@@ -118,36 +118,42 @@ package Drone {
     requirement installation {
         doc /* The geometric installation envelope.  Both measures are
                computed kernel-side by longeron.analysis.geometry
-               (camera_occlusion / disc_clearance) over the same mesh the
-               3D viewer paints, and injected into the scoreboard as
+               (camera_occlusion / disc_overlap): CAD boolean
+               intersections against the same parametric solids
+               to_cadquery builds (with the cad extra installed;
+               a deterministic volume-quadrature estimate of the same
+               measures otherwise), injected into the scoreboard as
                values= bindings for the unvalued attributes below --
                see tutorial 10. */
         subject drone : QuadCopter;
-        attribute occludedFraction : Real;    // measured: fraction of camera rays blocked
-        attribute minDiscClearance : Real;    // measured: m, tightest prop-disc gap
+        attribute occludedFraction : Real;    // measured: airframe volume inside the view cone / cone volume
+        attribute discOverlapVolume : Real;   // measured: m^3 of prop-disc overlap with other components
 
         requirement clearView {
-            doc /* The camera frustum shall be at most 5% blocked by the
-                   drone's own airframe. */
+            doc /* The camera's view cone -- apex at the lens, axis along
+                   the boresight, half-angle fieldOfView / 2, reaching one
+                   airframe bounding-box diagonal -- shall contain no part
+                   of the drone's own airframe. */
             attribute weight : Real = 2.0;
             attribute utility : String = "smaller-is-better";
-            attribute ramp0 : Real = 0.25;
+            attribute ramp0 : Real = 0.001;
             attribute ramp1 : Real = 0.0;
             attribute measure : Real = occludedFraction;
             attribute unit : String = "fraction";
-            require constraint viewBudget { occludedFraction <= 0.05 }
+            require constraint viewBudget { occludedFraction <= 0.0 }
         }
 
         requirement propClearance {
-            doc /* Every propeller disc shall keep at least 10 mm of
-                   clearance to every other component. */
+            doc /* No propeller disc shall overlap any other component
+                   (zero intersection volume between each disc's thin
+                   cylinder and the rest of the assembly). */
             attribute weight : Real = 1.0;
-            attribute utility : String = "larger-is-better";
-            attribute ramp0 : Real = 0.0;
-            attribute ramp1 : Real = 0.05;
-            attribute measure : Real = minDiscClearance;
-            attribute unit : String = "m";
-            require constraint clearanceFloor { minDiscClearance >= 0.01 [SI::m] }
+            attribute utility : String = "smaller-is-better";
+            attribute ramp0 : Real = 0.00002;
+            attribute ramp1 : Real = 0.0;
+            attribute measure : Real = discOverlapVolume;
+            attribute unit : String = "m^3";
+            require constraint noOverlap { discOverlapVolume <= 0.0 }
         }
     }
 

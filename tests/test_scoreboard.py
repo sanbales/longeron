@@ -563,7 +563,8 @@ class TestValuesInjection:
         # the measured-elsewhere seam of examples/drone.sysml: the measure
         # reads a DECLARED but unvalued attribute (so the model validates
         # clean), stays honestly unmeasured bare, and values= injects the
-        # kernel-side reading (here: the geometry checks' occludedFraction)
+        # kernel-side reading (a clearView-style occludedFraction; ramps
+        # here are the test's own, not the drone model's)
         model = longeron.loads(
             """
             package P {

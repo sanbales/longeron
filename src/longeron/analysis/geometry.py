@@ -31,19 +31,27 @@ convention the SysML part usage's qualified name) stamped by
 (:mod:`longeron.analysis.link`); untagged parts fall back to their
 ``name``.
 
-The same mesh doubles as the input to the GEOMETRIC REQUIREMENT CHECKS:
-:func:`camera_occlusion` casts a deterministic ray grid over a mounted
-camera's field of view and reports the fraction blocked by own-airframe
-triangles, and :func:`disc_clearance` measures the tightest gap between
-each propeller disc (stamped analytically by :func:`drone_geometry` in
-``split_instances`` mode) and every other component's triangles.  Both
-are pure stdlib math, deterministic, and keyed by
-:func:`geometry_checks` to feed ``examples/drone.sysml``'s
-``installation`` requirements through the scoreboard's ``values=`` seam.
+The same geometry feeds the GEOMETRIC REQUIREMENT CHECKS, which are
+CAD-NATIVE: :func:`camera_occlusion` builds a VIEW CONE solid at a
+mounted camera (apex at the lens, axis along the boresight, half-angle
+``fieldOfView / 2``) and boolean-INTERSECTS it with every other
+component's parametric solid -- the same solids :func:`to_cadquery`
+builds -- reporting intersected volume over cone volume (0.0 is a
+perfectly clear view), and :func:`disc_overlap` boolean-intersects each
+propeller disc (a thin cylinder solid, stamped analytically by
+:func:`drone_geometry` in ``split_instances`` mode) with every other
+component, reporting the overlap volume (0.0 is no overlap).  cadquery
+(the ``cad`` extra) powers the exact booleans; without it both checks
+fall back to a deterministic stdlib volume quadrature over the mesh
+triangles that integrates the SAME measures (see
+:func:`occlusion_report` / :func:`overlap_report` for the accuracy
+contract).  Both are deterministic and keyed by :func:`geometry_checks`
+to feed ``examples/drone.sysml``'s ``installation`` requirements
+through the scoreboard's ``values=`` seam in either posture.
 
-House pattern: geometry is baked in Python once per configuration (a
-millisecond or so -- no CAD kernel in the loop); the front-end never
-recomputes it.  Y is up, +X is forward, one unit is one metre, and every
+House pattern: MESH geometry is baked in Python once per configuration
+(a millisecond or so -- no CAD kernel in the render loop); the front-end
+never recomputes it.  Y is up, +X is forward, one unit is one metre, and every
 dimension is a real measurement or a documented heuristic, so two mixes
 render truly to scale side by side (:func:`lineup` merges several
 configurations into one to-scale scene).  :func:`mission_geometry`
@@ -51,14 +59,16 @@ dispatches a ``UavMissions``-style mix onto its family builder from the
 selected airframe's attributes.
 
 :func:`to_cadquery` rebuilds the quad-copter assembly as CAD solids
-(STEP export, fillets) behind the ``cad`` extra -- the mesh pipeline here
-deliberately does not need the ~1 GB OCC kernel.
+(STEP export, and the solid source of the CAD-native checks above)
+behind the ``cad`` extra -- the mesh pipeline here deliberately does not
+need the ~1 GB OCC kernel.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from math import atan, atan2, ceil, cos, floor, pi, radians, sin, sqrt
+from importlib.util import find_spec
+from math import atan, atan2, ceil, cos, floor, pi, radians, sin, sqrt, tan
 from typing import Any
 
 from ..errors import MissingExtraError
@@ -69,8 +79,7 @@ __all__ = [
     "architecture_geometry",
     "architecture_params",
     "camera_occlusion",
-    "clearance_report",
-    "disc_clearance",
+    "disc_overlap",
     "drone_geometry",
     "geometry_checks",
     "interceptor_geometry",
@@ -79,9 +88,11 @@ __all__ = [
     "mission_params",
     "naca4_profile",
     "occlusion_report",
+    "overlap_report",
     "tag_parts",
     "teardrop_quad_geometry",
     "to_cadquery",
+    "view_cone",
     "winged_vtol_geometry",
 ]
 
@@ -391,7 +402,7 @@ def drone_geometry(
     5-inch racer.  ``motor_spacing`` overrides that derivation with a
     FIXED motor-to-motor distance -- a real frame does not grow when a
     bigger prop is bolted onto it, so a prop-swap what-if passes the
-    stock spacing and lets :func:`disc_clearance` judge the result.
+    stock spacing and lets :func:`disc_overlap` judge the result.
     ``arm_thickness``/``arm_width`` default to the demo
     heuristics; callers with load-sized arm tubes (see
     :func:`mission_geometry`) pass the sized outer diameter so heavier-
@@ -407,8 +418,11 @@ def drone_geometry(
     reproduces the merged part exactly, and the default (``False``)
     output is unchanged.  Split mode additionally stamps the analytic
     propeller discs onto the mesh (``mesh["discs"]``: centre, normal,
-    radius, owning part, and the same-station parts a clearance check
-    must ignore) -- the input :func:`disc_clearance` consumes.
+    radius, thickness, owning part, and the same-station parts an
+    overlap check must ignore) -- the input :func:`overlap_report`
+    consumes -- and the parametric recipe (``mesh["cad"]``: this
+    function's own sizing inputs) from which the CAD-native checks
+    rebuild the exact solids via :func:`to_cadquery`.
 
     ``camera`` mounts the mission camera: a mapping with the placement
     and boresight attribute names of ``examples/drone.sysml``'s
@@ -417,7 +431,7 @@ def drone_geometry(
     slot dict of an instantiated/interpreted camera individual.  It adds
     a violet ``camera`` body part (a small box, yawed to the azimuth)
     and stamps the parameters on ``mesh["camera"]`` for
-    :func:`camera_occlusion`.
+    :func:`camera_occlusion`'s view cone.
     """
 
     prop_d = prop_diameter_in * IN
@@ -477,10 +491,20 @@ def drone_geometry(
                 "center": [round(x, 5), round(prop_y, 5), round(z, 5)],
                 "normal": [0.0, 1.0, 0.0],
                 "radius": round(prop_d / 2, 5),
+                "thickness": 0.0025,
                 "exclude": [f"motor{i + 1}", f"prop{i + 1}"],
             }
             for i, (x, z) in enumerate(stations)
         ]
+        mesh["cad"] = {
+            "prop_diameter_in": prop_diameter_in,
+            "motor_mass": motor_mass,
+            "battery_mass": battery_mass,
+            "esc_mass": esc_mass,
+            "arm_thickness": arm_thickness,
+            "arm_width": arm_width,
+            "motor_spacing": motor_spacing,
+        }
         if camera is not None:
             mesh["camera"] = _camera_params(camera)
         return mesh
@@ -499,13 +523,28 @@ def drone_geometry(
 
 
 # ---------------------------------------------------------------------------
-# geometric requirement checks (camera line of sight, prop-disc clearance)
+# geometric requirement checks (camera view cone, prop-disc overlap)
 # ---------------------------------------------------------------------------
 
 #: the camera parameter names -- exactly the attribute names of
 #: ``examples/drone.sysml``'s ``Camera`` part, so an instantiated /
 #: M0-interpreted camera's slot dict wires straight through
 _CAMERA_KEYS = ("x", "y", "z", "azimuth", "elevation", "fieldOfView")
+
+#: boolean-intersection volumes below this (m^3) count as zero: OCC
+#: booleans on flush faces (the ESC sitting directly on the top plate)
+#: can return slivers of numerical dust instead of an empty shape
+_VOLUME_EPS = 1e-12
+
+#: propeller-disc solid thickness (m) assumed when a stamped disc does
+#: not carry its own ``thickness`` -- the prop-cylinder thickness of
+#: :func:`drone_geometry` and :func:`to_cadquery`
+_DISC_THICKNESS = 0.0025
+
+#: fixed parity-ray direction for point-in-solid tests: (1, 2, 3)
+#: normalized -- oblique to every axis-aligned face and lathe/fan edge of
+#: the primitive meshes, so no quadrature sample's ray grazes an edge
+_PARITY_DIR: Vec = (0.2672612419124244, 0.5345224838248488, 0.8017837257372732)
 
 
 def _camera_params(camera: Mapping[str, Any]) -> dict[str, float]:
@@ -534,6 +573,17 @@ def _boresight(azimuth_deg: float, elevation_deg: float) -> Vec:
     return (cos(el) * cos(az), sin(el), -cos(el) * sin(az))
 
 
+def _perpendicular(normal: Vec) -> tuple[Vec, Vec]:
+    """Two unit vectors completing a right-handed frame with ``normal``."""
+
+    nx, ny, nz = normal
+    ux, uy, uz = (1.0, 0.0, 0.0) if abs(nx) < 0.9 else (0.0, 1.0, 0.0)
+    vx, vy, vz = ny * uz - nz * uy, nz * ux - nx * uz, nx * uy - ny * ux
+    norm = sqrt(vx * vx + vy * vy + vz * vz)
+    vx, vy, vz = vx / norm, vy / norm, vz / norm
+    return (vx, vy, vz), (ny * vz - nz * vy, nz * vx - nx * vz, nx * vy - ny * vx)
+
+
 def _part_triangles(part: Mapping[str, Any]) -> list[tuple[Vec, Vec, Vec]]:
     v, f = part["vertices"], part["faces"]
     tris = []
@@ -555,24 +605,6 @@ def _part_aabb(part: Mapping[str, Any]) -> tuple[Vec, Vec]:
         (min(v[0::3]), min(v[1::3]), min(v[2::3])),
         (max(v[0::3]), max(v[1::3]), max(v[2::3])),
     )
-
-
-def _ray_hits_aabb(origin: Vec, direction: Vec, lo: Vec, hi: Vec) -> bool:
-    """Slab test: does the ray (t >= 0) touch the axis-aligned box?"""
-
-    t0, t1 = 0.0, float("inf")
-    for o, d, a, b in zip(origin, direction, lo, hi, strict=True):
-        if abs(d) < 1e-12:
-            if o < a or o > b:
-                return False
-            continue
-        ta, tb = (a - o) / d, (b - o) / d
-        if ta > tb:
-            ta, tb = tb, ta
-        t0, t1 = max(t0, ta), min(t1, tb)
-        if t0 > t1:
-            return False
-    return True
 
 
 def _ray_hits_triangle(origin: Vec, direction: Vec, tri: tuple[Vec, Vec, Vec]) -> bool:
@@ -602,37 +634,371 @@ def _ray_hits_triangle(origin: Vec, direction: Vec, tri: tuple[Vec, Vec, Vec]) -
     return t > 1e-9
 
 
+#: one closed connected sub-solid of a mesh part: its triangles + AABB
+_Component = tuple[list[tuple[Vec, Vec, Vec]], Vec, Vec]
+
+
+def _solid_components(part: Mapping[str, Any]) -> list[_Component]:
+    """The closed connected sub-solids of a (possibly merged) mesh part.
+
+    A merged part (the frame: centre plate + four arm boxes) is a
+    concatenation of closed sub-meshes that INTERPENETRATE, so ray
+    parity over the whole triangle soup misclassifies points inside two
+    sub-solids at once (two exits -> even -> "outside").  Vertices are
+    merged positionally and faces grouped by connectivity; membership is
+    then decided per component (:func:`_point_in_part`), each with its
+    own AABB prune.
+    """
+
+    vertices, faces = part["vertices"], part["faces"]
+    canonical: dict[tuple[float, float, float], int] = {}
+    index_of = []
+    for i in range(0, len(vertices), 3):
+        key = (round(vertices[i], 7), round(vertices[i + 1], 7), round(vertices[i + 2], 7))
+        index_of.append(canonical.setdefault(key, len(canonical)))
+    parent = list(range(len(canonical)))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i in range(0, len(faces), 3):
+        a = find(index_of[faces[i]])
+        for k in (1, 2):
+            parent[find(index_of[faces[i + k]])] = a
+
+    grouped: dict[int, list[tuple[Vec, Vec, Vec]]] = {}
+    for i in range(0, len(faces), 3):
+        a, b, c = faces[i] * 3, faces[i + 1] * 3, faces[i + 2] * 3
+        grouped.setdefault(find(index_of[faces[i]]), []).append(
+            (
+                (vertices[a], vertices[a + 1], vertices[a + 2]),
+                (vertices[b], vertices[b + 1], vertices[b + 2]),
+                (vertices[c], vertices[c + 1], vertices[c + 2]),
+            )
+        )
+
+    components: list[_Component] = []
+    for tris in grouped.values():
+        xs = [p[0] for tri in tris for p in tri]
+        ys = [p[1] for tri in tris for p in tri]
+        zs = [p[2] for tri in tris for p in tri]
+        components.append((tris, (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))))
+    return components
+
+
+def _point_in_part(point: Vec, components: list[_Component]) -> bool:
+    """Ray-parity membership: inside ANY closed component of the part."""
+
+    for tris, lo, hi in components:
+        if not all(lo[i] - 1e-9 <= point[i] <= hi[i] + 1e-9 for i in range(3)):
+            continue
+        crossings = sum(1 for tri in tris if _ray_hits_triangle(point, _PARITY_DIR, tri))
+        if crossings % 2 == 1:
+            return True
+    return False
+
+
+def _cone_cells(
+    params: Mapping[str, float], length: float, resolution: int
+) -> list[tuple[Vec, float]]:
+    """Deterministic quadrature cells filling the view cone.
+
+    The cone is cut into ``resolution`` axial slabs (exact slab
+    volumes), each slab into ``max(resolution // 4, 4)`` equal-area
+    radial rings times ``resolution`` azimuthal sectors.  Every cell
+    yields its centre point and its EXACT volume, so the weights sum to
+    the cone volume and a cone that intersects nothing integrates to
+    exactly 0.0 occluded volume.
+    """
+
+    axial, radial, azimuthal = resolution, max(resolution // 4, 4), resolution
+    apex = (params["x"], params["y"], params["z"])
+    axis = _boresight(params["azimuth"], params["elevation"])
+    u, w = _perpendicular(axis)
+    tan_half = tan(radians(params["fieldOfView"]) / 2.0)
+    cells: list[tuple[Vec, float]] = []
+    for k in range(axial):
+        t0, t1 = length * k / axial, length * (k + 1) / axial
+        tc = (t0 + t1) / 2.0
+        slab = pi * tan_half * tan_half * (t1**3 - t0**3) / 3.0
+        for j in range(radial):
+            weight = slab * (2 * j + 1) / (radial * radial * azimuthal)
+            r = tc * tan_half * (j + 0.5) / radial
+            for m in range(azimuthal):
+                angle = 2.0 * pi * (m + 0.5) / azimuthal
+                c, s = r * cos(angle), r * sin(angle)
+                cells.append(
+                    (
+                        (
+                            apex[0] + axis[0] * tc + u[0] * c + w[0] * s,
+                            apex[1] + axis[1] * tc + u[1] * c + w[1] * s,
+                            apex[2] + axis[2] * tc + u[2] * c + w[2] * s,
+                        ),
+                        weight,
+                    )
+                )
+    return cells
+
+
+def _disc_cells(disc: Mapping[str, Any], resolution: int) -> list[tuple[Vec, float]]:
+    """Deterministic quadrature cells filling a propeller-disc solid.
+
+    ``resolution`` equal-area radial rings times ``4 * resolution``
+    azimuthal sectors on the disc mid-plane, each cell weighted by its
+    exact area times the disc thickness (the disc is wafer-thin against
+    every neighbouring feature, so mid-plane membership stands in for
+    the through-thickness integral).  Weights sum to the disc volume.
+    """
+
+    cx, cy, cz = (float(c) for c in disc["center"])
+    nx, ny, nz = (float(c) for c in disc["normal"])
+    norm = sqrt(nx * nx + ny * ny + nz * nz)
+    if norm <= 0:
+        raise AnalysisError("disc normal must be non-zero")
+    radius = float(disc["radius"])
+    if radius <= 0:
+        raise AnalysisError(f"disc radius must be positive (got {radius!r})")
+    u, w = _perpendicular((nx / norm, ny / norm, nz / norm))
+    thickness = float(disc.get("thickness", _DISC_THICKNESS))
+    radial, azimuthal = resolution, 4 * resolution
+    volume = pi * radius * radius * thickness
+    cells: list[tuple[Vec, float]] = []
+    for j in range(radial):
+        weight = volume * (2 * j + 1) / (radial * radial * azimuthal)
+        r = radius * (j + 0.5) / radial
+        for m in range(azimuthal):
+            angle = 2.0 * pi * (m + 0.5) / azimuthal
+            c, s = r * cos(angle), r * sin(angle)
+            cells.append(
+                (
+                    (cx + u[0] * c + w[0] * s, cy + u[1] * c + w[1] * s, cz + u[2] * c + w[2] * s),
+                    weight,
+                )
+            )
+    return cells
+
+
+def _bounds_diagonal(mesh: Mapping[str, Any]) -> float:
+    """The mesh bounding-box diagonal: the default view-cone reach."""
+
+    bounds = mesh.get("bounds")
+    if bounds is None:
+        boxes = [_part_aabb(p) for p in mesh["parts"]]
+        bounds = (
+            [min(lo[i] for lo, _ in boxes) for i in range(3)],
+            [max(hi[i] for _, hi in boxes) for i in range(3)],
+        )
+    (x0, y0, z0), (x1, y1, z1) = bounds
+    return sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2 + (z1 - z0) ** 2)
+
+
+def _cad_available() -> bool:
+    """Is cadquery installed (probed without importing the OCC kernel)?"""
+
+    return find_spec("cadquery") is not None
+
+
+def _require_cadquery(feature: str) -> Any:
+    try:
+        import cadquery
+    except ImportError as err:
+        raise MissingExtraError(feature, "cadquery", "cad") from err
+    return cadquery
+
+
+def _resolve_engine(engine: str, mesh: Mapping[str, Any]) -> str:
+    """``auto`` picks CAD when cadquery AND a stamped recipe are at hand."""
+
+    if engine not in ("auto", "cad", "mesh"):
+        raise AnalysisError(f"engine must be 'auto', 'cad', or 'mesh' (got {engine!r})")
+    if engine == "auto":
+        return "cad" if "cad" in mesh and _cad_available() else "mesh"
+    return engine
+
+
+def _shape(obj: Any) -> Any:
+    """A cadquery Workplane or bare Shape as a bare Shape."""
+
+    return obj.val() if hasattr(obj, "val") else obj
+
+
+def _intersection_volume(a: Any, b: Any) -> float:
+    """The volume of the boolean intersection, with the dust clamp."""
+
+    volume = float(a.intersect(b).Volume())
+    return volume if volume > _VOLUME_EPS else 0.0
+
+
+def _fused_intersection_volume(target: Any, offenders: list[Any]) -> float:
+    """Volume of ``target & union(offenders)`` (0.0 for no offenders)."""
+
+    if not offenders:
+        return 0.0
+    union = offenders[0]
+    for solid in offenders[1:]:
+        union = union.fuse(solid)
+    return _intersection_volume(target, union)
+
+
+def _cad_parts(mesh: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    """The mesh's parametric CAD twin as ordered (name, Shape) pairs.
+
+    Rebuilt by :func:`to_cadquery` from the recipe ``drone_geometry``
+    stamps on ``mesh["cad"]`` in ``split_instances`` mode (plus the
+    mounted camera, if any), so the booleans run against the exact
+    parametric solids, not mesh tessellations.
+    """
+
+    recipe = mesh.get("cad")
+    if recipe is None:
+        raise AnalysisError(
+            "this mesh carries no CAD recipe: build it with "
+            "drone_geometry(split_instances=True), or pass engine='mesh'"
+        )
+    assembly = to_cadquery(**recipe, camera=mesh.get("camera"))
+    return [(child.name, _shape(child.obj)) for child in assembly.children]
+
+
+def view_cone(camera: Mapping[str, Any], *, length: float) -> Any:
+    """The camera's view cone as a cadquery solid (``cad`` extra).
+
+    Apex at the camera position, axis along the azimuth/elevation
+    boresight, half-angle ``fieldOfView / 2``, truncated ``length``
+    metres from the apex (the sensing range under test).  This is the
+    solid the CAD-native occlusion check boolean-intersects with the
+    airframe: any non-empty intersection is an obstruction.  ``camera``
+    uses the ``Camera`` part's attribute names (see
+    :func:`occlusion_report`).
+    """
+
+    cq = _require_cadquery("longeron.analysis.geometry.view_cone")
+    params = _camera_params(camera)
+    if length <= 0:
+        raise AnalysisError(f"view cone length must be positive (got {length!r})")
+    return cq.Solid.makeCone(
+        0.0,
+        length * tan(radians(params["fieldOfView"]) / 2.0),
+        length,
+        pnt=cq.Vector(params["x"], params["y"], params["z"]),
+        dir=cq.Vector(*_boresight(params["azimuth"], params["elevation"])),
+    )
+
+
+def _occlusion_result(
+    engine: str,
+    occluded: float,
+    cone_volume: float,
+    length: float,
+    obstructions: dict[str, float],
+) -> dict[str, Any]:
+    return {
+        "engine": engine,
+        "occludedFraction": occluded / cone_volume,
+        "occludedVolume": occluded,
+        "coneVolume": cone_volume,
+        "sensingRange": length,
+        "obstructions": dict(sorted(obstructions.items(), key=lambda kv: -kv[1])),
+    }
+
+
+def _occlusion_cad(
+    mesh: Mapping[str, Any],
+    params: Mapping[str, float],
+    length: float,
+    exclude: tuple[str, ...],
+) -> dict[str, Any]:
+    cone = view_cone(params, length=length)
+    cone_volume = float(cone.Volume())
+    obstructions: dict[str, float] = {}
+    offenders: list[Any] = []
+    for name, solid in _cad_parts(mesh):
+        if name in exclude:
+            continue
+        volume = _intersection_volume(cone, solid)
+        if volume > 0.0:
+            obstructions[name] = volume
+            offenders.append(solid)
+    occluded = _fused_intersection_volume(cone, offenders)
+    return _occlusion_result("cad", occluded, cone_volume, length, obstructions)
+
+
+def _occlusion_mesh(
+    mesh: Mapping[str, Any],
+    params: Mapping[str, float],
+    length: float,
+    exclude: tuple[str, ...],
+    resolution: int,
+) -> dict[str, Any]:
+    parts = [p for p in mesh["parts"] if p["name"] not in exclude]
+    components = [_solid_components(p) for p in parts]
+    tan_half = tan(radians(params["fieldOfView"]) / 2.0)
+    cone_volume = pi * tan_half * tan_half * length**3 / 3.0
+    occluded = 0.0
+    obstructions: dict[str, float] = {}
+    for point, weight in _cone_cells(params, length, resolution):
+        for part, comps in zip(parts, components, strict=True):
+            if _point_in_part(point, comps):
+                occluded += weight
+                obstructions[part["name"]] = obstructions.get(part["name"], 0.0) + weight
+                break
+    return _occlusion_result("mesh", occluded, cone_volume, length, obstructions)
+
+
 def occlusion_report(
     mesh: Mapping[str, Any],
     camera: Mapping[str, Any] | None = None,
     *,
-    rays: int = 15,
+    sensing_range: float | None = None,
+    resolution: int = 24,
     exclude: tuple[str, ...] = ("camera",),
+    engine: str = "auto",
 ) -> dict[str, Any]:
-    """How much of the camera frustum the airframe blocks, and by what.
+    """How much of the camera's view cone the airframe fills, and what.
 
-    Casts a deterministic ``rays x rays`` grid of rays (cell centres of a
-    uniform angular grid spanning ``fieldOfView`` degrees in both the
-    local azimuth and elevation axes around the boresight) from the
-    camera position and tests every triangle of every mesh part except
-    ``exclude`` (the camera's own body by default).  Returns::
+    The check is CAD-NATIVE: a VIEW CONE solid -- apex at the camera
+    position, axis along the azimuth/elevation boresight, half-angle
+    ``fieldOfView / 2``, reaching ``sensing_range`` metres (default: the
+    airframe bounding-box diagonal, long enough to sweep past the whole
+    craft) -- is boolean-intersected with every other component's
+    parametric solid, the same solids :func:`to_cadquery` builds.  A
+    perfectly clear view intersects nothing.  Returns::
 
-        {"occludedFraction": blocked / (rays * rays),
-         "rays": rays * rays,
-         "hits": {part_name: rays_blocked_by_it, ...}}   # offenders
+        {"engine": "cad" | "mesh",
+         "occludedFraction": intersected volume / cone volume,
+         "occludedVolume": ...,             # m^3, union of all offenders
+         "coneVolume": ..., "sensingRange": ...,
+         "obstructions": {part: m^3, ...}}  # offenders, largest first
+
+    ``engine`` picks the implementation.  ``"cad"`` (exact booleans)
+    needs the ``cad`` extra and a mesh built by
+    ``drone_geometry(split_instances=True)`` (which stamps the
+    parametric recipe the solids are rebuilt from); ``"mesh"`` is a
+    stdlib fallback that integrates the SAME measure by deterministic
+    volume quadrature -- ray-parity point-in-solid tests over an exact
+    cell decomposition of the cone -- against the mesh triangles.  The
+    default ``"auto"`` uses CAD when both prerequisites hold.  The
+    quadrature is exact for a clear cone (every weight counted is a
+    genuine interior point) but can MISS features thinner than a grid
+    cell (``resolution`` axial slabs); treat its nonzero readings as
+    real and its zeros as "nothing grid-cell-sized".  CAD per-part
+    volumes are each exact (parts that interpenetrate each other are
+    counted once per part); the mesh engine attributes each cell to the
+    first part (mesh order) containing it.
 
     ``camera`` defaults to the parameters stamped on ``mesh["camera"]``
     by :func:`drone_geometry`; pass an explicit mapping (the ``Camera``
     part's attribute names) for what-ifs -- e.g. the same camera yawed
-    ``azimuth=180`` to look back through the airframe.  A ray counts as
-    blocked when it hits ANY non-excluded triangle ahead of the camera;
-    each blocked ray is attributed to its nearest-listed part in
-    ``hits`` (first part in mesh order that intersects it).  Pure
-    stdlib math, no randomness: equal inputs give equal fractions.
+    ``azimuth=180`` to look back through the airframe.  ``exclude``
+    names mesh parts the cone may legitimately contain (the camera's own
+    body, whose centre is the cone apex).  Deterministic in both
+    engines: equal inputs give equal fractions.
     """
 
-    if rays < 1:
-        raise AnalysisError(f"rays must be >= 1 (got {rays!r})")
+    if resolution < 1:
+        raise AnalysisError(f"resolution must be >= 1 (got {resolution!r})")
     source = camera if camera is not None else mesh.get("camera")
     if source is None:
         raise AnalysisError(
@@ -640,216 +1006,178 @@ def occlusion_report(
             "drone_geometry(camera=...)"
         )
     params = _camera_params(source)
-    origin: Vec = (params["x"], params["y"], params["z"])
-    fov_deg = params["fieldOfView"]
-
-    parts = [p for p in mesh["parts"] if p["name"] not in exclude]
-    boxes = [_part_aabb(p) for p in parts]
-    triangles = [_part_triangles(p) for p in parts]
-
-    hits: dict[str, int] = {}
-    blocked = 0
-    for i in range(rays):
-        for j in range(rays):
-            du = fov_deg * ((i + 0.5) / rays - 0.5)
-            dv = fov_deg * ((j + 0.5) / rays - 0.5)
-            direction = _boresight(params["azimuth"] + du, params["elevation"] + dv)
-            for part, (lo, hi), tris in zip(parts, boxes, triangles, strict=True):
-                if not _ray_hits_aabb(origin, direction, lo, hi):
-                    continue
-                if any(_ray_hits_triangle(origin, direction, tri) for tri in tris):
-                    blocked += 1
-                    hits[part["name"]] = hits.get(part["name"], 0) + 1
-                    break
-    return {
-        "occludedFraction": blocked / (rays * rays),
-        "rays": rays * rays,
-        "hits": dict(sorted(hits.items(), key=lambda kv: -kv[1])),
-    }
+    length = float(sensing_range) if sensing_range is not None else _bounds_diagonal(mesh)
+    if length <= 0:
+        raise AnalysisError(f"sensing range must be positive (got {length!r})")
+    if _resolve_engine(engine, mesh) == "cad":
+        return _occlusion_cad(mesh, params, length, exclude)
+    return _occlusion_mesh(mesh, params, length, exclude, resolution)
 
 
 def camera_occlusion(
     mesh: Mapping[str, Any],
     camera: Mapping[str, Any] | None = None,
     *,
-    rays: int = 15,
+    sensing_range: float | None = None,
+    resolution: int = 24,
     exclude: tuple[str, ...] = ("camera",),
+    engine: str = "auto",
 ) -> float:
-    """The blocked fraction of the camera frustum, in [0, 1].
+    """The airframe volume inside the view cone over the cone volume.
 
     The scalar measure behind the ``clearView`` requirement of
     ``examples/drone.sysml`` (\"occludedFraction\"): 0.0 is a perfectly
-    clear view, 1.0 a fully blinded camera.  See :func:`occlusion_report`
-    for the sampling contract and the per-part offender breakdown.
+    clear view cone, anything positive means some component pokes into
+    it.  See :func:`occlusion_report` for the cone construction, the
+    engines, and the per-part offender breakdown.
     """
 
-    return float(occlusion_report(mesh, camera, rays=rays, exclude=exclude)["occludedFraction"])
-
-
-def _point_triangle_distance(p: Vec, tri: tuple[Vec, Vec, Vec]) -> float:
-    """Exact 3D point-to-triangle distance (Ericson, RTCD 5.1.5)."""
-
-    a, b, c = tri
-    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
-    ac = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
-    ap = (p[0] - a[0], p[1] - a[1], p[2] - a[2])
-    d1 = ab[0] * ap[0] + ab[1] * ap[1] + ab[2] * ap[2]
-    d2 = ac[0] * ap[0] + ac[1] * ap[1] + ac[2] * ap[2]
-
-    def dist(q: Vec) -> float:
-        return sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
-
-    if d1 <= 0.0 and d2 <= 0.0:
-        return dist(a)
-    bp = (p[0] - b[0], p[1] - b[1], p[2] - b[2])
-    d3 = ab[0] * bp[0] + ab[1] * bp[1] + ab[2] * bp[2]
-    d4 = ac[0] * bp[0] + ac[1] * bp[1] + ac[2] * bp[2]
-    if d3 >= 0.0 and d4 <= d3:
-        return dist(b)
-    vc = d1 * d4 - d3 * d2
-    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
-        t = d1 / (d1 - d3)
-        return dist((a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]))
-    cp = (p[0] - c[0], p[1] - c[1], p[2] - c[2])
-    d5 = ab[0] * cp[0] + ab[1] * cp[1] + ab[2] * cp[2]
-    d6 = ac[0] * cp[0] + ac[1] * cp[1] + ac[2] * cp[2]
-    if d6 >= 0.0 and d5 <= d6:
-        return dist(c)
-    vb = d5 * d2 - d1 * d6
-    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
-        t = d2 / (d2 - d6)
-        return dist((a[0] + t * ac[0], a[1] + t * ac[1], a[2] + t * ac[2]))
-    va = d3 * d6 - d5 * d4
-    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
-        t = (d4 - d3) / ((d4 - d3) + (d5 - d6))
-        return dist((b[0] + t * (c[0] - b[0]), b[1] + t * (c[1] - b[1]), b[2] + t * (c[2] - b[2])))
-    denom = 1.0 / (va + vb + vc)
-    v = vb * denom
-    w = vc * denom
-    return dist(
-        (
-            a[0] + ab[0] * v + ac[0] * w,
-            a[1] + ab[1] * v + ac[1] * w,
-            a[2] + ab[2] * v + ac[2] * w,
-        )
+    report = occlusion_report(
+        mesh,
+        camera,
+        sensing_range=sensing_range,
+        resolution=resolution,
+        exclude=exclude,
+        engine=engine,
     )
+    return float(report["occludedFraction"])
 
 
-def _point_aabb_distance(p: Vec, lo: Vec, hi: Vec) -> float:
-    dx = max(lo[0] - p[0], 0.0, p[0] - hi[0])
-    dy = max(lo[1] - p[1], 0.0, p[1] - hi[1])
-    dz = max(lo[2] - p[2], 0.0, p[2] - hi[2])
-    return sqrt(dx * dx + dy * dy + dz * dz)
+def _overlap_cad(mesh: Mapping[str, Any], discs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    parts = _cad_parts(mesh)
+    by_name = dict(parts)
+    rows: list[dict[str, Any]] = []
+    for disc in discs:
+        name = disc["part"]
+        solid = by_name.get(name)
+        if solid is None:
+            raise AnalysisError(f"no CAD part named {name!r} to check disc overlap against")
+        excluded = set(disc.get("exclude", ())) | {name}
+        per: dict[str, float] = {}
+        offenders: list[Any] = []
+        for other, other_solid in parts:
+            if other in excluded:
+                continue
+            volume = _intersection_volume(solid, other_solid)
+            if volume > 0.0:
+                per[other] = volume
+                offenders.append(other_solid)
+        rows.append(
+            {
+                "disc": name,
+                "engine": "cad",
+                "overlap": _fused_intersection_volume(solid, offenders),
+                "parts": dict(sorted(per.items(), key=lambda kv: -kv[1])),
+            }
+        )
+    return rows
 
 
-def _disc_points(disc: Mapping[str, Any], samples: int) -> list[Vec]:
-    """Deterministic sample points on a disc: centre + half-radius ring
-    (``samples // 2`` points) + rim (``samples`` points)."""
-
-    cx, cy, cz = disc["center"]
-    nx, ny, nz = disc["normal"]
-    norm = sqrt(nx * nx + ny * ny + nz * nz)
-    if norm <= 0:
-        raise AnalysisError("disc normal must be non-zero")
-    nx, ny, nz = nx / norm, ny / norm, nz / norm
-    # any unit vector perpendicular to n
-    ux, uy, uz = (1.0, 0.0, 0.0) if abs(nx) < 0.9 else (0.0, 1.0, 0.0)
-    vx, vy, vz = ny * uz - nz * uy, nz * ux - nx * uz, nx * uy - ny * ux
-    vn = sqrt(vx * vx + vy * vy + vz * vz)
-    vx, vy, vz = vx / vn, vy / vn, vz / vn
-    wx, wy, wz = ny * vz - nz * vy, nz * vx - nx * vz, nx * vy - ny * vx
-    radius = float(disc["radius"])
-    points: list[Vec] = [(cx, cy, cz)]
-    for r, count in ((radius / 2, max(samples // 2, 4)), (radius, max(samples, 8))):
-        for k in range(count):
-            angle = 2 * pi * k / count
-            points.append(
-                (
-                    cx + r * (cos(angle) * vx + sin(angle) * wx),
-                    cy + r * (cos(angle) * vy + sin(angle) * wy),
-                    cz + r * (cos(angle) * vz + sin(angle) * wz),
-                )
-            )
-    return points
+def _overlap_mesh(
+    mesh: Mapping[str, Any], discs: list[Mapping[str, Any]], resolution: int
+) -> list[dict[str, Any]]:
+    parts = [(p, _solid_components(p)) for p in mesh["parts"]]
+    rows: list[dict[str, Any]] = []
+    for disc in discs:
+        excluded = set(disc.get("exclude", ())) | {disc["part"]}
+        per: dict[str, float] = {}
+        overlap = 0.0
+        for point, weight in _disc_cells(disc, resolution):
+            for part, comps in parts:
+                if part["name"] in excluded:
+                    continue
+                if _point_in_part(point, comps):
+                    overlap += weight
+                    per[part["name"]] = per.get(part["name"], 0.0) + weight
+                    break
+        rows.append(
+            {
+                "disc": disc["part"],
+                "engine": "mesh",
+                "overlap": overlap,
+                "parts": dict(sorted(per.items(), key=lambda kv: -kv[1])),
+            }
+        )
+    return rows
 
 
-def clearance_report(mesh: Mapping[str, Any], *, samples: int = 48) -> list[dict[str, Any]]:
-    """Per-disc clearance: how close each propeller disc comes to what.
+def overlap_report(
+    mesh: Mapping[str, Any], *, resolution: int = 24, engine: str = "auto"
+) -> list[dict[str, Any]]:
+    """Per-disc overlap: how much of each propeller disc is inside what.
 
-    Consumes the analytic discs :func:`drone_geometry` stamps on
+    The CAD-native reading of \"propeller discs shall not overlap other
+    components\": each disc is a thin cylinder solid (the assembly's own
+    prop cylinders), boolean-intersected with every other component's
+    solid.  Consumes the analytic discs :func:`drone_geometry` stamps on
     ``mesh["discs"]`` in ``split_instances`` mode (a disc knows which
-    same-station parts -- its own prop mesh and motor can -- to ignore).
-    Each disc is sampled deterministically (centre + half-radius ring +
-    rim, see ``samples``) and every sample point's exact distance to
-    every other part's triangles is minimized, with a per-part
-    bounding-box lower-bound prune.  Returns one row per disc, ordered
-    as stamped::
+    same-station parts -- its own prop and motor can -- to ignore).
+    Returns one row per disc, ordered as stamped::
 
-        {"disc": "prop1", "clearance": 0.02, "nearest": "prop2"}
+        {"disc": "prop1", "engine": "cad", "overlap": 0.0,   # m^3
+         "parts": {offender: m^3, ...}}                      # largest first
 
-    Interpenetrating geometry reports the distance to the offending
-    SURFACE (a point inside a solid is still positive-distance from its
-    boundary), so an overlapping disc pair reads as near-zero clearance,
-    never negative.
+    ``overlap`` is the volume of the disc's intersection with the UNION
+    of the non-excluded components -- exactly 0.0 when the disc is
+    clear.  Engines as in :func:`occlusion_report`: ``"cad"`` computes
+    exact booleans on the parametric solids (needs the ``cad`` extra +
+    the stamped recipe); ``"mesh"`` estimates the same volumes by
+    deterministic mid-plane quadrature over the stamped disc (exact-zero
+    when clear, may miss sub-cell slivers); ``"auto"`` prefers CAD.
     """
 
+    if resolution < 1:
+        raise AnalysisError(f"resolution must be >= 1 (got {resolution!r})")
     discs = mesh.get("discs")
     if not discs:
         raise AnalysisError(
             "no propeller discs on this mesh: build it with drone_geometry(split_instances=True)"
         )
-    rows: list[dict[str, Any]] = []
-    for disc in discs:
-        excluded = set(disc.get("exclude", ())) | {disc["part"]}
-        points = _disc_points(disc, samples)
-        best, nearest = float("inf"), None
-        for part in mesh["parts"]:
-            if part["name"] in excluded:
-                continue
-            lo, hi = _part_aabb(part)
-            if min(_point_aabb_distance(p, lo, hi) for p in points) >= best:
-                continue
-            tris = _part_triangles(part)
-            for p in points:
-                if _point_aabb_distance(p, lo, hi) >= best:
-                    continue
-                for tri in tris:
-                    d = _point_triangle_distance(p, tri)
-                    if d < best:
-                        best, nearest = d, part["name"]
-        rows.append({"disc": disc["part"], "clearance": best, "nearest": nearest})
-    return rows
+    if _resolve_engine(engine, mesh) == "cad":
+        return _overlap_cad(mesh, discs)
+    return _overlap_mesh(mesh, discs, resolution)
 
 
-def disc_clearance(mesh: Mapping[str, Any], *, samples: int = 48) -> float:
-    """The tightest propeller-disc-to-anything gap, in metres.
+def disc_overlap(mesh: Mapping[str, Any], *, resolution: int = 24, engine: str = "auto") -> float:
+    """The total propeller-disc overlap volume, in cubic metres.
 
     The scalar measure behind the ``propClearance`` requirement of
-    ``examples/drone.sysml`` (\"minDiscClearance\"): the minimum over
-    every disc of :func:`clearance_report`'s per-disc clearance.
+    ``examples/drone.sysml`` (\"discOverlapVolume\"): the sum over every
+    disc of :func:`overlap_report`'s per-disc overlap.  0.0 means no
+    disc touches anything; a disc-against-disc overlap counts once per
+    participating disc.
     """
 
-    return min(float(row["clearance"]) for row in clearance_report(mesh, samples=samples))
+    rows = overlap_report(mesh, resolution=resolution, engine=engine)
+    return sum(float(row["overlap"]) for row in rows)
 
 
 def geometry_checks(
-    mesh: Mapping[str, Any], *, rays: int = 15, samples: int = 48
+    mesh: Mapping[str, Any],
+    *,
+    sensing_range: float | None = None,
+    resolution: int = 24,
+    engine: str = "auto",
 ) -> dict[str, float]:
     """Both geometric requirement measures, keyed for the scoreboard.
 
-    Returns ``{"occludedFraction": ..., "minDiscClearance": ...}`` --
+    Returns ``{"occludedFraction": ..., "discOverlapVolume": ...}`` --
     exactly the free names the ``installation`` requirements of
     ``examples/drone.sysml`` measure, so the result feeds
     ``scoreboard(model, values=geometry_checks(mesh))`` directly (the
     lightest honest wiring: the measures are computed kernel-side from
-    the same mesh the 3D viewer paints, then injected as evaluation-
-    frame bindings; nothing is baked into the model file).  Needs a
-    mesh built with ``drone_geometry(split_instances=True, camera=...)``.
+    the same parametric geometry the 3D viewer paints, then injected as
+    evaluation-frame bindings; nothing is baked into the model file).
+    Needs a mesh built with ``drone_geometry(split_instances=True,
+    camera=...)``.  Both measures read 0.0 for a clean installation in
+    BOTH engines (see :func:`occlusion_report` for the engine contract).
     """
 
     return {
-        "occludedFraction": camera_occlusion(mesh, rays=rays),
-        "minDiscClearance": disc_clearance(mesh, samples=samples),
+        "occludedFraction": camera_occlusion(
+            mesh, sensing_range=sensing_range, resolution=resolution, engine=engine
+        ),
+        "discOverlapVolume": disc_overlap(mesh, resolution=resolution, engine=engine),
     }
 
 
@@ -1582,29 +1910,39 @@ def architecture_geometry(
 
 
 def to_cadquery(
-    *, prop_diameter_in: float, motor_mass: float, battery_mass: float, esc_mass: float
+    *,
+    prop_diameter_in: float,
+    motor_mass: float,
+    battery_mass: float,
+    esc_mass: float,
+    arm_thickness: float = _ARM_THICKNESS,
+    arm_width: float = _ARM_WIDTH,
+    motor_spacing: float | None = None,
+    camera: Mapping[str, float] | None = None,
 ) -> Any:
     """The same parametric assembly as cadquery solids (``cad`` extra).
 
     Returns a ``cadquery.Assembly`` with one named, colored child per
-    part -- ready for ``assembly.export("drone.step")`` or downstream CAD.
-    Kept separate from the mesh pipeline so the viewer never depends on
-    the OCC kernel.
+    part -- ready for ``assembly.export("drone.step")`` or downstream
+    CAD -- built from the same sizing inputs as :func:`drone_geometry`
+    (``motor_spacing`` fixes the motor-to-motor distance for prop-swap
+    what-ifs, ``camera`` mounts the mission camera body and takes the
+    ``Camera`` part's attribute names).  These exact solids are what the
+    CAD-native geometric checks (:func:`occlusion_report` /
+    :func:`overlap_report`) boolean-intersect.  Kept separate from the
+    mesh pipeline so the viewer never depends on the OCC kernel.
     """
 
-    try:
-        import cadquery as cq
-    except ImportError as err:  # pragma: no cover - exercised without extra
-        raise MissingExtraError(
-            "longeron.analysis.geometry.to_cadquery", "cadquery", "cad"
-        ) from err
+    cq = _require_cadquery("longeron.analysis.geometry.to_cadquery")
 
     def color(name: str) -> Any:
         r, g, b = (int(COLORS[name][i : i + 2], 16) / 255 for i in (1, 3, 5))
         return cq.Color(r, g, b)
 
     prop_d = prop_diameter_in * IN
-    spacing = prop_d + _PROP_CLEARANCE
+    spacing = prop_d + _PROP_CLEARANCE if motor_spacing is None else motor_spacing
+    if spacing <= 0:
+        raise AnalysisError(f"motor spacing must be positive (got {spacing!r})")
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
@@ -1617,7 +1955,7 @@ def to_cadquery(
         angle = atan2(mz, mx)
         arm = (
             cq.Workplane("XZ")
-            .box(length, _ARM_WIDTH, _ARM_THICKNESS)
+            .box(length, arm_width, arm_thickness)
             .translate((length / 2, 0, 0))
             .rotate((0, 0, 0), (0, 1, 0), -angle * 180.0 / pi)
         )
@@ -1627,12 +1965,21 @@ def to_cadquery(
     assembly.add(frame, name="frame", color=color("frame"))
     for i, (mx, mz) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
         x, z = mx * spacing / 2, mz * spacing / 2
-        motor = cq.Workplane("XZ", origin=(x, motor_h / 2 + _ARM_THICKNESS / 2, z)).cylinder(
-            motor_h, motor_d / 2, direct=(0, 1, 0)
+        # global-frame cylinders: axis straight up (+y), like the mesh --
+        # a Workplane("XZ").cylinder(direct=...) reads direct in LOCAL
+        # plane coordinates and would lay the cans on their sides
+        motor = cq.Solid.makeCylinder(
+            motor_d / 2,
+            motor_h,
+            pnt=cq.Vector(x, arm_thickness / 2, z),
+            dir=cq.Vector(0, 1, 0),
         )
-        prop = cq.Workplane(
-            "XZ", origin=(x, _ARM_THICKNESS / 2 + motor_h + 0.002 + 0.00125, z)
-        ).cylinder(0.0025, prop_d / 2, direct=(0, 1, 0))
+        prop = cq.Solid.makeCylinder(
+            prop_d / 2,
+            0.0025,
+            pnt=cq.Vector(x, arm_thickness / 2 + motor_h + 0.002, z),
+            dir=cq.Vector(0, 1, 0),
+        )
         assembly.add(motor, name=f"motor{i + 1}", color=color("motors"))
         assembly.add(prop, name=f"prop{i + 1}", color=color("props"))
     battery = cq.Workplane("XZ", origin=(0, -(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2), 0)).box(
@@ -1643,4 +1990,13 @@ def to_cadquery(
     )
     assembly.add(battery, name="battery", color=color("battery"))
     assembly.add(esc, name="esc", color=color("esc"))
+    if camera is not None:
+        params = _camera_params(camera)
+        body = (
+            cq.Workplane("XZ")
+            .box(0.020, 0.016, 0.016)
+            .rotate((0, 0, 0), (0, 1, 0), params["azimuth"])
+            .translate((params["x"], params["y"], params["z"]))
+        )
+        assembly.add(body, name="camera", color=color("camera"))
     return assembly
