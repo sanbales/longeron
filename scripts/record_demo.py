@@ -1,44 +1,61 @@
 #!/usr/bin/env python
-"""Record the README demo: a scripted JupyterLab walkthrough -> mp4 + GIF.
+"""Record the README demo: the grand-tour dashboard, one take -> mp4 + GIF.
 
     python scripts/record_demo.py
 
 re-records the whole thing after UI changes.  The walkthrough is
-DETERMINISTIC by construction: a purpose-built demo notebook is generated
-into a throwaway lab root (the repo's notebooks are never touched), the
-models it loads ship with this checkout (``examples/drone.sysml`` plus the
-ScoutUAV requirements hierarchy inlined below), the scoreboard's Voronoi
-seed is fixed, ``PYTHONHASHSEED=0`` pins kernel hashing, and every camera
-beat is a fixed pause -- so two recordings differ only in sub-second
-layout-arrival jitter.  The story is ONE LINEAR pass (~35 s), every beat
-motivated: open the notebook -> ``explore()`` docks the explorer -> click
-QuadCopter in the tree (diagram highlight + breadcrumb) -> one kind-switch
-to the state-machine view -> run the scoreboard cell -> hover one Voronoi
-cell (units tooltip) -> double-click zoom -> hold -> end.  No tab-hopping,
-no switch-backs.  Outputs land in ``build/demo/`` (gitignored):
+DETERMINISTIC by construction: a purpose-built copy of the tutorial-15
+notebook is generated into a throwaway lab root (the repo's notebooks are
+never touched), the models it loads ship with this checkout
+(``examples/drone.sysml`` + ``examples/uav_missions.sysml``), the
+scoreboard's Voronoi seed is fixed inside ``grand_dashboard``,
+``PYTHONHASHSEED=0`` pins kernel hashing, and every camera beat is a
+fixed pause -- so two recordings differ only in sub-second layout-arrival
+jitter plus Cesium imagery-tile streaming (the finale's camera framing is
+CZML ``viewFrom`` tracking and therefore stable; only tile sharpness
+varies with the network).
 
-* ``demo.webm``   -- the raw playwright capture (1600x900)
+The story is ONE LINEAR pass over ONE surface (~55 s), every beat
+motivated, no back-and-forth: open ``15_grand_tour.ipynb`` -> Run All
+Cells -> scroll once to the dashboard and let the composition land ->
+click ``motors`` in the structure diagram (all four motors flash in 3D)
+-> drag the azimuth slider until the view cone sweeps into the airframe
+(occludedFraction goes red, ``clearView`` flips red on the Voronoi, the
+obstructing parts light up) and drag back to clear (the score recovers
+live) -> drag the loiter slider down to the stall floor (the generated
+OpenMDAO problem re-runs on every step; station time climbs to its
+maximum) -> a cursor pass over the Z3 SAT verdict
+and the what-if's UNSAT conflict core -> double-click the ``endurance``
+cell (the Voronoi zooms to the performance branch) and Esc back -> press
+play on the Cesium timeline and end mid-flight over satellite Atlanta.
+Outputs land in ``build/demo/`` (gitignored):
+
+* ``demo.webm``   -- the raw playwright capture (1600x1200)
 * ``demo.mp4``    -- h264, crf 20, faststart (the shareable video)
-* ``demo.gif``    -- palette-optimized, <= 10 MB (the GitHub-attachment
-  ceiling; see the publish workflow below)
-* ``frames/*.png``-- three representative stills for quick review
+* ``demo.gif``    -- palette-optimized, <= 10 MB (the GitHub release-asset
+  budget; see the publish workflow below)
+* ``frames/*.png``-- four representative stills for quick review
 
-PUBLISH WORKFLOW -- media is NEVER committed to this repo.  A maintainer
-drags ``demo.mp4`` and/or ``demo.gif`` into a GitHub issue comment (the
-usual assets-issue pattern); GitHub rehosts the file at a stable
-``github.com/user-attachments/...`` URL, and the README then embeds that
-hosted URL.  Re-recording therefore never touches git history: re-run this
-script, re-drag the file, update the URL.
+PUBLISH WORKFLOW -- media is NEVER committed to this repo.  The
+maintainer attaches ``demo.gif`` (and ``demo.mp4``) to the GitHub
+release; the README already embeds
+``github.com/sanbales/longeron/releases/latest/download/demo.gif``, so
+the latest release's asset is what renders.  Re-recording therefore
+never touches git history: re-run this script, re-attach the files to
+the next release.
 
 The recording rig mirrors ``scripts/capture_widget_snapshots.py`` and
 ``tests/browser/conftest.py``: one real JupyterLab server (temp root,
 temp user settings with ``autoStartDefaultKernel`` on, autosave OFF,
-``windowingMode: none``), driven by headless Chromium.  Unlike those, this
-script performs for a HUMAN camera: a fake cursor overlay follows the
-mouse (playwright records no OS cursor), travel is smoothed with
-``mouse.move(steps=...)``, and every action gets a beat to breathe.
-Record on a quiet machine -- concurrent browser suites steal the frames'
-smoothness.
+``windowingMode: none``), driven by headless Chromium.  Unlike those,
+this script performs for a HUMAN camera: a fake cursor overlay follows
+the mouse (playwright records no OS cursor), travel is smoothed with
+``mouse.move(steps=...)``, slider drags are paced segment by segment so
+the kernel repaints stream by on camera, and every action gets a beat to
+breathe.  The models are parse-cached and the three.js/Cesium CDN
+bundles are browser-cached OFF camera, so the on-camera Run All lands in
+seconds.  Record on a quiet machine -- concurrent browser suites steal
+the frames' smoothness.
 """
 
 from __future__ import annotations
@@ -61,24 +78,40 @@ REPO = Path(__file__).resolve().parents[1]
 DEMO_DIR = REPO / "build" / "demo"
 LAB_ROOT = DEMO_DIR / "lab-root"
 FRAME_DIR = DEMO_DIR / "frames"
+MODEL_CACHE = DEMO_DIR / "model-cache"
 VENDOR_LABEXTENSIONS = REPO / "vendor/ipyelk/src/_d/share/jupyter/labextensions"
 FFMPEG = os.environ.get("LONGERON_FFMPEG", "/opt/homebrew/bin/ffmpeg")
 
-NOTEBOOK = "longeron_demo.ipynb"
-VIEWPORT = {"width": 1600, "height": 900}
+NOTEBOOK = "15_grand_tour.ipynb"
+#: the dashboard is ~1010 px tall; 1200 px of viewport leaves it filling
+#: the frame under the Lab chrome after the one scroll to its top
+VIEWPORT = {"width": 1600, "height": 1200}
 #: 2 supersamples the capture on high-DPI text (the video is downscaled
-#: back to the viewport size; stills come out at 3200x1800 and crisp)
+#: back to the viewport size; stills come out at 3200x2400 and crisp)
 DEVICE_SCALE_FACTOR = 2
-#: GIF discipline: the artifact is hosted via a GitHub-issue upload (never
-#: committed), so quality can run high -- but GitHub caps attachments at
-#: 10 MB, and that ceiling is the budget.
+#: front-end CDN bundles fetched into the browser HTTP cache OFF camera
+#: (the warm page), so the dashboard's 3D and Cesium panes land fast --
+#: keep in sync with analysis/viewer3d.py and analysis/mission3d.py
+CDN_WARM_URLS = (
+    "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "https://cdn.jsdelivr.net/npm/cesium@1.144.0/Build/Cesium/Cesium.js",
+    "https://cdn.jsdelivr.net/npm/cesium@1.144.0/Build/Cesium/Widgets/widgets.css",
+)
+#: GIF discipline: the artifact is a GitHub release asset (never
+#: committed), so quality can run high -- but 10 MB is the budget the
+#: README's embed stays friendly under.
 GIF_BUDGET_BYTES = 10 * 1024 * 1024
-#: quality ladder walked until the GIF fits the budget
+#: quality ladder walked until the GIF fits the budget (the Cesium
+#: finale over satellite imagery is entropy-heavy, and the slider sweeps
+#: repaint half the surface -- ~55 s of dashboard lands near the bottom)
 GIF_LADDER = (
-    {"fps": 15, "width": 1400, "colors": 256},
     {"fps": 14, "width": 1280, "colors": 192},
-    {"fps": 12, "width": 1200, "colors": 160},
     {"fps": 10, "width": 1024, "colors": 128},
+    {"fps": 10, "width": 900, "colors": 112},
+    {"fps": 8, "width": 800, "colors": 96},
+    {"fps": 8, "width": 760, "colors": 96},
+    {"fps": 8, "width": 720, "colors": 96},
+    {"fps": 7, "width": 660, "colors": 96},
 )
 
 # -- camera pacing (ms) -------------------------------------------------------
@@ -90,110 +123,75 @@ MOVE_STEPS = 45
 
 # -- the demo notebook ---------------------------------------------------------
 
-#: the ScoutUAV requirements hierarchy from tutorial 13 (catalog omitted:
-#: the scoreboard act only needs the measured requirement tree)
-SCOUT_SRC = """\
-package ScoutUAV {
-    // the current design point: what the requirements score by default
-    attribute hoverTime : Real = 12.0 [SI::min];   // full-hover endurance
-    attribute cruiseTime : Real = 20.0 [SI::min];  // full-cruise endurance
-    attribute radius_km : Real = 8.5 [SI::km];
-    attribute totalMass : Real = 1.62 [SI::kg];
-    attribute unitCost : Real = 950.0;             // USD -- no SI unit
-    attribute noise_dB : Real = 68.0 [SI::dB];     // at 50 m
-
-    requirement mission {
-        requirement performance {
-            attribute weight : Real = 3.0;
-            requirement endurance {
-                attribute weight : Real = 3.0;
-                requirement hoverEndurance {
-                    attribute utility : String = "larger-is-better";
-                    attribute ramp0 : Real = 5.0;
-                    attribute ramp1 : Real = 20.0;
-                    attribute measure : Real = hoverTime;
-                    attribute unit : String = "min";
-                }
-                requirement cruiseEndurance {
-                    attribute weight : Real = 2.0;
-                    attribute utility : String = "larger-is-better";
-                    attribute ramp0 : Real = 10.0;
-                    attribute ramp1 : Real = 30.0;
-                    attribute measure : Real = cruiseTime;
-                    attribute unit : String = "min";
-                }
-            }
-            requirement radius {
-                attribute weight : Real = 2.0;
-                attribute utility : String = "larger-is-better";
-                attribute ramp0 : Real = 3.0;
-                attribute ramp1 : Real = 12.0;
-                attribute measure : Real = radius_km;
-                attribute unit : String = "km";
-            }
-        }
-        requirement affordability {
+#: tutorial 15's performance graft, condensed: parsed from SysML text,
+#: grafted into the loaded model, measured through the model's own calcs
+_PERF_CELL = '''\
+drone.find("Drone").add(
+    longeron.loads("""
+package _Perf {
+    requirement performance {
+        attribute hoverMinutes : Real;      // measured: HoverTime(battery.capacity)
+        attribute thrustToWeight : Real;    // measured: ThrustToWeight(4 rotors, MTOW)
+        requirement endurance {
             attribute weight : Real = 2.0;
-            requirement cost {
-                attribute utility : String = "smaller-is-better";
-                attribute ramp0 : Real = 1500.0;
-                attribute ramp1 : Real = 500.0;
-                attribute measure : Real = unitCost;
-                attribute unit : String = "USD";
-            }
+            attribute utility : String = "larger-is-better";
+            attribute ramp0 : Real = 10.0;
+            attribute ramp1 : Real = 30.0;
+            attribute measure : Real = hoverMinutes;
+            attribute unit : String = "min";
         }
-        requirement operability {
-            attribute weight : Real = 2.0;
-            requirement mass {
-                attribute weight : Real = 2.0;
-                attribute utility : String = "smaller-is-better";
-                attribute ramp0 : Real = 2.5;
-                attribute ramp1 : Real = 1.0;
-                attribute measure : Real = totalMass;
-                attribute unit : String = "kg";
-            }
-            requirement regulatory {
-                require constraint { totalMass <= 25.0 }
-            }
-            requirement quiet {
-                attribute utility : String = "target-is-best";
-                attribute target : Real = 60.0;
-                attribute limit : Real = 15.0;
-                attribute measure : Real = noise_dB;
-                attribute unit : String = "dB";
-            }
-            requirement futureProofing;  // deliberately unmeasured
+        requirement agility {
+            attribute utility : String = "larger-is-better";
+            attribute ramp0 : Real = 1.0;
+            attribute ramp1 : Real = 3.0;
+            attribute measure : Real = thrustToWeight;
+            attribute unit : String = "T/W";
+            require constraint hoverMargin { thrustToWeight >= 1.8 }
         }
     }
+}""").find("_Perf::performance")
+)
+
+interp = longeron.Interpreter(drone)
+quad = interp.instantiate("Drone::QuadCopter")
+scope = drone.find("Drone")
+capacity = quad.slots["battery"].slots["capacity"]
+thrust = 4.0 * quad.slots["thrustPerRotor"]
+mass = quad.slots["totalMass"]
+measured = {
+    "hoverMinutes": interp.evaluate(
+        longeron.parse_expression(f"HoverTime(capacity = {capacity})"), scope
+    ),
+    "thrustToWeight": interp.evaluate(
+        longeron.parse_expression(f"ThrustToWeight(thrust = {thrust}, mass = {mass})"), scope
+    ),
 }
-"""
+'''
 
 CELLS: tuple[tuple[str, str], ...] = (
     (
         "markdown",
-        "# Longeron: SysML v2 in Python\n\n"
-        "Define, execute, and **explore** SysML v2 models — live in JupyterLab.",
+        "# 15 · The grand tour: one dashboard, every seam\n\n"
+        "Diagram · CAD · occlusion · scoreboard · OpenMDAO · Z3 · Cesium —\n"
+        "one reactive surface, every reaction kernel-side.",
     ),
     (
         "code",
         "import longeron\n"
-        "from longeron.explorer import explore\n"
+        "from longeron.analysis.grand import grand_dashboard\n"
         "\n"
-        'model = longeron.load("drone.sysml")  # a small quad-copter model\n'
-        "explore(model)  # docks a tree + diagram explorer as its own Lab tab",
+        'drone = longeron.load("drone.sysml")  # structure, geometry, requirements, states\n'
+        'missions = longeron.load("uav_missions.sysml")  # the continuous sizing side',
     ),
     (
         "markdown",
-        "## Score requirements with MAUT\n\n"
-        "`scoreboard` maps measured values onto utilities and aggregates them\n"
-        "up the requirement hierarchy — **area = importance, color = utility**.",
+        "A performance branch, grafted from SysML text and measured through\n"
+        "the model's own calcs — then **one call** composes the dashboard.",
     ),
+    ("code", _PERF_CELL),
     (
         "code",
-        "from longeron.analysis.scoreboard import scoreboard\n"
-        "\n"
-        'scout = longeron.load("scout_uav.sysml")  # a UAV requirements hierarchy\n'
-        'scoreboard(scout).widget(tessellation="voronoi", height_px=430)',
+        "dash = grand_dashboard(drone, missions, values=measured)\ndash",
     ),
 )
 
@@ -205,7 +203,7 @@ def build_lab_root() -> None:
         shutil.rmtree(LAB_ROOT)
     LAB_ROOT.mkdir(parents=True)
     shutil.copy(REPO / "examples" / "drone.sysml", LAB_ROOT / "drone.sysml")
-    (LAB_ROOT / "scout_uav.sysml").write_text(SCOUT_SRC, encoding="utf-8")
+    shutil.copy(REPO / "examples" / "uav_missions.sysml", LAB_ROOT / "uav_missions.sysml")
     notebook = {
         "cells": [
             {
@@ -229,6 +227,50 @@ def build_lab_root() -> None:
         "nbformat_minor": 5,
     }
     (LAB_ROOT / NOTEBOOK).write_text(json.dumps(notebook, indent=1), encoding="utf-8")
+
+
+def _kernel_env() -> dict[str, str]:
+    """The environment the lab server (and so the kernel) runs under."""
+
+    return dict(
+        os.environ,
+        PYTHONHASHSEED="0",
+        # kernels inherit this: a contended machine can hold up the elkjs
+        # layout roundtrip for minutes, and a tripped timeout is a FINAL
+        # visible failure -- same choice as tests/browser/conftest.py
+        LONGERON_BROWSER_TIMEOUT="600",
+        # a rig-local parse cache, warmed off camera so the on-camera
+        # Run All spends its seconds building the dashboard, not parsing
+        LONGERON_CACHE_DIR=str(MODEL_CACHE),
+        # the kernel must import THIS tree's sources (and its vendored
+        # ipyelk) even when the editable install resolves elsewhere
+        PYTHONPATH=os.pathsep.join(
+            path
+            for path in (
+                str(REPO / "src"),
+                str(REPO / "vendor" / "ipyelk" / "src"),
+                os.environ.get("PYTHONPATH", ""),
+            )
+            if path
+        ),
+    )
+
+
+def warm_model_cache() -> None:
+    """Parse-cache the demo models off camera (content-addressed)."""
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import longeron\n"
+            f"longeron.load({str(LAB_ROOT / 'drone.sysml')!r})\n"
+            f"longeron.load({str(LAB_ROOT / 'uav_missions.sysml')!r})\n",
+        ],
+        env=_kernel_env(),
+        check=True,
+        capture_output=True,
+    )
 
 
 # -- the lab server (mirrors scripts/capture_widget_snapshots.py) -------------
@@ -278,25 +320,9 @@ def start_lab_server() -> LabServer:
         encoding="utf-8",
     )
     env = dict(
-        os.environ,
-        PYTHONHASHSEED="0",
-        # kernels inherit this: a contended machine can hold up the elkjs
-        # layout roundtrip for minutes, and a tripped timeout is a FINAL
-        # visible failure -- same choice as tests/browser/conftest.py
-        LONGERON_BROWSER_TIMEOUT="600",
+        _kernel_env(),
         JUPYTERLAB_SETTINGS_DIR=str(settings),
         JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
-        # the kernel must import THIS tree's sources (and its vendored
-        # ipyelk) even when the editable install resolves elsewhere
-        PYTHONPATH=os.pathsep.join(
-            path
-            for path in (
-                str(REPO / "src"),
-                str(REPO / "vendor" / "ipyelk" / "src"),
-                os.environ.get("PYTHONPATH", ""),
-            )
-            if path
-        ),
     )
     port = _free_port()
     token = secrets.token_hex(16)
@@ -383,10 +409,11 @@ CURSOR_JS = """
 
 # -- browser-truth probes -------------------------------------------------------
 
-#: the VISIBLE explorer diagram's framing (from tests/browser/test_browser_explorer.py)
+#: the dashboard's structure-diagram framing (the one visible sprotty
+#: pane in the notebook output area)
 _VISIBLE_DIAGRAM_JS = r"""() => {
     const shown = [...document.querySelectorAll(
-        '.lgx-diagram-box div.sprotty[id^="sprotty"]',
+        '.jp-OutputArea div.sprotty[id^="sprotty"]',
     )].filter((div) => div.getBoundingClientRect().width > 0);
     if (shown.length !== 1) return { shown: shown.length };
     const g = shown[0].querySelector('svg.sprotty-graph > g');
@@ -445,6 +472,40 @@ class Camera:
         self.page.mouse.dblclick(x, y)
         self.beat(settle_ms)
 
+    def drag_slider(
+        self,
+        slider: Any,
+        value: float,
+        *,
+        minimum: float,
+        maximum: float,
+        segments: int = 40,
+        pace_ms: int = 28,
+    ) -> None:
+        """Drag an ipywidgets slider handle to ``value``, paced for camera.
+
+        The sweep is segment-by-segment (playwright's ``steps=`` runs at
+        protocol speed, too fast to read as a human drag), so every
+        intermediate value streams through ``continuous_update`` and the
+        dashboard's kernel-side repaints show live under the drag.
+        noUiSlider maps position to value linearly and snaps to the
+        slider's step, which also forgives the handle-center offset.
+        """
+
+        handle = slider.locator(".noUi-handle")
+        x0, y = self.glide(handle)
+        self.page.wait_for_timeout(250)
+        base = slider.locator(".noUi-base").bounding_box()
+        if base is None:
+            raise RuntimeError("slider track has no bounding box")
+        x1 = base["x"] + (value - minimum) / (maximum - minimum) * base["width"]
+        self.page.mouse.down()
+        for i in range(1, segments + 1):
+            self.page.mouse.move(x0 + (x1 - x0) * i / segments, y, steps=2)
+            self.page.wait_for_timeout(pace_ms)
+        self.page.wait_for_timeout(150)
+        self.page.mouse.up()
+
     def shot(self, name: str) -> None:
         FRAME_DIR.mkdir(parents=True, exist_ok=True)
         path = FRAME_DIR / f"{name}.png"
@@ -453,21 +514,12 @@ class Camera:
 
     # -- waits ------------------------------------------------------------
 
-    def wait_diagram(
-        self,
-        marker: str,
-        *,
-        absent: str = "",
-        timeout: float = 150.0,
-    ) -> str:
-        """Wait for the visible explorer diagram: fitted and showing ``marker``.
+    def wait_diagram(self, marker: str, *, timeout: float = 150.0) -> str:
+        """Wait for the dashboard diagram: fitted and showing ``marker``.
 
-        ``absent`` distinguishes look-alike kinds (the structure view also
-        prints state names inside the FlightStates compound, so the state
-        view is recognized by what it LACKS).  Framing is part of the
-        contract: the content must sit INSIDE the pane (the kind-switch
-        re-fit is a kernel roundtrip that lands a beat after the relayout
-        -- the camera must not fire early).
+        Framing is part of the contract: the content must sit INSIDE the
+        pane (the autofit lands a beat after the relayout -- the camera
+        must not fire early).
         """
 
         deadline = time.monotonic() + timeout
@@ -481,7 +533,6 @@ class Camera:
                 state.get("rendered")
                 and state.get("fitted")
                 and marker in text
-                and (not absent or absent not in text)
                 # scale(0.01) is the hidden-viewport autofit sentinel: tiny
                 # content has no overflow, so require a human-visible zoom
                 and state.get("scale", 0) > 0.05
@@ -497,10 +548,10 @@ class Camera:
                 streak, stable = 0, None
             time.sleep(0.5)
         state.pop("text", None)
-        raise TimeoutError(f"explorer diagram never settled on {marker!r}; last state: {state}")
+        raise TimeoutError(f"dashboard diagram never settled on {marker!r}; last state: {state}")
 
 
-def wait_kernel_idle(page: Any, timeout: float = 120.0) -> None:
+def wait_kernel_idle(page: Any, timeout: float = 300.0) -> None:
     page.wait_for_selector(
         '.jp-Notebook-ExecutionIndicator[data-status="idle"]',
         state="attached",
@@ -526,6 +577,25 @@ def open_demo_notebook(page: Any, server: LabServer, timeout: float = 120.0) -> 
     wait_kernel_idle(page, timeout)
 
 
+def kernel_exec(page: Any, code: str, timeout_ms: int = 30_000) -> None:
+    """Silently execute ``code`` on the notebook's kernel (no cell, no
+    camera footprint) -- the invisible-cleanup seam for gestures whose
+    mouse form would misread on camera."""
+
+    page.evaluate(
+        """async ([code, timeout]) => {
+            const app = window.jupyterapp || window.jupyterlab;
+            const kernel = app.shell.currentWidget.sessionContext.session.kernel;
+            const future = kernel.requestExecute(
+                { code, silent: true, store_history: false });
+            await Promise.race([future.done, new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('kernel_exec timeout')), timeout))]);
+            return true;
+        }""",
+        [code, timeout_ms],
+    )
+
+
 # -- the scenario ----------------------------------------------------------------
 
 
@@ -546,86 +616,100 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
     page.wait_for_timeout(500)
 
     scene_start = time.monotonic() - t_page  # trim the boot right here
+
+    def mark(label: str) -> None:
+        """Log a beat timestamp relative to the trimmed video's t=0."""
+
+        print(f"  beat {time.monotonic() - t_page - scene_start:5.1f}s  {label}", flush=True)
+
     cam.beat(BEAT_SHORT)
 
-    # -- act 1: load the drone model, dock the explorer -------------------
-    code_cells = page.locator(".jp-Notebook .jp-CodeCell")
-    cam.click(code_cells.nth(0).locator(".jp-InputArea-editor"), settle_ms=500)
-    page.keyboard.press("Shift+Enter")
-    dock_tab = page.locator("#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey]")
-    dock_tab.wait_for(state="attached", timeout=180_000)
-    cam.beat(BEAT)
-
-    # -- act 2: the model explorer ----------------------------------------
-    cam.click(dock_tab.first, settle_ms=400)
-    page.wait_for_selector(".lgx-explorer .lgx-row", state="visible", timeout=60_000)
-    cam.wait_diagram("QuadCopter")  # first reveal fits the structure view
-    cam.beat(BEAT_SHORT)
-
-    # the dock split starts ~50/50: drag the handle left like a person
-    # would, giving the diagram the stage (the tree needs ~430px)
-    handle = page.locator(".lgx-explorer .lm-SplitPanel-handle").first
-    if handle.count():
-        box = handle.bounding_box()
-        if box is not None:
-            y = box["y"] + box["height"] / 2
-            page.mouse.move(box["x"] + box["width"] / 2, y, steps=30)
-            page.wait_for_timeout(200)
-            page.mouse.down()
-            page.mouse.move(430, y, steps=35)
-            page.mouse.up()
-            cam.beat(BEAT_SHORT)
-            cam.wait_diagram("QuadCopter")  # the pane re-fits to its new width
-    cam.beat(BEAT_SHORT)
-
-    row = page.locator(".lgx-explorer .lgx-row", has_text="QuadCopter")
-    cam.click(row.first)
-    page.wait_for_selector("text=Drone::QuadCopter", timeout=60_000)
-    cam.beat(BEAT)
-    cam.shot("01-explorer-structure")
-
-    # the ONE kind switch: FlightStates offers the state-machine view
-    row = page.locator(".lgx-explorer .lgx-row", has_text="FlightStates")
-    cam.click(row.first)
-    switcher = page.locator(".lgx-explorer .widget-toggle-buttons").first
-    state_button = switcher.locator("button", has_text="state")
-    state_button.wait_for(state="visible", timeout=30_000)
-    cam.click(state_button)
-    # the state view is recognized by what it lacks: no QuadCopter node
-    cam.wait_diagram("takingOff", absent="QuadCopter")
-    cam.beat(BEAT_LONG)
-    cam.shot("02-state-machine")
-    cam.beat(BEAT_SHORT)
-
-    # -- act 3: the requirements scoreboard --------------------------------
-    notebook_tab = page.locator("#jp-main-dock-panel .lm-TabBar-tab", has_text=NOTEBOOK)
-    cam.click(notebook_tab.first, settle_ms=600)
-    cam.click(code_cells.nth(1).locator(".jp-InputArea-editor"), settle_ms=400)
-    page.keyboard.press("Control+Enter")  # run in place (no cell added below)
-    page.wait_for_selector(".lgn-sb-cell", state="attached", timeout=120_000)
-    # center the board: scroll_into_view stops at 'barely visible', which
-    # leaves the bottom row of cells kissing the status bar
+    # -- act 1: Run All Cells, scroll ONCE to the dashboard ----------------
+    mark("act 1: Run All Cells")
+    cam.click(page.locator('.lm-MenuBar-itemLabel:text-is("Run")'), settle_ms=400)
+    cam.click(page.locator('.lm-Menu-itemLabel:text-is("Run All Cells")'), settle_ms=300)
+    # the dashboard output exists as soon as the last cell displays it;
+    # scroll to it while the panes are still landing (that IS the shot)
+    page.wait_for_selector(".lgn-sb-cell", state="attached", timeout=240_000)
     page.evaluate(
-        "() => document.querySelector('.lgn-sb-wrap')"
-        ".scrollIntoView({block: 'center', behavior: 'smooth'})"
+        "() => document.querySelector('.jp-Notebook .jp-CodeCell:last-child .jp-OutputArea')"
+        ".scrollIntoView({block: 'start', behavior: 'smooth'})"
     )
+    # park the cursor in the left gutter while the composition lands
+    page.mouse.move(VIEWPORT["width"] * 0.05, VIEWPORT["height"] * 0.58, steps=25)
+    page.wait_for_selector(".longeron-mission3d .cesium-viewer", timeout=240_000)
+    cam.wait_diagram("QuadCopter")
+    wait_kernel_idle(page)
+    mark("act 1: dashboard landed")
+    cam.beat(BEAT_LONG)
+    cam.shot("01-dashboard-landed")
+
+    # -- act 2: the diagram is the selection hub -- click a part ----------
+    mark("act 2: diagram click -> 3D flash")
+    diagram_pane = page.locator('.jp-OutputArea div.sprotty[id^="sprotty"]')
+    motors = diagram_pane.locator("svg text", has_text="motors")
+    cam.click(motors.first, settle_ms=BEAT_SHORT)
+    cam.beat(BEAT)  # all four motors pop in 3D, the rest of the craft dims
+    cam.shot("02-diagram-3d-link")
+    cam.beat(BEAT_SHORT)
+    # release the selection invisibly (a background click would read as a
+    # misfire on camera; the next beat repaints the highlight anyway)
+    kernel_exec(page, "dash.diagram.view.selection.ids = []")
+
+    # -- act 3: the money shot -- swing the view cone into the airframe ---
+    mark("act 3: azimuth sweep (occlusion)")
+    azimuth = page.locator('.widget-hslider:has(.widget-label:text-is("azimuth"))')
+    cam.drag_slider(azimuth, 180.0, minimum=-180.0, maximum=180.0)
+    # browser truth: the readout card lists the obstructing parts red
+    page.wait_for_selector('text="view cone clear of the airframe"', state="hidden", timeout=20_000)
+    cam.beat(BEAT_LONG)  # occludedFraction red, clearView red, parts lit
+    cam.shot("03-occlusion-red")
+    cam.beat(BEAT_SHORT)
+    cam.drag_slider(azimuth, 0.0, minimum=-180.0, maximum=180.0)
+    page.wait_for_selector('text="view cone clear of the airframe"', timeout=20_000)
+    mark("act 3: recovered")
+    cam.beat(BEAT)  # ...and the score recovers: live, both directions
+
+    # -- act 4: the OpenMDAO sizing strip -- maximize station time -------
+    mark("act 4: loiter drag (OpenMDAO)")
+    # NOT the driver button: the strip card's fixed height clips it out of
+    # view in the browser (QA note for the dashboard).  The slider is the
+    # same seam -- every step re-runs the generated Problem kernel-side,
+    # and dragging to the stall floor IS maximizing station time.
+    loiter = page.locator('.widget-hslider:has(.widget-label:text-is("loiter m/s"))')
+    cam.drag_slider(loiter, 11.0, minimum=11.0, maximum=24.0, segments=30)
+    loiter.locator('.widget-readout:text-is("11.0")').wait_for(timeout=30_000)
+    cam.beat(BEAT_LONG)  # stationMinutes climbed to the stall-floor optimum
+
+    # -- act 5: the Z3 verdicts (static cards -- a cursor pass) ------------
+    mark("act 5: Z3 verdict pass")
+    cam.glide(page.locator('span:text-is("SAT")').first)
+    cam.beat(BEAT_SHORT)
+    cam.glide(page.locator("div", has_text="aboveStall").last, steps=30)
     cam.beat(BEAT)
 
-    # hover ONE leaf: the tooltip narrates raw measure -> utility, units on
-    cam.glide(page.locator('.lgn-sb-cell[data-qname$="hoverEndurance"]'), steps=60)
-    cam.beat(BEAT_LONG)
-
-    # double-click zooms to the endurance group -- the closing image
-    cam.dblclick(page.locator('.lgn-sb-cell[data-qname$="hoverEndurance"]'), settle_ms=BEAT_SHORT)
-    # the dblclick word-selects whatever text sits under the pointer
-    # (tooltip included) -- drop the selection, it reads as a glitch
+    # -- act 6: the scoreboard zooms -- double-click, Esc back -------------
+    mark("act 6: scoreboard zoom")
+    endurance = page.locator('.lgn-sb-cell[data-qname$="::endurance"]')
+    cam.dblclick(endurance, settle_ms=BEAT_SHORT)
+    # the dblclick word-selects whatever text sits under the pointer --
+    # drop the selection, it reads as a glitch
     page.evaluate("() => window.getSelection().removeAllRanges()")
-    cam.glide(page.locator('.lgn-sb-cell[data-qname$="cruiseEndurance"]'), steps=40)
-    cam.beat(BEAT_LONG)
-    cam.shot("03-scoreboard-zoom")
+    page.wait_for_selector(".lgn-sb-crumbs", state="visible", timeout=20_000)
+    cam.beat(BEAT_LONG)  # the performance branch fills the canvas
+    page.keyboard.press("Escape")  # one level back out
+    page.wait_for_selector(".lgn-sb-crumbs", state="hidden", timeout=20_000)
+    kernel_exec(page, "dash.board.selected = []")  # drop the click-selection ring
+    cam.beat(BEAT)
 
-    # -- outro: hold the zoomed view, then cut ------------------------------
-    cam.beat(BEAT_LONG)
+    # -- act 7: the Cesium finale -- fly the mission ----------------------
+    mark("act 7: Cesium play")
+    play = page.locator(".cesium-animation-rectButton", has_text="Play Forward")
+    cam.click(play.first, settle_ms=400)
+    cam.beat(3500)  # the drone banks over Piedmont Park...
+    cam.shot("04-mission-finale")
+    cam.beat(3500)  # ...and we cut mid-flight
+    mark("cut")
     return scene_start, cam
 
 
@@ -717,6 +801,7 @@ def main() -> int:
     if FRAME_DIR.exists():
         shutil.rmtree(FRAME_DIR)
     build_lab_root()
+    warm_model_cache()
     server = start_lab_server()
     webm = DEMO_DIR / "demo.webm"
     try:
@@ -729,10 +814,16 @@ def main() -> int:
                 record_video_size=VIEWPORT,
             )
             context.add_init_script(CURSOR_JS)
-            # warm take: pays the extension/asset cold start OFF camera
+            # warm take: pays the extension/asset cold start OFF camera,
+            # including the CDN bundles the 3D and Cesium panes import
             warm = context.new_page()
             warm.goto(f"{server.base_url}/lab?token={server.token}", wait_until="domcontentloaded")
             warm.wait_for_selector("#jp-main-dock-panel", state="attached", timeout=120_000)
+            warm.evaluate(
+                "(urls) => Promise.allSettled(urls.map("
+                "(u) => fetch(u, {cache: 'force-cache'}).then((r) => r.blob())))",
+                list(CDN_WARM_URLS),
+            )
             warm_video = warm.video
             warm.close()
 
