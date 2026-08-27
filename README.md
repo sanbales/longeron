@@ -157,7 +157,7 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 # -> 'on'
 ```
 
-A complete walk-through lives in `examples/demo.py`, and ten executable
+A complete walk-through lives in `examples/demo.py`, and the executable
 tutorials live in [`notebooks/`](notebooks/):
 
 | Notebook | Covers |
@@ -175,6 +175,8 @@ tutorials live in [`notebooks/`](notebooks/):
 | `11_notation_gallery` | every implemented SysML v2 glyph beside its OMG spec figure -- the specialization-family shaft adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, stick-figure actors -- each section self-verifying, doubling as the notation regression harness |
 | `12_model_explorer` | the model explorer: a searchable, keyboard-navigable tree over the owning structure beside a diagram pane with per-selection kinds (structure/state/action/requirements), two-way selection linkage, and JupyterLab docking via the `[explorer]` extra |
 | `13_requirements_scoreboard` | MAUT over the requirement hierarchy: weights/utility shapes/measures declared in the model, pluggable aggregation (additive, weakest-link, geometric), and the treemap/Voronoi scoreboard widget -- area is importance, color is utility, double-click collapses a subtree to its aggregate |
+| `14_model_app` | the JupyterLab sidebar workbench: load files/folders or API projects, launch explorer and scoreboard tabs, the selection seam for item inspectors, model save and API push |
+| `15_grand_tour` | the grand tour: ONE dashboard composing the structure diagram, linked 3D CAD with a live camera-occlusion what-if, the requirements scoreboard recoloring live, an OpenMDAO sizing strip, Z3 consistency verdicts, and the Cesium mission replay -- a single `grand_dashboard` call |
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.

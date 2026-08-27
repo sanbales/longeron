@@ -46,6 +46,7 @@ objects are defined.
 | [3D viewer](analysis/viewer3d.md) | `longeron.analysis.viewer3d` | three.js mesh viewer |
 | [Structure views](analysis/structure.md) | `longeron.analysis.structure` | N2 matrix, connection networks |
 | [Dashboard](analysis/dashboard.md) | `longeron.analysis.dashboard` | linked mission-compromise dashboard |
+| [Grand tour](analysis/grand.md) | `longeron.analysis.grand` | the all-seams demo dashboard |
 
 ```{toctree}
 :hidden:

@@ -31,6 +31,11 @@ third-party dependencies):
   Cesium ion token required).
 * :mod:`longeron.analysis.dashboard` -- the linked mission-compromise
   dashboard composing the widgets above with ipywidgets (``viz`` extra).
+* :mod:`longeron.analysis.grand` -- the grand-tour dashboard: structure
+  diagram, linked 3D CAD with a live occlusion what-if, the requirements
+  scoreboard, an OpenMDAO sizing strip, Z3 consistency verdicts, and the
+  Cesium mission replay on ONE reactive surface (``viz`` extra plus
+  ``mdao``/``smt`` for the solver strips).
 * :mod:`longeron.analysis.link` -- linked selection between the
   interactive diagrams and the 3D viewer: diagram clicks highlight the
   matching meshes, mesh picks select the diagram node (``viz`` extra
@@ -47,6 +52,7 @@ __all__ = [
     "AnalysisError",
     "dashboard",
     "geometry",
+    "grand",
     "link",
     "mdao",
     "mission3d",

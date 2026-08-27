@@ -17,7 +17,8 @@ analysis widgets (ipyelk diagrams and the replay player in tutorial 6;
 the parallel-coordinates plot, N2 map, 3D viewer, and dashboard in
 tutorial 7; the linked diagram + 3D pair in tutorial 10; the notation
 gallery in tutorial 11; the requirements scoreboard in tutorial 13;
-the sidebar model app and its launched tabs in tutorial 14) are
+the sidebar model app and its launched tabs in tutorial 14; the
+grand-tour dashboard in tutorial 15) are
 live browser applications and cannot run on
 a static site. On these pages each one is shown as a real PNG snapshot,
 captured from the executed notebook in a headless JupyterLab
@@ -49,6 +50,7 @@ extra.
 | {doc}`11. The notation gallery <11_notation_gallery>` | every implemented SysML v2 glyph beside its spec figure -- specialization adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, actors -- with self-verifying asserts |
 | {doc}`13. The requirements scoreboard <13_requirements_scoreboard>` | MAUT over the requirements hierarchy: model-declared weights and utility shapes, pluggable aggregation, the treemap/Voronoi scoreboard widget, what-if injection, the trade-study bridge |
 | {doc}`14. The model app <14_model_app>` | the JupyterLab sidebar workbench: load files/folders or API projects, launch explorer and scoreboard tabs, the selection seam for inspectors, save and push |
+| {doc}`15. The grand tour <15_grand_tour>` | one dashboard, every seam: structure diagram, linked 3D CAD with a live camera-occlusion what-if, the requirements scoreboard recoloring live, an OpenMDAO sizing strip, Z3 consistency verdicts, and the Cesium mission replay -- one `grand_dashboard` call |
 
 Tutorial 12 (`notebooks/12_model_explorer.ipynb`, the model explorer app)
 is JupyterLab-only for now and deliberately not rendered here; it will
@@ -71,4 +73,5 @@ join the docs when the ipylab-based integration is revamped.
 11_notation_gallery
 13_requirements_scoreboard
 14_model_app
+15_grand_tour
 ```

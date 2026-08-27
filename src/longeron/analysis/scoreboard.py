@@ -692,7 +692,7 @@ class Scoreboard:
             raise ValueError(f"max_depth must be a positive int or None, not {max_depth!r}")
         cls = _widget_class()
         return cls(
-            nodes_json=json.dumps(self._payload(self.root)),
+            nodes_json=json.dumps(self.payload()),
             tessellation=tessellation,
             aggregation=self.aggregation,
             collapsed=sorted(collapsed),
@@ -703,6 +703,16 @@ class Scoreboard:
             height_px=height_px,
             value_format=value_format,
         )
+
+    def payload(self) -> dict[str, Any]:
+        """The widget's node tree as plain data (the ``nodes_json`` payload).
+
+        Assign ``json.dumps(board.payload())`` to an existing widget's
+        ``nodes_json`` trait to repaint it in place from a re-scored
+        board -- the live-update seam the composed dashboards use.
+        """
+
+        return self._payload(self.root)
 
     def _payload(self, node: _Node) -> dict[str, Any]:
         def scrub(value: Any) -> Any:  # JSON has no NaN

@@ -5,7 +5,7 @@ The docs site cannot run live widgets (ipyelk diagrams, anywidget
 viewers), so the tutorial pages embed *static PNG snapshots* instead
 (see ``docs/_ext/widget_snapshots.py``).  This script regenerates them:
 
-    pixi run capture-widgets              # all of tutorials 01..11 + 13
+    pixi run capture-widgets              # all of tutorials 01..11, 13, 15
     pixi run capture-widgets 06 11        # just those two (manifest merge)
 
 It boots one real JupyterLab server (root: ``notebooks/``, so relative
@@ -19,9 +19,9 @@ busy, no visible progress bars, DOM state stable), then screenshots the
 top-level DOM element of every rendered widget output into
 ``docs/_static/widget-snapshots/<stem>/cell-<code-cell-index>.png`` and
 rewrites ``manifest.json`` mapping each snapshot back to its notebook
-cell.  Notebooks with no widget outputs contribute nothing.  Tutorial 12
-(the model explorer docks into the Lab shell itself, there is no
-meaningful in-cell snapshot) is excluded.
+cell.  Notebooks with no widget outputs contribute nothing.  Tutorials
+12 and 14 (the explorer and the model app dock into the Lab shell
+itself, there is no meaningful in-cell snapshot) are excluded.
 
 The PNGs and manifest are COMMITTED artifacts: docs builds stay
 deterministic and Chromium-free, and this script is re-run manually when
@@ -64,8 +64,8 @@ VENDOR_LABEXTENSIONS = REPO / "vendor/ipyelk/src/_d/share/jupyter/labextensions"
 WIDGET_VIEW_MIMETYPE = "application/vnd.jupyter.widget-view+json"
 VIEWPORT = {"width": 1500, "height": 1100}  # matches tests/browser/conftest.py
 DEVICE_SCALE_FACTOR = 2  # crisp diagram text on high-DPI displays
-#: tutorials 01..11 and 13; 12 is excluded by design (see module docstring)
-TUTORIAL_NUMBERS = tuple(f"{n:02d}" for n in (*range(1, 12), 13))
+#: tutorials 01..11, 13, and 15; 12 and 14 are excluded by design (see module docstring)
+TUTORIAL_NUMBERS = tuple(f"{n:02d}" for n in (*range(1, 12), 13, 15))
 
 # -- DOM snapshots (adapted from tests/browser/conftest.py) ------------------
 
