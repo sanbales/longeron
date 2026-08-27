@@ -89,6 +89,7 @@ Deeper design rationale for major subsystems:
 :maxdepth: 1
 
 design/m0-interpretations
+design/mdao-objects
 design/ocl-stance
 design/openmbee-integration
 design/units
