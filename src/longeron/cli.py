@@ -91,7 +91,13 @@ def main(argv=None) -> int:
         "against the vendored standard library "
         "unless --no-stdlib",
     )
-    p.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="strict mode: unresolved references and other resolution "
+        "failures become errors, and a bare 'import' (no visibility "
+        "prefix) warns (bare-import)",
+    )
     p.add_argument(
         "--strict-imports",
         action="store_true",
@@ -190,15 +196,17 @@ def _run(ns: argparse.Namespace) -> int:
         from .validation import validate
 
         diagnostics = validate(
-            model, stdlib=False if ns.no_stdlib else None, strict_imports=ns.strict_imports
+            model,
+            stdlib=False if ns.no_stdlib else None,
+            strict_imports=ns.strict_imports,
+            strict=ns.strict,
         )
         for diagnostic in diagnostics:
             print(diagnostic)
         errors = sum(d.severity == "error" for d in diagnostics)
         warnings = len(diagnostics) - errors
         print(f"{errors} error(s), {warnings} warning(s)")
-        failed = errors or (ns.strict and warnings)
-        return 1 if failed else 0
+        return 1 if errors else 0
 
     if ns.command == "export":
         if ns.format == "api":

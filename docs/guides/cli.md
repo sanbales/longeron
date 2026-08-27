@@ -65,8 +65,8 @@ show their traceback.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success. For `check`: no constraint failed. For `lint`: no error (and, with `--strict`, no warning). |
-| `1` | `lint` found errors (or warnings under `--strict`), `check` found a failed constraint, `parse` found no matching files in a directory or any file failed to parse, or an expected failure was reported (`error: ...` on stderr). |
+| `0` | Success. For `check`: no constraint failed. For `lint`: no error-severity diagnostic. |
+| `1` | `lint` found errors (with `--strict`, resolution warnings count as errors), `check` found a failed constraint, `parse` found no matching files in a directory or any file failed to parse, or an expected failure was reported (`error: ...` on stderr). |
 | `2` | Command-line usage error (reported by argparse). |
 
 ## `longeron parse`
@@ -118,7 +118,7 @@ prefix. Pass `--no-cache` to re-parse and get positions back.
 
 | Option | Effect |
 |---|---|
-| `--strict` | Treat warnings as errors: exit `1` when any diagnostic exists. |
+| `--strict` | Strict mode: unresolved references and the other resolution failures become errors, and a bare `import` (no visibility prefix) warns (`bare-import`). See [the two strict modes](validation.md#the-two-strict-modes). |
 | `--strict-imports` | Additionally warn (`stdlib-implicit-name`) when a bare standard-library name is used without an import. |
 | `--no-stdlib` | Do not resolve names against the standard library. Every library reference then warns. |
 

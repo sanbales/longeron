@@ -44,7 +44,10 @@ and code.
 Severities draw one line: structural problems that make the model
 self-contradictory are errors, and references that merely fail to
 resolve are warnings. An unresolved reference is a warning because the
-missing target may live in a file you did not load.
+missing target may live in a file you did not load. When that excuse
+does not apply -- the model is complete and typos must not ship --
+[strict mode](#the-two-strict-modes) (`strict=True` / `--strict`)
+promotes exactly the resolution-failure codes to errors.
 
 ## The diagnostic codes
 
@@ -67,6 +70,7 @@ missing target may live in a file you did not load.
 | `mixed-units` | warning | `+`, `-`, or a comparison over same-dimension operands declared in *different units* (`5.0 [kg] + 3.0 [lbm]`, `1.0 [m] + 2.0 [mm]`). Active only without the `[units]` extra: with it, declaration-boundary normalization makes the arithmetic correct and the warning moot. |
 | `anchor-dimension-mismatch` | warning | A scoreboard-convention `ramp0` / `ramp1` / `target` / `limit` attribute disagrees with its sibling `measure` -- dimensionally, or (without the `[units]` extra) in declared unit: a ramp anchored in minutes scoring a measure computed in hours. |
 | `stdlib-implicit-name` | warning | Only under `strict_imports=True` / `--strict-imports`. A bare standard-library name resolved only through the implicit library-visibility hop. |
+| `bare-import` | warning | Only under `strict=True` / `--strict`. An `import` with no visibility prefix: the spec BNF (8.2.2.5.2) makes the visibility indicator mandatory, and longeron's default mode deliberately accepts the bare form ([grammar patch 1](grammar.md#the-patch-table)). Never an error, and never promoted -- the notation appears in OMG-authored text. |
 | `usage-type` | error | A declared type resolves to a definition of a conflicting kind, or to a package: `attribute a : D` with `D` a part def, `action a : D`, `part p : P` with `P` a package. Pilot: `validateAttributeUsageType`, `validateActionUsageType`, `validateUsageType`. |
 | `metadata-usage-type` | error | A metadata annotation (`#Meta part p;`, `@Meta;`) resolves to something other than a metadata definition. Pilot: `validateMetadataUsageType`. Unresolved annotation names stay silent (user-defined keywords may live in unloaded files). |
 | `attribute-composite-feature` | error | A composite occurrence feature (part, state, action, port, ...) owned by an attribute definition or usage: `attribute def A { state s; }`. Spec: `validateAttributeDefinitionFeatures` / `validateAttributeUsageFeatures`. Items are deliberately not judged -- the spec's own corpus nests composite items in attribute definitions. |
@@ -89,7 +93,7 @@ missing target may live in a file you did not load.
 | `exhibit-state-reference` | error | An `exhibit` reference resolves to something other than a state: `part a; exhibit a;`. Spec: `validateExhibitStateUsageReference` ("Must reference a state"). |
 | `perform-action-reference` | error | A `perform` reference resolves to something other than an action: `attribute b : Real; perform b;`. Pilot: `validatePerformActionUsageReference` ("Must reference an action"). |
 | `multiplicity-bound-type` | error | A literal multiplicity bound that is not a natural number: `part p : D[1.5];`, `D["two"]`. KerML: `validateMultiplicityRangeResultTypes` ("Must have a Natural value"). `*` is an infinity literal and always fine. |
-| `multiplicity-bound-order` | error | A literal range whose lower bound exceeds its upper: `part p : D[2..1];` -- an unsatisfiable (empty) range. |
+| `multiplicity-bound-order` | error | A literal range whose lower bound exceeds its upper: `part p : D[3..1];` -- an unsatisfiable (empty) range. Only literal integer pairs are decidable and judged; named or expression bounds are never order-checked. Deliberately **stricter than the pilot**, which has no lower-must-not-exceed-upper rule -- a maintainer-ratified divergence (see below and the [conformance design](../design/conformance.md)). |
 
 ## Kind-level well-formedness
 
@@ -124,6 +128,16 @@ models clean:
 - **Vendored-library kinds are bottom.** The KerML libraries project
   `datatype` onto the item kind (`Collections::Array`), so kind
   judgments skip targets inside library packages.
+
+One divergence runs the other way -- longeron is deliberately
+**stricter** than the reference, per a maintainer override recorded in
+the [conformance design](../design/conformance.md)'s ratification
+block: `multiplicity-bound-order` rejects `[3..1]` as an error although
+the pilot has no lower-vs-upper rule at all (its validator carries only
+bound-*type* rules), so the pilot accepts the unsatisfiable range. The
+divergence is intentional and pinned by the rejection suite, so a
+future pilot differential adjudicates it as ours-only-by-design rather
+than a bug.
 
 ## Names resolve against the standard library
 
@@ -166,23 +180,40 @@ entries:
 
 ## The two strict modes
 
-The CLI exposes two independent tightening flags:
+The CLI exposes two independent tightening flags; each is a parameter
+of {func}`~longeron.validation.validate` in the Python API:
 
-| Flag | Effect |
-|---|---|
-| `--strict` | Exit `1` when any warning exists, not only errors. The diagnostics themselves are unchanged. This is the CI gate. |
-| `--strict-imports` | Emit `stdlib-implicit-name` for bare standard-library names that resolve only through the implicit library-visibility hop. Qualified names (`ScalarValues::Real`) and explicitly imported names stay silent. Use it when your team requires every dependency to be spelled out. |
+| Flag | API | Effect |
+|---|---|---|
+| `--strict` | `strict=True` | Resolution failures become errors, and a bare `import` warns (`bare-import`). Nothing else changes severity. |
+| `--strict-imports` | `strict_imports=True` | Emit `stdlib-implicit-name` for bare standard-library names that resolve only through the implicit library-visibility hop. Qualified names (`ScalarValues::Real`) and explicitly imported names stay silent. Use it when your team requires every dependency to be spelled out. |
 
-`--strict` is a CLI policy about the exit code. In the Python API,
-apply the same policy by checking severities yourself:
+Strict mode promotes exactly the resolution-failure family -- the
+warning codes that report a reference which failed to resolve
+({data}`longeron.validation.RESOLUTION_CODES`):
 
-```python
-diagnostics = longeron.validate(model)
-errors = [d for d in diagnostics if d.severity == "error"]
-```
+`unresolved-reference`, `unresolved-name`, `unresolved-unit`,
+`dangling-expose`, `dangling-flow`, `dangling-succession`
 
-`strict_imports=True` is the API spelling of `--strict-imports`
-({func}`~longeron.validation.validate`).
+Every other diagnostic keeps its severity: `stdlib-implicit-name`
+reports a *successful* (implicit) resolution, and
+`flow-payload-mismatch` and the dimensional-lint warnings report
+conflicts between typings that *did* resolve -- none are resolution
+failures, so none promote. The `longeron lint` exit code is driven by
+error count alone, in both modes: `--strict` fails exactly when a
+resolution failure (or any default-mode error) exists, and
+`bare-import` warns without failing.
+
+What `--strict` means against OMG's own files, measured on the pinned
+309-file release corpus (each file loaded independently with the
+vendored standard library attached -- the same per-file protocol as
+the corpus badge): **142 of 309 files carry at least one strict-mode
+error** (5 of them already carry default-mode errors), almost entirely
+`unresolved-reference` from cross-file references a per-file load
+cannot see; **0 of 309 files use a bare `import`** -- the pinned
+release writes a visibility prefix on every import. Strict mode is a
+single-model discipline: expect it to fail on files that reference
+siblings you did not load.
 
 ## Flow connectivity
 

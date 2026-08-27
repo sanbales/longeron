@@ -9,7 +9,11 @@ specializations are honored too: a plain ``action def`` implicitly
 specializes ``Actions::Action``, so inherited names like ``start`` and
 ``done`` resolve in expressions.  Unresolved references are *warnings*;
 structural problems (duplicate names, specialization cycles, transitions
-to unknown states) are *errors*.
+to unknown states) are *errors*.  ``strict=True`` promotes the
+resolution-failure family (:data:`RESOLUTION_CODES`) to errors and
+additionally warns on ``import`` without a visibility prefix
+(``bare-import``) -- see the design's ratified open questions 1 and 4
+(``docs/design/conformance.md``).
 
 The dimensional lint (design: ``docs/design/units.md``) also lives here:
 unit annotations must resolve (``unresolved-unit``), arithmetic over
@@ -58,6 +62,23 @@ from .errors import ResolutionError, SourceLocation
 from .interpreter import BUILTINS, IMPLIED_SPECIALIZATIONS, Resolver, _in_library_package
 
 Severity = Literal["error", "warning"]
+
+#: the resolution-failure family: every warning code that reports a
+#: reference which failed to resolve.  ``validate(strict=True)`` promotes
+#: exactly these to error severity -- and nothing else.  Codes that fire
+#: on *successful* resolution (``stdlib-implicit-name``) or on conflicts
+#: between resolved typings (``flow-payload-mismatch``, the dimensional
+#: lint) are not resolution failures and keep their severity.
+RESOLUTION_CODES = frozenset(
+    {
+        "unresolved-reference",
+        "unresolved-name",
+        "unresolved-unit",
+        "dangling-expose",
+        "dangling-flow",
+        "dangling-succession",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Metamodel kind families (SysML v2 clause 8.3 / KerML clause 8.4)
@@ -216,9 +237,23 @@ class Diagnostic:
 
 
 def validate(
-    model: M.Model, *, stdlib: bool | None = None, strict_imports: bool = False
+    model: M.Model,
+    *,
+    stdlib: bool | None = None,
+    strict_imports: bool = False,
+    strict: bool = False,
 ) -> list[Diagnostic]:
     """Validate a model; returns diagnostics sorted errors-first.
+
+    ``strict`` promotes the resolution-failure warnings
+    (:data:`RESOLUTION_CODES`: ``unresolved-reference``,
+    ``unresolved-name``, ``unresolved-unit``, ``dangling-expose``,
+    ``dangling-flow``, ``dangling-succession``) to error severity, and
+    additionally warns (``bare-import``) on an ``import`` with no
+    visibility prefix -- the spec BNF requires one; longeron's default
+    mode deliberately accepts the bare form because the OMG corpus
+    writes it (grammar patch 1).  No other diagnostic changes severity
+    under ``strict``.
 
     ``stdlib`` controls the standard-library fallback used for name
     resolution: ``None`` (default) auto-attaches the vendored library when
@@ -244,19 +279,28 @@ def validate(
             library = None  # degrade to resolution without the library
     elif stdlib:
         library = stdlib_module.standard_library_model(cache=True)
-    checker = _Checker(model, library=library, strict_imports=strict_imports)
+    checker = _Checker(model, library=library, strict_imports=strict_imports, strict=strict)
     checker.check_all()
+    if strict:
+        for diagnostic in checker.diagnostics:
+            if diagnostic.severity == "warning" and diagnostic.code in RESOLUTION_CODES:
+                diagnostic.severity = "error"
     order = {"error": 0, "warning": 1}
     return sorted(checker.diagnostics, key=lambda d: (order[d.severity], d.element, d.code))
 
 
 class _Checker:
     def __init__(
-        self, model: M.Model, library: M.Model | None = None, strict_imports: bool = False
+        self,
+        model: M.Model,
+        library: M.Model | None = None,
+        strict_imports: bool = False,
+        strict: bool = False,
     ):
         self.model = model
         self.resolver = Resolver(model, library=library)
         self.strict_imports = strict_imports
+        self.strict = strict
         self._used_implicit = False  # set by _resolves, read right after
         self.diagnostics: list[Diagnostic] = []
         self._unit_table: units_module.UnitTable | None = None
@@ -318,6 +362,7 @@ class _Checker:
             self.check_metadata_refs(element)
         if isinstance(element, M.Import):
             self.check_target(element, element.target, "import")
+            self.check_bare_import(element)
         if isinstance(element, M.Expose):
             self.check_expose(element)
         if isinstance(element, M.FlowUsage):
@@ -389,6 +434,26 @@ class _Checker:
             self._check_implicit(element, ref)
             return
         self.report("warning", "unresolved-reference", element, f"{role} {ref!r} does not resolve")
+
+    def check_bare_import(self, imp: M.Import) -> None:
+        """bare-import (strict only): an ``import`` with no visibility
+        prefix.  The release BNF (spec 8.2.2.5.2) makes the
+        VisibilityIndicator mandatory; longeron's grammar patch 1
+        deliberately accepts the bare form because the spec's own
+        examples write it (dialect table, ``docs/guides/grammar.md``).
+        The builder records the absence as ``visibility is None``, so no
+        extra parse-layer breadcrumb is needed.  A warning, never an
+        error: the notation appears in OMG-authored text."""
+
+        if not self.strict or imp.visibility is not None:
+            return
+        self.report(
+            "warning",
+            "bare-import",
+            imp,
+            f"import {imp.target!r} has no visibility prefix (the spec BNF "
+            "requires one); write 'private import' or 'public import'",
+        )
 
     def check_expose(self, expose: M.Expose) -> None:
         """dangling-expose: an ``expose`` inside a view usage names an

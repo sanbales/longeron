@@ -260,7 +260,9 @@ diagnoses these but as warnings, where the pilot reports errors:
   references are *warnings*; structural problems … are errors"), made
   safer than it sounds by stdlib-aware resolution — but a user who
   filters for errors ships a model full of typos. Held as an open
-  question below rather than a gap.
+  question below rather than a gap — since ratified and implemented:
+  `validate(strict=True)` / `lint --strict` promotes the
+  resolution-failure family to errors (open question 1).
 
 And two findings are **deliberate dialect divergences** already
 documented in the grammar-patch table (`docs/guides/grammar.md`),
@@ -326,7 +328,9 @@ A negative suite in the opensysml mold, adapted to pytest:
   36, and the validation-diagnostics landing then drained it to 28 / 36
   / 10 / 2 (29 gaps promoted to error-severity rejections, 5 to
   warning-severity detection, 2 deferred with corpus-calibrated reasons
-  stated on the cases). The counts are stated by the suite itself (a
+  stated on the cases); the ratified Q3 override then added the
+  `[3..1]` bound-order case, making the current counts 28 / 37 / 10 /
+  2. The counts are stated by the suite itself (a
   summary test asserts the bucket sizes match the doc's claim, the
   cheap analog of opensysml's count guards).
 
@@ -411,9 +415,23 @@ rejection-suite promotion, the corpus sweep as the permanent gate.
 **Q3 OVERRIDDEN: `[3..1]` is REJECTED as an error** -- longeron is
 deliberately stricter than the pilot here; the divergence is recorded
 in the dialect table so the future differential adjudicates it as
-intentional. Implementation notes: Q1's strict mode (validate(
-strict=True) + CLI --strict) and Q3's bound-order error are queued
-work items; Q4's bare-import warning folds into that same strict mode.
+intentional. Implementation status: **all implemented** (the change
+following this ratification). Q1+Q4 landed as `validate(strict=True)`
++ `longeron lint --strict`: the resolution-failure family
+(`RESOLUTION_CODES` in `validation.py` -- `unresolved-reference`,
+`unresolved-name`, `unresolved-unit`, `dangling-expose`,
+`dangling-flow`, `dangling-succession`) promotes to error severity,
+and a bare `import` warns (`bare-import`; strict only, never an
+error, never default). No parse-layer breadcrumb was needed: the
+builder already records a missing visibility prefix as
+`Import.visibility is None` and it survives the JSON round-trip. Q3
+landed as the `multiplicity-bound-order` error (literal integer pairs
+only -- named/expression bounds are undecidable and stay unchecked)
+plus its rejection-corpus case (bucket 2: 36 -> 37). Strict results are
+reported separately from default results, per the design rule: measured
+per-file over the pinned corpus, 142 of 309 files carry a strict-mode
+error (cross-file references dominate) and 0 use a bare import --
+numbers stated in `docs/guides/validation.md`.
 
 
 1. **Should `unresolved-reference` stay a warning?** The pilot errors
@@ -426,6 +444,8 @@ work items; Q4's bare-import warning folds into that same strict mode.
    `--strict`. The rejection suite's bucket 3 becomes bucket 2 under
    that flag. This is validation.py work — deliberately **not** in
    phase 1 (that file is owned by concurrent workstreams).
+   *Ratified outcome: implemented as recommended* — see the
+   ratification block above for the exact promoted-code list.
 2. **Who closes the known gaps, and in what order?** The 22 gap rows
    above (24 suite cases: row 4 contributes two, and row 10's
    qualified-name variant is its own case) cluster into four checks: kind-typing (rows 5–9, one resolver-aware
@@ -441,6 +461,10 @@ work items; Q4's bare-import warning folds into that same strict mode.
    so a `[3..1]` range is unsatisfiable but well-formed.
    *Recommendation:* follow the pilot (accept); a `possibly-empty`
    *lint* warning would be a longeron extension, labeled as such.
+   *Ratified outcome: OVERRIDDEN — rejected as the
+   `multiplicity-bound-order` error* (literal bounds only), with a
+   rejection-corpus case citing the override; the stricter-than-pilot
+   divergence is recorded in `docs/guides/validation.md`.
 4. **Does bare `import` (patch 1) ever get flagged?** The spec BNF
    mandates the visibility prefix; the spec's own examples omit it;
    the pilot and opensysml both reject it. *Recommendation:* keep
@@ -448,6 +472,11 @@ work items; Q4's bare-import warning folds into that same strict mode.
    in the dialect table (done, patch 1), and fold it into the same
    future strict mode as question 1 — as a warning, since unlike the
    pseudostate dialect it appears in OMG-authored text.
+   *Ratified outcome: implemented as recommended* — the `bare-import`
+   warning, strict mode only. (Measured at implementation time: the
+   pinned release corpus itself contains zero bare imports — every
+   corpus `import` carries a visibility prefix; the bare form remains
+   in spec-PDF examples and common usage.)
 5. **KerML rejection cases?** The KerML grammar is the same ANTLR
    pipeline but `build_model` rejects KerML outright, so only
    parse-layer cases are testable. *Recommendation:* defer until the
@@ -520,9 +549,12 @@ behaviors (`validateParameterMembershipOwningType`), non-port
 interface-usage ends (`validateInterfaceUsageEnd_`), and three resolver
 holes (multiplicity bounds, succession ends, and `perform` targets are
 never resolved — not even to the warning the rest of the resolver
-would emit). Deliberately *not* added: `[3..1]` stays
-adjudicated-accept (open question 3), and pilot-*warning* rules (e.g.
-`validateBindingConnectorTypeConformance`) do not qualify — warnings
+would emit). Deliberately *not* added at the time: `[3..1]` stayed
+adjudicated-accept while open question 3 stood (the maintainer's
+ratification later overrode that adjudication -- it is now the
+`multiplicity-bound-order` error with its own rejection case), and
+pilot-*warning* rules (e.g.
+`validateBindingConnectorTypeConformance`) do not qualify -- warnings
 do not count as rejection in either direction.
 
 CI posture versus deep sweeps: hypothesis is **not** a project

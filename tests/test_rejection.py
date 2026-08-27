@@ -609,6 +609,21 @@ def test_reference_problems_are_at_least_diagnosed(case: Case):
     )
 
 
+@pytest.mark.parametrize("case", WARNING_DIAGNOSED, ids=_case_ids(WARNING_DIAGNOSED))
+def test_reference_problems_become_errors_under_strict(case: Case):
+    # The ratified strict mode (design doc, open question 1): bucket 3
+    # becomes bucket 2 under validate(strict=True) -- every resolution
+    # warning here must carry error severity when asked strictly.  Reported
+    # separately from the default-mode buckets, per the opensysml rule: a
+    # strict agreement never reads as a default one.
+    model = longeron.loads(case.source)
+    diags = validate(model, strict=True)
+    assert any(d.code == case.code and d.severity == "error" for d in diags), (
+        f"expected [{case.code}] at error severity under strict; rule: {case.rule}; "
+        f"got: {[str(d) for d in diags]}"
+    )
+
+
 @pytest.mark.parametrize(
     "case",
     [

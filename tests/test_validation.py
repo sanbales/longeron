@@ -899,6 +899,25 @@ class TestMultiplicityBounds:
         assert len(found) == 1
         assert found[0].severity == "error"
 
+    def test_three_to_one(self):
+        # the ratified Q3 override (docs/design/conformance.md): [3..1] is
+        # an error, deliberately stricter than the pilot
+        found = diags("package P { part def D; part p : D[3..1]; }", "multiplicity-bound-order")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_ordered_and_equal_bounds_are_fine(self):
+        src = """package P { part def D;
+                   part p : D[1..3]; part q : D[3..3]; }"""
+        assert diags(src) == []
+
+    def test_named_bounds_are_not_order_checked(self):
+        # only literal integer pairs are decidable; a named (expression)
+        # bound is never judged for order
+        src = """package P { part def D; attribute n : Natural;
+                   part p : D[n..1]; part q : D[3..n]; }"""
+        assert diags(src, "multiplicity-bound-order") == []
+
     def test_unresolved_name_bound_warns(self):
         found = diags("package P { part def D; part p : D[n]; }", "unresolved-reference")
         assert len(found) == 1
@@ -1188,8 +1207,102 @@ class TestCLI:
         out = capsys.readouterr().out
         assert "warning[stdlib-implicit-name]" in out
         assert "used without import" in out
-        # --strict promotes the warning to a failure
-        assert main(["lint", "--strict-imports", "--strict", str(path)]) == 1
+        # stdlib-implicit-name reports a *successful* (implicit) resolution,
+        # not a resolution failure: --strict does not promote it, and the
+        # exit code stays 0
+        assert main(["lint", "--strict-imports", "--strict", str(path)]) == 0
+
+
+class TestStrictMode:
+    """validate(strict=True): the ratified open questions 1 and 4
+    (docs/design/conformance.md).  Exactly the resolution-failure codes
+    (RESOLUTION_CODES) promote to errors, and a bare 'import' warns."""
+
+    def test_resolution_codes_are_the_documented_set(self):
+        from longeron.validation import RESOLUTION_CODES
+
+        assert RESOLUTION_CODES == {
+            "unresolved-reference",
+            "unresolved-name",
+            "unresolved-unit",
+            "dangling-expose",
+            "dangling-flow",
+            "dangling-succession",
+        }
+
+    def test_unresolved_reference_promotes(self):
+        model = longeron.loads("package P { part v : Ghost; }")
+        (default,) = longeron.validate(model)
+        assert (default.code, default.severity) == ("unresolved-reference", "warning")
+        (strict,) = longeron.validate(model, strict=True)
+        assert (strict.code, strict.severity) == ("unresolved-reference", "error")
+
+    def test_only_resolution_codes_promote(self):
+        # one resolution warning, two non-resolution warnings, one error:
+        # strict flips exactly the resolution warning and adds nothing else
+        src = """package P {
+            part def X; part def X;
+            part v : Ghost;
+            calc hollow { }
+            state def S { state a; }
+        }"""
+        model = longeron.loads(src)
+        default = {(d.code, d.severity) for d in longeron.validate(model)}
+        strict = {(d.code, d.severity) for d in longeron.validate(model, strict=True)}
+        assert ("unresolved-reference", "warning") in default
+        assert ("unresolved-reference", "error") in strict
+        unchanged = {
+            ("duplicate-name", "error"),
+            ("calc-without-result", "warning"),
+            ("no-entry-transition", "warning"),
+        }
+        assert unchanged <= default and unchanged <= strict
+        assert strict - {("unresolved-reference", "error")} == default - {
+            ("unresolved-reference", "warning")
+        }
+
+    def test_stdlib_implicit_name_is_not_promoted(self):
+        # fires on a successful implicit resolution: not a resolution failure
+        model = longeron.loads("package P { part def V { attribute m : Real; } }")
+        found = [
+            d
+            for d in longeron.validate(model, strict=True, strict_imports=True)
+            if d.code == "stdlib-implicit-name"
+        ]
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+
+    def test_bare_import_warns_under_strict_only(self):
+        src = "package Q { part def D; } package P { import Q::*; }"
+        model = longeron.loads(src)
+        assert longeron.validate(model) == []  # default mode stays quiet
+        (found,) = longeron.validate(model, strict=True)
+        assert (found.code, found.severity) == ("bare-import", "warning")
+        assert "visibility prefix" in found.message
+
+    def test_prefixed_imports_stay_silent_under_strict(self):
+        src = """package Q { part def D; }
+                 package P { private import Q::*; public import Q::D; }"""
+        model = longeron.loads(src)
+        assert longeron.validate(model, strict=True) == []
+
+    def test_lint_strict_flag_wires_through(self, tmp_path, capsys):
+        from longeron.cli import main
+
+        path = tmp_path / "warn.sysml"
+        path.write_text("package P { part v : Ghost; }")
+        assert main(["lint", str(path)]) == 0
+        assert "warning[unresolved-reference]" in capsys.readouterr().out
+        assert main(["lint", str(path), "--strict"]) == 1
+        assert "error[unresolved-reference]" in capsys.readouterr().out
+
+    def test_lint_strict_bare_import_warns_but_passes(self, tmp_path, capsys):
+        from longeron.cli import main
+
+        path = tmp_path / "bare.sysml"
+        path.write_text("package Q { part def D; } package P { import Q::*; }")
+        assert main(["lint", str(path), "--strict"]) == 0  # a warning, not an error
+        assert "warning[bare-import]" in capsys.readouterr().out
 
 
 def test_diagnostics_sorted_errors_first():
