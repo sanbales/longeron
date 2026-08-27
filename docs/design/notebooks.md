@@ -1,8 +1,15 @@
 # Design: the tutorial notebooks, rebuilt as one curriculum
 
-> Status: PROPOSAL (2026-08-27). Nothing here is ratified. Open
-> questions at the end carry recommendations. Target: the 0.12 arc,
-> after the v0.11.0 release.
+> Status: RATIFIED (2026-08-27) -- the maintainer approved the
+> proposal and all five recommendations ("i like your suggestions"):
+> two models with the program framing, scoreboard rebased onto the
+> fleet model, notation gallery to Reference, two foundations
+> notebooks, authoring starts immediately in parallel worktrees.
+> LANDING of the renumbered set waits for the v0.11.0 tag (0.11 docs
+> keep the old numbering); the rebuild is the 0.12 headline arc.
+> Authoring order: T1+T2 and T4+T5 first (no dependency on in-flight
+> work); T3 after the inspector/relationships landing; T6 after the
+> board clears (it owns the uav_missions scoring edit).
 
 The maintainer's charge, verbatim: *"the tutorial notebooks have grown
 organically as we added features. Some things are repetitive, others
