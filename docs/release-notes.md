@@ -1,5 +1,44 @@
 # Release notes
 
+## 0.11.0 (unreleased)
+
+- **Units, tiers 2 and 3 of the ratified design**
+  ([design doc](design/units.md)): models with `[SI::kg]`-style
+  measurement annotations now get a real dimensional lint, and an
+  optional typed conversion facade
+  - **The dimensional lint** (`longeron lint` / `validate()`, zero new
+    dependencies): five diagnostics over exponent vectors WITH scale
+    tags, derived from the vendored quantities library's own
+    definitional algebra (`newton = kg*m/s^2` survives in the model and
+    seeds the table; all 257 vendored units derive, none hand-coded).
+    `unresolved-unit` closes the deliberate unit-reference skip;
+    `dimension-mismatch` catches the motivating bug (`mass [kg] +
+    flightTime [min]` -- previously a silent `35.0`); `scale-mismatch`
+    is an ERROR for cross-scale `+`/`-` (`dBW + W`, `°C + K` -- the
+    interval scale marks °C offset so it can never pose as a linear
+    kelvin); `mixed-units` warns on same-dimension-different-unit
+    arithmetic without the `[units]` extra; `anchor-dimension-mismatch`
+    checks scoreboard ramp/target anchors against their `measure`.
+    Unknown dimensions are bottom and propagate silently -- unitless
+    models validate exactly as before. Guide:
+    [The dimensional lint](guides/validation.md#the-dimensional-lint)
+  - **`longeron.units`**: the derived unit table is public --
+    `unit_table()` / `derive_units()` (user unit packages shaped like
+    the stdlib derive with NO mapping table, per the foreign-packages
+    ruling), `register_unit()` for overrides, and a pint-backed typed
+    facade behind `pip install "longeron[units]"`: `convert()` (linear,
+    offset °C, logarithmic dBm/dBW), `si_value()`, `si_unit()`,
+    `format_quantity()` and `om_unit()` (both pint-free), `with_units()`
+    (pint-pandas dtypes for M0/trade tables), `define()` pint
+    pass-through. pint never leaks: floats and unit strings in, floats
+    out; the registry is a lazy singleton, and `import longeron` stays
+    pint-free
+  - Interpreter, instance slots, M0, and `compute()` bodies still see
+    only floats -- declaration-boundary SI normalization and the
+    OpenMDAO/scoreboard conversion hooks are documented seams
+    ([reference](reference/units.md#conversion-seams-reserved-for-011))
+    wired next release
+
 ## 0.10.0
 
 - **The JupyterLab app** (`longeron.app` + `longeron.inspector`):

@@ -49,10 +49,11 @@ class TestCleanModels:
             == []
         )
 
-    def test_units_not_flagged(self):
+    def test_resolvable_units_are_silent(self):
         assert (
             diags("""
-            package P { part def V { attribute d : Real = 10.0 [furlongs]; } }
+            package P { part def V { attribute d : Real = 10.0 [SI::m];
+                                     attribute e : Real = 2.0 [kg]; } }
         """)
             == []
         )
@@ -659,3 +660,284 @@ class TestReferencePositions:
         }
         # the typed calc usage delegates its result: only the def is flagged
         assert [d.element for d in result if d.code == "calc-without-result"] == ["P::Quiet"]
+
+
+class TestDimensionalLint:
+    """The units design's five diagnostics (docs/design/units.md)."""
+
+    def test_kg_plus_min_flags_the_motivating_bug(self):
+        # the interpreter evaluates this to 35.0 without comment; the
+        # lint exists because of this exact observation
+        found = diags(
+            """
+            package P {
+                part def Drone {
+                    attribute mass = 5.0 [SI::kg];
+                    attribute flightTime = 30.0 [SI::min];
+                    attribute nonsense = mass + flightTime;
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert found[0].element == "P::Drone::nonsense"
+        assert "'kg'" in found[0].message and "'min'" in found[0].message
+
+    def test_comparison_across_dimensions_warns(self):
+        found = diags(
+            """
+            package P {
+                part def V {
+                    attribute mass = 5.0 [kg];
+                    attribute wingSpan = 2.0 [m];
+                    assert constraint fits { mass < wingSpan }
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+        assert "'<'" in found[0].message
+
+    def test_same_dimension_addition_is_silent(self):
+        assert (
+            diags("""
+            package P { part def V {
+                attribute a = 1.0 [SI::m];
+                attribute b = 2.0 [m];
+                attribute c = a + b;
+            } }
+        """)
+            == []
+        )
+
+    def test_unknown_dimensions_are_bottom_and_propagate_silently(self):
+        # bare literals and unitless attributes never conflict
+        assert (
+            diags("""
+            package P { part def V {
+                attribute mass = 5.0 [kg];
+                attribute margin = 100.0;
+                attribute padded = mass + margin;
+                attribute doubled = 2.0 * mass;
+                attribute total = padded + doubled;
+            } }
+        """)
+            == []
+        )
+
+    def test_dimension_flows_through_products_and_powers(self):
+        found = diags(
+            """
+            package P {
+                part def V {
+                    attribute speed = 10.0 [SI::'m/s'];
+                    attribute duration = 5.0 [s];
+                    attribute distance = speed * duration;
+                    attribute area = 4.0 ['m²'];
+                    attribute bogus = distance + area;
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+        assert found[0].element == "P::V::bogus"
+
+    def test_quantity_subsetting_types_the_attribute(self):
+        # `:> ISQ::mass` carries the M vector with no value annotation
+        found = diags(
+            """
+            package P {
+                part def V {
+                    attribute mass :> ISQ::mass;
+                    attribute clock :> ISQ::duration;
+                    attribute odd = mass + clock;
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+
+    def test_scale_mismatch_is_an_error(self):
+        # the ratified dBW + W ruling: cross-scale linear arithmetic is
+        # never meaningful, so this outranks the dimensional heuristic
+        found = diags(
+            """
+            package P {
+                part def RF {
+                    attribute gain = 20.0 [dB];
+                    attribute ratio = 5.0 [one];
+                    attribute bad = gain + ratio;
+                }
+            }
+            """,
+            "scale-mismatch",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "error"
+        assert "log" in found[0].message and "linear" in found[0].message
+
+    def test_celsius_plus_kelvin_is_a_scale_error(self):
+        # the ruling's second half: °C is offset where K is linear
+        found = diags(
+            """
+            package P {
+                part def Thermal {
+                    attribute cabin = 25.0 ['°C'];
+                    attribute ambient = 298.15 [K];
+                    attribute wrong = cabin + ambient;
+                }
+            }
+            """,
+            "scale-mismatch",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_unresolved_unit_warns(self):
+        found = diags(
+            "package P { part def V { attribute d : Real = 10.0 [furlongs]; } }",
+            "unresolved-unit",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "furlongs" in found[0].message
+
+    def test_unresolved_unit_in_qualified_form(self):
+        found = diags(
+            "package P { part def V { attribute d = 1.0 [SI::bogusUnit]; } }",
+            "unresolved-unit",
+        )
+        assert len(found) == 1
+        assert "SI::bogusUnit" in found[0].message
+
+    def test_bare_units_do_not_trip_strict_imports(self):
+        # bare [kg] is the measurement library's own idiom
+        model = longeron.loads("package P { part def V { attribute m = 1.0 [kg]; } }")
+        found = [
+            d
+            for d in longeron.validate(model, strict_imports=True)
+            if d.code == "stdlib-implicit-name"
+        ]
+        assert found == []
+
+    def test_mixed_units_warns_without_the_extra(self, monkeypatch):
+        from longeron import units as units_module
+
+        monkeypatch.setattr(units_module, "units_extra_available", lambda: False)
+        found = diags(
+            """
+            package P {
+                part def V {
+                    attribute a = 1.0 [SI::m];
+                    attribute b = 2.0 [mm];
+                    attribute c = a + b;
+                }
+            }
+            """,
+            "mixed-units",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "'m'" in found[0].message and "'mm'" in found[0].message
+
+    def test_mixed_units_gates_off_with_the_extra(self, monkeypatch):
+        # the ratified kg + lbm ruling: with [units] installed the
+        # declaration boundary normalizes, so the warning is moot
+        from longeron import units as units_module
+
+        monkeypatch.setattr(units_module, "units_extra_available", lambda: True)
+        assert (
+            diags("""
+            package P { part def V {
+                attribute a = 1.0 [SI::m];
+                attribute b = 2.0 [mm];
+                attribute c = a + b;
+            } }
+        """)
+            == []
+        )
+
+    def test_anchor_dimension_mismatch(self, monkeypatch):
+        from longeron import units as units_module
+
+        monkeypatch.setattr(units_module, "units_extra_available", lambda: False)
+        found = diags(
+            """
+            package P {
+                part def UAV { attribute flightTime = 0.5 [h]; }
+                requirement endurance {
+                    attribute shape : String = "larger-is-better";
+                    attribute ramp0 : Real = 15.0 [SI::min];
+                    attribute ramp1 : Real = 45.0 [SI::kg];
+                    attribute measure : Real = UAV::flightTime;
+                }
+            }
+            """,
+            "anchor-dimension-mismatch",
+        )
+        assert len(found) == 2  # ramp0: same dim, different unit; ramp1: wrong dim
+        by_element = {d.element: d.message for d in found}
+        assert "different units" in by_element["P::endurance::ramp0"]
+        assert "disagrees dimensionally" in by_element["P::endurance::ramp1"]
+
+    def test_unitless_scoreboard_convention_stays_silent(self):
+        # the drone example's shape: plain Real anchors, no annotations
+        assert (
+            diags("""
+            package P {
+                part def V { attribute occludedFraction : Real; }
+                requirement r {
+                    attribute shape : String = "smaller-is-better";
+                    attribute ramp0 : Real = 0.001;
+                    attribute ramp1 : Real = 0.05;
+                    attribute measure : Real = V::occludedFraction;
+                    attribute unit : String = "fraction";
+                }
+            }
+        """)
+            == []
+        )
+
+    def test_redefinition_chains_inherit_dimensions(self):
+        found = diags(
+            """
+            package P {
+                part def Machine { attribute mass = 100.0 [kg]; }
+                part def Vehicle :> Machine {
+                    attribute mass :>> Machine::mass = 1200.0;
+                    attribute clock = 3.0 [s];
+                    attribute odd = mass + clock;
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+
+    def test_annotation_on_expression_overrides_operands(self):
+        # `3 * x [m / s]` -- the spec's own derived-unit expression shape
+        found = diags(
+            """
+            package P {
+                part def V {
+                    attribute x = 2.0;
+                    attribute speed = 3 * x [m / s];
+                    attribute mass = 5.0 [kg];
+                    attribute odd = speed + mass;
+                }
+            }
+            """,
+            "dimension-mismatch",
+        )
+        assert len(found) == 1
+
+    def test_library_models_are_never_subjects(self):
+        # a merged-in standard library must not be re-linted
+        model = longeron.loads("package P { part def V { attribute m = 1.0 [kg]; } }")
+        longeron.add_standard_library(model)
+        assert longeron.validate(model) == []

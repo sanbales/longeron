@@ -10,16 +10,31 @@ specializes ``Actions::Action``, so inherited names like ``start`` and
 ``done`` resolve in expressions.  Unresolved references are *warnings*;
 structural problems (duplicate names, specialization cycles, transitions
 to unknown states) are *errors*.
+
+The dimensional lint (design: ``docs/design/units.md``) also lives here:
+unit annotations must resolve (``unresolved-unit``), arithmetic over
+attributes with known dimension vectors must agree (``dimension-mismatch``
+-- the ``mass + flightTime`` bug the interpreter silently evaluates),
+mixed measurement scales under ``+``/``-`` are an error
+(``scale-mismatch``: ``dBW + W``, ``°C + K``), same-dimension operands in
+different units warn without the ``[units]`` extra (``mixed-units``), and
+scoreboard ramp/target anchors are checked against their requirement's
+``measure`` (``anchor-dimension-mismatch``).  Dimensions come from
+:mod:`longeron.units`, derived from the vendored library's own
+definitional algebra; unknown dimensions are bottom and propagate
+silently -- the lint only speaks when two *known* vectors conflict.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Literal
 
 from . import ast as A
 from . import model as M
 from . import stdlib as stdlib_module
+from . import units as units_module
 from .errors import ResolutionError, SourceLocation
 from .interpreter import BUILTINS, Resolver
 
@@ -83,6 +98,8 @@ class _Checker:
         self.strict_imports = strict_imports
         self._used_implicit = False  # set by _resolves, read right after
         self.diagnostics: list[Diagnostic] = []
+        self._unit_table: units_module.UnitTable | None = None
+        self._meanings: dict[int, _Meaning | None] = {}  # id(usage) -> declared meaning
 
     def report(self, severity: Severity, code: str, element: M.Element, message: str) -> None:
         where = element.qualified_name or element.label
@@ -103,6 +120,8 @@ class _Checker:
             self.check_references(element)
             self.check_specialization_cycle(element)
             self.check_expressions(element)
+            self.check_units(element)
+            self.check_scoreboard_anchors(element)
         if isinstance(element, M.Import):
             self.check_target(element, element.target, "import")
         if isinstance(element, M.Expose):
@@ -400,6 +419,358 @@ class _Checker:
             return  # reference/typed calc usages delegate their result
         self.report("warning", "calc-without-result", calc, "calculation has no result expression")
 
+    # -- units ------------------------------------------------------------------
+
+    def _units(self) -> units_module.UnitTable:
+        """The unit table for this model (standard + model-derived), built
+        lazily once per checker; degrades to an empty table on failure."""
+
+        if self._unit_table is None:
+            try:
+                self._unit_table = units_module.unit_table(
+                    self.model, include_standard=self.resolver.library is not None
+                )
+            except Exception:
+                self._unit_table = units_module.UnitTable()
+        return self._unit_table
+
+    def check_units(self, element: M.Definition | M.Usage) -> None:
+        """The dimensional lint: walk every owned expression, resolving
+        unit annotations (``unresolved-unit``) and checking arithmetic
+        over known dimension vectors and scale tags
+        (``dimension-mismatch`` / ``scale-mismatch`` / ``mixed-units``)."""
+
+        for owner, expr in self._owned_expressions(element):
+            self._unit_meaning(owner, expr, report=True)
+
+    _COMPARISONS = ("<", ">", "<=", ">=", "==", "!=")
+
+    def _unit_meaning(self, owner: M.Element, expr: A.Expr, *, report: bool) -> _Meaning | None:
+        """Bottom-up dimensional meaning of ``expr`` (``None`` = unknown),
+        emitting diagnostics at conflicting operators when ``report``.
+
+        Unknowns are bottom: a bare literal has *no* dimension (35.0 could
+        be anything), unknown operands silence the check, and only two
+        *known* vectors can conflict -- per the design's lint contract.
+        """
+
+        if isinstance(expr, A.QuantityOp):
+            self._unit_meaning(owner, expr.base, report=report)
+            return self._annotation_meaning(owner, expr.unit, report=report)
+        if isinstance(expr, (A.FeatureRef, A.ChainAccess)):
+            return self._feature_meaning(owner, expr)
+        if isinstance(expr, A.Unary):
+            operand = self._unit_meaning(owner, expr.operand, report=report)
+            return operand if expr.op in ("+", "-") else None
+        if isinstance(expr, A.Conditional):
+            self._unit_meaning(owner, expr.test, report=report)
+            then = self._unit_meaning(owner, expr.then, report=report)
+            orelse = self._unit_meaning(owner, expr.orelse, report=report)
+            if then is not None and orelse is not None and then.dim == orelse.dim:
+                return then
+            return None
+        if isinstance(expr, A.Binary):
+            return self._binary_meaning(owner, expr, report=report)
+        # anything else: recurse for nested reporting, meaning unknown
+        for field_name in ("base", "index", "items", "args", "result"):
+            value = getattr(expr, field_name, None)
+            if isinstance(value, A.Expr):
+                self._unit_meaning(owner, value, report=report)
+            elif isinstance(value, tuple):
+                for item in value:
+                    if isinstance(item, A.Expr):
+                        self._unit_meaning(owner, item, report=report)
+        return None
+
+    def _binary_meaning(self, owner: M.Element, expr: A.Binary, *, report: bool) -> _Meaning | None:
+        left = self._unit_meaning(owner, expr.left, report=report)
+        right = self._unit_meaning(owner, expr.right, report=report)
+        op = expr.op
+        if op in ("+", "-") or op in self._COMPARISONS:
+            if left is None or right is None:
+                if op in ("+", "-"):
+                    return left or right  # additive: the known side carries
+                return None
+            if len(left.dim.exp) != len(right.dim.exp):
+                return None  # different bases (foreign system): incomparable
+            table = self._units()
+            if (
+                op in ("+", "-")
+                and left.scale is not None
+                and right.scale is not None
+                and left.scale != right.scale
+            ):
+                if report:
+                    self.report(
+                        "error",
+                        "scale-mismatch",
+                        owner,
+                        f"operands of '{op}' mix measurement scales: "
+                        f"{left.display(table)} is {left.scale}-scale, "
+                        f"{right.display(table)} is {right.scale}-scale; "
+                        "convert explicitly",
+                    )
+                return None
+            if left.dim != right.dim:
+                if report:
+                    self.report(
+                        "warning",
+                        "dimension-mismatch",
+                        owner,
+                        f"operands of '{op}' have different dimensions: "
+                        f"{left.display(table)} vs {right.display(table)}",
+                    )
+                return None
+            if left.ident is not None and right.ident is not None and left.ident != right.ident:
+                if report and not units_module.units_extra_available():
+                    self.report(
+                        "warning",
+                        "mixed-units",
+                        owner,
+                        f"operands of '{op}' use different units of one "
+                        f"dimension: {left.display(table)} vs {right.display(table)}; "
+                        "magnitudes are not normalized without the [units] extra",
+                    )
+                if op in ("+", "-"):
+                    return _Meaning(left.dim, left.scale, None, None)
+            if op in ("+", "-"):
+                return left
+            return None  # comparisons yield booleans
+        if op in ("*", "/"):
+            # scaling by a bare numeric literal cannot change dimension
+            # (`3 * x [m/s]`: the annotation binds to the primary `x`)
+            if left is None and right is not None and _literal_number(expr.left) is not None:
+                return right if op == "*" else None
+            if right is None and left is not None and _literal_number(expr.right) is not None:
+                return left
+            if left is None or right is None:
+                return None
+            if len(left.dim.exp) != len(right.dim.exp):
+                return None
+            dim = left.dim * right.dim if op == "*" else left.dim / right.dim
+            scale = "linear" if left.scale == right.scale == "linear" else None
+            return _Meaning(dim, scale, None, None)
+        if op in ("^", "**"):
+            if left is None:
+                return None
+            power = _literal_number(expr.right)
+            if power is None:
+                return None
+            scale = "linear" if left.scale == "linear" else None
+            return _Meaning(left.dim ** Fraction(power).limit_denominator(1000), scale, None, None)
+        return None  # logic, range, equality-of-identity, ...
+
+    def _annotation_meaning(
+        self, owner: M.Element, unit_expr: A.Expr, *, report: bool
+    ) -> _Meaning | None:
+        """The meaning carried by a ``[unit]`` annotation.  Reports
+        ``unresolved-unit`` (once per dangling reference) when asked."""
+
+        if isinstance(unit_expr, A.FeatureRef):
+            info = self._resolve_unit(owner, unit_expr, report=report)
+            if info is None:
+                return None
+            return _Meaning(info.dim, info.scale, info.qname, info.label)
+        if isinstance(unit_expr, A.Binary) and unit_expr.op in ("*", "/", "^", "**"):
+            left = self._annotation_meaning(owner, unit_expr.left, report=report)
+            if unit_expr.op in ("^", "**"):
+                power = _literal_number(unit_expr.right)
+                if left is None or power is None:
+                    return None
+                dim = left.dim ** Fraction(power).limit_denominator(1000)
+                return _Meaning(dim, left.scale, f"({left.ident}^{power})", None)
+            right = self._annotation_meaning(owner, unit_expr.right, report=report)
+            if left is None or right is None:
+                return None
+            if len(left.dim.exp) != len(right.dim.exp):
+                return None
+            dim = left.dim * right.dim if unit_expr.op == "*" else left.dim / right.dim
+            scale = "linear" if left.scale == right.scale == "linear" else None
+            ident = f"({left.ident}{unit_expr.op}{right.ident})"
+            return _Meaning(dim, scale, ident, None)
+        if isinstance(unit_expr, A.Literal) and isinstance(unit_expr.value, (int, float)):
+            table = self._units()
+            return _Meaning(table.dimensionless, "linear", None, None)
+        return None  # exotic annotation shapes stay unchecked
+
+    def _resolve_unit(
+        self, owner: M.Element, ref: A.FeatureRef, *, report: bool
+    ) -> units_module.UnitInfo | None:
+        """Resolve one unit reference; ``unresolved-unit`` when it dangles.
+
+        Bare stdlib unit names (``[kg]``) resolve through the implicit
+        library hop *without* tripping ``strict_imports`` -- units are the
+        measurement library's vocabulary, and bare references to it are
+        the spec's own idiom.  A reference that resolves but is not a
+        derivable unit contributes no dimension (bottom, silent).
+        """
+
+        scope = owner.owner or self.model
+        try:
+            element = self.resolver.resolve(ref.parts, scope)
+        except ResolutionError:
+            if report:
+                self.report(
+                    "warning",
+                    "unresolved-unit",
+                    owner,
+                    f"unit {'::'.join(ref.parts)!r} does not resolve",
+                )
+            return None
+        qname = element.qualified_name
+        return self._units().lookup(qname) if qname else None
+
+    def _feature_meaning(self, owner: M.Element, expr: A.Expr) -> _Meaning | None:
+        """Meaning of a name in value position, from its declaration."""
+
+        target = self._resolve_feature(owner, expr)
+        if isinstance(target, M.Usage):
+            return self._declared_meaning(target)
+        return None
+
+    def _resolve_feature(self, owner: M.Element, expr: A.Expr) -> M.Element | None:
+        parts: tuple[str, ...]
+        if isinstance(expr, A.FeatureRef):
+            parts = expr.parts
+        elif isinstance(expr, A.ChainAccess) and isinstance(expr.base, A.FeatureRef):
+            parts = expr.base.parts + expr.parts
+        else:
+            return None
+        scope: M.Element = owner.owner or self.model
+        for segment in parts:
+            if segment == "$":
+                scope = self.model
+                continue
+            try:
+                scope = self.resolver.resolve(segment, scope)
+            except ResolutionError:
+                return None
+        return scope
+
+    def _declared_meaning(self, usage: M.Usage) -> _Meaning | None:
+        """Dimensional meaning of an attribute declaration: its value
+        expression's annotation first, then quantity typing/subsetting
+        (``:> ISQ::mass``), then the declaration it redefines or subsets.
+        Memoized and cycle-guarded per checker."""
+
+        key = id(usage)
+        if key in self._meanings:
+            return self._meanings[key]
+        self._meanings[key] = None  # cycle guard: recursion sees bottom
+        meaning: _Meaning | None = None
+        if usage.value is not None:
+            meaning = self._unit_meaning(usage, usage.value.expr, report=False)
+        if meaning is None:
+            meaning = self._quantity_typing_meaning(usage)
+        self._meanings[key] = meaning
+        return meaning
+
+    def _quantity_typing_meaning(self, usage: M.Usage) -> _Meaning | None:
+        table = self._units()
+        scope = usage.owner or self.model
+        for ref in list(usage.types) + list(usage.subsets) + list(usage.redefines):
+            try:
+                element = self.resolver.resolve(ref.lstrip("~").replace(".", "::"), scope)
+            except ResolutionError:
+                continue
+            qname = element.qualified_name
+            if qname is not None:
+                dim = table.quantity_dimension(qname)
+                if dim is not None:
+                    # scale/identity unknown: quantity kinds type dimensions,
+                    # not units, so only dimension-mismatch can fire
+                    return _Meaning(dim, None, None, None)
+            if isinstance(element, M.Usage) and element is not usage:
+                inherited = self._declared_meaning(element)
+                if inherited is not None:
+                    return inherited
+        return None
+
+    #: the scoreboard convention's utility-shape parameters (kept in sync
+    #: with :mod:`longeron.analysis.scoreboard`)
+    _ANCHOR_ATTRS = ("ramp0", "ramp1", "target", "limit")
+
+    def check_scoreboard_anchors(self, element: M.Definition | M.Usage) -> None:
+        """anchor-dimension-mismatch: a scoreboard-convention ``ramp0`` /
+        ``ramp1`` / ``target`` / ``limit`` attribute disagrees
+        dimensionally with its sibling ``measure`` -- a ramp anchored in
+        minutes scoring a measure computed in hours."""
+
+        attributes = {
+            member.name: member
+            for member in element.members
+            if isinstance(member, M.Usage) and member.kind == "attribute" and member.name
+        }
+        measure = attributes.get("measure")
+        if measure is None:
+            return
+        measured = self._declared_meaning(measure)
+        if measured is None:
+            return
+        table = self._units()
+        for name in self._ANCHOR_ATTRS:
+            anchor = attributes.get(name)
+            if anchor is None:
+                continue
+            anchored = self._declared_meaning(anchor)
+            if anchored is None:
+                continue
+            if anchored.dim != measured.dim:
+                self.report(
+                    "warning",
+                    "anchor-dimension-mismatch",
+                    anchor,
+                    f"'{name}' {anchored.display(table)} disagrees dimensionally "
+                    f"with 'measure' {measured.display(table)}",
+                )
+            elif (
+                anchored.ident is not None
+                and measured.ident is not None
+                and anchored.ident != measured.ident
+                and not units_module.units_extra_available()
+            ):
+                # the design's own example: a ramp anchored in minutes
+                # scoring a measure computed in hours -- dimensionally
+                # fine, numerically 60x off until the [units] extra
+                # converts anchors at scoreboard build time
+                self.report(
+                    "warning",
+                    "anchor-dimension-mismatch",
+                    anchor,
+                    f"'{name}' {anchored.display(table)} and 'measure' "
+                    f"{measured.display(table)} use different units; magnitudes "
+                    "are not normalized without the [units] extra",
+                )
+
+
+def _literal_number(expr: A.Expr) -> float | None:
+    """The numeric value of a literal (or negated literal) exponent."""
+
+    if isinstance(expr, A.Literal) and isinstance(expr.value, (int, float)):
+        return float(expr.value)
+    if isinstance(expr, A.Unary) and expr.op == "-":
+        inner = _literal_number(expr.operand)
+        return -inner if inner is not None else None
+    return None
+
+
+@dataclass(frozen=True)
+class _Meaning:
+    """What the dimensional lint knows about one expression: its exponent
+    vector, its scale tag (``None`` = unknown), and -- when the value is
+    still in one declared unit -- that unit's identity and label."""
+
+    dim: units_module.Dim
+    scale: str | None
+    ident: str | None  # unit identity (qualified name / canonical compound)
+    label: str | None  # display label ('kg', 'm / s'); None for derived
+
+    def display(self, table: units_module.UnitTable) -> str:
+        dim_text = table.format_dim(self.dim)
+        if self.label:
+            return f"'{self.label}' [{dim_text}]"
+        return f"[{dim_text}]"
+
 
 def _expression_heads(expr: A.Expr) -> set[str]:
     """First name segments referenced by an expression (skipping locals of
@@ -450,8 +821,8 @@ def _expression_heads(expr: A.Expr) -> set[str]:
             "index",
             "items",
         ):
-            # note: QuantityOp.unit is deliberately skipped -- unit
-            # references live in measurement libraries we do not load
+            # note: QuantityOp.unit is deliberately skipped here -- unit
+            # references get their own resolution check (unresolved-unit)
             value = getattr(node, field_name, None)
             if isinstance(value, A.Expr):
                 walk(value, bound)

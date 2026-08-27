@@ -66,6 +66,13 @@ trades = ["ortools>=9.8"]
 smt = ["z3-solver>=4.12"]
 viz = ["matplotlib>=3.8", "anywidget>=0.9"]
 cad = ["cadquery>=2.5"]
+units = [
+    # longeron.units boundary tier: conversion, display, exchange (the
+    # dimensional lint in longeron.validation needs NO extra -- it runs
+    # on the in-house derived unit table, stdlib only)
+    "pint>=0.24",
+    "pint-pandas>=0.7",  # with_units(): unit-aware DataFrame columns
+]
 browser-test = [
     # the browser-truth test tier (tests/browser/): drives real JupyterLab
     # in headless Chromium; kept OUT of dev so default envs never grow a
@@ -170,6 +177,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "cairosvg.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# lazy imports behind the [units] extra
+module = ["pint.*", "pint_pandas.*", "pandas.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["openmdao.*", "ortools.*", "z3.*"]

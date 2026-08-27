@@ -10465,7 +10465,7 @@ packages:
 - pypi: ./
   name: longeron
   version: 0.10.0
-  sha256: 696d9b4fa60bec110ab63cd19c013a9edeeba2b0fe20b8d43c7fdedf4eac93bc
+  sha256: ab5ed26a744b481d8a95ec5006b5172f5bddb79fb3cef83ba09ae2c7b75b4c8e
   requires_dist:
   - antlr4-python3-runtime==4.13.2
   - pytest>=8 ; extra == 'dev'
@@ -10507,6 +10507,8 @@ packages:
   - matplotlib>=3.8 ; extra == 'viz'
   - anywidget>=0.9 ; extra == 'viz'
   - cadquery>=2.5 ; extra == 'cad'
+  - pint>=0.24 ; extra == 'units'
+  - pint-pandas>=0.7 ; extra == 'units'
   - playwright>=1.55 ; extra == 'browser-test'
   - pytest-rerunfailures>=14 ; extra == 'browser-test'
   - pytest-timeout>=2.3 ; extra == 'browser-test'
