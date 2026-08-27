@@ -19,9 +19,9 @@ for SysML v2 and KerML, taken from
 The corpus badge is a positive-only acceptance claim: every `.sysml`
 file of the pinned SysML-v2-Release corpus parses and builds
 (`scripts/check_corpus.py`). The negative direction — invalid input
-longeron must *reject* — is `tests/test_rejection.py`: 40 spec-cited
-negative cases enforced (28 parse rejections, 7 semantic errors, 5
-reference problems pinned as diagnosed) and 24 known permissiveness
+longeron must *reject* — is `tests/test_rejection.py`: 74 spec-cited
+negative cases enforced (28 parse rejections, 36 semantic errors, 10
+reference problems pinned as diagnosed) and 2 known permissiveness
 gaps tracked as strict xfails (design: `docs/design/conformance.md`).
 
 > SysML® is a registered trademark of the Object Management Group. This

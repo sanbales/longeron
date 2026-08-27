@@ -610,6 +610,408 @@ class TestStructuralErrors:
         assert diags("package P { part def C { attribute mass : Real :>> mass; } }") == []
 
 
+class TestKindNesting:
+    """Composite occurrence features where the metamodel demands
+    referential ones (validateAttributeDefinitionFeatures /
+    validateAttributeUsageFeatures / the pilot's port-composite rule)."""
+
+    def test_state_in_attribute_def(self):
+        found = diags("package P { attribute def A { state s; } }", "attribute-composite-feature")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_part_in_attribute_usage(self):
+        found = diags("package P { attribute a : Real { part p; } }", "attribute-composite-feature")
+        assert len(found) == 1
+
+    def test_item_in_attribute_def_is_tolerated(self):
+        # the spec rule text covers items too, but the spec's own corpus
+        # nests composite items in attribute defs ('attribute def Show {
+        # item picture : Picture; }'), so items stay unjudged
+        src = "package P { item def Picture; attribute def Show { item p : Picture; } }"
+        assert diags(src, "attribute-composite-feature") == []
+
+    def test_composite_part_in_port_def(self):
+        found = diags(
+            "package P { part def D; port def Q { part p : D; } }", "port-composite-usage"
+        )
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_ref_part_in_port_def_is_fine(self):
+        assert diags("package P { part def D; port def Q { ref part p : D; } }") == []
+
+    def test_directed_items_in_port_def_are_fine(self):
+        # 'out item fuelSupply : Fuel;' is the spec's own port idiom
+        src = """package P { item def Fuel;
+                   port def FuelPort { out item supply : Fuel; in item ret : Fuel; } }"""
+        assert diags(src, "port-composite-usage") == []
+
+
+class TestKindTyping:
+    """usage-type and friends: a declared type that resolves to a
+    definition of a conflicting kind is a structural error; unresolved
+    types stay [unresolved-reference] warnings."""
+
+    def test_attribute_typed_by_part_def(self):
+        found = diags("package P { part def D; attribute a : D; }", "usage-type")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+        assert "attribute" in found[0].message
+
+    def test_part_typed_by_attribute_def(self):
+        found = diags("package P { attribute def A; part p : A; }", "usage-type")
+        assert len(found) == 1
+
+    def test_action_typed_by_part_def(self):
+        found = diags("package P { part def D; action a : D; }", "usage-type")
+        assert len(found) == 1
+
+    def test_usage_typed_by_package(self):
+        found = diags("package P { part p : P; }", "usage-type")
+        assert len(found) == 1
+        assert "package" in found[0].message
+
+    def test_legitimate_typings_are_silent(self):
+        src = """package P { part def D; attribute def A; action def B;
+                   part p : D; attribute a : A; action b : B; }"""
+        assert diags(src, "usage-type") == []
+
+    def test_library_typed_kinds_are_not_judged(self):
+        # the vendored KerML libraries project 'datatype' onto the item
+        # kind (Collections::Set et al.); library kinds are bottom, so
+        # the corpus idiom 'attribute c : Set' stays silent
+        assert diags("package P { attribute c : Collections::Set; }", "usage-type") == []
+
+    def test_two_individual_definitions(self):
+        src = (
+            "package P { individual part def I1; individual part def I2; "
+            "individual part p : I1, I2; }"
+        )
+        found = diags(src, "individual-definition")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_enum_attribute_with_two_types(self):
+        found = diags("package P { enum def E { a; } attribute e : E, E; }", "enum-attribute-type")
+        assert len(found) == 1
+
+    def test_single_enum_typing_is_fine(self):
+        assert diags("package P { enum def E { a; } attribute e : E; }") == []
+
+    def test_metadata_prefix_must_be_metadata_def(self):
+        found = diags("package P { part def Meta; #Meta part p; }", "metadata-usage-type")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_metadata_prefix_of_metadata_def_is_fine(self):
+        src = "package P { metadata def Safety; #Safety part p; }"
+        assert diags(src, "metadata-usage-type") == []
+
+    def test_unresolved_metadata_prefix_stays_silent(self):
+        # user-defined keywords may live in files that were not loaded
+        assert diags("package P { #ghost part p; }", "metadata-usage-type") == []
+
+
+class TestSpecializationKinds:
+    """Cross-family definition specializations (KerML: a DataType may not
+    specialize a Class; Behaviors and Structures do not mix)."""
+
+    def test_attribute_def_specializes_part_def(self):
+        found = diags("package P { part def D; attribute def A :> D; }", "datatype-specialization")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_action_def_specializes_part_def(self):
+        found = diags("package P { part def D; action def A :> D; }", "behavior-specialization")
+        assert len(found) == 1
+
+    def test_part_def_specializes_action_def(self):
+        found = diags("package P { action def B; part def D :> B; }", "structure-specialization")
+        assert len(found) == 1
+
+    def test_within_family_specializations_are_silent(self):
+        src = """package P { part def D; part def D2 :> D;
+                   action def B; state def S :> B;
+                   attribute def A; attribute def A2 :> A; }"""
+        assert diags(src) == []
+
+    def test_library_supers_are_not_judged(self):
+        # Collections::Array is a KerML datatype the vendored library
+        # projects onto the item kind; library kinds are bottom
+        src = "package P { attribute def C :> Collections::Array; }"
+        assert diags(src, "datatype-specialization") == []
+
+
+class TestRedefinitionFeaturing:
+    def test_sibling_redefinition(self):
+        found = diags(
+            "package P { part def A { attribute x : Real; attribute y :>> x; } }",
+            "redefinition-featuring-types",
+        )
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_package_level_redefinition(self):
+        found = diags(
+            "package P { attribute x : Real; attribute y :>> x; }",
+            "redefinition-featuring-types",
+        )
+        assert len(found) == 1
+        assert "package-level" in found[0].message
+
+    def test_inherited_redefinition_is_fine(self):
+        src = """package P { part def A { attribute x : Real; }
+                   part def B :> A { attribute x : Real :>> x; } }"""
+        assert diags(src, "redefinition-featuring-types") == []
+
+
+class TestVariationMembership:
+    def test_variant_outside_variation(self):
+        found = diags("package P { part def D { variant part v; } }", "variant-membership")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_non_variant_in_variation(self):
+        found = diags(
+            "package P { variation part def V { part notvariant; } }", "variation-membership"
+        )
+        assert len(found) == 1
+
+    def test_proper_variation_is_silent(self):
+        src = """package P { part def D;
+                   variation part def V { variant part a : D; variant part b : D; } }"""
+        assert diags(src) == []
+
+
+class TestMemberCounts:
+    def test_two_subjects(self):
+        src = "package P { part def D; requirement def R { subject s1 : D; subject s2 : D; } }"
+        found = diags(src, "only-one-subject")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_two_returns(self):
+        src = "package P { calc def C { return : Real = 1.0; return : Real = 2.0; } }"
+        found = diags(src, "only-one-return-parameter")
+        assert len(found) == 1
+
+    def test_two_entry_actions(self):
+        src = "state def S { entry; then a; entry; then b; state a; state b; }"
+        found = diags(src, "state-subaction-kind")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_one_of_each_state_subaction_is_fine(self):
+        src = """package P { action def Go;
+                   state def S { entry; then a; state a { do Go; exit Go; } } }"""
+        assert diags(src, "state-subaction-kind") == []
+
+    def test_one_subject_one_return_are_fine(self):
+        src = """package P { part def D;
+                   requirement def R { subject s : D; }
+                   calc def C { return : Real = 1.0; } }"""
+        assert diags(src) == []
+
+
+class TestConnectorEndKinds:
+    def test_connector_end_is_a_definition(self):
+        src = "package P { part def D1; part def Asm { part a : D1; connect a to D1; } }"
+        found = diags(src, "connector-end-not-feature")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_binding_end_is_a_definition(self):
+        src = "package P { part def D; part def Asm { attribute a : Real; bind a = D; } }"
+        found = diags(src, "connector-end-not-feature")
+        assert len(found) == 1
+
+    def test_interface_def_end_not_a_port(self):
+        src = "package P { part def W; interface def I { end w1 : W; end w2 : W; } }"
+        found = diags(src, "interface-end-not-port")
+        assert len(found) == 2
+        assert found[0].severity == "error"
+
+    def test_interface_usage_ends_not_ports(self):
+        src = (
+            "package P { interface def I; part def Asm { part a; part b; "
+            "interface i : I connect a to b; } }"
+        )
+        found = diags(src, "interface-end-not-port")
+        assert len(found) == 2
+
+    def test_proper_interface_is_silent(self):
+        src = """package P { port def Q;
+                   interface def I { end p1 : Q; end p2 : Q; }
+                   part def Asm { part a { port pa : Q; } part b { port pb : ~Q; }
+                                  interface i : I connect a.pa to b.pb; } }"""
+        assert diags(src) == []
+
+
+class TestExhibitAndPerformKinds:
+    def test_exhibit_of_a_non_state(self):
+        found = diags("package P { part def D { part a; exhibit a; } }", "exhibit-state-reference")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_exhibit_of_a_state_is_fine(self):
+        assert diags("package P { part def D { state s; exhibit s; } }") == []
+
+    def test_perform_of_a_non_action(self):
+        src = "package P { attribute b : Real; part def D { perform b; } }"
+        found = diags(src, "perform-action-reference")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_perform_of_unresolved_target_warns(self):
+        found = diags("package P { part def D { perform ghost; } }", "unresolved-reference")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+
+    def test_perform_of_inline_declared_action_is_fine(self):
+        # 'perform action X;' hides X's name from the resolver (it lives
+        # on the wrapped usage); the reference must not warn
+        src = """package P { part def V {
+                   perform action providePower;
+                   exhibit state states { state on { do providePower; } } } }"""
+        assert diags(src, "unresolved-reference") == []
+
+    def test_perform_chain_with_live_head_is_not_judged(self):
+        # a chained target may reach its action through featuring
+        # semantics the model does not carry: bottom, no judgment
+        src = """package P { part def E { action go; } part def D {
+                   part e : E; perform e.missing; } }"""
+        assert diags(src, "unresolved-reference") == []
+
+
+class TestMultiplicityBounds:
+    def test_real_bound(self):
+        found = diags("package P { part def D; part p : D[1.5]; }", "multiplicity-bound-type")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_string_bound(self):
+        found = diags('package P { part def D; part p : D["two"]; }', "multiplicity-bound-type")
+        assert len(found) == 1
+
+    def test_lower_exceeds_upper(self):
+        found = diags("package P { part def D; part p : D[2..1]; }", "multiplicity-bound-order")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_unresolved_name_bound_warns(self):
+        found = diags("package P { part def D; part p : D[n]; }", "unresolved-reference")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "multiplicity bound" in found[0].message
+
+    def test_natural_star_and_named_bounds_are_fine(self):
+        src = """package P { part def D; attribute n : Natural;
+                   part p : D[*]; part q : D[0..5]; part r : D[n]; }"""
+        assert diags(src) == []
+
+
+class TestSubsetsNonFeature:
+    def test_subsetting_a_package(self):
+        found = diags("package P { part def D; part p subsets P; }", "subsets-non-feature")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_subsetting_a_definition(self):
+        found = diags(
+            "package P { part def D; part a : D; part p subsets D; }", "subsets-non-feature"
+        )
+        assert len(found) == 1
+
+    def test_subsetting_a_feature_is_fine(self):
+        assert diags("package P { part def D; part a : D; part p subsets a; }") == []
+
+
+class TestSendPayload:
+    def test_bare_send_errors(self):
+        found = diags("package P { action def A { send; } }", "send-payload")
+        assert len(found) == 1
+        assert found[0].severity == "error"
+
+    def test_send_with_payload_is_fine(self):
+        src = """package P { attribute def Sig;
+                   action def A { action t { send Sig() to t; } } }"""
+        assert diags(src, "send-payload") == []
+
+    def test_named_or_routed_sends_are_not_judged(self):
+        # the pilot's own ActionTest declares 'action snd send { in :>>
+        # payload = s; }' and 'action snd2 send via ... to ...;' -- the
+        # payload binds elsewhere, so only the anonymous unrouted form errs
+        src = """package P { action def A { action a1;
+                   action snd send { }
+                   action snd2 send via a1 to a1; } }"""
+        assert diags(src, "send-payload") == []
+
+
+class TestDanglingSuccessions:
+    def test_ghost_succession_end(self):
+        src = "package P { action def A { action a1; first a1 then ghost; } }"
+        found = diags(src, "dangling-succession")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+
+    def test_implied_start_done_are_fine(self):
+        src = "package P { action def A { action s1; first start then s1; first s1 then done; } }"
+        assert diags(src, "dangling-succession") == []
+
+    def test_use_case_lifecycle_is_not_judged(self):
+        # 'use case' has no implied-specialization mapping, so its
+        # inherited start/done are unknowable here: bottom, no judgment
+        src = "package P { use case def U { action s1; first start then s1; } }"
+        assert diags(src, "dangling-succession") == []
+
+    def test_explicitly_specialized_owner_is_not_judged(self):
+        # explicit supers suppress the implied base and may inherit steps
+        src = """package P { action def Base;
+                   action def A :> Base { first start then missing; } }"""
+        assert diags(src, "dangling-succession") == []
+
+    def test_terminate_owner_is_not_judged(self):
+        # 'action stop terminate;' loses its declared name in the model
+        # layer, so member lookups in that body are unreliable
+        src = """package P { action def A { action go;
+                   first go then stop;
+                   action stop terminate; } }"""
+        assert diags(src, "dangling-succession") == []
+
+
+class TestQualifiedChainResolution:
+    def test_qualified_reference_to_nothing(self):
+        src = "package P { part def D { attribute m : Real; } attribute t = P::D::nope; }"
+        found = diags(src, "unresolved-name")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "nope" in found[0].message
+
+    def test_undefined_enum_literal(self):
+        src = "package P { enum def E { a; b; } attribute e : E = E::c; }"
+        found = diags(src, "unresolved-name")
+        assert len(found) == 1
+
+    def test_valid_qualified_references_are_fine(self):
+        src = """package P { enum def E { a; b; } part def D { attribute m : Real; }
+                   attribute e : E = E::a; attribute t = P::D::m; }"""
+        assert diags(src, "unresolved-name") == []
+
+    def test_usage_head_chains_are_not_judged(self):
+        # a usage's member closure (featuring contexts, variant configs,
+        # subject redefinitions) is richer than the model's static
+        # members -- pinned as the KNOWN GAP 'feature-chain-to-nothing'
+        src = "package P { part def D { attribute m : Real; } part d : D; attribute t = d.nope; }"
+        assert diags(src, "unresolved-name") == []
+
+    def test_implicit_result_member_is_not_judged(self):
+        # calcs and cases carry an implicit 'result' parameter the model
+        # layer does not reify
+        src = "package P { calc def M { return : Real = 1.0; } attribute t = M.result; }"
+        assert diags(src, "unresolved-name") == []
+
+
 class TestDiagnosticLocations:
     """Diagnostics carry the subject element's file:line:column (U3)."""
 

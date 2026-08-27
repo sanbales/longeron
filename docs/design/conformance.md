@@ -215,7 +215,15 @@ SysML v2 spec — the citations are the spec's own validation-rule names
 (OMG *Systems Modeling Language v2.0*, clause 8.3.x abstract-syntax
 constraints) and, where the spec text is thin, the pilot
 implementation's validator rule (`SysMLValidator.xtend` /
-`KerMLValidator.xtend` constants, whose messages are quoted):
+`KerMLValidator.xtend` constants, whose messages are quoted).
+*Status note:* this table records the measurement at commit `2296290`
+that motivated the rejection corpus; the validation-diagnostics landing
+has since implemented checks for all rows except 10 (usage-head feature
+chains, deferred: a usage's member closure exceeds the model layer's
+static members) and the directed-parameter row (deferred: the pilot's
+own corpus places directed features in part definitions and usages) —
+see `docs/guides/validation.md` for the shipped diagnostic codes and
+the corpus-calibrated deviations:
 
 | # | Source (abbreviated) | Violated rule | Reference behavior |
 |---|---|---|---|
@@ -313,11 +321,14 @@ A negative suite in the opensysml mold, adapted to pytest:
   opensysml rule, so the gap count cannot be gamed by softening.
 - **The denominator honesty, restated for us:** we authored every case,
   so "N/N rejections" measures our coverage of the rejection surface,
-  not conformance. At this commit the buckets hold 28 / 7 / 5 / 24
-  cases (the generative tier below later raised the fourth bucket to
-  36). The counts are stated by the suite itself (a summary test
-  asserts the bucket sizes match the doc's claim, the cheap analog of
-  opensysml's count guards).
+  not conformance. At the phase-1 commit the buckets held 28 / 7 / 5 /
+  24 cases; the generative tier below later raised the fourth bucket to
+  36, and the validation-diagnostics landing then drained it to 28 / 36
+  / 10 / 2 (29 gaps promoted to error-severity rejections, 5 to
+  warning-severity detection, 2 deferred with corpus-calibrated reasons
+  stated on the cases). The counts are stated by the suite itself (a
+  summary test asserts the bucket sizes match the doc's claim, the
+  cheap analog of opensysml's count guards).
 
 ### (b) Production-coverage accounting (phase 2, recommended)
 
@@ -468,7 +479,8 @@ Three property families run over the generated models:
   these invariants only on hand examples.
 - **C — mutation invalidity.** A catalog
   (`tests/_model_strategies.py:MUTATIONS`, 29 entries: 6 enforced, 4
-  diagnosed, 19 gaps) of invalidating
+  diagnosed, 19 gaps at creation — the validation-diagnostics landing
+  re-classed 18 of the 19 as enforced or diagnosed) of invalidating
   mutations applied to generated models, each tied to the one spec/
   pilot rule it violates — the corpus-header discipline, ported.
   Expected verdicts are classed `error` (must stay rejected),

@@ -30,6 +30,18 @@ that does not resolve warns (``dangling-flow``, the moral twin of
 specialization relationship to the target end's declared typing warns
 (``flow-payload-mismatch``).  Typing absent on either side stays silent
 -- the check only speaks when two known typings conflict.
+
+The kind-level well-formedness checks (``usage-type``,
+``attribute-composite-feature``, ``redefinition-featuring-types``, and
+friends -- the full table lives in ``docs/guides/validation.md``) apply
+the same contract to the SysML v2 metamodel's clause-8.3 constraints:
+they only speak when a reference *resolves* and the resolved element's
+kind is known to conflict.  Unresolved references stay warnings, kinds
+outside the vocabulary families below ('extended' definitions, bare
+``feature``/``ref`` usages) are bottom, and a resolved-but-wrong-kind
+target -- a part typed by an attribute definition, a variant outside a
+variation, two subjects in one requirement -- is a structural
+self-contradiction and therefore an error.
 """
 
 from __future__ import annotations
@@ -43,9 +55,151 @@ from . import model as M
 from . import stdlib as stdlib_module
 from . import units as units_module
 from .errors import ResolutionError, SourceLocation
-from .interpreter import BUILTINS, Resolver
+from .interpreter import BUILTINS, IMPLIED_SPECIALIZATIONS, Resolver, _in_library_package
 
 Severity = Literal["error", "warning"]
+
+# ---------------------------------------------------------------------------
+# Metamodel kind families (SysML v2 clause 8.3 / KerML clause 8.4)
+# ---------------------------------------------------------------------------
+#
+# 'flow' is deliberately in none of the three families: a
+# FlowConnectionDefinition is both a ConnectionDefinition (a Structure)
+# and an ActionDefinition (a Behavior).  'occurrence' and 'individual'
+# sit above the structure/behavior split; 'extended' is a language
+# extension of unknown kind.  All three are bottom for the kind checks.
+
+#: definition kinds that are KerML DataTypes
+_DATA_DEFS = frozenset({"attribute", "enum"})
+#: definition kinds that are KerML Structures (occurrence, non-behavior)
+_STRUCTURE_DEFS = frozenset(
+    {
+        "part",
+        "item",
+        "port",
+        "connection",
+        "interface",
+        "allocation",
+        "metadata",
+        "view",
+        "rendering",
+    }
+)
+#: definition kinds that are KerML Behaviors
+_BEHAVIOR_DEFS = frozenset(
+    {
+        "action",
+        "calc",
+        "state",
+        "constraint",
+        "requirement",
+        "concern",
+        "case",
+        "analysis",
+        "verification",
+        "use_case",
+        "viewpoint",
+    }
+)
+#: every definition kind that is an OccurrenceDefinition (not a DataType)
+_OCCURRENCE_DEFS = (
+    _STRUCTURE_DEFS | _BEHAVIOR_DEFS | frozenset({"occurrence", "individual", "flow"})
+)
+
+#: usage kinds whose metamodel class is unambiguous (everything except
+#: keyword-less features, bare refs, events, and language extensions --
+#: those are bottom: the checks below never judge them)
+_KNOWN_USAGES = frozenset(M.USAGE_KINDS) - frozenset(
+    {"feature", "ref", "extended", "event", "event_occurrence"}
+)
+#: usage kinds that are KerML Steps (performable; ActionUsage and subtypes)
+_ACTION_USAGES = frozenset(
+    {"action", "calc", "state", "case", "analysis", "verification", "use_case", "flow", "message"}
+)
+#: usage kinds that are composite occurrence features by default --
+#: the vocabulary for the attribute-body and port-body checks
+_COMPOSITE_OCCURRENCE_USAGES = frozenset(
+    {
+        "part",
+        "port",
+        "action",
+        "state",
+        "occurrence",
+        "individual",
+        "connection",
+        "interface",
+        "flow",
+    }
+)
+# 'item' is deliberately absent: the spec rule text covers items too, but
+# the spec's own corpus nests composite items in attribute definitions
+# ('attribute def Show { item picture : Picture; }' in the messaging
+# training models), so judging them would reject official models.
+#: the subset of those that a port body must declare ``ref`` (connectors
+#: and nested ports are legitimate port-definition members)
+_PORT_COMPOSITE_USAGES = frozenset({"part", "item", "action", "state", "occurrence", "individual"})
+
+
+#: usage kind -> (conflicting definition kinds, the rule's phrasing).
+#: A conflict fires ``usage-type`` only when the declared type RESOLVES
+#: to a definition of a conflicting kind; kinds absent from the map
+#: (connectors, subjects, views, ...) and definition kinds outside the
+#: conflict set are bottom.
+_USAGE_TYPE_RULES: dict[str, tuple[frozenset[str], str]] = {
+    "attribute": (_OCCURRENCE_DEFS, "an attribute must be typed by attribute definitions"),
+    "enum": (_OCCURRENCE_DEFS, "an enumeration must be typed by enumeration definitions"),
+    "part": (
+        _DATA_DEFS | _BEHAVIOR_DEFS | {"port"},
+        "a part must be typed by part or item definitions",
+    ),
+    "item": (
+        _DATA_DEFS | _BEHAVIOR_DEFS | {"port"},
+        "an item must be typed by item definitions",
+    ),
+    "port": (_DATA_DEFS | _BEHAVIOR_DEFS, "a port must be typed by port definitions"),
+    "action": (_DATA_DEFS | _STRUCTURE_DEFS, "an action must be typed by action definitions"),
+    "state": (_DATA_DEFS | _STRUCTURE_DEFS, "a state must be typed by state definitions"),
+    "calc": (
+        _DATA_DEFS | _STRUCTURE_DEFS,
+        "a calculation must be typed by calculation definitions",
+    ),
+    "constraint": (
+        _DATA_DEFS | _STRUCTURE_DEFS,
+        "a constraint must be typed by constraint definitions",
+    ),
+    "requirement": (
+        _DATA_DEFS | _STRUCTURE_DEFS,
+        "a requirement must be typed by requirement definitions",
+    ),
+    "concern": (_DATA_DEFS | _STRUCTURE_DEFS, "a concern must be typed by concern definitions"),
+    "case": (_DATA_DEFS | _STRUCTURE_DEFS, "a case must be typed by case definitions"),
+    "analysis": (
+        _DATA_DEFS | _STRUCTURE_DEFS,
+        "an analysis case must be typed by analysis definitions",
+    ),
+    "verification": (
+        _DATA_DEFS | _STRUCTURE_DEFS,
+        "a verification case must be typed by verification definitions",
+    ),
+    "use_case": (_DATA_DEFS | _STRUCTURE_DEFS, "a use case must be typed by use case definitions"),
+    "occurrence": (_DATA_DEFS, "an occurrence must be typed by occurrence definitions"),
+    "individual": (_DATA_DEFS, "an individual must be typed by occurrence definitions"),
+}
+
+#: usage kinds whose declaration references another element by name
+#: (``satisfy R1 by ...``, ``verify R1``, ``include uc``): the builder
+#: stores the reference as a subsetting, and naming a *definition* there
+#: is legal (the pilot mints a usage typed by it) -- so the
+#: subsets-non-feature judgment skips them
+_REFERENCE_USAGE_KINDS = frozenset({"satisfy", "verify", "include", "frame", "render", "objective"})
+
+#: definition-kind family -> the definition kinds it may not specialize
+#: (KerML validateDataTypeSpecialization / the Behavior-Structure split)
+_SPECIALIZATION_CONFLICTS: dict[str, frozenset[str]] = {
+    "datatype": _OCCURRENCE_DEFS,  # a DataType may not specialize a Class or Association
+    "behavior": _STRUCTURE_DEFS | _DATA_DEFS,  # a Behavior may not specialize a Structure
+    "structure": _BEHAVIOR_DEFS | _DATA_DEFS,  # a Structure may not specialize a Behavior
+}
 
 
 @dataclass
@@ -107,9 +261,19 @@ class _Checker:
         self.diagnostics: list[Diagnostic] = []
         self._unit_table: units_module.UnitTable | None = None
         self._meanings: dict[int, _Meaning | None] = {}  # id(usage) -> declared meaning
+        #: tree-walk parent for elements the builder does not own-link
+        #: (state entry/do/exit actions, if/loop body members); used to
+        #: anchor name resolution for those elements
+        self._parents: dict[int, M.Element] = {}
 
     def report(self, severity: Severity, code: str, element: M.Element, message: str) -> None:
-        where = element.qualified_name or element.label
+        where = element.qualified_name
+        node = element.owner
+        while where is None and node is not None:  # anonymous: nearest named owner
+            where = node.qualified_name
+            node = node.owner
+        if where is None:
+            where = element.label
         location = getattr(element, "source_location", None)
         self.diagnostics.append(Diagnostic(severity, code, message, where, location))
 
@@ -129,6 +293,29 @@ class _Checker:
             self.check_expressions(element)
             self.check_units(element)
             self.check_scoreboard_anchors(element)
+            self.check_member_counts(element)
+            self.check_owned_composites(element)
+            self.check_variation_members(element)
+        if isinstance(element, M.Definition):
+            self.check_definition_specialization(element)
+            if element.kind == "interface":
+                self.check_interface_definition_ends(element)
+        if isinstance(element, M.Usage):
+            self.check_usage_typing(element)
+            self.check_feature_relationships(element)
+        if isinstance(element, (M.ConnectionUsage, M.InterfaceUsage)):
+            self.check_connector_ends(element, element.ends)
+        if isinstance(element, M.BindingConnector):
+            ends = [e for e in (element.source_end, element.target_end) if e is not None]
+            self.check_connector_ends(element, ends)
+        if isinstance(element, M.SendAction):
+            self.check_send(element)
+        if isinstance(element, M.PerformAction):
+            self.check_perform(element)
+        if isinstance(element, (M.Succession, M.InitialNode)):
+            self.check_succession_ends(element)
+        if element.metadata or isinstance(element, M.MetadataUsage):
+            self.check_metadata_refs(element)
         if isinstance(element, M.Import):
             self.check_target(element, element.target, "import")
         if isinstance(element, M.Expose):
@@ -147,6 +334,8 @@ class _Checker:
         if isinstance(element, M.Definition) and element.kind == "calc":
             self.check_calc_result(element)
         for child in element.children():
+            if child.owner is None:
+                self._parents[id(child)] = element
             self._check_tree(child)
 
     # -- checks ------------------------------------------------------------------
@@ -353,8 +542,16 @@ class _Checker:
                 f"stdlib name {ref!r} used without import",
             )
 
+    def _scope_of(self, context: M.Element) -> M.Element:
+        """The scope name resolution starts from: the context's owner --
+        or, for body elements the builder does not own-link (state
+        entry/do/exit actions, inline perform bodies), the tree-walk
+        parent recorded during the visit."""
+
+        return context.owner or self._parents.get(id(context)) or self.model
+
     def _resolves(self, ref: str, context: M.Element) -> bool:
-        scope: M.Element = context.owner or self.model
+        scope: M.Element = self._scope_of(context)
         implicit = False
         for segment in ref.split("."):
             if segment == "$":  # root escape: re-anchor at the model root
@@ -419,6 +616,530 @@ class _Checker:
                 out.append(general)
         return out
 
+    # -- kind-level well-formedness (SysML v2 clause 8.3 / KerML 8.4) ------------
+
+    def check_member_counts(self, element: M.Definition | M.Usage) -> None:
+        """only-one-subject / only-one-return-parameter / state-subaction-kind:
+        the \"at most one\" cardinalities over owned members
+        (validateRequirementDefinitionOnlyOneSubject and its case twin;
+        KerML's single result parameter for functions;
+        validateStateDefinitionStateSubactionKind, spec p. 336)."""
+
+        subjects = [m for m in element.members if isinstance(m, M.Usage) and m.kind == "subject"]
+        if len(subjects) > 1:
+            self.report(
+                "error",
+                "only-one-subject",
+                element,
+                f"{len(subjects)} subjects declared; only one subject is allowed",
+            )
+        returns = [m for m in element.members if isinstance(m, M.Usage) and m.direction == "return"]
+        if len(returns) > 1:
+            self.report(
+                "error",
+                "only-one-return-parameter",
+                element,
+                f"{len(returns)} return parameters declared; only one return parameter is allowed",
+            )
+        for kind in ("entry", "do", "exit"):
+            actions = [
+                m for m in element.members if isinstance(m, M.StateAction) and m.kind == kind
+            ]
+            if len(actions) > 1:
+                self.report(
+                    "error",
+                    "state-subaction-kind",
+                    element,
+                    f"{len(actions)} {kind!r} actions declared; at most one "
+                    "state subaction of each kind is allowed",
+                )
+
+    def check_owned_composites(self, element: M.Definition | M.Usage) -> None:
+        """attribute-composite-feature / port-composite-usage: composite
+        occurrence features where the metamodel demands referential ones
+        (validateAttributeDefinitionFeatures, spec p. 278;
+        validateAttributeUsageFeatures, p. 279;
+        pilot:validatePortDefinitionOwnedUsagesNotComposite)."""
+
+        is_attribute = element.kind in ("attribute", "enum")
+        is_port = element.kind == "port"
+        if not is_attribute and not is_port:
+            return
+        for member in element.members:
+            if not isinstance(member, M.Usage) or member.is_ref or member.is_end:
+                continue
+            if member.direction is not None:
+                continue  # directed features ('out item fuel') are the port idiom
+            if is_attribute and member.kind in _COMPOSITE_OCCURRENCE_USAGES:
+                shape = "definition" if isinstance(element, M.Definition) else "usage"
+                self.report(
+                    "error",
+                    "attribute-composite-feature",
+                    member,
+                    f"a composite {member.kind} is not a valid feature of an attribute "
+                    f"{shape}: all features of an attribute must be non-composite",
+                )
+            elif is_port and member.kind in _PORT_COMPOSITE_USAGES:
+                self.report(
+                    "error",
+                    "port-composite-usage",
+                    member,
+                    f"owned usages of a port (other than ports) must be referential: "
+                    f"declare {member.label!r} with 'ref'",
+                )
+
+    def check_variation_members(self, element: M.Definition | M.Usage) -> None:
+        """variation-membership: an owned usage of a variation must be a
+        variant (pilot:validateDefinitionVariationMembership /
+        validateUsageVariationMembership).  Non-usage members (docs,
+        imports) are fine; only usage members are judged."""
+
+        if not element.is_variation:
+            return
+        for member in element.members:
+            if isinstance(member, M.Usage) and not member.is_variant:
+                self.report(
+                    "error",
+                    "variation-membership",
+                    member,
+                    f"an owned usage of variation {element.label!r} must be a variant",
+                )
+
+    def check_definition_specialization(self, defn: M.Definition) -> None:
+        """datatype- / behavior- / structure-specialization: cross-family
+        specializations the kernel forbids (KerML
+        validateDataTypeSpecialization: 'Cannot specialize class or
+        association', and the Behavior/Structure split).  Only resolved
+        supers of a known conflicting kind speak."""
+
+        if defn.kind in _DATA_DEFS:
+            family = "datatype"
+        elif defn.kind in _BEHAVIOR_DEFS:
+            family = "behavior"
+        elif defn.kind in _STRUCTURE_DEFS:
+            family = "structure"
+        else:
+            return  # flow / occurrence / individual / extended: bottom
+        conflicts = _SPECIALIZATION_CONFLICTS[family]
+        for ref in defn.supers:
+            target = self._resolve_path(ref.lstrip("~"), defn)
+            if (
+                isinstance(target, M.Definition)
+                and target.kind in conflicts
+                and not _in_library_package(target)
+            ):
+                self.report(
+                    "error",
+                    f"{family}-specialization",
+                    defn,
+                    f"a {defn.kind} definition cannot specialize {ref!r}, "
+                    f"a {target.kind} definition",
+                )
+
+    def check_usage_typing(self, usage: M.Usage) -> None:
+        """usage-type / individual-definition / enum-attribute-type: the
+        declared-typing kind checks.  Fires only on types that resolve;
+        an unresolved type already warns as [unresolved-reference]."""
+
+        rule = _USAGE_TYPE_RULES.get(usage.kind)
+        individuals: list[str] = []
+        enum_typed = False
+        for ref in usage.types:
+            target = self._resolve_path(ref.lstrip("~"), usage)
+            if target is None:
+                continue
+            if isinstance(target, M.Package):
+                self.report(
+                    "error",
+                    "usage-type",
+                    usage,
+                    f"typed by {ref!r}: a usage must be typed by a definition, not a package",
+                )
+                continue
+            if not isinstance(target, M.Definition):
+                continue
+            if rule is not None and target.kind in rule[0] and not _in_library_package(target):
+                self.report(
+                    "error",
+                    "usage-type",
+                    usage,
+                    f"typed by {ref!r}: {rule[1]}, not a {target.kind} definition",
+                )
+            if target.is_individual or target.kind == "individual":
+                individuals.append(ref)
+            if target.kind == "enum":
+                enum_typed = True
+        if len(individuals) > 1:
+            self.report(
+                "error",
+                "individual-definition",
+                usage,
+                "at most one individual definition is allowed "
+                f"(typed by {', '.join(repr(r) for r in individuals)})",
+            )
+        if enum_typed and len(usage.types) > 1 and usage.kind in ("attribute", "enum"):
+            self.report(
+                "error",
+                "enum-attribute-type",
+                usage,
+                "an enumeration attribute cannot have more than one declared type",
+            )
+
+    def check_feature_relationships(self, usage: M.Usage) -> None:
+        """The per-usage relationship checks: subsets-non-feature,
+        redefinition-featuring-types, variant-membership,
+        parameter-membership, the multiplicity-bound checks, and
+        exhibit-state-reference."""
+
+        for role, refs in (("subsets", usage.subsets), ("redefines", usage.redefines)):
+            for ref in refs:
+                target = self._resolve_path(ref.lstrip("~"), usage)
+                if isinstance(target, (M.Package, M.Definition)) and role == "subsets":
+                    kind = (
+                        "package" if isinstance(target, M.Package) else f"{target.kind} definition"
+                    )
+                    if usage.is_exhibit or usage.kind in _REFERENCE_USAGE_KINDS:
+                        continue  # reference usages may legally name definitions
+                    self.report(
+                        "error",
+                        "subsets-non-feature",
+                        usage,
+                        f"{role} {ref!r}: the subsetted element must be a feature, not a {kind}",
+                    )
+                elif (
+                    role == "redefines"
+                    and isinstance(target, M.Usage)
+                    and target is not usage
+                    and target.owner is not None
+                    and target.owner is usage.owner
+                ):
+                    where = (
+                        "a package-level feature cannot be redefined"
+                        if isinstance(usage.owner, (M.Package, M.Model))
+                        else "the featuring types of the redefining and redefined "
+                        "features cannot be the same"
+                    )
+                    self.report(
+                        "error",
+                        "redefinition-featuring-types",
+                        usage,
+                        f"redefines sibling feature {ref!r}: {where}",
+                    )
+        if usage.is_variant:
+            owner = usage.owner
+            owner_is_variation = isinstance(owner, (M.Definition, M.Usage)) and owner.is_variation
+            if not owner_is_variation:
+                self.report(
+                    "error",
+                    "variant-membership",
+                    usage,
+                    "a variant must be owned by a variation-point definition or usage "
+                    "(mark the owner 'variation')",
+                )
+        # NOTE deliberately absent: a directed-feature-outside-behavior check
+        # (KerML validateParameterMembershipOwningType).  The pilot's own
+        # corpus places directed features in part definitions and usages
+        # ('in item scene;' in Camera.sysml, 'in ref y: A, B;' in
+        # ItemTest.sysml), so SysML textual direction does not map to
+        # KerML ParameterMembership and any validation-time check here
+        # rejects official models.
+        self.check_multiplicity(usage)
+        if usage.is_exhibit:
+            self.check_exhibit(usage)
+
+    def check_multiplicity(self, usage: M.Usage) -> None:
+        """multiplicity-bound-type / multiplicity-bound-order and the
+        bound-resolution warning (KerML
+        validateMultiplicityRangeResultTypes: 'Must have a Natural
+        value').  ``*`` parses as an infinity literal and is always a
+        valid upper bound; name bounds must resolve."""
+
+        mult = usage.multiplicity
+        if mult is None:
+            return
+        values: dict[str, int] = {}
+        for role, expr in (("lower", mult.lower), ("upper", mult.upper)):
+            if expr is None:
+                continue
+            if isinstance(expr, A.Literal):
+                value = expr.value
+                if isinstance(value, float) and value == float("inf"):
+                    continue  # '*'
+                if isinstance(value, int) and not isinstance(value, bool):
+                    values[role] = value
+                    continue
+                self.report(
+                    "error",
+                    "multiplicity-bound-type",
+                    usage,
+                    f"multiplicity {role} bound {value!r} must be a natural number",
+                )
+            elif isinstance(expr, A.FeatureRef):
+                ref = ".".join(expr.parts)
+                if not self._resolves(ref, usage):
+                    self.report(
+                        "warning",
+                        "unresolved-reference",
+                        usage,
+                        f"multiplicity bound {ref!r} does not resolve",
+                    )
+            # other expression shapes (arithmetic bounds) stay unchecked
+        if "lower" in values and "upper" in values and values["lower"] > values["upper"]:
+            self.report(
+                "error",
+                "multiplicity-bound-order",
+                usage,
+                f"multiplicity lower bound {values['lower']} exceeds upper bound {values['upper']}",
+            )
+
+    def check_exhibit(self, usage: M.Usage) -> None:
+        """exhibit-state-reference: 'Must reference a state'
+        (validateExhibitStateUsageReference, spec p. 333).  Judged only
+        when the reference resolves to a usage of known kind."""
+
+        for ref in usage.subsets:
+            target = self._resolve_path(ref.lstrip("~"), usage)
+            if target is None or target is usage:
+                continue
+            if isinstance(target, M.Usage) and target.kind in _KNOWN_USAGES - {"state"}:
+                self.report(
+                    "error",
+                    "exhibit-state-reference",
+                    usage,
+                    f"exhibit must reference a state; {ref!r} is a {target.kind}",
+                )
+            elif isinstance(target, (M.Package, M.Definition)):
+                kind = "package" if isinstance(target, M.Package) else f"{target.kind} definition"
+                self.report(
+                    "error",
+                    "exhibit-state-reference",
+                    usage,
+                    f"exhibit must reference a state usage; {ref!r} is a {kind}",
+                )
+
+    def check_interface_definition_ends(self, defn: M.Definition) -> None:
+        """interface-end-not-port for definitions: 'An interface
+        definition end must be a port' (pilot:validateInterfaceDefinitionEnd).
+        Untyped ends stay silent (their kind is unknown here)."""
+
+        for member in defn.members:
+            if not isinstance(member, M.Usage) or not member.is_end:
+                continue
+            if member.kind == "port":
+                continue
+            for ref in member.types:
+                target = self._resolve_path(ref.lstrip("~"), member)
+                if isinstance(target, M.Definition) and target.kind not in ("port", "extended"):
+                    self.report(
+                        "error",
+                        "interface-end-not-port",
+                        member,
+                        f"an interface definition end must be a port; "
+                        f"{member.label!r} is typed by {ref!r}, a {target.kind} definition",
+                    )
+
+    def check_connector_ends(self, usage: M.Usage, ends: list[M.ConnectorEnd]) -> None:
+        """connector-end-not-feature / interface-end-not-port for usages:
+        a connector's relatedFeatures must be Features (KerML 8.3), and
+        an interface end must be a port (pilot:validateInterfaceUsageEnd).
+        Dangling ends are the resolver checks' business."""
+
+        for end in ends:
+            if not end.target:
+                continue
+            target = self._resolve_path(end.target, usage)
+            if target is None:
+                continue
+            if isinstance(target, (M.Definition, M.Package)):
+                kind = "package" if isinstance(target, M.Package) else f"{target.kind} definition"
+                self.report(
+                    "error",
+                    "connector-end-not-feature",
+                    usage,
+                    f"connector end {end.target!r} must be a feature, not a {kind}",
+                )
+            elif (
+                isinstance(usage, M.InterfaceUsage)
+                and isinstance(target, M.Usage)
+                and target.kind in _KNOWN_USAGES - {"port"}
+            ):
+                self.report(
+                    "error",
+                    "interface-end-not-port",
+                    usage,
+                    f"an interface end must be a port; {end.target!r} is a {target.kind}",
+                )
+
+    def check_send(self, send: M.SendAction) -> None:
+        """send-payload: 'A send action must have a payload'
+        (pilot:validateSendActionUsagePayloadArgument).  A bare ``send;``
+        builds a null-literal payload.  Named send declarations
+        (``action snd send { in :>> payload = s; }``) and sends that at
+        least route (``send via this to x;``) bind their payload
+        elsewhere, so only the anonymous, unrouted form is judged."""
+
+        if send.name is not None or send.via is not None or send.to is not None:
+            return
+        if isinstance(send.payload, A.Literal) and send.payload.value is None:
+            self.report(
+                "error",
+                "send-payload",
+                send,
+                "a send action must have a payload argument",
+            )
+
+    def _hidden_member(self, name: str, context: M.Element) -> bool:
+        """True when ``name`` is visible from ``context`` through structure
+        the resolver cannot walk: inline ``perform action X;`` declarations
+        (their name lives on the wrapped usage, not on a namespace
+        membership) and scope chains broken by body elements the builder
+        does not own-link (followed here via the tree-walk parents)."""
+
+        node: M.Element | None = context
+        while node is not None:
+            members: list[M.Element] = []
+            if isinstance(node, (M.Definition, M.Usage)):
+                members = self.resolver.members_of(node, implied=True)
+            elif isinstance(node, M.Namespace):
+                members = node.members
+            for member in members:
+                if name in (member.name, member.short_name):
+                    return True
+                if (
+                    isinstance(member, M.PerformAction)
+                    and member.action is not None
+                    and name in (member.action.name, member.action.short_name)
+                ):
+                    return True
+            node = node.owner or self._parents.get(id(node))
+        return False
+
+    def check_perform(self, perform: M.PerformAction) -> None:
+        """perform-action-reference: 'Must reference an action'
+        (pilot:validatePerformActionUsageReference) -- plus the
+        unresolved-target warning its exhibit twin already gets."""
+
+        if perform.action is not None or not perform.target:
+            return
+        ref = perform.target
+        if not self._resolves(ref, perform):
+            segments = ref.split(".")
+            if len(segments) > 1 and self._resolve_path(segments[0], perform) is not None:
+                # a chained target with a live head may reach its action
+                # through featuring semantics the model does not carry:
+                # bottom, no judgment
+                return
+            if self._hidden_member(segments[0], perform):
+                return  # an inline 'perform action X;' declares the name
+            if not self._inherited_name(segments[0], perform):
+                self.report(
+                    "warning",
+                    "unresolved-reference",
+                    perform,
+                    f"performs {ref!r} does not resolve",
+                )
+            return
+        target = self._resolve_path(ref, perform)
+        if isinstance(target, M.Usage) and target.kind in _KNOWN_USAGES - _ACTION_USAGES:
+            self.report(
+                "error",
+                "perform-action-reference",
+                perform,
+                f"perform must reference an action; {ref!r} is a {target.kind}",
+            )
+        elif isinstance(target, M.Definition) and target.kind in _DATA_DEFS | _STRUCTURE_DEFS:
+            self.report(
+                "error",
+                "perform-action-reference",
+                perform,
+                f"perform must reference an action; {ref!r} is a {target.kind} definition",
+            )
+        elif isinstance(target, M.Package):
+            self.report(
+                "error",
+                "perform-action-reference",
+                perform,
+                f"perform must reference an action; {ref!r} is a package",
+            )
+
+    def check_succession_ends(self, element: M.Succession | M.InitialNode) -> None:
+        """dangling-succession: a succession's ends must resolve (the
+        action-body analog of [unknown-state]; warning like the other
+        reference checks -- the end may be an inherited step from a file
+        that was not loaded).  Bottom-guards, per the lint contract: the
+        owner must be of a kind whose implied library base we know
+        (``use case`` is not mapped, so its inherited ``start``/``done``
+        are unknowable here), must declare no explicit specializations
+        (those suppress the implied base and may inherit steps we cannot
+        enumerate), and must not own ``terminate``-style actions whose
+        declared names the model layer drops."""
+
+        scope = self._scope_of(element)
+        if not isinstance(scope, (M.Definition, M.Usage)):
+            return
+        if scope.kind not in IMPLIED_SPECIALIZATIONS:
+            return
+        declared = (
+            list(scope.supers)
+            if isinstance(scope, M.Definition)
+            else list(scope.types) + list(scope.subsets) + list(scope.redefines)
+        )
+        if declared:
+            return
+        if any(isinstance(m, M.TerminateAction) for m in scope.members):
+            return
+        refs = (
+            [element.source, element.target]
+            if isinstance(element, M.Succession)
+            else [element.target]
+        )
+        for ref in refs:
+            if not ref or ref == M.ENTRY_SOURCE:
+                continue
+            if self._resolves(ref, element):
+                continue
+            if self._inherited_name(ref.split(".")[0], element):
+                continue
+            if self._hidden_member(ref.split(".")[0], element):
+                continue
+            self.report(
+                "warning",
+                "dangling-succession",
+                element,
+                f"succession end {ref!r} does not resolve",
+            )
+
+    def check_metadata_refs(self, element: M.Element) -> None:
+        """metadata-usage-type: metadata must be typed by metadata
+        definitions (pilot:validateMetadataUsageType).  Unresolved
+        annotation names stay silent -- user-defined keywords may live in
+        files that were not loaded."""
+
+        refs = list(element.metadata)
+        if isinstance(element, M.MetadataUsage) and element.typed_by:
+            refs.append(element.typed_by)
+        for ref in refs:
+            target = self._resolve_path(ref, element)
+            if target is None:
+                continue
+            if isinstance(target, M.Definition):
+                if target.kind not in ("metadata", "extended"):
+                    self.report(
+                        "error",
+                        "metadata-usage-type",
+                        element,
+                        f"metadata annotation {ref!r} must reference a metadata "
+                        f"definition, not a {target.kind} definition",
+                    )
+            elif isinstance(target, M.Package):
+                self.report(
+                    "error",
+                    "metadata-usage-type",
+                    element,
+                    f"metadata annotation {ref!r} must reference a metadata "
+                    "definition, not a package",
+                )
+
     # -- expressions ------------------------------------------------------------------
 
     def check_expressions(self, element: M.Definition | M.Usage) -> None:
@@ -438,6 +1159,85 @@ class _Checker:
                     owner,
                     f"expression name {head!r} does not resolve",
                 )
+            for parts in _expression_chains(expr):
+                if parts[0] in local_names or parts[0] in BUILTINS:
+                    continue
+                self.check_chain(parts, owner)
+
+    def check_chain(self, parts: tuple[str, ...], owner: M.Element) -> None:
+        """unresolved-name for dotted/qualified expression references whose
+        *head* resolves but a later segment does not (``d.nope``,
+        ``P::D::nope``, ``E::c`` with no such literal).  Honest per the
+        lint contract: a failing step is only reported when the container
+        it failed in has fully-known members -- an unresolved typing
+        anywhere in the container's specialization closure is bottom."""
+
+        scope: M.Element = owner.owner or self.model
+        try:
+            self.resolver.resolve(parts, scope)
+            return  # resolves through scoping, inheritance, and imports
+        except ResolutionError:
+            pass
+        try:
+            node: M.Element = self.resolver.resolve(parts[0], scope)
+        except ResolutionError:
+            return  # an unresolved head is the head check's business
+        for segment in parts[1:]:
+            if not isinstance(node, M.Namespace):
+                return  # chained through a non-namespace: no judgment
+            found: M.Element | None = None
+            for member in self.resolver.members_of(node, implied=True):
+                if segment in (member.name, member.short_name):
+                    found = member
+                    break
+            if found is None:
+                if not isinstance(node, (M.Package, M.Definition)):
+                    # a usage's member closure (featuring contexts, variant
+                    # configurations, subject redefinitions) is richer than
+                    # the model's static members: bottom, no judgment
+                    return
+                if _in_library_package(node):
+                    return  # the vendored library projection is not the judge
+                if segment == "result":
+                    return  # the implicit result parameter is not reified
+                if not self._members_fully_known(node):
+                    return  # bottom: the container's members are not all known
+                self.report(
+                    "warning",
+                    "unresolved-name",
+                    owner,
+                    f"expression name {'.'.join(parts)!r} does not resolve: "
+                    f"{segment!r} is not a member of {node.qualified_name or node.label}",
+                )
+                return
+            node = found
+
+    def _members_fully_known(self, node: M.Namespace) -> bool:
+        """True when every declared specialization reference in ``node``'s
+        closure resolves -- i.e. a member lookup miss is a real miss, not
+        an unknown propagating up from an unresolved typing."""
+
+        seen: set[int] = set()
+        stack: list[M.Element] = [node]
+        while stack:
+            current = stack.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            if not isinstance(current, (M.Definition, M.Usage)):
+                continue
+            if isinstance(current, M.Definition):
+                names = list(current.supers)
+            else:
+                names = list(current.types) + list(current.subsets) + list(current.redefines)
+            for name in names:
+                try:
+                    general = self.resolver.resolve(name.lstrip("~"), current.owner or self.model)
+                except ResolutionError:
+                    return False
+                if isinstance(general, M.Namespace):
+                    stack.append(general)
+        return True
 
     def _inherited_name(self, name: str, context: M.Element) -> bool:
         """True when ``name`` is a member inherited through an *implied*
@@ -449,7 +1249,7 @@ class _Checker:
                 for member in self.resolver.members_of(node, implied=True):
                     if name in (member.name, member.short_name):
                         return True
-            node = node.owner
+            node = node.owner or self._parents.get(id(node))
         return False
 
     def _local_names(self, element: M.Namespace) -> set[str]:
@@ -767,7 +1567,7 @@ class _Checker:
         """Resolve a dotted path from ``context``'s scope (the shared walk
         behind ``_resolves``, keeping the element); ``None`` on failure."""
 
-        scope: M.Element = context.owner or self.model
+        scope: M.Element = self._scope_of(context)
         for segment in ref.split("."):
             if segment == "$":
                 scope = self.model
@@ -908,16 +1708,40 @@ def _expression_heads(expr: A.Expr) -> set[str]:
     nested body expressions)."""
 
     heads: set[str] = set()
+    for parts in _walk_references(expr):
+        heads.add(parts[0])
+    return heads
+
+
+def _expression_chains(expr: A.Expr) -> set[tuple[str, ...]]:
+    """Multi-segment reference paths in an expression (``d.nope``,
+    ``P::D::nope``); the single-segment heads are ``_expression_heads``'s
+    business."""
+
+    return {parts for parts in _walk_references(expr) if len(parts) > 1 and parts[0] != "$"}
+
+
+def _walk_references(expr: A.Expr) -> set[tuple[str, ...]]:
+    """Reference paths in an expression, with body-expression locals
+    excluded: FeatureRef parts, ChainAccess chains over FeatureRef bases,
+    and Invocation/Constructor targets."""
+
+    refs: set[tuple[str, ...]] = set()
 
     def walk(node: A.Expr, bound: frozenset[str]) -> None:
         if isinstance(node, A.FeatureRef):
             if node.parts and node.parts[0] not in bound:
-                heads.add(node.parts[0])
+                refs.add(node.parts)
+            return
+        if isinstance(node, A.ChainAccess) and isinstance(node.base, A.FeatureRef):
+            base = node.base
+            if base.parts and base.parts[0] not in bound:
+                refs.add(base.parts + node.parts)
             return
         if isinstance(node, (A.Invocation, A.Constructor)):
-            head = node.target[0] if isinstance(node, A.Invocation) else node.type[0]
-            if head not in bound:
-                heads.add(head)
+            target = node.target if isinstance(node, A.Invocation) else node.type
+            if target and target[0] not in bound:
+                refs.add(target)
             for arg in node.args:
                 walk(arg, bound)
             for _, arg in node.named:
@@ -963,4 +1787,4 @@ def _expression_heads(expr: A.Expr) -> set[str]:
                         walk(item, bound)
 
     walk(expr, frozenset())
-    return heads
+    return refs

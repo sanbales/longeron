@@ -23,6 +23,10 @@ Four buckets (see the design doc for the rationale):
   suite is green today, the gaps are visible and counted, and the
   moment a check lands for one of them the xpass fails the suite until
   the case is promoted to ``SEMANTIC_REJECTIONS``.  No papering over.
+  The validation-diagnostics landing promoted 29 cases to bucket 2 and
+  5 to bucket 3; the two that remain are deferred with their reasons
+  stated inline (both are contradicted or out-modeled by the pilot's
+  own corpus).
 
 Every case carries ``rule``: the spec clause / validation-rule name it
 violates (``validate*``/``check*`` names are the spec's own clause-8.3
@@ -242,6 +246,201 @@ SEMANTIC_REJECTIONS = [
         "a transition's target must be a vertex of its own machine",
         code="unknown-state",
     ),
+    # -- promoted from KNOWN_GAPS: kind-nesting / compositeness
+    Case(
+        "state-in-attribute-def",
+        "package P { attribute def A { state s; } }",
+        "validateAttributeDefinitionFeatures (spec p. 278): all features of an "
+        "AttributeDefinition must be non-composite",
+        code="attribute-composite-feature",
+    ),
+    Case(
+        "part-in-attribute-def",
+        "package P { attribute def A { part p; } }",
+        "validateAttributeDefinitionFeatures (spec p. 278)",
+        code="attribute-composite-feature",
+    ),
+    Case(
+        "state-in-attribute-usage",
+        "package P { attribute a : Real { state s; } }",
+        "validateAttributeUsageFeatures (spec p. 279): all features of an "
+        "AttributeUsage must be non-composite",
+        code="attribute-composite-feature",
+    ),
+    Case(
+        "composite-part-in-port-def",
+        "package P { part def D; port def Q { part p : D; } }",
+        "pilot:validatePortDefinitionOwnedUsagesNotComposite: 'Owned usages of a "
+        "port definition (other than ports) must be referential'",
+        code="port-composite-usage",
+    ),
+    Case(
+        "non-port-interface-ends",
+        "package P { part def W; interface def I { end w1 : W; end w2 : W; } }",
+        "pilot:validateInterfaceDefinitionEnd_: 'An interface definition end must be a port'",
+        code="interface-end-not-port",
+    ),
+    # -- promoted from KNOWN_GAPS: kind-typing
+    Case(
+        "part-typed-by-attribute-def",
+        "package P { attribute def A; part p : A; }",
+        "validatePartUsagePartDefinition (spec p. 291): at least one itemDefinition "
+        "of a PartUsage must be a PartDefinition",
+        code="usage-type",
+    ),
+    Case(
+        "attribute-typed-by-part-def",
+        "package P { part def D; attribute a : D; }",
+        "checkAttributeUsageDataTypeSpecialization (spec p. 404); "
+        "pilot:validateAttributeUsageType_: 'An attribute must be typed by attribute definitions'",
+        code="usage-type",
+    ),
+    Case(
+        "action-typed-by-part-def",
+        "package P { part def D; action a : D; }",
+        "pilot:validateActionUsageType_: 'An action must be typed by action definitions'",
+        code="usage-type",
+    ),
+    Case(
+        "part-typed-by-package",
+        "package P { part p : P; }",
+        "KerML: FeatureTyping::type must be a Type; a Package is not; "
+        "pilot:validateUsageType_: 'A usage must be typed by definitions'",
+        code="usage-type",
+    ),
+    Case(
+        "metadata-typed-by-part-def",
+        "package P { part def Meta; #Meta part p; }",
+        "pilot:validateMetadataUsageType_: metadata must be typed by metadata definitions",
+        code="metadata-usage-type",
+    ),
+    Case(
+        "subsetting-a-package",
+        "package P { part def D; part p subsets P; }",
+        "KerML 8.3: Subsetting::subsettedFeature must be a Feature; a Package is not",
+        code="subsets-non-feature",
+    ),
+    # -- promoted from KNOWN_GAPS: reference-kind conformance
+    Case(
+        "exhibit-of-a-non-state",
+        "package P { part def D { part a; exhibit a; } }",
+        "validateExhibitStateUsageReference (spec p. 333): 'Must reference a state'",
+        code="exhibit-state-reference",
+    ),
+    Case(
+        "perform-of-a-non-action",
+        "package P { attribute b : Real; part def D { perform b; } }",
+        "pilot:validatePerformActionUsageReference: 'Must reference an action'",
+        code="perform-action-reference",
+    ),
+    Case(
+        "connector-end-is-a-definition",
+        "package P { part def D1; part def Asm { part a : D1; connect a to D1; } }",
+        "KerML 8.3: a Connector's relatedFeatures must be Features; a Definition is not",
+        code="connector-end-not-feature",
+    ),
+    Case(
+        "interface-usage-nonport-ends",
+        "package P { interface def I; part def Asm { part a; part b; "
+        "interface i : I connect a to b; } }",
+        "pilot:validateInterfaceUsageEnd_: 'An interface end must be a port.'",
+        code="interface-end-not-port",
+    ),
+    # -- promoted from KNOWN_GAPS: multiplicity bound types
+    Case(
+        "real-multiplicity-bound",
+        "package P { part def D; part p : D[1.5]; }",
+        "KerML pilot:validateMultiplicityRangeResultTypes: 'Must have a Natural value'",
+        code="multiplicity-bound-type",
+    ),
+    Case(
+        "string-multiplicity-bound",
+        'package P { part def D; part p : D["two"]; }',
+        "KerML pilot:validateMultiplicityRangeResultTypes: 'Must have a Natural value'",
+        code="multiplicity-bound-type",
+    ),
+    # -- promoted from KNOWN_GAPS: variation modeling
+    Case(
+        "variant-outside-variation",
+        "package P { part def D { variant part v; } }",
+        "validateVariantMembershipOwningNamespace (spec p. 277): a variant's owning "
+        "namespace must be a variation-point Definition or Usage",
+        code="variant-membership",
+    ),
+    Case(
+        "non-variant-in-variation",
+        "package P { variation part def V { part notvariant; } }",
+        "pilot:validateDefinitionVariationMembership: 'An owned usage of a "
+        "variation must be a variant'",
+        code="variation-membership",
+    ),
+    # -- promoted from KNOWN_GAPS: cardinality of owned members
+    Case(
+        "two-entry-transitions",
+        "state def S { entry; then a; entry; then b; state a; state b; }",
+        "validateStateDefinitionStateSubactionKind (spec p. 336): at most one "
+        "StateSubactionMembership of each kind",
+        code="state-subaction-kind",
+    ),
+    Case(
+        "two-individual-definitions",
+        "package P { individual part def I1; individual part def I2; individual part p : I1, I2; }",
+        "validateOccurrenceUsageIndividualDefinition (spec p. 285): 'At most one "
+        "individual definition is allowed'",
+        code="individual-definition",
+    ),
+    Case(
+        "enum-attribute-with-two-types",
+        "package P { enum def E { a; } attribute e : E, E; }",
+        "pilot:validateAttributeUsageEnumerationType_: 'An enumeration attribute "
+        "cannot have more than one type'",
+        code="enum-attribute-type",
+    ),
+    Case(
+        "two-subjects-in-requirement",
+        "package P { part def D; requirement def R { subject s1 : D; subject s2 : D; } }",
+        "validateRequirementDefinitionOnlyOneSubject: 'Only one subject is allowed.'",
+        code="only-one-subject",
+    ),
+    Case(
+        "two-return-parameters",
+        "package P { calc def C { return : Real = 1.0; return : Real = 2.0; } }",
+        "KerML validateFunctionResultParameterMembership: 'Only one return parameter is allowed'",
+        code="only-one-return-parameter",
+    ),
+    # -- promoted from KNOWN_GAPS: mandatory semantic arguments
+    Case(
+        "send-without-payload",
+        "package P { action def A { send; } }",
+        "pilot:validateSendActionUsagePayloadArgument: 'A send action must have a payload'",
+        code="send-payload",
+    ),
+    # -- promoted from KNOWN_GAPS: redefinition and specialization kinds
+    Case(
+        "redefinition-of-sibling-feature",
+        "package P { part def A { attribute x : Real; attribute y :>> x; } }",
+        "pilot:validateRedefinitionFeaturingTypes: 'Featuring types of redefining "
+        "feature and redefined feature cannot be the same'",
+        code="redefinition-featuring-types",
+    ),
+    Case(
+        "package-level-redefinition",
+        "package P { attribute x : Real; attribute y :>> x; }",
+        "pilot:validateRedefinitionFeaturingTypes: 'A package-level feature cannot be redefined'",
+        code="redefinition-featuring-types",
+    ),
+    Case(
+        "attribute-def-specializes-part-def",
+        "package P { part def D; attribute def A :> D; }",
+        "KerML validateDataTypeSpecialization: 'Cannot specialize class or association'",
+        code="datatype-specialization",
+    ),
+    Case(
+        "action-def-specializes-part-def",
+        "package P { part def D; action def A :> D; }",
+        "KerML validateBehaviorSpecialization: 'Cannot specialize structure'",
+        code="behavior-specialization",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -279,6 +478,39 @@ WARNING_DIAGNOSED = [
         "unresolved connector ends; the pilot reports an error",
         code="unresolved-reference",
     ),
+    # -- promoted from KNOWN_GAPS: detected, held at warning severity
+    Case(
+        "qualified-reference-to-nothing",
+        "package P { part def D { attribute m : Real; } attribute t = P::D::nope; }",
+        "a qualified name must resolve; 'nope' is not a member of P::D",
+        code="unresolved-name",
+    ),
+    Case(
+        "undefined-enum-literal",
+        "package P { enum def E { a; b; } attribute e : E = E::c; }",
+        "a reference to an enumerated value must resolve; E has no literal 'c'",
+        code="unresolved-name",
+    ),
+    Case(
+        "unresolved-multiplicity-bound",
+        "package P { part def D; part p : D[n]; }",
+        "a multiplicity bound name must resolve; the pilot errors (cf. KerML "
+        "validateMultiplicityRangeResultTypes: 'Must have a Natural value')",
+        code="unresolved-reference",
+    ),
+    Case(
+        "succession-end-unresolved",
+        "package P { action def A { action a1; first a1 then ghost; } }",
+        "a succession's ends must resolve; the pilot reports an unresolved-reference "
+        "error (longeron enforces the state-machine analog as [unknown-state])",
+        code="dangling-succession",
+    ),
+    Case(
+        "perform-target-unresolved",
+        "package P { part def D { perform ghost; } }",
+        "an unresolved PerformActionUsage target; the pilot reports an error",
+        code="unresolved-reference",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -287,214 +519,31 @@ WARNING_DIAGNOSED = [
 # ---------------------------------------------------------------------------
 
 KNOWN_GAPS = [
-    # kind-nesting / compositeness
-    Case(
-        "state-in-attribute-def",
-        "package P { attribute def A { state s; } }",
-        "validateAttributeDefinitionFeatures (spec p. 278): all features of an "
-        "AttributeDefinition must be non-composite",
-    ),
-    Case(
-        "part-in-attribute-def",
-        "package P { attribute def A { part p; } }",
-        "validateAttributeDefinitionFeatures (spec p. 278)",
-    ),
-    Case(
-        "state-in-attribute-usage",
-        "package P { attribute a : Real { state s; } }",
-        "validateAttributeUsageFeatures (spec p. 279): all features of an "
-        "AttributeUsage must be non-composite",
-    ),
-    Case(
-        "composite-part-in-port-def",
-        "package P { part def D; port def Q { part p : D; } }",
-        "pilot:validatePortDefinitionOwnedUsagesNotComposite: 'Owned usages of a "
-        "port definition (other than ports) must be referential'",
-    ),
-    Case(
-        "non-port-interface-ends",
-        "package P { part def W; interface def I { end w1 : W; end w2 : W; } }",
-        "pilot:validateInterfaceDefinitionEnd_: 'An interface definition end must be a port'",
-    ),
-    # kind-typing
-    Case(
-        "part-typed-by-attribute-def",
-        "package P { attribute def A; part p : A; }",
-        "validatePartUsagePartDefinition (spec p. 291): at least one itemDefinition "
-        "of a PartUsage must be a PartDefinition",
-    ),
-    Case(
-        "attribute-typed-by-part-def",
-        "package P { part def D; attribute a : D; }",
-        "checkAttributeUsageDataTypeSpecialization (spec p. 404); "
-        "pilot:validateAttributeUsageType_: 'An attribute must be typed by attribute definitions'",
-    ),
-    Case(
-        "action-typed-by-part-def",
-        "package P { part def D; action a : D; }",
-        "pilot:validateActionUsageType_: 'An action must be typed by action definitions'",
-    ),
-    Case(
-        "part-typed-by-package",
-        "package P { part p : P; }",
-        "KerML: FeatureTyping::type must be a Type; a Package is not; "
-        "pilot:validateUsageType_: 'A usage must be typed by definitions'",
-    ),
-    Case(
-        "metadata-typed-by-part-def",
-        "package P { part def Meta; #Meta part p; }",
-        "pilot:validateMetadataUsageType_: metadata must be typed by metadata definitions",
-    ),
-    # reference-kind and deep-reference resolution
+    # Both deferrals are corpus-calibrated: the check each case asks for
+    # was implemented, run over the 309-file OMG corpus, and retired
+    # because it rejected the pilot's own models.  The xfail pins keep
+    # the pressure honest -- if a future model-layer change makes either
+    # check possible, the xpass forces its promotion.
     Case(
         "feature-chain-to-nothing",
         "package P { part def D { attribute m : Real; } part d : D; attribute t = d.nope; }",
-        "a feature chain must resolve through each step; 'nope' is not a member of D",
-    ),
-    Case(
-        "qualified-reference-to-nothing",
-        "package P { part def D { attribute m : Real; } attribute t = P::D::nope; }",
-        "a qualified name must resolve; 'nope' is not a member of P::D",
-    ),
-    Case(
-        "undefined-enum-literal",
-        "package P { enum def E { a; b; } attribute e : E = E::c; }",
-        "a reference to an enumerated value must resolve; E has no literal 'c'",
-    ),
-    Case(
-        "subsetting-a-package",
-        "package P { part def D; part p subsets P; }",
-        "KerML 8.3: Subsetting::subsettedFeature must be a Feature; a Package is not",
-    ),
-    Case(
-        "exhibit-of-a-non-state",
-        "package P { part def D { part a; exhibit a; } }",
-        "validateExhibitStateUsageReference (spec p. 333): 'Must reference a state'",
-    ),
-    Case(
-        "perform-of-a-non-action",
-        "package P { attribute b : Real; part def D { perform b; } }",
-        "pilot:validatePerformActionUsageReference: 'Must reference an action'",
-    ),
-    # multiplicity bound types
-    Case(
-        "real-multiplicity-bound",
-        "package P { part def D; part p : D[1.5]; }",
-        "KerML pilot:validateMultiplicityRangeResultTypes: 'Must have a Natural value'",
-    ),
-    Case(
-        "string-multiplicity-bound",
-        'package P { part def D; part p : D["two"]; }',
-        "KerML pilot:validateMultiplicityRangeResultTypes: 'Must have a Natural value'",
-    ),
-    # variation modeling
-    Case(
-        "variant-outside-variation",
-        "package P { part def D { variant part v; } }",
-        "validateVariantMembershipOwningNamespace (spec p. 277): a variant's owning "
-        "namespace must be a variation-point Definition or Usage",
-    ),
-    Case(
-        "non-variant-in-variation",
-        "package P { variation part def V { part notvariant; } }",
-        "pilot:validateDefinitionVariationMembership: 'An owned usage of a "
-        "variation must be a variant'",
-    ),
-    # cardinality of owned members
-    Case(
-        "two-entry-transitions",
-        "state def S { entry; then a; entry; then b; state a; state b; }",
-        "validateStateDefinitionStateSubactionKind (spec p. 336): at most one "
-        "StateSubactionMembership of each kind",
-    ),
-    Case(
-        "two-individual-definitions",
-        "package P { individual part def I1; individual part def I2; individual part p : I1, I2; }",
-        "validateOccurrenceUsageIndividualDefinition (spec p. 285): 'At most one "
-        "individual definition is allowed'",
-    ),
-    Case(
-        "enum-attribute-with-two-types",
-        "package P { enum def E { a; } attribute e : E, E; }",
-        "pilot:validateAttributeUsageEnumerationType_: 'An enumeration attribute "
-        "cannot have more than one type'",
-    ),
-    # mandatory semantic arguments
-    Case(
-        "send-without-payload",
-        "package P { action def A { send; } }",
-        "pilot:validateSendActionUsagePayloadArgument: 'A send action must have a payload'",
-    ),
-    # -- found by the generative tier (tests/test_generative.py); each case is
-    #    the shrunk minimal form of an accepted-silent mutant from the
-    #    invalidating-mutation catalog (tests/_model_strategies.py:MUTATIONS)
-    Case(
-        "redefinition-of-sibling-feature",
-        "package P { part def A { attribute x : Real; attribute y :>> x; } }",
-        "pilot:validateRedefinitionFeaturingTypes: 'Featuring types of redefining "
-        "feature and redefined feature cannot be the same'",
-    ),
-    Case(
-        "package-level-redefinition",
-        "package P { attribute x : Real; attribute y :>> x; }",
-        "pilot:validateRedefinitionFeaturingTypes: 'A package-level feature cannot be redefined'",
-    ),
-    Case(
-        "connector-end-is-a-definition",
-        "package P { part def D1; part def Asm { part a : D1; connect a to D1; } }",
-        "KerML 8.3: a Connector's relatedFeatures must be Features; a Definition is "
-        "not (the dangling-end case is diagnosed, a resolved non-feature end is not)",
-    ),
-    Case(
-        "two-subjects-in-requirement",
-        "package P { part def D; requirement def R { subject s1 : D; subject s2 : D; } }",
-        "validateRequirementDefinitionOnlyOneSubject: 'Only one subject is allowed.'",
-    ),
-    Case(
-        "two-return-parameters",
-        "package P { calc def C { return : Real = 1.0; return : Real = 2.0; } }",
-        "KerML validateFunctionResultParameterMembership: 'Only one return parameter is allowed'",
-    ),
-    Case(
-        "attribute-def-specializes-part-def",
-        "package P { part def D; attribute def A :> D; }",
-        "KerML validateDataTypeSpecialization: 'Cannot specialize class or association'",
-    ),
-    Case(
-        "action-def-specializes-part-def",
-        "package P { part def D; action def A :> D; }",
-        "KerML validateBehaviorSpecialization: 'Cannot specialize structure'",
+        "a feature chain must resolve through each step; 'nope' is not a member of D. "
+        "DEFERRED: chain steps through a *usage* head are judged bottom -- a usage's "
+        "member closure (featuring contexts, variant configurations, subject "
+        "redefinitions) is richer than the model layer's static members, and the "
+        "corpus shows systematic false positives (EVSample.sysml, "
+        "VehicleVariabilityModel.sysml).  The qualified/definition-container twin "
+        "([qualified-reference-to-nothing]) is enforced.",
     ),
     Case(
         "parameter-outside-behavior",
         "package P { part def D { in attribute x : Real; } }",
         "KerML validateParameterMembershipOwningType: 'Parameter membership not "
-        "allowed' (directed parameters belong to behaviors and steps)",
-    ),
-    Case(
-        "interface-usage-nonport-ends",
-        "package P { interface def I; part def Asm { part a; part b; "
-        "interface i : I connect a to b; } }",
-        "pilot:validateInterfaceUsageEnd_: 'An interface end must be a port.'",
-    ),
-    Case(
-        "unresolved-multiplicity-bound",
-        "package P { part def D; part p : D[n]; }",
-        "a multiplicity bound name must resolve -- longeron's resolver never visits "
-        "bounds, so this is not even warned; the pilot errors (cf. KerML "
-        "validateMultiplicityRangeResultTypes: 'Must have a Natural value')",
-    ),
-    Case(
-        "succession-end-unresolved",
-        "package P { action def A { action a1; first a1 then ghost; } }",
-        "a succession's ends must resolve; the pilot reports an unresolved-reference "
-        "error (longeron enforces the state-machine analog as [unknown-state])",
-    ),
-    Case(
-        "perform-target-unresolved",
-        "package P { part def D { perform ghost; } }",
-        "an unresolved PerformActionUsage target is accepted silently (the exhibit "
-        "twin at least warns [unresolved-reference]); the pilot reports an error",
+        "allowed' (directed parameters belong to behaviors and steps). "
+        "DEFERRED: the pilot's own corpus places directed features in part "
+        "definitions and usages ('in item scene;' in Camera.sysml, 'in ref y: A, B;' "
+        "in ItemTest.sysml), so SysML textual direction does not map to KerML "
+        "ParameterMembership and any validation-time check rejects official models.",
     ),
 ]
 
@@ -592,9 +641,9 @@ def test_counts_match_the_design_doc():
     # them honest (the cheap analog of opensysml's committed-baseline count
     # guards).  Update the docs when you update these.
     assert len(PARSE_REJECTIONS) == 28
-    assert len(SEMANTIC_REJECTIONS) == 7
-    assert len(WARNING_DIAGNOSED) == 5
-    assert len(KNOWN_GAPS) == 36  # 24 phase-1 cases + 12 generative-tier findings
+    assert len(SEMANTIC_REJECTIONS) == 36  # 7 phase-1 + 29 promoted gaps
+    assert len(WARNING_DIAGNOSED) == 10  # 5 phase-1 + 5 promoted gaps
+    assert len(KNOWN_GAPS) == 2  # both deferred with corpus-calibrated reasons
 
 
 def test_every_case_names_its_rule():

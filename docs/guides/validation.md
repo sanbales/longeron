@@ -12,11 +12,13 @@ the model itself (including a merged-in standard library) are treated
 the same way: they are resolution context, never the subject of
 diagnostics.
 
-Scope: these checks are a curated set aimed at real modeling mistakes
--- they are not an implementation of the OCL well-formedness
-constraints embedded in the OMG spec metamodel, and conformance claims
-keep those axes separate (the corpus badge measures *parsing*
-conformance). Rationale in the design doc:
+Scope: these checks are a curated set aimed at real modeling mistakes.
+They now include a corpus-calibrated selection of the clause-8.3
+well-formedness constraints (the [kind-level checks](#kind-level-well-formedness)
+below), but they are not an implementation of the OCL constraints
+embedded in the OMG spec metamodel, and conformance claims keep those
+axes separate (the corpus badge measures *parsing* conformance).
+Rationale in the design doc:
 [The OCL stance](../design/ocl-stance.md).
 
 ## Reading a diagnostic
@@ -51,11 +53,12 @@ missing target may live in a file you did not load.
 | `duplicate-name` | error | Two members of one namespace share a name or short name. |
 | `specialization-cycle` | error | An element's specialization hierarchy (`specializes` / `typed by` / `subsets`, including implied specializations) reaches the element itself. Redefinitions (`:>>`) are not specialization edges: redefining a same-named inherited feature is not a cycle. |
 | `unknown-state` | error | A transition names a source or target that is not a state of its machine. |
-| `unresolved-reference` | warning | A declared reference does not resolve: `typed by`, `specializes`, `subsets`, `redefines`, `references`, `crosses`, connection/binding ends, `satisfied by`, an import, an alias, or a dependency end. |
+| `unresolved-reference` | warning | A declared reference does not resolve: `typed by`, `specializes`, `subsets`, `redefines`, `references`, `crosses`, connection/binding ends, `satisfied by`, an import, an alias, a dependency end, a named multiplicity bound (`part p : D[n]` with no `n`), or a `perform` target. |
+| `dangling-succession` | warning | A succession end in an action body does not resolve: `first a1 then ghost;` (the action-body analog of `unknown-state`, at reference-check severity). Bottom-guarded: owners whose implied library base is unmapped (`use case`), owners with explicit specializations, and bodies with `terminate`-style declarations are not judged. |
 | `dangling-expose` | warning | An `expose` inside a view usage names an element that no longer resolves. Restoring the view ([view persistence](../reference/views.md)) skips such exposes with a warning; this diagnostic surfaces the same condition statically. |
 | `dangling-flow` | warning | A `flow` or `message` end (`from` / `to`) does not resolve: `flow of Fuel from tank.nope to engine.fuelIn`. The model layer stores flow ends as verbatim paths, so a dangling end silently disconnects the flow -- diagrams skip the edge, analyses have nothing to bind. A warning, like the other reference checks: the end may live in a file you did not load. |
 | `flow-payload-mismatch` | warning | A flow's declared payload typing has no specialization relationship -- in either direction -- with the target end's declared typing: `flow of Water from tank.fuelOut to engine.fuelIn` where `fuelIn : Fuel`. See [Flow connectivity](#flow-connectivity). |
-| `unresolved-name` | warning | The leading name of an expression does not resolve. Locals, loop variables, accept payloads, builtin functions, and inherited members are recognized first. |
+| `unresolved-name` | warning | The leading name of an expression does not resolve. Locals, loop variables, accept payloads, builtin functions, and inherited members are recognized first. Qualified chains through packages and definitions are checked step-wise too (`P::D::nope`, `E::c` with no such literal); chains through *usage* heads are not judged (their member closure is richer than the model's static members). |
 | `no-entry-transition` | warning | A state machine declares states but no `entry; then <state>;` transition, so simulation has no starting state. |
 | `calc-without-result` | warning | A calc has no result expression and no `return`-directed member with a value. Reference calc usages that delegate to a typed calc stay silent. |
 | `unresolved-unit` | warning | A `[unit]` annotation does not resolve -- `= 5.0 [SI::bogusUnit]` or a `[furlongs]` no library defines. Bare stdlib unit names (`[kg]`) resolve through the implicit library hop and stay silent. |
@@ -64,6 +67,63 @@ missing target may live in a file you did not load.
 | `mixed-units` | warning | `+`, `-`, or a comparison over same-dimension operands declared in *different units* (`5.0 [kg] + 3.0 [lbm]`, `1.0 [m] + 2.0 [mm]`). Active only without the `[units]` extra: with it, declaration-boundary normalization makes the arithmetic correct and the warning moot. |
 | `anchor-dimension-mismatch` | warning | A scoreboard-convention `ramp0` / `ramp1` / `target` / `limit` attribute disagrees with its sibling `measure` -- dimensionally, or (without the `[units]` extra) in declared unit: a ramp anchored in minutes scoring a measure computed in hours. |
 | `stdlib-implicit-name` | warning | Only under `strict_imports=True` / `--strict-imports`. A bare standard-library name resolved only through the implicit library-visibility hop. |
+| `usage-type` | error | A declared type resolves to a definition of a conflicting kind, or to a package: `attribute a : D` with `D` a part def, `action a : D`, `part p : P` with `P` a package. Pilot: `validateAttributeUsageType`, `validateActionUsageType`, `validateUsageType`. |
+| `metadata-usage-type` | error | A metadata annotation (`#Meta part p;`, `@Meta;`) resolves to something other than a metadata definition. Pilot: `validateMetadataUsageType`. Unresolved annotation names stay silent (user-defined keywords may live in unloaded files). |
+| `attribute-composite-feature` | error | A composite occurrence feature (part, state, action, port, ...) owned by an attribute definition or usage: `attribute def A { state s; }`. Spec: `validateAttributeDefinitionFeatures` / `validateAttributeUsageFeatures`. Items are deliberately not judged -- the spec's own corpus nests composite items in attribute definitions. |
+| `port-composite-usage` | error | A composite (non-`ref`, undirected) part/state/action usage owned by a port definition or usage: `port def Q { part p : D; }`. Directed features (`out item fuel : Fuel;`) are the spec's own port idiom and stay silent. Pilot: `validatePortDefinitionOwnedUsagesNotComposite`. |
+| `interface-end-not-port` | error | An interface definition end typed by a non-port definition (`interface def I { end w : W; }` with `W` a part def), or an interface usage end resolving to a non-port usage (`interface i : I connect a to b;` over parts). Pilot: `validateInterfaceDefinitionEnd` / `validateInterfaceUsageEnd`. |
+| `connector-end-not-feature` | error | A connector, interface, or binding end resolves to a definition or package rather than a feature: `connect a to D1;`. KerML: a Connector's `relatedFeatures` must be Features. |
+| `subsets-non-feature` | error | A subsetting target resolves to a package or a definition: `part p subsets P;`. KerML: `Subsetting::subsettedFeature` must be a Feature. Reference usages (`satisfy R1 by ...`, `verify`, `include`, exhibits) may legally name definitions and are not judged. |
+| `redefinition-featuring-types` | error | A redefinition targets a sibling feature (same featuring type) or a package-level feature: `attribute x : Real; attribute y :>> x;`. Pilot: `validateRedefinitionFeaturingTypes`. Redefining an *inherited* same-named feature stays legal. |
+| `datatype-specialization` | error | An attribute or enum definition specializes an occurrence definition: `attribute def A :> D;` with `D` a part def. KerML: a DataType may not specialize a Class or Association. |
+| `behavior-specialization` | error | A behavior-family definition (action, calc, state, constraint, requirement, case, ...) specializes a structure-family or data definition: `action def A :> D;`. |
+| `structure-specialization` | error | A structure-family definition (part, item, port, connection, ...) specializes a behavior-family or data definition. |
+| `variant-membership` | error | A `variant` usage owned by a non-variation namespace: `part def D { variant part v; }`. Spec: `validateVariantMembershipOwningNamespace`. |
+| `variation-membership` | error | A non-variant usage owned by a `variation` definition or usage. Pilot: `validateDefinitionVariationMembership`. |
+| `state-subaction-kind` | error | More than one `entry`, `do`, or `exit` action in one state body. Spec: `validateStateDefinitionStateSubactionKind`. |
+| `only-one-subject` | error | More than one `subject` in one requirement/case body. Spec: `validateRequirementDefinitionOnlyOneSubject` and its case twin. |
+| `only-one-return-parameter` | error | More than one `return` parameter in one calc/action body. KerML: a Function has exactly one result parameter. |
+| `individual-definition` | error | A usage typed by more than one `individual` definition: `individual part p : I1, I2;`. Spec: `validateOccurrenceUsageIndividualDefinition`. |
+| `enum-attribute-type` | error | An attribute typed by an enumeration definition carries more than one declared type: `attribute e : E, E;`. Pilot: `validateAttributeUsageEnumerationType`. |
+| `send-payload` | error | An anonymous, unrouted `send;` with no payload argument. Pilot: `validateSendActionUsagePayloadArgument`. Named send declarations and routed sends (`send via ... to ...;`) bind their payload elsewhere and stay silent. |
+| `exhibit-state-reference` | error | An `exhibit` reference resolves to something other than a state: `part a; exhibit a;`. Spec: `validateExhibitStateUsageReference` ("Must reference a state"). |
+| `perform-action-reference` | error | A `perform` reference resolves to something other than an action: `attribute b : Real; perform b;`. Pilot: `validatePerformActionUsageReference` ("Must reference an action"). |
+| `multiplicity-bound-type` | error | A literal multiplicity bound that is not a natural number: `part p : D[1.5];`, `D["two"]`. KerML: `validateMultiplicityRangeResultTypes` ("Must have a Natural value"). `*` is an infinity literal and always fine. |
+| `multiplicity-bound-order` | error | A literal range whose lower bound exceeds its upper: `part p : D[2..1];` -- an unsatisfiable (empty) range. |
+
+## Kind-level well-formedness
+
+The error rows above from `usage-type` through `multiplicity-bound-order`
+implement a corpus-calibrated selection of the SysML v2 clause-8.3
+constraints (spec `validate*` names) and the pilot implementation's
+validator rules (`SysMLValidator.xtend` / `KerMLValidator.xtend`), under
+one contract inherited from the dimensional lint: **only speak when two
+known things conflict**. A check fires only when a reference *resolves*
+and the resolved element's kind is known to conflict -- a
+resolved-but-wrong-kind target is a structural self-contradiction and
+therefore an error, while an unresolved reference stays a warning
+(`unresolved-reference`), because the target may live in a file you did
+not load. Kinds outside the check's vocabulary -- language-extension
+definitions, keyword-less `feature`/`ref` usages -- are bottom: no
+guessing.
+
+Every check was calibrated against the 309-file OMG corpus, and four
+deliberate deviations from the literal rule text keep the spec's own
+models clean:
+
+- **Items in attribute bodies are not judged.** The rule says *all*
+  features of an attribute definition must be non-composite, but the
+  spec's training models nest composite items there
+  (`attribute def Show { item picture : Picture; }`).
+- **Directed features are never composite-checked** and there is no
+  directed-parameter-placement check at all: the pilot's corpus places
+  directed features in part definitions and usages (`in item scene;`),
+  so SysML textual direction does not map to KerML ParameterMembership.
+- **Reference usages may name definitions.** `satisfy R1 by x;` names a
+  requirement definition; the pilot mints a usage typed by it.
+- **Vendored-library kinds are bottom.** The KerML libraries project
+  `datatype` onto the item kind (`Collections::Array`), so kind
+  judgments skip targets inside library packages.
 
 ## Names resolve against the standard library
 
