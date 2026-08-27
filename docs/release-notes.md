@@ -1,8 +1,68 @@
 # Release notes
 
-## 0.10.0 (unreleased)
+## 0.10.0
 
-- **Model editing** (`longeron.edit`): a small, verified mutation API
+- **The JupyterLab app** (`longeron.app` + `longeron.inspector`):
+  `app.open()` docks a left-sidebar panel behind a theme-aware
+  model-diagram icon -- load models (path field, multi-select Browse
+  over the kernel's filesystem, a collapsible Systems-Modeling-API
+  connect), then launch per-model tabs: [Explore] (the explorer),
+  [Score] (the scoreboard), [Save]/[Push] with a dirty indicator fed
+  by `edit.track`. The ITEM INSPECTOR docks in the right sidebar: a
+  selection-driven property sheet (kind, typings, multiplicity,
+  relationship endpoints as clickable navigation) where name,
+  documentation, and attribute values EDIT through `longeron.edit` --
+  refusals render as inline error strips, units show in value
+  expressions, and the sidebar reveals itself once on the first
+  selection. The app adopts explorers created directly in the kernel,
+  so `explore()` users get the inspector too. `longeron:open-app`
+  rides the command palette. Tutorial 14
+- **Relationships in the explorer tree**: satisfies, connections,
+  bindings, interfaces, allocations, flows -- plus newly admitted
+  imports, exposes, dependencies, filters, and aliases -- appear under
+  the element that OWNS them, dim-italic with relation chips and
+  derived labels ('connect axle to hub'), full declaration on hover.
+  A tree-toolbar toggle shows/hides them (synced trait); where the
+  relationship draws as a diagram edge, selection round-trips both
+  ways
+- **Diagrams size and fit themselves, everywhere**: the fit-on-reveal/
+  resize machinery moved into the builders -- bare `display(widget)`,
+  HBox panes, explorer tabs, and restored views all self-fit on first
+  reveal and container resize (user pan/zoom is never fought); the
+  explorer's docked pane fills its tab; builders take `height=`.
+  Compound nodes under top-down flow no longer overflow their labels
+  (an elkjs transposed-sizing bug, fixed at the layout-options source),
+  and `max_label_width` (default 480px) ellipsizes absurd
+  calculation rows kernel-side -- measurement, sizing, and the fits
+  all see the display string -- with the full text on hover
+- **Geometry as requirements, CAD-native**: the drone example splits
+  its rotors into motors x propellers (separable variation points,
+  thrust as a calc over the pair) and gains a camera whose view is a
+  requirement: `camera_occlusion` builds a VIEW CONE solid and
+  boolean-intersects it against every other component
+  (`occludedFraction`, per-part obstruction volumes), and prop discs
+  prove non-overlap the same way (`discOverlapVolume`). Exact OCC
+  booleans with the `[cad]` extra; without it, a deterministic
+  quadrature integrates the same integral. Both land on the
+  scoreboard like any other requirement
+- **The grand tour** (`longeron.analysis.grand`): `grand_dashboard(
+  model)` composes the whole toolchain into one reactive surface --
+  structure diagram, 3D airframe with the translucent view cone,
+  scoreboard voronoi, camera what-if sliders that re-run the occlusion
+  check and repaint the board live, OpenMDAO sizing cards, Z3 verdict
+  cards (a design-point SAT witness beside an impossible what-if's
+  UNSAT core), and the Cesium mission finale. Tutorial 15 builds it in
+  five code cells; `scripts/record_demo.py` films it deterministically
+  for the README
+- **Units groundwork**: the ratified [units design](design/units.md)
+  (model-tier stdlib units, an in-house dimensional lint with scale
+  tags, pint behind a typed facade at the boundaries only); bracket
+  units (`1.5 [SI::kg]`) now appear across the examples, render in
+  expression text everywhere (inspector value rows included), and the
+  scoreboard displays a reserved `unit` attribute in tooltips and
+  tables -- scores themselves default to percent with one decimal
+  (`value_format=`)
+- - **Model editing** (`longeron.edit`): a small, verified mutation API
   -- the seam UI inspectors change element properties through.
   `rename` validates the new name, rewrites *every* textual reference
   that reaches the renamed element or its descendants (typings,
