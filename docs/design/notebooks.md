@@ -58,6 +58,14 @@ The repetition, named:
 
 ## Principles for the rebuild
 
+0. **Prose follows the writing-documentation skill** (maintainer
+   directive). Every markdown cell obeys the skill's contract:
+   one claim per sentence, descriptive sentences of at most 25 words,
+   active voice with a named actor, one term per concept, no
+   intensifiers, topic-sentence-first paragraphs. Authoring agents
+   read the skill file in full before writing and run its self-check
+   before delivering.
+
 1. **One question per notebook.** Each notebook opens with an
    engineering question and closes with the model answering it. A
    reader who wants feature reference goes to `docs/reference`, not
