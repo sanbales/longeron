@@ -352,6 +352,201 @@ class TestDanglingExposes:
         assert main(["lint", str(target), "--no-cache", "--strict"]) == 1
 
 
+class TestDanglingFlows:
+    """dangling-flow: a flow/message end that does not resolve (the
+    mdao-objects design's finding 4 -- ends are verbatim strings the
+    model layer never resolves)."""
+
+    PLANT = """
+        package P {
+            item def Fuel;
+            item def Diesel :> Fuel;
+            item def Water;
+            part def Tank { out item fuelOut : Fuel; }
+            part def Engine { in item fuelIn : Fuel; }
+            part def Plant {
+                part tank : Tank;
+                part engine : Engine;
+                %s
+            }
+        }
+    """
+
+    def flow_diags(self, member, code="dangling-flow"):
+        return diags(self.PLANT % member, code)
+
+    def test_resolving_ends_stay_silent(self):
+        assert self.flow_diags("flow of Fuel from tank.fuelOut to engine.fuelIn;") == []
+
+    def test_dangling_source_warns(self):
+        found = self.flow_diags("flow from tank.nope to engine.fuelIn;")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert "flow source 'tank.nope' does not resolve" in found[0].message
+        # the subject is the owning part def (the flow is anonymous)
+        assert found[0].element == "P::Plant"
+
+    def test_dangling_target_warns(self):
+        found = self.flow_diags("flow from tank.fuelOut to engine.gone;")
+        assert len(found) == 1
+        assert "flow target 'engine.gone' does not resolve" in found[0].message
+
+    def test_both_ends_dangle(self):
+        found = self.flow_diags("flow from tank.nope to engine.gone;")
+        assert len(found) == 2
+
+    def test_named_flow_is_the_subject(self):
+        found = self.flow_diags("flow f from tank.nope to engine.fuelIn;")
+        assert [d.element for d in found] == ["P::Plant::f"]
+
+    def test_message_ends_checked(self):
+        found = self.flow_diags("message of Fuel from tank.nope to engine.fuelIn;")
+        assert len(found) == 1
+        assert "message source 'tank.nope' does not resolve" in found[0].message
+
+    def test_action_scoped_flow_resolves(self):
+        assert (
+            diags(
+                """
+            package Q {
+                item def Part1;
+                action def Move {
+                    action a1 { out item y : Part1; }
+                    action a2 { in item x : Part1; }
+                    flow of Part1 from a1.y to a2.x;
+                }
+            }
+        """,
+                "dangling-flow",
+            )
+            == []
+        )
+
+    def test_location_points_at_the_flow(self):
+        source = self.PLANT % "flow from tank.nope to engine.fuelIn;"
+        model = longeron.loads(source, source_name="plant.sysml")
+        found = [d for d in longeron.validate(model) if d.code == "dangling-flow"]
+        assert len(found) == 1
+        location = found[0].location
+        assert location is not None
+        assert location.source_name == "plant.sysml"
+
+
+class TestFlowPayloadMismatch:
+    """flow-payload-mismatch: declared payload typing unrelated (by the
+    specialization walk, either direction) to the target end's declared
+    typing.  Typing absent on either side stays silent -- no guessing."""
+
+    PLANT = TestDanglingFlows.PLANT
+
+    def flow_diags(self, member, code="flow-payload-mismatch"):
+        return diags(self.PLANT % member, code)
+
+    def test_conforming_subtype_payload_is_silent(self):
+        assert self.flow_diags("flow of Diesel from tank.fuelOut to engine.fuelIn;") == []
+
+    def test_exact_type_is_silent(self):
+        assert self.flow_diags("flow of Fuel from tank.fuelOut to engine.fuelIn;") == []
+
+    def test_supertype_payload_is_silent(self):
+        # a Fuel-typed payload may hold a Diesel at runtime: related types
+        # never warn, only provably unrelated ones
+        found = diags(
+            """
+            package P {
+                item def Fuel;
+                item def Diesel :> Fuel;
+                part def Tank { out item fuelOut : Fuel; }
+                part def Engine { in item dieselIn : Diesel; }
+                part def Plant {
+                    part tank : Tank;
+                    part engine : Engine;
+                    flow of Fuel from tank.fuelOut to engine.dieselIn;
+                }
+            }
+        """,
+            "flow-payload-mismatch",
+        )
+        assert found == []
+
+    def test_unrelated_payload_warns(self):
+        found = self.flow_diags("flow of Water from tank.fuelOut to engine.fuelIn;")
+        assert len(found) == 1
+        assert found[0].severity == "warning"
+        assert (
+            "payload 'Water' is incompatible with flow target "
+            "'engine.fuelIn' (accepts 'Fuel')" in found[0].message
+        )
+
+    def test_named_payload_typing_is_checked(self):
+        found = self.flow_diags("flow of x : Water from tank.fuelOut to engine.fuelIn;")
+        assert len(found) == 1
+        assert "'x : Water'" in found[0].message
+
+    def test_untyped_target_is_silent(self):
+        found = diags(
+            """
+            package P {
+                item def Water;
+                part def Tank { out item out1 : Water; }
+                part def Plant {
+                    part tank : Tank;
+                    part sink;
+                    flow of Water from tank.out1 to sink;
+                }
+            }
+        """,
+            "flow-payload-mismatch",
+        )
+        assert found == []
+
+    def test_untyped_payload_is_silent(self):
+        # 'flow from a to b' declares no payload; 'flow of x from a to b'
+        # names a payload feature with no typing -- neither can conflict
+        assert self.flow_diags("flow from tank.fuelOut to engine.fuelIn;") == []
+        assert self.flow_diags("flow of x from tank.fuelOut to engine.fuelIn;") == []
+
+    def test_unresolved_payload_is_silent(self):
+        assert self.flow_diags("flow of Bogus from tank.fuelOut to engine.fuelIn;") == []
+
+    def test_message_payload_checked_against_accept_typing(self):
+        source = """
+            package Q {
+                item def Ping;
+                item def Pong;
+                action def Exchange {
+                    action sender { out item p : Ping; }
+                    action receiveIt accept hit : Pong;
+                    message of %s from sender.p to receiveIt;
+                }
+            }
+        """
+        found = diags(source % "Ping", "flow-payload-mismatch")
+        assert len(found) == 1
+        assert (
+            "payload 'Ping' is incompatible with message target "
+            "'receiveIt' (accepts 'Pong')" in found[0].message
+        )
+        assert diags(source % "Pong", "flow-payload-mismatch") == []
+
+    def test_lint_cli_reports_flow_diagnostics(self, tmp_path, capsys):
+        from longeron.cli import main
+
+        target = tmp_path / "plant.sysml"
+        target.write_text(
+            self.PLANT
+            % (
+                "flow of Water from tank.fuelOut to engine.fuelIn;"
+                "flow from tank.nope to engine.fuelIn;"
+            )
+        )
+        assert main(["lint", str(target), "--no-cache"]) == 0  # warnings, not errors
+        out = capsys.readouterr().out
+        assert "flow-payload-mismatch" in out
+        assert "dangling-flow" in out
+        assert main(["lint", str(target), "--no-cache", "--strict"]) == 1
+
+
 class TestStructuralErrors:
     def test_duplicate_names(self):
         found = diags(

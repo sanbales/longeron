@@ -296,6 +296,67 @@ class TestVariableProductsAndNestedLogic:
         assert cheapest.selection == {"widget": "smallW", "gadget": "slowG"}
 
 
+BODY_CATALOG = """
+package BodyCatalog {
+    item def Motor { attribute mass : Real = 0.040; attribute cost : Real = 10.0; }
+    variation item def MotorChoice :> Motor {
+        variant item light : Motor {
+            :>> mass = 0.025;
+            :>> cost = 18.0;
+        }
+        variant item heavy : Motor {
+            :>> mass = 0.055;
+        }
+        variant item stock : Motor;
+    }
+    part def Quad {
+        item motors : MotorChoice [4];
+        attribute totalMass : Real = 4.0 * motors.mass;
+        attribute totalCost : Real = 4.0 * motors.cost;
+        assert constraint massOk { totalMass <= 0.2 }
+    }
+}
+"""
+
+
+class TestVariantBodyRedefinitions:
+    """A variant's own body overrides survive into its bundle.
+
+    ``variant item light : Motor { :>> mass = 0.025; }`` must enumerate
+    with 0.025, not the type's 0.040 -- instantiating the variant's *type*
+    dropped the body redefinitions and silently zeroed such catalogs
+    (docs/design/mdao-objects.md, Q5).
+    """
+
+    @pytest.fixture(scope="class")
+    def quad(self):
+        return trades.TradeStudy(longeron.loads(BODY_CATALOG), "BodyCatalog::Quad")
+
+    def test_body_redefinitions_survive_into_bundles(self, quad):
+        variants = quad.points["motors"].variants
+        assert variants["light"] == {"mass": 0.025, "cost": 18.0}
+        # partial body: the redefined slot overrides, the rest inherits
+        assert variants["heavy"] == {"mass": 0.055, "cost": 10.0}
+
+    def test_typed_variant_without_body_keeps_type_defaults(self, quad):
+        assert quad.points["motors"].variants["stock"] == {"mass": 0.040, "cost": 10.0}
+
+    def test_enumerate_uses_body_values(self, quad):
+        archs = {a.selection["motors"]: a for a in quad.enumerate()}
+        assert set(archs) == {"light", "stock"}  # heavy: 0.22 > 0.2
+        assert all(a.verified for a in archs.values())
+        assert archs["light"].metrics["totalMass"] == pytest.approx(0.1)
+        assert archs["light"].metrics["totalCost"] == pytest.approx(72.0)
+        assert archs["stock"].metrics["totalMass"] == pytest.approx(0.16)
+
+    def test_interpreter_reverification_sees_body_values(self, quad):
+        heavy = quad.evaluate({"motors": "heavy"})
+        assert heavy.metrics["totalMass"] == pytest.approx(0.22)
+        assert heavy.metrics["totalCost"] == pytest.approx(40.0)  # inherited cost
+        assert not heavy.verified
+        assert heavy.violations == ["massOk"]
+
+
 MINI_CATALOG_2 = """
 package Mini2 {
     part def Widget { attribute factor : Real; attribute cost : Real; }

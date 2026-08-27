@@ -53,6 +53,8 @@ missing target may live in a file you did not load.
 | `unknown-state` | error | A transition names a source or target that is not a state of its machine. |
 | `unresolved-reference` | warning | A declared reference does not resolve: `typed by`, `specializes`, `subsets`, `redefines`, `references`, `crosses`, connection/binding ends, `satisfied by`, an import, an alias, or a dependency end. |
 | `dangling-expose` | warning | An `expose` inside a view usage names an element that no longer resolves. Restoring the view ([view persistence](../reference/views.md)) skips such exposes with a warning; this diagnostic surfaces the same condition statically. |
+| `dangling-flow` | warning | A `flow` or `message` end (`from` / `to`) does not resolve: `flow of Fuel from tank.nope to engine.fuelIn`. The model layer stores flow ends as verbatim paths, so a dangling end silently disconnects the flow -- diagrams skip the edge, analyses have nothing to bind. A warning, like the other reference checks: the end may live in a file you did not load. |
+| `flow-payload-mismatch` | warning | A flow's declared payload typing has no specialization relationship -- in either direction -- with the target end's declared typing: `flow of Water from tank.fuelOut to engine.fuelIn` where `fuelIn : Fuel`. See [Flow connectivity](#flow-connectivity). |
 | `unresolved-name` | warning | The leading name of an expression does not resolve. Locals, loop variables, accept payloads, builtin functions, and inherited members are recognized first. |
 | `no-entry-transition` | warning | A state machine declares states but no `entry; then <state>;` transition, so simulation has no starting state. |
 | `calc-without-result` | warning | A calc has no result expression and no `return`-directed member with a value. Reference calc usages that delegate to a typed calc stay silent. |
@@ -121,6 +123,34 @@ errors = [d for d in diagnostics if d.severity == "error"]
 
 `strict_imports=True` is the API spelling of `--strict-imports`
 ({func}`~longeron.validation.validate`).
+
+## Flow connectivity
+
+`flow of Payload from a.out to b.in` stores its ends and payload as
+plain text that nothing resolves at parse time, so a typo'd end or a
+wrong payload type is invisible until something downstream silently
+ignores the flow. Two diagnostics close that gap:
+
+```text
+plant.sysml:11:9: warning[dangling-flow] P::Plant: flow source 'tank.nope' does not resolve
+plant.sysml:12:9: warning[flow-payload-mismatch] P::Plant: payload 'Water' is incompatible with flow target 'engine.fuelIn' (accepts 'Fuel')
+```
+
+**What carries the typing.** The payload's declared type (`flow of
+Diesel ...`, `flow of x : Diesel ...`) is checked against the target
+end's declared type: the target usage's `typed by`, or -- for messages
+to a named accept action (`action receiveIt accept hit : Pong;`) --
+the accept's payload typing.
+
+**What counts as incompatible.** Only provably unrelated types warn:
+the payload and target types must have *no* specialization relationship
+in either direction. A `Diesel` payload flowing into a `Fuel` port is
+fine (`Diesel :> Fuel`); a declared `Fuel` payload into a `Diesel` port
+is also silent, because the feature may well hold a conforming value at
+runtime. Where typing is absent on either side -- an untyped target
+feature, a payload feature with no declared type, a payload that does
+not resolve -- the check stays silent rather than guess. Like the
+dimensional lint, it only speaks when two *known* typings conflict.
 
 ## The dimensional lint
 

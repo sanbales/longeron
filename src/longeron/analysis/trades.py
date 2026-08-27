@@ -388,12 +388,11 @@ class TradeStudy:
             for var in typ.members:
                 if not (isinstance(var, M.Usage) and var.is_variant and var.name):
                     continue
-                if var.types:
-                    inst = self.interp.instantiate(
-                        self._namespace(self.interp.resolver.resolve(var.types[0], typ))
-                    )
-                else:
-                    inst = self.interp.instantiate(var)
+                # instantiate the variant usage itself: the resolver's member
+                # walk merges its body redefinitions (':>> mass = 0.055;')
+                # over the typed variant's inherited defaults -- instantiating
+                # the *type* would silently drop the body overrides
+                inst = self.interp.instantiate(var)
                 variants[var.name] = {k: v for k, v in inst.slots.items() if is_scalar(v)}
             count = 1
             if member.multiplicity is not None and member.multiplicity.upper is not None:
@@ -531,12 +530,9 @@ class TradeStudy:
                     usage = var
                     break
             assert usage is not None
-            source = (
-                self._namespace(self.interp.resolver.resolve(usage.types[0], typ))
-                if usage.types
-                else usage
-            )
-            bindings[pname] = self.interp.instantiate(source)
+            # the variant usage, not its type: body redefinitions must
+            # survive into the interpreter-exact re-evaluation too
+            bindings[pname] = self.interp.instantiate(usage)
         for name, expr in self.derived_order:
             bindings[name] = self.interp.evaluate(expr, self.assembly, **bindings)
         return bindings

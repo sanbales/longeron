@@ -23,6 +23,13 @@ scoreboard ramp/target anchors are checked against their requirement's
 :mod:`longeron.units`, derived from the vendored library's own
 definitional algebra; unknown dimensions are bottom and propagate
 silently -- the lint only speaks when two *known* vectors conflict.
+
+Flow connectivity gets the same treatment: a ``flow`` / ``message`` end
+that does not resolve warns (``dangling-flow``, the moral twin of
+``dangling-expose``), and a declared payload typing with no
+specialization relationship to the target end's declared typing warns
+(``flow-payload-mismatch``).  Typing absent on either side stays silent
+-- the check only speaks when two known typings conflict.
 """
 
 from __future__ import annotations
@@ -126,6 +133,8 @@ class _Checker:
             self.check_target(element, element.target, "import")
         if isinstance(element, M.Expose):
             self.check_expose(element)
+        if isinstance(element, M.FlowUsage):
+            self.check_flow(element)
         if isinstance(element, M.Alias):
             self.check_target(element, element.target, "alias")
         if isinstance(element, M.Dependency):
@@ -215,6 +224,122 @@ class _Checker:
                 location,
             )
         )
+
+    def check_flow(self, flow: M.FlowUsage) -> None:
+        """dangling-flow / flow-payload-mismatch: the flow-connectivity
+        checks.  A ``flow of Payload from a.out to b.in`` stores its ends
+        and payload as strings the model layer never resolves; a dangling
+        end (warning, like ``dangling-expose``: the target may live in a
+        file that was not loaded) or a payload whose declared typing has
+        no specialization relationship with the target end's declared
+        typing (warning) is invisible until here."""
+
+        keyword = "message" if flow.kind == "message" else "flow"
+        for role, ref in (("source", flow.source), ("target", flow.target_end)):
+            if not ref or self._resolves(ref, flow):
+                continue
+            self._report_flow("dangling-flow", flow, f"{keyword} {role} {ref!r} does not resolve")
+        self.check_flow_payload(flow, keyword)
+
+    def check_flow_payload(self, flow: M.FlowUsage, keyword: str) -> None:
+        """flow-payload-mismatch, honestly: only when *both* the payload
+        and the target end carry resolvable declared typing, and no pair
+        of those types is related by the specialization walk (in either
+        direction -- a supertype payload may still hold a conforming
+        value at runtime, so only provably unrelated types conflict)."""
+
+        if not flow.payload or not flow.target_end:
+            return
+        payload_types: list[M.Element] = []
+        for ref in self._flow_payload_refs(flow):
+            types = self._declared_types(self._resolve_path(ref, flow))
+            if not types:
+                return  # untyped or unresolved payload: no guessing
+            payload_types.extend(types)
+        if not payload_types:
+            return  # bare payload name with no typing ('flow of x from ...')
+        accepted = self._declared_types(self._resolve_path(flow.target_end, flow))
+        if not accepted:
+            return  # dangling or untyped target end: silent here
+        for payload_type in payload_types:
+            for target_type in accepted:
+                if self._conforms(payload_type, target_type) or self._conforms(
+                    target_type, payload_type
+                ):
+                    return
+        names = ", ".join(repr(t.label) for t in accepted)
+        self._report_flow(
+            "flow-payload-mismatch",
+            flow,
+            f"payload {flow.payload!r} is incompatible with {keyword} "
+            f"target {flow.target_end!r} (accepts {names})",
+        )
+
+    def _report_flow(self, code: str, flow: M.FlowUsage, message: str) -> None:
+        """Report against the flow's own qualified name when it has one,
+        else its owner's (flows are usually anonymous, like exposes)."""
+
+        where = flow.qualified_name
+        if where is None:
+            owner = flow.owner
+            where = (owner.qualified_name or owner.label) if owner is not None else flow.label
+        location = getattr(flow, "source_location", None)
+        self.diagnostics.append(Diagnostic("warning", code, message, where, location))
+
+    @staticmethod
+    def _flow_payload_refs(flow: M.FlowUsage) -> list[str]:
+        """Type references declared by the payload feature.  The model
+        keeps the payload as canonical text (``'x : T'`` / ``'T'`` /
+        ``'x : T1, T2'``); the part after the colon is the declared
+        typing, and a colon-free payload is a single reference (a type,
+        or a feature whose declaration carries the typing)."""
+
+        text = flow.payload or ""
+        if ":" in text:
+            return [t.strip() for t in text.split(":", 1)[1].split(",") if t.strip()]
+        return [text.strip()] if text.strip() else []
+
+    def _declared_types(self, element: M.Element | None) -> list[M.Element]:
+        """The declared typing behind a resolved payload/end reference: a
+        definition is its own type, a usage contributes its resolved
+        ``types``, an accept action its payload types.  Empty = unknown."""
+
+        if element is None:
+            return []
+        if isinstance(element, M.Definition):
+            return [element]
+        names: list[str] = []
+        if isinstance(element, M.AcceptAction):
+            names = list(element.payload_types)
+        elif isinstance(element, M.Usage):
+            names = list(element.types)
+        out: list[M.Element] = []
+        for name in names:
+            resolved = self._resolve_path(name.lstrip("~"), element)
+            if resolved is not None:
+                out.append(resolved)
+        return out
+
+    def _conforms(self, special: M.Element, general: M.Element) -> bool:
+        """True when ``special`` reaches ``general`` through the
+        specialization walk (``supers`` / ``types`` / ``subsets`` plus
+        implied bases; redefinition edges excluded, as in the cycle
+        check)."""
+
+        if special is general:
+            return True
+        seen: set[int] = set()
+        stack: list[M.Element] = [special]
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            for g in self._cycle_generals(node):
+                if g is general:
+                    return True
+                stack.append(g)
+        return False
 
     def _check_implicit(self, element: M.Element, ref: str) -> None:
         """stdlib-implicit-name: ``ref`` resolved, but only through the
@@ -636,8 +761,14 @@ class _Checker:
             parts = expr.base.parts + expr.parts
         else:
             return None
-        scope: M.Element = owner.owner or self.model
-        for segment in parts:
+        return self._resolve_path(".".join(parts), owner)
+
+    def _resolve_path(self, ref: str, context: M.Element) -> M.Element | None:
+        """Resolve a dotted path from ``context``'s scope (the shared walk
+        behind ``_resolves``, keeping the element); ``None`` on failure."""
+
+        scope: M.Element = context.owner or self.model
+        for segment in ref.split("."):
             if segment == "$":
                 scope = self.model
                 continue
