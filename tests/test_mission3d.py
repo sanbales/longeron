@@ -16,6 +16,7 @@ import math
 import struct
 from datetime import datetime, timezone
 from itertools import pairwise
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -23,6 +24,8 @@ import pytest
 import longeron
 from longeron.analysis import geometry, mission3d
 from longeron.analysis._expr import AnalysisError
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 WAYPOINTS = [
     (40.0100, -105.3000, 1750.0),
@@ -250,6 +253,252 @@ class TestFromReplay:
         assert max(alt for *_tll, alt in track.samples) == 1750.0  # still climbs
 
 
+# -- attitude ------------------------------------------------------------------
+
+
+def recover_attitude(q, lat, lon):
+    """(heading_deg, pitch_deg, left_z) implied by an ECEF quaternion.
+
+    Rotates the body axes by ``q`` and projects them onto the local
+    east-north-up frame; ``left_z`` is the vertical component of the
+    body +Y axis -- zero for a roll-free attitude.
+    """
+
+    x, y, z, w = q
+
+    def rotate(v):
+        t = (2 * (y * v[2] - z * v[1]), 2 * (z * v[0] - x * v[2]), 2 * (x * v[1] - y * v[0]))
+        cross = (y * t[2] - z * t[1], z * t[0] - x * t[2], x * t[1] - y * t[0])
+        return tuple(v[i] + w * t[i] + cross[i] for i in range(3))
+
+    phi, lam = math.radians(lat), math.radians(lon)
+    east = (-math.sin(lam), math.cos(lam), 0.0)
+    north = (-math.sin(phi) * math.cos(lam), -math.sin(phi) * math.sin(lam), math.cos(phi))
+    up = (math.cos(phi) * math.cos(lam), math.cos(phi) * math.sin(lam), math.sin(phi))
+
+    def enu(v):
+        return tuple(sum(v[i] * basis[i] for i in range(3)) for basis in (east, north, up))
+
+    nose = enu(rotate((1.0, 0.0, 0.0)))
+    left = enu(rotate((0.0, 1.0, 0.0)))
+    heading = math.degrees(math.atan2(nose[0], nose[1])) % 360.0
+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, nose[2]))))
+    return heading, pitch, left[2]
+
+
+@pytest.fixture(scope="module")
+def tilted(interp):
+    return mission3d.from_replay(
+        interp,
+        "Mission::FlightStates",
+        EVENTS,
+        waypoints=WAYPOINTS,
+        ground_alt=1650.0,
+        tilt_deg=25.0,
+    )
+
+
+class TestAttitude:
+    def test_keyframes_strictly_increasing(self, tilted):
+        times = [t for t, _h, _p in tilted.attitude()]
+        assert times == sorted(times) and len(set(times)) == len(times)
+        assert times[0] == 0.0 and times[-1] == tilted.duration
+
+    def test_pitch_zero_in_climb_and_descent_tilt_on_route(self, tilted):
+        # phases: takeoff 0-20, route 20-140, landing 140-170, ground 170-180
+        for t, _heading, pitch in tilted.attitude():
+            if t <= 20.0 or t >= 140.0:  # vertical/ground: props up
+                assert pitch == 0.0, (t, pitch)
+            elif 25.0 <= t <= 135.0:  # cruise, clear of the blends
+                assert pitch == -25.0, (t, pitch)
+
+    def test_heading_follows_the_track_legs(self, tilted):
+        legs = [
+            mission3d._initial_bearing_deg(a[0], a[1], b[0], b[1]) for a, b in pairwise(WAYPOINTS)
+        ]
+        keys = tilted.attitude()
+        # the drone faces the first leg from the ground up
+        assert keys[0][1] == pytest.approx(legs[0])
+        headings = [heading for _t, heading, _p in keys]
+        for leg in legs:  # every leg heading is flown
+            assert any(h == pytest.approx(leg) for h in headings), leg
+        # landing and the final ground hold keep the last leg's heading
+        assert keys[-1][1] == pytest.approx(legs[-1])
+
+    def test_blends_are_short_and_monotonic(self, tilted):
+        keys = tilted.attitude()
+        changes = 0
+        for (t0, h0, p0), (t1, h1, p1) in pairwise(keys):
+            if p0 == p1 and h0 == h1:
+                continue
+            changes += 1
+            assert t1 - t0 <= 3.0 + 1e-9  # the blend window
+            # slerp between the two keyframes moves pitch monotonically:
+            # the midpoint attitude lies between the endpoints
+            lat, lon = tilted._position_at((t0 + t1) / 2.0)
+            qa = mission3d._attitude_quaternion(lat, lon, h0, p0)
+            qb = mission3d._attitude_quaternion(lat, lon, h1, p1)
+            if sum(a * b for a, b in zip(qa, qb, strict=True)) < 0.0:
+                qb = tuple(-c for c in qb)
+            mid = tuple((a + b) / 2.0 for a, b in zip(qa, qb, strict=True))
+            norm = math.hypot(*mid)
+            _h, pitch, roll = recover_attitude(tuple(c / norm for c in mid), lat, lon)
+            assert min(p0, p1) - 1e-6 <= pitch <= max(p0, p1) + 1e-6
+            assert abs(roll) < 1e-6  # roll stays 0 through the blend
+        assert changes >= 2  # at least the climb->route and route->landing blends
+
+    def test_hover_only_track_keeps_props_level(self, interp):
+        track = mission3d.from_replay(
+            interp,
+            "Mission::FlightStates",
+            EVENTS,
+            waypoints=[(40.0, -105.0, 1750.0)],
+            tilt_deg=25.0,
+        )
+        # no horizontal motion anywhere: the tilt never engages
+        assert {pitch for _t, _h, pitch in track.attitude()} == {0.0}
+
+    def test_plain_route_track_holds_the_tilt(self):
+        track = mission3d.mission_track(WAYPOINTS, tilt_deg=10.0)
+        assert {pitch for _t, _h, pitch in track.attitude()} == {-10.0}
+
+    def test_tilt_validation(self, interp):
+        with pytest.raises(AnalysisError, match="tilt_deg"):
+            mission3d.mission_track(WAYPOINTS, tilt_deg=-1.0)
+        with pytest.raises(AnalysisError, match="tilt_deg"):
+            mission3d.from_replay(
+                interp, "Mission::FlightStates", EVENTS, waypoints=WAYPOINTS, tilt_deg=90.0
+            )
+
+    def test_quaternion_is_unit_and_roll_free(self, tilted):
+        for t, heading, pitch in tilted.attitude():
+            lat, lon = tilted._position_at(t)
+            q = mission3d._attitude_quaternion(lat, lon, heading, pitch)
+            assert math.hypot(*q) == pytest.approx(1.0)
+            got_heading, got_pitch, roll = recover_attitude(q, lat, lon)
+            assert got_pitch == pytest.approx(pitch, abs=1e-9)
+            assert abs(roll) < 1e-12
+            assert got_heading == pytest.approx(heading % 360.0, abs=1e-9)
+
+
+# -- the drone model's own attitude/mission physics ----------------------------
+
+#: hand-computed stock design point of examples/drone.sysml
+THRUST_N = 0.11 * 1.225 * (0.75 * 920.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
+USABLE_N = 4.0 * THRUST_N * 0.55  # continuousThrustFraction
+MASS_KG = 0.42 + 0.38 + 4.0 * 0.048 + 4.0 * 0.012 + 0.2
+CDA_M2 = 0.024 * 1.1  # frontalArea x bluff-body Cd
+MAX_TILT_DEG = math.degrees(math.acos(MASS_KG * 9.81 / USABLE_N))
+CRUISE_SPEED = math.sqrt(MASS_KG * 9.81 * math.tan(math.radians(25.0)) / (0.5 * 1.225 * CDA_M2))
+
+#: tutorial 10's mission: a loop over Piedmont Park, ~300 m MSL ground
+ATLANTA = [
+    (33.7813, -84.3833, 350.0),
+    (33.7885, -84.3785, 390.0),
+    (33.7900, -84.3695, 380.0),
+    (33.7838, -84.3690, 360.0),
+    (33.7770, -84.3825, 350.0),
+]
+
+
+@pytest.fixture(scope="module")
+def drone_interp():
+    return longeron.Interpreter(longeron.load(EXAMPLES / "drone.sysml", cache=False))
+
+
+class TestModelPhysics:
+    def test_max_tilt_is_the_continuous_thrust_arccos(self, drone_interp):
+        quad = drone_interp.instantiate("Drone::QuadCopter")
+        assert quad.slots["thrustPerRotor"] == pytest.approx(THRUST_N)
+        assert quad.slots["usableThrust"] == pytest.approx(USABLE_N)
+        assert quad.slots["maxTilt"] == pytest.approx(MAX_TILT_DEG)  # ~52.8 deg
+        # ...but the COMMANDED tilt is ops-capped: min(physics, 25 deg)
+        assert quad.slots["cruiseTilt"] == 25.0
+
+    def test_max_cruise_speed_is_the_drag_balance(self, drone_interp):
+        quad = drone_interp.instantiate("Drone::QuadCopter")
+        assert quad.slots["maxCruiseSpeed"] == pytest.approx(CRUISE_SPEED)  # ~18.7 m/s
+
+    def test_tilt_for_speed_inverts_max_cruise_speed(self, drone_interp):
+        quad = drone_interp.instantiate("Drone::QuadCopter")
+        tilt = drone_interp.call(
+            "Drone::TiltForSpeed",
+            speed=quad.slots["maxCruiseSpeed"],
+            massKg=quad.slots["totalMass"],
+            dragArea=quad.slots["dragArea"],
+        )
+        assert tilt == pytest.approx(25.0)
+
+    def test_overloaded_airframe_reads_zero_not_domain_error(self, drone_interp):
+        assert drone_interp.call("Drone::MaxTilt", massKg=3.0, thrustN=USABLE_N) == 0.0
+
+    def test_mission_time_calc(self, drone_interp):
+        minutes = drone_interp.call(
+            "Drone::MissionTime", routeM=3600.0, climbM=50.0, descentM=45.0, cruiseSpeed=12.0
+        )
+        assert minutes == pytest.approx((3600.0 / 12.0 + 50.0 / 2.0 + 45.0 / 1.5) / 60.0)
+
+    def test_model_tilt_reads_the_model(self, drone_interp):
+        assert mission3d.model_tilt(drone_interp, "Drone::QuadCopter") == 25.0
+
+    def test_model_tilt_missing_attribute_is_loud(self, drone_interp):
+        with pytest.raises(AnalysisError, match="did not evaluate to a number"):
+            mission3d.model_tilt(drone_interp, "Drone::QuadCopter", attribute="nope")
+        with pytest.raises(AnalysisError, match="cannot instantiate"):
+            mission3d.model_tilt(drone_interp, "Drone::Nope")
+
+    def test_mission_values_design_point(self, drone_interp):
+        values = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
+        route = sum(mission3d._haversine_m(a[0], a[1], b[0], b[1]) for a, b in pairwise(ATLANTA))
+        expected = (route / CRUISE_SPEED + 50.0 / 2.0 + 50.0 / 1.5) / 60.0
+        assert values["routeM"] == pytest.approx(route)  # ~3.9 km
+        assert values["cruiseTiltDeg"] == 25.0
+        assert values["cruiseSpeedMps"] == pytest.approx(CRUISE_SPEED)
+        assert values["missionMinutes"] == pytest.approx(expected)  # ~4.5 min
+        assert values["missionMinutes"] < 6.0  # inside the model's budget
+
+    def test_mission_values_payload_what_if_busts_the_budget(self, drone_interp):
+        # a 1 kg payload eats the continuous-thrust margin: the tilt
+        # ceiling collapses below the ops cap, cruise slows, budget busts
+        bust = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.0)
+        mass = MASS_KG + 0.8
+        tilt = math.degrees(math.acos(mass * 9.81 / USABLE_N))
+        speed = math.sqrt(mass * 9.81 * math.tan(math.radians(tilt)) / (0.5 * 1.225 * CDA_M2))
+        assert bust["cruiseTiltDeg"] == pytest.approx(tilt)  # ~5.5 deg
+        assert bust["cruiseSpeedMps"] == pytest.approx(speed)  # ~11 m/s
+        assert bust["missionMinutes"] > 6.0  # budget bust (~6.9 min)
+        # past the continuous-thrust ceiling: infinite, not a crash
+        over = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.2)
+        assert over["cruiseSpeedMps"] == 0.0
+        assert math.isinf(over["missionMinutes"])
+
+    def test_mission_values_unknown_assembly_is_loud(self, drone_interp):
+        with pytest.raises(AnalysisError, match="mission physics"):
+            mission3d.mission_values(
+                drone_interp, ATLANTA, ground_alt=300.0, assembly="Drone::Battery"
+            )
+
+    def test_requirement_scoring(self, drone_interp):
+        from longeron.analysis.scoreboard import scoreboard
+
+        model = drone_interp.model
+        green = scoreboard(
+            model, values=mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
+        )
+        row = {r.name: r for r in green.table()}["missionTime"]
+        assert row.unit == "min"
+        assert row.raw == pytest.approx(4.455, abs=0.01)
+        # smaller-is-better between ramp0=6 (budget) and ramp1=4
+        assert row.utility == pytest.approx((6.0 - row.raw) / 2.0)
+        bust = scoreboard(
+            model,
+            values=mission3d.mission_values(
+                drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.0
+            ),
+        )
+        assert {r.name: r for r in bust.table()}["missionTime"].utility == 0.0
+
+
 # -- CZML payload --------------------------------------------------------------
 
 
@@ -459,8 +708,19 @@ class TestDroneModelPacket:
         # the embedded payload is the mesh's own GLB, byte for byte
         payload = base64.b64decode(model["gltf"].split(",", 1)[1])
         assert payload == mission3d.mesh_to_glb(mesh)
-        # nose along the velocity vector (VelocityOrientationProperty)
-        assert drone["orientation"] == {"velocityReference": "#position"}
+        # the multirotor attitude rides as SAMPLED quaternions -- NOT a
+        # velocityReference (VelocityOrientationProperty pitches the quad
+        # vertical during climb/descent)
+        orientation = drone["orientation"]
+        assert "velocityReference" not in orientation
+        assert orientation["epoch"] == "2026-01-01T12:00:00Z"
+        assert orientation["interpolationAlgorithm"] == "LINEAR"
+        packed = orientation["unitQuaternion"]
+        assert len(packed) % 5 == 0 and len(packed) >= 10
+        times = packed[0::5]
+        assert times == sorted(times) and len(set(times)) == len(times)
+        for x, y, z, w in zip(packed[1::5], packed[2::5], packed[3::5], packed[4::5], strict=True):
+            assert math.hypot(x, y, z, w) == pytest.approx(1.0, abs=1e-4)
         # the state-machine label and the trail survive the swap
         assert "label" in drone and "path" in drone
 

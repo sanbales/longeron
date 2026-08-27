@@ -395,12 +395,21 @@ def grand_dashboard(
     smt_what_if = what_if_system.check()
 
     # -- Cesium: the state machine's recorded execution over the route -------
+    # the cruise attitude comes FROM THE MODEL where it carries one (the
+    # drone example's cruiseTilt calc); a model without the physics still
+    # flies, props level
+    interp = Interpreter(model)
+    try:
+        tilt_deg = mission3d.model_tilt(interp, assembly)
+    except AnalysisError:
+        tilt_deg = 0.0
     track = mission3d.from_replay(
-        Interpreter(model),
+        interp,
         states,
         list(events),
         waypoints=waypoints,
         ground_alt=ground_alt,
+        tilt_deg=tilt_deg,
     )
     mission = mission3d.mission_viewer(
         track,

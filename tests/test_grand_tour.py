@@ -101,6 +101,11 @@ class TestComposition:
         assert ATLANTA_LOOP[0][0] == pytest.approx(33.7813)
         assert dash.report["occludedFraction"] == 0.0  # stock camera: clear
 
+    def test_track_flies_the_model_tilt(self, dash):
+        # the Cesium pane's cruise attitude comes FROM THE MODEL: cruiseTilt
+        # = min(arccos continuous-thrust ceiling ~52.8 deg, 25 deg ops cap)
+        assert dash.track.tilt_deg == 25.0
+
     def test_scene_carries_the_view_cone_but_analysis_mesh_does_not(self, dash):
         scene = json.loads(dash.viewer.mesh_json)
         assert scene["parts"][-1]["name"] == "viewCone"

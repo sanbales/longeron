@@ -51,12 +51,35 @@ build) and the ACTUAL airframe geometry flies the route: the mesh
 exports to a self-contained binary glTF through :func:`mesh_to_glb`
 (in-house, stdlib-only -- see :mod:`longeron.analysis._glb` for the
 exact container), embeds in the CZML as a ``data:`` URI (tens of kB for
-the quad), keeps its nose along the velocity vector (CZML
-``velocityReference`` orientation, Cesium's
-``VelocityOrientationProperty``), and never shrinks below a legible
-pixel size however far the camera sits; ``model_scale`` blows it up
-beyond true scale when the route dwarfs the airframe.  Without a mesh
-the drone stays the point entity.  The camera
+the quad), flies with a MULTIROTOR ATTITUDE, and never shrinks below a
+legible pixel size however far the camera sits; ``model_scale`` blows it
+up beyond true scale when the route dwarfs the airframe.  Without a mesh
+the drone stays the point entity.
+
+Attitude: a multirotor moves vertically props-up and cruises with a
+small forward tilt -- Cesium's ``VelocityOrientationProperty`` (which
+points the nose along the velocity vector, so a climb renders the quad
+VERTICAL) is deliberately NOT used.  Instead the track bakes a sampled
+orientation into the CZML (``unitQuaternion`` keyframes, computed by
+:meth:`MissionTrack.attitude`): yaw follows the track heading, pitch is
+0 wherever there is no horizontal motion (climb, descent, hover,
+ground) and the ``tilt_deg`` forward tilt while the drone advances
+along the route, roll stays 0, and orientation changes blend over a few
+seconds (Cesium slerps between adjacent quaternion samples).  A
+CZML-sampled property is chosen over a front-end ``CallbackProperty``
+because the module's whole design bakes the payload kernel-side: the
+samples are deterministic, testable without a browser, and need no
+front-end code.  The tilt itself should come FROM THE MODEL:
+:func:`model_tilt` evaluates the airframe's own physics (e.g.
+``examples/drone.sysml``'s ``cruiseTilt``: the arccos altitude-hold
+ceiling at continuous thrust, capped by the operational comfort limit)
+and feeds ``mission_track`` / ``from_replay`` ``tilt_deg=``, a plain
+float override.  :func:`mission_values` completes the loop: it measures
+the route's waypoint legs and evaluates the model's ``MissionTime``
+calc at the model's own achievable cruise speed, producing the
+scoreboard ``values=`` bindings for the mission-time requirement.
+
+The camera
 tracks the drone with an offset sized from the route (CZML ``viewFrom``).
 Cesium's native timeline + animation dial are the mission-playback UI
 (play/pause/scrub); the chrome that needs Cesium ion (base-layer picker,
@@ -124,7 +147,9 @@ __all__ = [
     "from_replay",
     "mesh_to_glb",
     "mission_track",
+    "mission_values",
     "mission_viewer",
+    "model_tilt",
     "model_waypoints",
 ]
 
@@ -148,6 +173,14 @@ CESIUM_CSS_URL = CESIUM_BASE_URL + "Widgets/widgets.css"
 _DEFAULT_EPOCH = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 _EARTH_RADIUS_M = 6_371_008.8
+
+#: orientation changes blend over this many seconds (half before the
+#: motion change, half after) -- a multirotor takes a moment to rotate
+_ATTITUDE_BLEND_S = 3.0
+
+#: horizontal ground speed below this is a vertical/hover motion
+#: segment: props level, heading held (m/s)
+_ATTITUDE_MOVING_MPS = 0.2
 
 # state-name substring hints -> motion phase, checked in order (takeoff
 # before ground, so "takingOff" never matches the "off" ground hint)
@@ -191,7 +224,10 @@ class MissionTrack:
     increasing times; ``waypoints`` is the planned route the samples fly;
     ``phases`` records the motion segments as ``(t0, t1, phase, qname)``
     -- for replay-built tracks ``qname`` is the instance-qualified name
-    of the driving leaf state (empty for plain waypoint tracks).
+    of the driving leaf state (empty for plain waypoint tracks);
+    ``tilt_deg`` is the forward cruise tilt the airframe holds while it
+    moves along the route (degrees nose-down; ideally the MODEL's own
+    number -- see :func:`model_tilt`).
     """
 
     name: str
@@ -199,6 +235,7 @@ class MissionTrack:
     samples: list[tuple[float, float, float, float]]
     waypoints: list[tuple[float, float, float]]
     phases: list[tuple[float, float, str, str]]
+    tilt_deg: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -222,9 +259,10 @@ class MissionTrack:
         active state name through the phases.  With ``mesh`` (a
         geometry-module mesh dict) the drone entity is the airframe's
         own glTF model -- :func:`mesh_to_glb` output on a ``data:``
-        URI, nose steered along the velocity vector, scaled by
-        ``model_scale`` and clamped to a legible minimum pixel size --
-        instead of the fallback point.
+        URI, nose steered along the track heading with the multirotor
+        attitude (see :meth:`attitude`), scaled by ``model_scale`` and
+        clamped to a legible minimum pixel size -- instead of the
+        fallback point.
         """
 
         if len(self.samples) < 2:
@@ -343,9 +381,31 @@ class MissionTrack:
                 "scale": model_scale,
                 "minimumPixelSize": _MODEL_MIN_PIXELS,
             }
-            # nose along the velocity vector: Cesium dereferences this to
-            # a VelocityOrientationProperty over the entity's own position
-            drone["orientation"] = {"velocityReference": "#position"}
+            # the multirotor attitude, baked as sampled quaternions: yaw
+            # follows the track heading, pitch 0 in vertical/hover motion
+            # (props up), the model-derived forward tilt along the route,
+            # roll 0; Cesium slerps between adjacent samples.  NOT a
+            # velocityReference: VelocityOrientationProperty would pitch
+            # the quad vertical during climb and descent.
+            quaternions: list[float] = []
+            previous: tuple[float, float, float, float] | None = None
+            for t, heading, pitch in self.attitude():
+                lat, lon = self._position_at(t)
+                q = _attitude_quaternion(lat, lon, heading, pitch)
+                if (
+                    previous is not None
+                    and sum(a * b for a, b in zip(q, previous, strict=True)) < 0.0
+                ):
+                    q = (-q[0], -q[1], -q[2], -q[3])  # same hemisphere: short-way slerp
+                previous = q
+                quaternions.append(round(t, 3))
+                quaternions.extend(round(component, 6) for component in q)
+            drone["orientation"] = {
+                "epoch": start,
+                "unitQuaternion": quaternions,
+                "interpolationAlgorithm": "LINEAR",
+                "interpolationDegree": 1,
+            }
         else:
             drone["point"] = {
                 "pixelSize": 10,
@@ -376,6 +436,75 @@ class MissionTrack:
             )
         return intervals
 
+    def attitude(self, *, blend_s: float = _ATTITUDE_BLEND_S) -> list[tuple[float, float, float]]:
+        """The orientation keyframes: ``(t, heading_deg, pitch_deg)``.
+
+        Heading follows the track's direction of travel (great-circle
+        initial bearing per motion segment, degrees clockwise from true
+        north); hover/vertical segments hold the last heading flown (or
+        face the first leg before anything has moved).  Pitch is 0
+        wherever the drone has no horizontal motion -- a multirotor
+        climbs, descends, and hovers props-up -- and ``-tilt_deg``
+        (nose-down forward tilt) while it advances along the route.
+        Roll is always 0.  Orientation changes blend over ``blend_s``
+        seconds, half on each side of the motion change, clamped to the
+        neighboring segments' midpoints so keyframe times stay strictly
+        increasing.
+        """
+
+        if len(self.samples) < 2:
+            raise AnalysisError("a mission track needs at least two samples")
+        spans: list[list[float]] = []  # [t0, t1, heading|nan, pitch]
+        for (t0, lat0, lon0, _a0), (t1, lat1, lon1, _a1) in pairwise(self.samples):
+            horizontal = _haversine_m(lat0, lon0, lat1, lon1)
+            if horizontal / (t1 - t0) >= _ATTITUDE_MOVING_MPS:
+                heading = _initial_bearing_deg(lat0, lon0, lat1, lon1)
+                pitch = -self.tilt_deg
+            else:
+                heading, pitch = math.nan, 0.0
+            spans.append([t0, t1, heading, pitch])
+        last = math.nan
+        for span in spans:  # hover holds the last heading flown
+            if math.isnan(span[2]):
+                span[2] = last
+            else:
+                last = span[2]
+        ahead = 0.0  # leading hovers face the first leg; a still track faces north
+        for span in reversed(spans):
+            if math.isnan(span[2]):
+                span[2] = ahead
+            else:
+                ahead = span[2]
+        merged = [spans[0]]
+        for span in spans[1:]:  # merge same-orientation neighbors
+            if span[2] == merged[-1][2] and span[3] == merged[-1][3]:
+                merged[-1][1] = span[1]
+            else:
+                merged.append(span)
+        keys: list[tuple[float, float, float]] = [(merged[0][0], merged[0][2], merged[0][3])]
+
+        def append(t: float, heading: float, pitch: float) -> None:
+            if t > keys[-1][0] + 1e-9:
+                keys.append((t, heading, pitch))
+
+        for (a0, a1, ah, ap), (b0, b1, bh, bp) in pairwise(merged):
+            append(a1 - min(blend_s / 2.0, (a1 - a0) / 2.0), ah, ap)
+            append(b0 + min(blend_s / 2.0, (b1 - b0) / 2.0), bh, bp)
+        append(merged[-1][1], merged[-1][2], merged[-1][3])
+        return keys
+
+    def _position_at(self, t: float) -> tuple[float, float]:
+        """(lat, lon) linearly interpolated on the samples at time t."""
+
+        samples = self.samples
+        if t <= samples[0][0]:
+            return samples[0][1], samples[0][2]
+        for (t0, lat0, lon0, _a0), (t1, lat1, lon1, _a1) in pairwise(samples):
+            if t <= t1:
+                f = (t - t0) / (t1 - t0)
+                return lat0 + f * (lat1 - lat0), lon0 + f * (lon1 - lon0)
+        return samples[-1][1], samples[-1][2]
+
     def _camera_offset_m(self) -> float:
         """A tracked-camera range that frames the whole route."""
 
@@ -405,6 +534,79 @@ def _haversine_m(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> floa
     d_lam = math.radians(lon_b - lon_a)
     h = math.sin(d_phi / 2) ** 2 + math.cos(phi_a) * math.cos(phi_b) * math.sin(d_lam / 2) ** 2
     return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(h))
+
+
+def _initial_bearing_deg(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    """Great-circle initial bearing a->b, degrees clockwise from north."""
+
+    phi_a, phi_b = math.radians(lat_a), math.radians(lat_b)
+    d_lam = math.radians(lon_b - lon_a)
+    x = math.sin(d_lam) * math.cos(phi_b)
+    y = math.cos(phi_a) * math.sin(phi_b) - math.sin(phi_a) * math.cos(phi_b) * math.cos(d_lam)
+    return math.degrees(math.atan2(x, y)) % 360.0
+
+
+def _attitude_quaternion(
+    lat: float, lon: float, heading_deg: float, pitch_deg: float
+) -> tuple[float, float, float, float]:
+    """The ECEF unit quaternion ``(x, y, z, w)`` for a zero-roll attitude.
+
+    Rotates the entity's body axes (+X nose, +Y left, +Z top -- the
+    frame Cesium gives glTF models, our GLB exporter included) into the
+    Earth-fixed frame at ``lat``/``lon``: ``heading_deg`` clockwise from
+    true north, ``pitch_deg`` nose-up (so a multirotor's forward tilt is
+    a NEGATIVE pitch).
+    """
+
+    phi, lam = math.radians(lat), math.radians(lon)
+    east = (-math.sin(lam), math.cos(lam), 0.0)
+    north = (-math.sin(phi) * math.cos(lam), -math.sin(phi) * math.sin(lam), math.cos(phi))
+    up = (math.cos(phi) * math.cos(lam), math.cos(phi) * math.sin(lam), math.sin(phi))
+    a, p = math.radians(heading_deg), math.radians(pitch_deg)
+    # body axes in the local east-north-up frame (zero roll)
+    nose = (math.sin(a) * math.cos(p), math.cos(a) * math.cos(p), math.sin(p))
+    right = (math.cos(a), -math.sin(a), 0.0)
+    top = _cross(right, nose)
+    left = _cross(top, nose)
+
+    def ecef(v: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (
+            v[0] * east[0] + v[1] * north[0] + v[2] * up[0],
+            v[0] * east[1] + v[1] * north[1] + v[2] * up[1],
+            v[0] * east[2] + v[1] * north[2] + v[2] * up[2],
+        )
+
+    x_axis, y_axis, z_axis = ecef(nose), ecef(left), ecef(top)
+    # rotation matrix (columns = body axes in ECEF) -> quaternion, the
+    # standard trace-max branch selection for numerical stability
+    m00, m01, m02 = x_axis[0], y_axis[0], z_axis[0]
+    m10, m11, m12 = x_axis[1], y_axis[1], z_axis[1]
+    m20, m21, m22 = x_axis[2], y_axis[2], z_axis[2]
+    trace = m00 + m11 + m22
+    if trace > 0.0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        q = ((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s)
+    elif m00 >= m11 and m00 >= m22:
+        s = 2.0 * math.sqrt(1.0 + m00 - m11 - m22)
+        q = (0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s)
+    elif m11 >= m22:
+        s = 2.0 * math.sqrt(1.0 + m11 - m00 - m22)
+        q = ((m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s)
+    else:
+        s = 2.0 * math.sqrt(1.0 + m22 - m00 - m11)
+        q = ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
+    norm = math.hypot(*q)
+    return (q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm)
+
+
+def _cross(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
 
 
 def _leg_length_m(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
@@ -451,10 +653,20 @@ def _parse_waypoints(
     return points, times
 
 
+def _validate_tilt(tilt_deg: float) -> float:
+    """A forward cruise tilt must be a sane multirotor attitude."""
+
+    tilt = float(tilt_deg)
+    if not 0.0 <= tilt < 90.0:
+        raise AnalysisError(f"tilt_deg must be in [0, 90) degrees (got {tilt_deg!r})")
+    return tilt
+
+
 def mission_track(
     waypoints: Sequence[Sequence[float]],
     *,
     speed_mps: float = 12.0,
+    tilt_deg: float = 0.0,
     epoch: datetime | None = None,
     name: str = "mission",
 ) -> MissionTrack:
@@ -464,6 +676,9 @@ def mission_track(
     tuples (degrees, meters above the ellipsoid, seconds past
     ``epoch``); either every waypoint carries a time or none does, in
     which case times derive from ``speed_mps`` over the 3D leg lengths.
+    ``tilt_deg`` is the forward cruise tilt the airframe holds along
+    the route (degrees nose-down; derive it from the model with
+    :func:`model_tilt`, or pass any plain float).
     ``epoch`` defaults to a fixed instant so the CZML is deterministic.
     """
 
@@ -482,6 +697,7 @@ def mission_track(
         samples=samples,
         waypoints=points,
         phases=[(times[0], times[-1], "route", "")],
+        tilt_deg=_validate_tilt(tilt_deg),
     )
 
 
@@ -525,6 +741,98 @@ def model_waypoints(
             f"{label!r} has no waypoint children (parts with {lat!r}/{lon!r} attributes)"
         )
     return waypoints
+
+
+def model_tilt(
+    interpreter: Interpreter,
+    assembly: str | M.Definition | M.Usage,
+    *,
+    attribute: str = "cruiseTilt",
+) -> float:
+    """The airframe's own cruise tilt, degrees, read off the model.
+
+    Instantiates ``assembly`` and evaluates ``attribute`` -- for
+    ``examples/drone.sysml`` that is ``cruiseTilt``, the CruiseTilt calc:
+    the altitude-hold ceiling ``arccos(m g / T)`` at continuous thrust,
+    capped by the operational comfort limit.  Feed the result to
+    :func:`mission_track` / :func:`from_replay` ``tilt_deg=`` so the
+    globe animation flies the MODEL's physics (any plain float still
+    works as an override).
+    """
+
+    try:
+        instance = interpreter.instantiate(assembly)
+    except SysMLError as err:
+        raise AnalysisError(f"cannot instantiate {assembly!r}: {err}") from err
+    value = instance.slots.get(attribute)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        label = assembly if isinstance(assembly, str) else (assembly.qualified_name or "")
+        raise AnalysisError(f"{label}::{attribute} did not evaluate to a number (got {value!r})")
+    return _validate_tilt(float(value))
+
+
+def mission_values(
+    interpreter: Interpreter,
+    waypoints: Sequence[Sequence[float]],
+    *,
+    ground_alt: float,
+    assembly: str | M.Definition | M.Usage = "Drone::QuadCopter",
+    mission_calc: str | M.Definition | M.Usage = "Drone::MissionTime",
+    payload_mass: float | None = None,
+) -> dict[str, float]:
+    """Scoreboard ``values=`` bindings for the mission-time requirement.
+
+    The kernel measures the GEOMETRY -- the waypoint legs' great-circle
+    lengths, the climb from ``ground_alt`` to the first waypoint, and
+    the descent home from the last (the same phase mapping
+    :func:`from_replay` flies) -- and the MODEL computes the physics:
+    an ``assembly`` instance supplies the achievable cruise speed
+    (``maxCruiseSpeed`` at ``cruiseTilt``) and the ``mission_calc``
+    calc def turns distances and speed into minutes.  The returned dict
+    (``missionMinutes`` plus the ``cruiseTiltDeg`` / ``cruiseSpeedMps``
+    / ``routeM`` it derives from) injects straight into
+    ``scoreboard(model, values=...)``, exactly like the geometry
+    module's occlusion measures.
+
+    ``payload_mass`` overrides the instance's ``payloadMass`` -- the
+    one-line what-if: a heavier payload eats the continuous-thrust
+    margin, the tilt ceiling and cruise speed collapse, and the mission
+    budget busts.  An airframe that cannot hold altitude at continuous
+    thrust at all (cruise speed 0) reports an INFINITE mission time.
+    """
+
+    points, _times = _parse_waypoints(waypoints, minimum=2, allow_times=True)
+    route_m = sum(_haversine_m(a[0], a[1], b[0], b[1]) for a, b in pairwise(points))
+    climb_m = max(points[0][2] - ground_alt, 0.0)
+    descent_m = max(points[-1][2] - ground_alt, 0.0)
+    overrides = {} if payload_mass is None else {"payloadMass": float(payload_mass)}
+    try:
+        instance = interpreter.instantiate(assembly, **overrides)
+        speed = float(instance.slots["maxCruiseSpeed"])
+        tilt = float(instance.slots["cruiseTilt"])
+        if speed > 0.0:
+            minutes = float(
+                interpreter.call(
+                    mission_calc,
+                    routeM=route_m,
+                    climbM=climb_m,
+                    descentM=descent_m,
+                    cruiseSpeed=speed,
+                )
+            )
+        else:
+            minutes = math.inf
+    except (SysMLError, KeyError, TypeError, ValueError) as err:
+        raise AnalysisError(
+            f"{assembly!r} did not yield the mission physics "
+            f"(cruiseTilt / maxCruiseSpeed / {mission_calc!r}): {err}"
+        ) from err
+    return {
+        "missionMinutes": minutes,
+        "cruiseTiltDeg": tilt,
+        "cruiseSpeedMps": speed,
+        "routeM": route_m,
+    }
 
 
 def _classify(qname: str, overrides: Mapping[str, str] | None) -> str:
@@ -587,6 +895,7 @@ def from_replay(
     inputs: dict[str, Any] | None = None,
     phases: Mapping[str, str] | None = None,
     ground_alt: float = 0.0,
+    tilt_deg: float = 0.0,
     seconds_per_step: float = 10.0,
     epoch: datetime | None = None,
     name: str | None = None,
@@ -602,8 +911,11 @@ def from_replay(
     ``phases=`` for per-state-name overrides.  ``waypoints`` are
     ``(lat, lon, alt)`` tuples (no times -- timing comes from the
     machine); the mission starts at the first waypoint at
-    ``ground_alt``.  Pure event cascades (step mode) count each step as
-    ``seconds_per_step`` seconds.
+    ``ground_alt``.  ``tilt_deg`` is the forward cruise tilt the
+    airframe holds while it advances along the route (degrees
+    nose-down; derive it from the model with :func:`model_tilt`, or
+    pass any plain float).  Pure event cascades (step mode) count each
+    step as ``seconds_per_step`` seconds.
     """
 
     from ..replay import record_timeline  # imports interpreter+render; keep module import light
@@ -697,6 +1009,7 @@ def from_replay(
         samples=samples,
         waypoints=points,
         phases=phase_records,
+        tilt_deg=_validate_tilt(tilt_deg),
     )
 
 
@@ -973,8 +1286,10 @@ def mission_viewer(
     tracking the drone; Cesium's native timeline and animation dial
     play, pause, scrub, and re-speed the mission.  Pass ``mesh`` (a
     :mod:`longeron.analysis.geometry` mesh dict) to fly the airframe's
-    own geometry as a glTF model, nose along the velocity vector and
-    ``model_scale`` times true size; without it the drone is a point.
+    own geometry as a glTF model at ``model_scale`` times true size,
+    flown with the multirotor attitude (yaw along the track heading,
+    props level in vertical phases, the track's ``tilt_deg`` forward
+    tilt in cruise); without a mesh the drone is a point.
     ``imagery`` picks the tokenless base: ``'satellite'`` (Esri World
     Imagery, the default), ``'plain'`` (a neutral dark globe, no
     tiles), or ``'osm'`` (OpenStreetMap streets); ``ion_token``

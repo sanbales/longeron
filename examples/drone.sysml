@@ -60,6 +60,34 @@ package Drone {
             diameter = propellers.diameter->head()
         );
 
+        // ----- attitude / cruise performance (see the Attitude calc
+        // defs below for the derivation) -------------------------------
+        // parasite drag area CdA, built up bluff-body style (the
+        // uav_missions.sysml BluffFrameDrag idiom): ~0.024 m^2 of frontal
+        // area (body + battery stack + four arms + motor cans + props in
+        // edgewise flow) times Cd ~1.1 for an open frame
+        attribute frontalArea : Real = 0.024;               // m^2
+        attribute dragArea : Real = frontalArea * 1.1;      // parasite CdA, m^2
+        // sustained flight runs partial throttle: motor thermals and
+        // control headroom hold CONTINUOUS thrust to ~55% of bench static
+        attribute continuousThrustFraction : Real = 0.55;
+        attribute usableThrust : Real =
+            4.0 * thrustPerRotor * continuousThrustFraction;    // N, continuous
+        // the flight controller's commanded-attitude cap: comfort and
+        // controllability, far below the physics ceiling
+        attribute maxOperationalTilt : Real = 25.0 [SI::'°'];
+        attribute maxTilt : Real = MaxTilt(
+            massKg = totalMass, thrustN = usableThrust
+        );                                                   // deg, physics cap
+        attribute cruiseTilt : Real = CruiseTilt(
+            massKg = totalMass,
+            thrustN = usableThrust,
+            opsCapDeg = maxOperationalTilt
+        );                                                   // deg, commanded
+        attribute maxCruiseSpeed : Real = MaxCruiseSpeed(
+            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
+        );                                                   // m/s
+
         part chassis : Frame;
         part battery : Battery;
         part motors : Motor[4];
@@ -104,6 +132,86 @@ package Drone {
         in thrust : Real;
         in mass : Real;
         return : Real = thrust / (mass * 9.81);
+    }
+
+    // ----- attitude & mission time --------------------------------------
+    // A multirotor holds altitude with its thrust vector tilted by theta:
+    //   vertical    T cos(theta) = m g          (altitude hold)
+    //   horizontal  T sin(theta) = 0.5 rho CdA v^2   (parasite drag)
+    // so theta_max = arccos(m g / T) at the usable thrust T, and the
+    // drag balance gives tan(theta) = 0.5 rho CdA v^2 / (m g) -- invert
+    // for the fastest level cruise a commanded tilt sustains.  At the
+    // stock point (T/W ~ 3.0) the full-throttle ceiling would be ~70 deg
+    // and even the continuous-thrust (55%) ceiling is ~53 deg --
+    // unrealistically sporty, so the COMMANDED tilt is the min() of the
+    // physics cap and the operational comfort cap (25 deg), both visible
+    // as QuadCopter attributes.  First-order honest: sea-level rho,
+    // rotor induced effects and frame lift ignored, drag purely
+    // parasitic.  Stock numbers: cruiseTilt 25 deg -> 18.7 m/s;
+    // mission time over tutorial 10's 3.9 km Atlanta loop ~4.5 min.
+
+    calc def MaxTilt {
+        doc /* The altitude-hold tilt ceiling, degrees: arccos(m g / T)
+               at the usable (continuous) total thrust T.  The ratio is
+               clamped at 1 so an overloaded airframe reads 0 deg (it
+               cannot hold altitude tilted at all) instead of a domain
+               error. */
+        in massKg : Real;
+        in thrustN : Real;      // usable TOTAL thrust, N (all rotors)
+        return : Real = acos(min(1.0, massKg * 9.81 / thrustN)) * 180.0 / pi;
+    }
+
+    calc def TiltForSpeed {
+        doc /* The level-cruise tilt that holds speed v, degrees:
+               tan(theta) = 0.5 rho CdA v^2 / (m g). */
+        in speed : Real;        // m/s
+        in massKg : Real;
+        in dragArea : Real;     // parasite CdA, m^2
+        return : Real = atan(
+            0.5 * 1.225 * dragArea * speed * speed / (massKg * 9.81)
+        ) * 180.0 / pi;
+    }
+
+    calc def CruiseTilt {
+        doc /* The commanded cruise tilt: the physics ceiling capped by
+               the operational comfort limit. */
+        in massKg : Real;
+        in thrustN : Real;
+        in opsCapDeg : Real;
+        return : Real = min(
+            MaxTilt(massKg = massKg, thrustN = thrustN), opsCapDeg
+        );
+    }
+
+    calc def MaxCruiseSpeed {
+        doc /* TiltForSpeed inverted at the commanded tilt: the fastest
+               level cruise it sustains, v = sqrt(m g tan(theta) /
+               (0.5 rho CdA)). */
+        in tiltDeg : Real;
+        in massKg : Real;
+        in dragArea : Real;
+        return : Real = sqrt(
+            massKg * 9.81 * tan(tiltDeg * pi / 180.0) / (0.5 * 1.225 * dragArea)
+        );
+    }
+
+    calc def MissionTime {
+        doc /* Route time at the achievable per-phase speeds, minutes:
+               the horizontal legs at cruiseSpeed, the climb to route
+               altitude and the descent home at the operational vertical
+               rates.  The distances are geometry, measured off the
+               mission's waypoint legs by
+               longeron.analysis.mission3d.mission_values and passed in
+               (the same kernel-measures seam as the installation
+               requirement). */
+        in routeM : Real;               // horizontal route length, m
+        in climbM : Real;               // takeoff climb, m
+        in descentM : Real;             // landing descent, m
+        in cruiseSpeed : Real;          // m/s
+        in climbRate : Real = 2.0;      // m/s, ops climb rate
+        in descentRate : Real = 1.5;    // m/s, ops descent rate
+        return : Real = (routeM / cruiseSpeed + climbM / climbRate
+            + descentM / descentRate) / 60.0;
     }
 
     requirement def FlightEnvelope {
@@ -154,6 +262,31 @@ package Drone {
             attribute measure : Real = discOverlapVolume;
             attribute unit : String = "m^3";
             require constraint noOverlap { discOverlapVolume <= 0.0 }
+        }
+    }
+
+    requirement mission {
+        doc /* The mission-time budget.  missionMinutes is measured
+               kernel-side by longeron.analysis.mission3d.mission_values:
+               the demo route's waypoint legs at the model's own
+               achievable speeds (MissionTime over maxCruiseSpeed at
+               cruiseTilt), injected into the scoreboard as a values=
+               binding for the unvalued attribute below -- see
+               tutorial 10. */
+        subject drone : QuadCopter;
+        attribute missionMinutes : Real;   // measured: MissionTime over the route legs
+
+        requirement missionTime {
+            doc /* The demo sortie shall finish inside the mission-time
+                   budget (battery comfort and airspace-slot discipline). */
+            attribute weight : Real = 1.5;
+            attribute utility : String = "smaller-is-better";
+            attribute ramp0 : Real = 6.0;      // at the budget: utility 0
+            attribute ramp1 : Real = 4.0;      // comfortable: utility 1
+            attribute measure : Real = missionMinutes;
+            attribute unit : String = "min";
+            attribute budget : Real = 6.0 [SI::min];
+            require constraint timeBudget { missionMinutes <= budget }
         }
     }
 
