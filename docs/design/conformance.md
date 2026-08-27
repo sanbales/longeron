@@ -402,6 +402,20 @@ today; revisit if the corpus grows a semantic-differential ambition
 
 ## Open questions for the maintainer
 
+All were ratified by the maintainer on 2026-08-27 -- Q1/Q4/Q5 and the
+design-body differential posture (periodic manual sweep via a future
+`scripts/pilot_referee.py`, never CI) as recommended; Q2 ratified as
+completed by the burn-down (34/36) WITH the standing rule: future
+gaps close grouped by check-family, each landing with its
+rejection-suite promotion, the corpus sweep as the permanent gate.
+**Q3 OVERRIDDEN: `[3..1]` is REJECTED as an error** -- longeron is
+deliberately stricter than the pilot here; the divergence is recorded
+in the dialect table so the future differential adjudicates it as
+intentional. Implementation notes: Q1's strict mode (validate(
+strict=True) + CLI --strict) and Q3's bound-order error are queued
+work items; Q4's bare-import warning folds into that same strict mode.
+
+
 1. **Should `unresolved-reference` stay a warning?** The pilot errors
    on every unresolved reference; longeron warns by design and the
    stdlib fallback keeps the false-positive rate low.
