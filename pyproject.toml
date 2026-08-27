@@ -42,8 +42,12 @@ dev = [
     "rdflib>=7.0",  # mirrors [rdf] so notebook 08 executes in CI
     "fastapi>=0.110", "uvicorn>=0.29",  # mirrors [server] (API server tests)
     "httpx>=0.27",  # mirrors [client] (API client tests)
-    # cadquery ([cad]) stays OUT of dev: the OCC kernel is ~1 GB and the
-    # notebook's cadquery cell degrades to a printed note without it
+    # maintainer ruling 2026-08-27: dev mirrors EVERY extra, cad included --
+    # the OCC kernel is heavy (~1 GB installed) but the exact-boolean
+    # occlusion engine and the cadquery notebook cells should run in dev
+    # cadquery mirrors [cad] via PIXI (conda-forge) rather than this pypi
+    # extra: cadquery-ocp ships no cp313 wheels on PyPI yet, conda-forge does
+    "pint>=0.24",  # mirrors [units] (the conversion facade)
 ]
 docs = [
     # the documentation site (docs/): sphinx-build -W -b html docs build/docs
@@ -259,6 +263,7 @@ nodejs = ">=20"     # elkjs layout for headless diagram rendering
 cairosvg = ">=2.7"  # SVG -> PNG (bundles the native cairo library)
 jupyterlab = ">=4.1"
 
+cadquery = ">=2.5"  # [cad] mirror: OCC kernel from conda-forge (no cp313 pypi wheels)
 [tool.pixi.pypi-dependencies]
 longeron = { path = ".", editable = true, extras = ["dev", "ecore"] }
 ipyelk = { path = "vendor/ipyelk", editable = true }  # vendored, with local TLC
