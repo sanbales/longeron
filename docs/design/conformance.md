@@ -314,7 +314,8 @@ A negative suite in the opensysml mold, adapted to pytest:
 - **The denominator honesty, restated for us:** we authored every case,
   so "N/N rejections" measures our coverage of the rejection surface,
   not conformance. At this commit the buckets hold 28 / 7 / 5 / 24
-  cases. The counts are stated by the suite itself (a summary test
+  cases (the generative tier below later raised the fourth bucket to
+  36). The counts are stated by the suite itself (a summary test
   asserts the bucket sizes match the doc's claim, the cheap analog of
   opensysml's count guards).
 
@@ -427,6 +428,90 @@ today; revisit if the corpus grows a semantic-differential ambition
    parse-layer cases are testable. *Recommendation:* defer until the
    KerML build path exists; the corpus structure already accommodates
    a `language` field when it does.
+
+## Generative tier (implemented)
+
+> Added 2026-08-27, the second implementation slice:
+> `tests/test_generative.py` + `tests/_model_strategies.py`. Everything
+> below was measured at commit `8cc8a2c`.
+
+The rejection corpus above is hand-authored, so its denominator is our
+imagination. The generative tier turns the sampling over to
+[Hypothesis](https://hypothesis.readthedocs.io): property-based testing
+applied to the toolchain itself. A composite strategy generates
+*valid-by-construction* models — as **text**, through a grammar-shaped
+recursive generator, so the parser is exercised on every example —
+covering packages (nested), part/attribute/port/action/calc/state/
+requirement/item/enum definitions and usages, specializations,
+subsettings, redefinitions, multiplicities, value expressions over a
+small closed vocabulary, state machines (entry + transitions),
+successions, connections, variations, aliases, quoted names, and doc
+comments. Every reference targets a name declared in lexical scope and
+every sibling name is unique, so a *guard property* can assert the
+strong form of validity: parse + build + `validate()` with **zero
+diagnostics of any severity**. A strategy bug is indistinguishable from
+a toolchain bug at that bar, which is the point — both fail the suite.
+
+Three property families run over the generated models:
+
+- **A — never crash.** The guard, plus an adversarial property: valid
+  text pushed through 1-3 character/token-level corruptions (deletions,
+  swaps, keyword substitutions, brace imbalance, truncation, unicode
+  noise) must produce `ParseError`/`BuildError` or diagnostics — never
+  an unhandled traceback; whatever still builds must also survive
+  `validate`, `to_sysml`, and `to_dict`. Hypothesis shrinks any crash
+  to a minimal reproducer.
+- **B — round-trip invariants.** `to_sysml -> loads -> to_sysml` is a
+  fixpoint; `to_json`/`from_json` is lossless (`to_dict` equality,
+  element counts, qualified names); `validate()` mints no new
+  diagnostics after either round-trip. The suite previously pinned
+  these invariants only on hand examples.
+- **C — mutation invalidity.** A catalog
+  (`tests/_model_strategies.py:MUTATIONS`, 29 entries: 6 enforced, 4
+  diagnosed, 19 gaps) of invalidating
+  mutations applied to generated models, each tied to the one spec/
+  pilot rule it violates — the corpus-header discipline, ported.
+  Expected verdicts are classed `error` (must stay rejected),
+  `diagnosed` (must stay at least warned), or `gap` (accepted silently
+  today; pinned as a strict xfail in the rejection corpus, which owns
+  the promotion pressure — a hygiene test asserts every `gap` entry
+  points at a live `KNOWN_GAPS` case). An accepted-silent mutant that
+  is *not* already pinned is a finding: shrink it, dedupe it by rule,
+  and append it to `tests/test_rejection.py`.
+
+That findings pipeline is how the fourth bucket grew from 24 to 36:
+twelve new permissiveness gaps, all verified against the pilot
+validator sources (rule constants and messages read from
+`SysMLValidator.xtend`/`KerMLValidator.xtend` at `master`, 2026-08-27)
+— same-scope and package-level redefinition
+(`validateRedefinitionFeaturingTypes`), connector ends resolving to
+non-features, second subjects
+(`validateRequirementDefinitionOnlyOneSubject`), second return
+parameters (`validateFunctionResultParameterMembership`), kind-crossed
+*definition* specialization (`validateDataTypeSpecialization`,
+`validateBehaviorSpecialization`), directed parameters outside
+behaviors (`validateParameterMembershipOwningType`), non-port
+interface-usage ends (`validateInterfaceUsageEnd_`), and three resolver
+holes (multiplicity bounds, succession ends, and `perform` targets are
+never resolved — not even to the warning the rest of the resolver
+would emit). Deliberately *not* added: `[3..1]` stays
+adjudicated-accept (open question 3), and pilot-*warning* rules (e.g.
+`validateBindingConnectorTypeConformance`) do not qualify — warnings
+do not count as rejection in either direction.
+
+CI posture versus deep sweeps: hypothesis is **not** a project
+dependency — in the default environments the file skips cleanly. When
+it is installed, the shipped properties run **derandomized** at
+`max_examples <= 100` per property (the whole file is about a minute),
+so CI stays deterministic and time-bounded.
+`LONGERON_GENERATIVE_PROFILE=deep` switches to the exploratory posture
+— fresh seeds, 20-40x the examples — for scratch-environment sweeps;
+findings flow back as shrunk minimal cases in the rejection corpus,
+never as new CI load. The denominator honesty carries over unchanged:
+the generator samples the constructs *we taught it*; a clean sweep
+bounds nothing but our own vocabulary. Constructs not yet generated
+(imports, interface/flow/binding usages, metadata, views, individuals,
+feature chains in expressions) are the tier's open frontier.
 
 ## References
 

@@ -425,6 +425,77 @@ KNOWN_GAPS = [
         "package P { action def A { send; } }",
         "pilot:validateSendActionUsagePayloadArgument: 'A send action must have a payload'",
     ),
+    # -- found by the generative tier (tests/test_generative.py); each case is
+    #    the shrunk minimal form of an accepted-silent mutant from the
+    #    invalidating-mutation catalog (tests/_model_strategies.py:MUTATIONS)
+    Case(
+        "redefinition-of-sibling-feature",
+        "package P { part def A { attribute x : Real; attribute y :>> x; } }",
+        "pilot:validateRedefinitionFeaturingTypes: 'Featuring types of redefining "
+        "feature and redefined feature cannot be the same'",
+    ),
+    Case(
+        "package-level-redefinition",
+        "package P { attribute x : Real; attribute y :>> x; }",
+        "pilot:validateRedefinitionFeaturingTypes: 'A package-level feature cannot be redefined'",
+    ),
+    Case(
+        "connector-end-is-a-definition",
+        "package P { part def D1; part def Asm { part a : D1; connect a to D1; } }",
+        "KerML 8.3: a Connector's relatedFeatures must be Features; a Definition is "
+        "not (the dangling-end case is diagnosed, a resolved non-feature end is not)",
+    ),
+    Case(
+        "two-subjects-in-requirement",
+        "package P { part def D; requirement def R { subject s1 : D; subject s2 : D; } }",
+        "validateRequirementDefinitionOnlyOneSubject: 'Only one subject is allowed.'",
+    ),
+    Case(
+        "two-return-parameters",
+        "package P { calc def C { return : Real = 1.0; return : Real = 2.0; } }",
+        "KerML validateFunctionResultParameterMembership: 'Only one return parameter is allowed'",
+    ),
+    Case(
+        "attribute-def-specializes-part-def",
+        "package P { part def D; attribute def A :> D; }",
+        "KerML validateDataTypeSpecialization: 'Cannot specialize class or association'",
+    ),
+    Case(
+        "action-def-specializes-part-def",
+        "package P { part def D; action def A :> D; }",
+        "KerML validateBehaviorSpecialization: 'Cannot specialize structure'",
+    ),
+    Case(
+        "parameter-outside-behavior",
+        "package P { part def D { in attribute x : Real; } }",
+        "KerML validateParameterMembershipOwningType: 'Parameter membership not "
+        "allowed' (directed parameters belong to behaviors and steps)",
+    ),
+    Case(
+        "interface-usage-nonport-ends",
+        "package P { interface def I; part def Asm { part a; part b; "
+        "interface i : I connect a to b; } }",
+        "pilot:validateInterfaceUsageEnd_: 'An interface end must be a port.'",
+    ),
+    Case(
+        "unresolved-multiplicity-bound",
+        "package P { part def D; part p : D[n]; }",
+        "a multiplicity bound name must resolve -- longeron's resolver never visits "
+        "bounds, so this is not even warned; the pilot errors (cf. KerML "
+        "validateMultiplicityRangeResultTypes: 'Must have a Natural value')",
+    ),
+    Case(
+        "succession-end-unresolved",
+        "package P { action def A { action a1; first a1 then ghost; } }",
+        "a succession's ends must resolve; the pilot reports an unresolved-reference "
+        "error (longeron enforces the state-machine analog as [unknown-state])",
+    ),
+    Case(
+        "perform-target-unresolved",
+        "package P { part def D { perform ghost; } }",
+        "an unresolved PerformActionUsage target is accepted silently (the exhibit "
+        "twin at least warns [unresolved-reference]); the pilot reports an error",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -523,7 +594,7 @@ def test_counts_match_the_design_doc():
     assert len(PARSE_REJECTIONS) == 28
     assert len(SEMANTIC_REJECTIONS) == 7
     assert len(WARNING_DIAGNOSED) == 5
-    assert len(KNOWN_GAPS) == 24
+    assert len(KNOWN_GAPS) == 36  # 24 phase-1 cases + 12 generative-tier findings
 
 
 def test_every_case_names_its_rule():
