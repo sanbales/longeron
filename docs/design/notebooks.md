@@ -89,6 +89,33 @@ The repetition, named:
    `drone.sysml` (the bird you build). Foundations may use small
    excerpts *of the drone*, never a disconnected toy.
 
+## The unified program (ratified 2026-08-28, supersedes Q1's answer)
+
+The maintainer overrode the earlier two-models-with-framing answer:
+ONE example replaces the bunch. Four decisions, ratified:
+
+1. **One program, few files** -- a single top-level program split
+   across domain files loaded as one workspace, refined by the
+   maintainer to the open-closed layout: a file for the GENERIC
+   concept and one file per specialization branch, so a future
+   concept (tilt-rotor) adds a file without touching the others.
+   Layout: parts catalog / abstract aircraft concepts / multirotor
+   branch / vtol-wing branch / missions+requirements(+scoring) /
+   structural sizing. `analysis_conventions.sysml` stays a library.
+2. **One family, both branches** -- the winged VTOL airframes join
+   as sibling configurations of the same program (the wing-buys-the-
+   loiter lesson survives); the multirotor configurations join the
+   dashboard tradespace beside them.
+3. **The octocopter is a flat-8 on the same catalog** (8x MT2213 on
+   a larger ring, disclaimed as a custom-build convention) -- AND
+   the catalog expands to the heavy part class so architecture and
+   part-class CROSS: an S1000-class hexa or quad, a big-motor dart,
+   coax pairs at either scale. Architecture alone stays one lesson;
+   the crossing is the scalability demonstration.
+4. **Finish, then tag** -- v0.11.0 waits for the unification, the
+   completed T-series, the old-notebook deletion, and the renumber;
+   one release whose docs, examples, and demo tell one story.
+
 ## The proposed curriculum: 9 tutorials + 1 reference
 
 15 notebooks → 9. Working titles; final names at authoring time.
