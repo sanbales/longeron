@@ -286,7 +286,7 @@ class TestDashboardLayout:
 
     def test_three_rows(self, dash):
         header, plot_row, control_row = dash.children
-        assert list(header.children)[-2:] == [dash.pareto_toggle, dash.top_n]
+        assert list(header.children)[-3:] == [dash.pareto_toggle, dash.pareto_hint, dash.top_n]
         assert list(plot_row.children) == [dash.parcoords, dash.scatter]
         assert list(control_row.children) == [dash.tabs, dash.lineup, dash.viewer]
 
@@ -354,6 +354,7 @@ class TestParetoToggle:
         scatter = json.loads(dash.scatter.payload_json)
         assert len(scatter["points"]) == len(front)
         assert all(p["feasible"] for p in scatter["points"])
+        assert all(p["front"] for p in scatter["points"])  # front ink only
         assert set(dash.picks) <= set(front)
         assert "non-dominated" in dash.ranking.value
         dash.pareto_toggle.value = False
@@ -430,6 +431,60 @@ class TestFrontJustificationsLive:
                 for name in named:  # every named metric beats every beater
                     assert all(mine[name] > dash.live[pool[k]]["metric"][name] for k in beaters)
         assert beaten >= 4  # picks 148-151 at least
+
+
+class TestFrontInk:
+    """THE third report pinned: the toggle was right, the INK lied.  With
+    'Pareto only' pressed every drawn point IS front, so none may wear
+    the dominated gray -- the scatter payload carries TWO flags, ``front``
+    (the 4-D truth: the ink) and ``stair`` (this plane's frontier: the
+    marker shape + the staircase line), styled distinctly in both toggle
+    states, with an in-plot legend and a hint beside the toggle."""
+
+    def test_toggle_on_zero_points_wear_dominated_gray(self, dash):
+        dash.pareto_toggle.value = True
+        points = json.loads(dash.scatter.payload_json)["points"]
+        assert points
+        assert all(p["front"] for p in points)  # every point: front ink
+        # the maintainer's screenshot: both marker kinds are on the plot
+        assert any(p["stair"] for p in points)  # staircase members, filled
+        assert any(not p["stair"] for p in points)  # hidden-axis members, rings
+
+    def test_front_members_keep_front_ink_in_both_toggle_states(self, dash):
+        for pressed in (False, True):
+            dash.pareto_toggle.value = pressed
+            points = json.loads(dash.scatter.payload_json)["points"]
+            assert [p["front"] for p in points] == [dash.front[i] for i in dash.pool]
+        dash.pareto_toggle.value = False
+        points = json.loads(dash.scatter.payload_json)["points"]
+        # gray survives ONLY on genuinely dominated (or infeasible) points
+        assert any(not p["front"] and p["feasible"] for p in points)
+
+    def test_stair_membership_changes_the_marker_never_the_ink(self, dash):
+        css = dash.scatter._css
+        # filled accent on the staircase, open accent ring off it
+        assert ".longeron-moefront-dot.front { fill: #ffffff; stroke: #2f6b8f" in css
+        assert ".longeron-moefront-dot.front.stair { fill: #2f6b8f" in css
+        assert ".longeron-moefront-dot { fill: #c3c7cd; }" in css  # gray = dominated
+        esm = dash.scatter._esm
+        assert '"longeron-moefront-dot front stair"' in esm
+        assert '"longeron-moefront-dot front"' in esm
+        assert "P.points.filter((p) => p.stair)" in esm  # the staircase follows the plane
+
+    def test_legend_names_every_ink(self, dash):
+        esm = dash.scatter._esm
+        assert "front: leads this plane" in esm
+        assert "front: wins on hidden axes" in esm
+        assert "dominated: a better design exists" in esm
+        assert "frontier in this plane only" in esm
+        assert "longeron-moefront-legend" in esm
+
+    def test_toggle_hint_self_describes_the_filtered_state(self, dash):
+        assert dash.pareto_hint.value == ""
+        dash.pareto_toggle.value = True
+        assert "all shown are non-dominated (4 objectives)" in dash.pareto_hint.value
+        dash.pareto_toggle.value = False
+        assert dash.pareto_hint.value == ""
 
 
 class TestLineupCards:
@@ -558,7 +613,10 @@ class TestDashboardWiring:
         payload = json.loads(dash.scatter.payload_json)
         points = [(p["x"], p["y"]) for p in payload["points"]]
         eligible = [p["feasible"] for p in payload["points"]]
-        assert [p["front"] for p in payload["points"]] == dashboard._front_flags(points, eligible)
+        # stair flags = this plane's frontier; front flags = the 4-D truth
+        stairs = dashboard._front_flags(points, eligible)
+        assert [p["stair"] for p in payload["points"]] == stairs
+        assert [p["front"] for p in payload["points"]] == [dash.front[i] for i in dash.pool]
         assert any(p["front"] for p in payload["points"])
         assert any(p["pick"] for p in payload["points"])
 

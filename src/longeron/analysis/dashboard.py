@@ -75,6 +75,17 @@ single metric covers every dominator) a minimal set of metrics such that
 EVERY dominator strictly trails on at least one.  Non-domination over
 cost plus those metrics guarantees a winning metric per dominator.
 
+The scatter's INK tells that same 4-axis truth: every front member
+wears the front accent in BOTH toggle states -- FILLED when it also
+leads the drawn plane, an OPEN RING when its win lives on a hidden
+axis -- and gray is reserved for dominated points (light gray:
+infeasible), so 'Pareto only' can never paint a front member as chaff
+(the maintainer's third report: off-staircase front members drawn in
+the dominated gray).  The staircase line is the PLANE's frontier, not
+THE front; an in-plot legend names each ink in a few words, and a hint
+beside the pressed toggle says the whole filtered view is
+non-dominated.
+
 All linking runs in Python via traitlets observers -- the candidate
 table is a couple hundred rows, so every front-end stays a dumb painter
 per the house widget pattern.
@@ -538,18 +549,21 @@ function render({ model, el }) {
     ylab.setAttribute("transform",
       `translate(12 ${(M.top + H - M.bottom) / 2}) rotate(-90)`);
 
-    // the attainable staircase through the front (min cost, max MOE)
-    const front = P.points.filter((p) => p.front)
+    // the staircase is this PLANE's frontier (min cost, max MOE) --
+    // NOT the front: dominance spans axes the plane hides
+    const stair = P.points.filter((p) => p.stair)
       .sort((a, b) => a.x - b.x || b.y - a.y);
-    if (front.length > 1) {
-      let d = `M${sx(front[0].x)},${sy(front[0].y)}`;
-      for (let i = 1; i < front.length; i++)
-        d += `H${sx(front[i].x)}V${sy(front[i].y)}`;
+    if (stair.length > 1) {
+      let d = `M${sx(stair[0].x)},${sy(stair[0].y)}`;
+      for (let i = 1; i < stair.length; i++)
+        d += `H${sx(stair[i].x)}V${sy(stair[i].y)}`;
       make("path", { d, class: "longeron-moefront-step" }, svg);
     }
     const sel = model.get("selected");
     P.points.forEach((p, j) => {
-      const cls = p.front ? "longeron-moefront-dot front"
+      const cls = p.front
+        ? (p.stair ? "longeron-moefront-dot front stair"
+                   : "longeron-moefront-dot front")
         : p.feasible ? "longeron-moefront-dot"
         : "longeron-moefront-dot infeasible";
       if (p.pick) make("circle", { cx: sx(p.x), cy: sy(p.y), r: 7,
@@ -565,6 +579,30 @@ function render({ model, el }) {
         (p.why ? "\n" + p.why : "");
       dot.appendChild(title);
     });
+
+    // the ink legend, in the utopia corner (top-left of the plane is
+    // beyond the front, so it stays point-free at any density); each
+    // entry appears only when its ink is actually on the plot
+    const legend = [];
+    if (P.points.some((p) => p.front && p.stair))
+      legend.push(["front stair", 4, "front: leads this plane"]);
+    if (P.points.some((p) => p.front && !p.stair))
+      legend.push(["front", 4, "front: wins on hidden axes"]);
+    if (P.points.some((p) => !p.front && p.feasible))
+      legend.push(["", 2.6, "dominated: a better design exists"]);
+    legend.forEach(([kind, r, label], k) => {
+      const y = M.top + 10 + 13 * k;
+      make("circle", { cx: M.left + 12, cy: y, r,
+                       class: "longeron-moefront-dot legend " + kind }, svg);
+      text(M.left + 20, y + 3, "longeron-moefront-legend", label);
+    });
+    if (stair.length > 1) {
+      const y = M.top + 10 + 13 * legend.length;
+      make("line", { x1: M.left + 6, y1: y, x2: M.left + 18, y2: y,
+                     class: "longeron-moefront-step" }, svg);
+      text(M.left + 20, y + 3, "longeron-moefront-legend",
+           "frontier in this plane only");
+    }
   }
 
   model.on("change:payload_json", draw);
@@ -587,8 +625,11 @@ _SCATTER_CSS = """
 .longeron-moefront-title { fill: #2b2d31; font-size: 10px; font-weight: 600; }
 .longeron-moefront-dot { fill: #c3c7cd; }
 .longeron-moefront-dot.infeasible { fill: #e3e5e8; }
-.longeron-moefront-dot.front { fill: #2f6b8f; stroke: #ffffff;
+.longeron-moefront-dot.front { fill: #ffffff; stroke: #2f6b8f;
+  stroke-width: 1.4; }
+.longeron-moefront-dot.front.stair { fill: #2f6b8f; stroke: #ffffff;
   stroke-width: 0.7; }
+.longeron-moefront-legend { fill: #6b7078; font-size: 9px; }
 .longeron-moefront-step { fill: none; stroke: #2f6b8f; stroke-width: 1.3;
   opacity: 0.85; }
 .longeron-moefront-pick { fill: none; stroke: #c2603e; stroke-width: 1.4; }
@@ -994,7 +1035,9 @@ def mission_dashboard(
     The returned layout exposes its pieces for scripting and tests:
     ``.sliders`` (mission -> priority IntSlider), ``.requirements``
     (mission -> key -> threshold FloatSlider), ``.top_n``,
-    ``.pareto_toggle`` (dominated-candidate filter), ``.tabs`` (summary +
+    ``.pareto_toggle`` (dominated-candidate filter), ``.pareto_hint``
+    (the one-line all-non-dominated hint beside the pressed toggle),
+    ``.tabs`` (summary +
     one tab per mission), ``.parcoords`` (its ``brushes`` trait carries
     the live brush intervals by axis name; ``traced`` the selected line),
     ``.scatter``, ``.viewer``, ``.cards``, ``.summary``, ``.lineup``
@@ -1084,6 +1127,10 @@ def mission_dashboard(
         ),
         layout=widgets.Layout(width="110px", flex="0 0 auto"),
     )
+    #: self-describing 'Pareto only' state: the one-line hint beside the
+    #: pressed toggle (empty when released) -- the maintainer kept landing
+    #: in the filtered view and reading its gray as dominated
+    pareto_hint = widgets.HTML(layout=widgets.Layout(flex="0 0 auto", margin="0 12px 0 6px"))
     cards = {name: widgets.HTML() for name in mission_names}
     ranking = widgets.HTML()
     summary = widgets.HTML()
@@ -1237,6 +1284,13 @@ def mission_dashboard(
             else list(range(len(candidates)))
         )
         box.pool = pool
+        pareto_hint.value = (
+            '<span style="font-family:Helvetica,Arial,sans-serif; '
+            f'font-size:11px; color:{viz.ACCENT}">all shown are '
+            "non-dominated (4 objectives)</span>"
+            if pareto_toggle.value
+            else ""
+        )
 
         rows = _rows(live, scores)
         payload = (
@@ -1275,7 +1329,7 @@ def mission_dashboard(
         if has_cost and pool:
             points = [(float(candidates[i]["cost"]), scores[i]) for i in pool]
             shown_eligible = [eligible[i] for i in pool]
-            fronts = _front_flags(points, shown_eligible)
+            stairs = _front_flags(points, shown_eligible)
             whys = front_justifications(
                 points,
                 [{metric_of[n]: live[i]["metric"][n] for n in mission_names} for i in pool],
@@ -1298,7 +1352,10 @@ def mission_dashboard(
                         {
                             "x": round(points[j][0], 2),
                             "y": round(points[j][1], 4),
-                            "front": fronts[j],
+                            # the 4-D truth (the INK) vs this plane's
+                            # frontier (the marker shape + the staircase)
+                            "front": front[index],
+                            "stair": stairs[j],
                             "feasible": shown_eligible[j],
                             "pick": index in pick_set,
                             "label": candidates[index]["label"],
@@ -1446,6 +1503,7 @@ def mission_dashboard(
                 layout=widgets.Layout(flex="1 1 auto", min_width="0"),
             ),
             pareto_toggle,
+            pareto_hint,
             top_n,
         ],
         layout=widgets.Layout(align_items="center", width="100%" if fluid else f"{base_w}px"),
@@ -1486,6 +1544,7 @@ def mission_dashboard(
     box.requirements = req_sliders
     box.top_n = top_n
     box.pareto_toggle = pareto_toggle
+    box.pareto_hint = pareto_hint
     box.tabs = tabs
     box.parcoords = pc
     box.scatter = scatter

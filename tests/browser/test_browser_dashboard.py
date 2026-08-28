@@ -14,6 +14,10 @@ front-end round trip:
 * hovering a lineup card shows its front justification and traces that
   candidate's line in the parallel coordinates (the projection defect:
   a front pick can look dominated in the cost-MOE plane);
+* with the toggle pressed EVERY scatter point wears the front ink --
+  filled staircase members plus open hidden-axis rings, zero dominated
+  gray -- the in-plot legend and the toggle-side hint say so, and
+  releasing the toggle returns gray only on truly dominated points;
 * a BRUSH gesture on a parcoords axis syncs its interval to the kernel,
   and a card selected while brushing stays visible: the selection violet
   is distinct from the brush blue, on the card border, the traced
@@ -84,6 +88,19 @@ def _poll_checker(lab: Any, predicate: Any, timeout: float = 60.0) -> dict[str, 
     raise TimeoutError(f"checker never satisfied the predicate; last state: {state}")
 
 
+def _poll_count(lab: Any, selector: str, expect: int, timeout: float = 30.0) -> None:
+    """Wait until ``selector`` matches exactly ``expect`` DOM nodes."""
+
+    deadline = time.monotonic() + timeout
+    count = -1
+    while time.monotonic() < deadline:
+        count = lab.page.locator(selector).count()
+        if count == expect:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"{selector!r}: expected {expect} nodes, last saw {count}")
+
+
 def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab = lab1080
     lab.open_notebook("dashboard_scenario.ipynb")
@@ -142,6 +159,30 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     readout.fill("8")
     readout.press("Enter")
     state = _poll_checker(lab, lambda s: s["picks"] == 8)
+
+    # -- (2c) THE third report: toggle ON means every drawn point IS
+    # front, so NONE may wear the dominated gray -- filled accent for
+    # the staircase members, open accent rings for the hidden-axis
+    # members, the legend naming both, the hint beside the toggle
+    # saying the state out loud (legend swatches carry .legend and are
+    # excluded from the point counts)
+    scatter_el = lab.page.locator(".longeron-moefront").first
+    scatter_el.scroll_into_view_if_needed()
+    n_front = state["front"]
+    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", n_front)
+    assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == n_front
+    filled = lab.page.locator(".longeron-moefront-dot.front.stair:not(.legend)").count()
+    assert 0 < filled < n_front, f"marker kinds: {filled} of {n_front} filled"
+    for words in (
+        "front: leads this plane",
+        "front: wins on hidden axes",
+        "frontier in this plane only",
+    ):
+        assert lab.page.locator(".longeron-moefront-legend", has_text=words).count() == 1, words
+    assert lab.page.locator(".longeron-moefront-legend", has_text="dominated").count() == 0
+    lab.page.wait_for_selector("text=all shown are non-dominated (4 objectives)", timeout=15_000)
+    scatter_el.screenshot(path=str(EVIDENCE / "t4_dashboard_front_ink_pareto_on.png"))
+
     card = lab.page.locator(".longeron-lineup-card", has_text="tops every pick").first
     card.scroll_into_view_if_needed()
     card.hover()
@@ -151,6 +192,21 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is False)
     assert state["pool"] == 288
+
+    # -- (2d) toggle OFF: gray returns, but ONLY on truly dominated
+    # points -- the front keeps its ink in the full cloud, and the
+    # legend now names the gray too; the hint is gone
+    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 288)
+    assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == state["front"]
+    assert (
+        lab.page.locator(
+            ".longeron-moefront-legend", has_text="dominated: a better design exists"
+        ).count()
+        == 1
+    )
+    assert lab.page.locator("text=all shown are non-dominated").count() == 0
+    scatter_el.scroll_into_view_if_needed()
+    scatter_el.screenshot(path=str(EVIDENCE / "t4_dashboard_front_ink_pareto_off.png"))
 
     # -- (3) the mission tabs switch: ISR shows its floors and card ---------
     lab.page.locator(".jp-OutputArea .lm-TabBar-tab", has_text="ISR").first.click()
