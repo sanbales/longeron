@@ -459,6 +459,146 @@ class TestConstantExponent:
             rig.enumerate()
 
 
+CALC_CATALOG = """
+package CalcCatalog {
+    calc def Momentum {
+        in massKg : Real;
+        in speed : Real = 10.0;
+        return : Real = massKg * speed;
+    }
+    calc def Padded {
+        in raw : Real;
+        in floorVal : Real;
+        return : Real = max(raw, floorVal) + Momentum(massKg = 0.1);
+    }
+    calc def Looper {
+        in x : Real;
+        return : Real = Looper(x = x);
+    }
+    part def Wheel { attribute mass : Real; attribute grip : Real; }
+    part def LightW :> Wheel { attribute mass : Real = 1.5; attribute grip : Real = 3.0; }
+    part def HeavyW :> Wheel { attribute mass : Real = 4.0; attribute grip : Real = 8.0; }
+    variation part def WheelChoice :> Wheel {
+        variant part lightW : LightW;
+        variant part heavyW : HeavyW;
+    }
+    part def Cart {
+        part wheel : WheelChoice;
+        attribute push : Real = Momentum(massKg = wheel.mass, speed = 2.0);
+        attribute defaulted : Real = Momentum(wheel.mass);
+        attribute padded : Real = Padded(raw = wheel.grip, floorVal = 5.0);
+        attribute clipped : Real = min(wheel.grip, 6.0);
+        assert constraint pushOk { push <= 6.0 }
+    }
+    part def LoopCart {
+        part wheel : WheelChoice;
+        attribute stuck : Real = Looper(x = wheel.mass);
+        constraint c { stuck >= 0.0 }
+    }
+}
+"""
+
+
+class TestCalcInvocationInlining:
+    """Calc invocations inline into CP-SAT: named/positional arguments,
+    parameter defaults, nested invocations, and native max()/min()."""
+
+    @pytest.fixture(scope="class")
+    def cart(self):
+        return trades.TradeStudy(longeron.loads(CALC_CATALOG), "CalcCatalog::Cart")
+
+    def test_enumerate_matches_the_interpreter(self, cart):
+        got = {a.selection["wheel"] for a in cart.enumerate()}
+        want = {a.selection["wheel"] for a in cart.all_architectures() if a.verified}
+        assert got == want == {"lightW"}  # heavyW: push 8 > 6
+
+    def test_named_and_positional_and_default_arguments(self, cart):
+        arch = cart.evaluate({"wheel": "lightW"})
+        assert arch.metrics["push"] == pytest.approx(3.0)  # 1.5 * 2.0
+        assert arch.metrics["defaulted"] == pytest.approx(15.0)  # 1.5 * default 10
+        best = cart.maximize("defaulted")
+        assert best is not None and best.selection == {"wheel": "lightW"}
+
+    def test_nested_invocation_and_max_inside_a_calc(self, cart):
+        # Padded = max(grip, 5.0) + Momentum(0.1) = max(grip, 5) + 1
+        best = cart.maximize("padded")
+        assert best is not None
+        assert best.metrics["padded"] == pytest.approx(6.0)  # lightW: max(3,5)+1
+
+    def test_min_encodes_natively(self, cart):
+        # heavyW breaks pushOk, so the feasible pool is lightW alone:
+        # min(grip 3.0, 6.0) must channel the VARIABLE side through CP-SAT
+        best = cart.maximize("clipped")
+        assert best is not None
+        assert best.selection == {"wheel": "lightW"}
+        assert best.metrics["clipped"] == pytest.approx(3.0)
+
+    def test_recursive_invocation_is_refused(self):
+        loop = trades.TradeStudy(longeron.loads(CALC_CATALOG), "CalcCatalog::LoopCart")
+        with pytest.raises(longeron.analysis.AnalysisError, match="recursive"):
+            loop.enumerate()
+
+
+class TestUavMissionCoverage:
+    """The extended mapper against ``examples/uav_missions.sysml``: the
+    shared platform assembly (calc invocations, max(), var*var division)
+    now encodes and must agree with the interpreter mix for mix; the
+    mission layers' sqrt/pow/conditional physics refuse with a one-line
+    verdict naming the innermost unencodable operation."""
+
+    @pytest.fixture(scope="class")
+    def uav(self):
+        return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+
+    @pytest.fixture(scope="class")
+    def platform(self, uav):
+        return trades.TradeStudy(uav, "UavMissions::MissionUAV")
+
+    def test_cpsat_agrees_with_the_interpreter_on_the_platform(self, platform):
+        """The fixed-point tolerance contract: after the interpreter
+        re-verification, CP-SAT's feasible set is EXACTLY the
+        interpreter's (no false admits survive, none of the 216 mixes
+        is lost to rounding)."""
+
+        got = {tuple(sorted(a.selection.items())) for a in platform.enumerate()}
+        exact = platform.all_architectures()
+        want = {tuple(sorted(a.selection.items())) for a in exact if a.verified}
+        assert len(exact) == 216
+        assert got == want
+        assert len(got) == 120
+
+    def test_optimization_agrees_with_the_interpreter(self, platform):
+        best = platform.minimize("baseCost")
+        assert best is not None and best.verified
+        exact = min(
+            (a for a in platform.all_architectures() if a.verified),
+            key=lambda a: a.metrics["baseCost"],
+        )
+        assert best.selection == exact.selection
+        assert best.metrics["baseCost"] == pytest.approx(exact.metrics["baseCost"])
+
+    @pytest.mark.parametrize(
+        ("assembly", "attribute", "operation"),
+        [
+            ("IsrUav", "hoverPowerW", "pow(massKg * 9.81, 1.5)"),
+            ("InterceptUav", "dashSpeed", "pow"),
+            ("LogisticsUav", "outboundPowerW", "conditional"),
+        ],
+    )
+    def test_mission_refusals_name_the_innermost_operation(
+        self, uav, assembly, attribute, operation
+    ):
+        study = trades.TradeStudy(uav, f"UavMissions::{assembly}")
+        with pytest.raises(longeron.analysis.AnalysisError) as err:
+            study.enumerate()
+        message = str(err.value)
+        assert f"'{attribute}'" in message  # the derived attribute
+        assert operation in message  # the innermost unencodable op
+        assert "all_architectures" in message  # the exact alternative
+        assert len(message) < 260  # a verdict, not an expression dump
+        assert "TubeWallForStress" not in message  # encodable parts absent
+
+
 class TestThrustParametric:
     """The motor x propeller thrust model, across the shipped examples."""
 

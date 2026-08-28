@@ -108,6 +108,30 @@ class TestApplyThresholds:
         assert live["metric"]["m"] == 20.0
 
 
+class TestParetoMask:
+    def test_simple_dominance(self):
+        rows = [(1.0, 1.0), (2.0, 2.0), (0.5, 3.0)]
+        # (1,1) is dominated by (2,2); the others are incomparable
+        assert dashboard.pareto_mask(rows) == [False, True, True]
+
+    def test_exact_ties_survive_together(self):
+        rows = [(1.0, 5.0), (1.0, 5.0), (0.0, 4.0)]
+        assert dashboard.pareto_mask(rows) == [True, True, False]
+
+    def test_weak_dominance_on_one_axis(self):
+        rows = [(1.0, 5.0), (1.0, 6.0)]
+        assert dashboard.pareto_mask(rows) == [False, True]
+
+    def test_ineligible_rows_never_join_or_dominate(self):
+        rows = [(9.0, 9.0), (1.0, 1.0)]
+        assert dashboard.pareto_mask(rows, [False, True]) == [False, True]
+
+    def test_front_flags_is_the_min_cost_max_moe_projection(self):
+        points = [(100.0, 0.2), (150.0, 0.9), (200.0, 0.5), (120.0, 0.9)]
+        flags = dashboard.pareto_mask([(-x, y) for x, y in points])
+        assert flags == dashboard._front_flags(points, [True] * 4)
+
+
 class TestFrontFlags:
     def test_min_cost_max_moe_front(self):
         points = [(100.0, 0.2), (150.0, 0.9), (200.0, 0.5), (120.0, 0.9)]
@@ -187,6 +211,7 @@ def _reset(dash, request):
         yield
         return
     yield
+    dash.pareto_toggle.value = False
     for slider in dash.sliders.values():
         slider.value = 50
     for sliders in dash.requirements.values():
@@ -195,6 +220,97 @@ def _reset(dash, request):
             slider.value = spec["default"]
     dash.top_n.value = 4
     dash.parcoords.selected = "[]"
+
+
+class TestDashboardLayout:
+    """The one-screen composition: header strip, plots side by side,
+    the mission Tab next to the 3D viewer."""
+
+    def test_three_rows(self, dash):
+        header, plot_row, control_row = dash.children
+        assert list(header.children)[-2:] == [dash.pareto_toggle, dash.top_n]
+        assert list(plot_row.children) == [dash.parcoords, dash.scatter]
+        assert list(control_row.children) == [dash.tabs, dash.viewer]
+
+    def test_missions_are_one_tab(self, dash, data):
+        names = [m["name"] for m in data["missions"]]
+        assert len(dash.tabs.children) == 1 + len(names)
+        assert dash.tabs.get_title(0) == "all missions"
+        assert [dash.tabs.get_title(i + 1) for i in range(len(names))] == names
+
+    def test_summary_tab_holds_priorities_and_the_scorecard(self, dash):
+        children = list(dash.tabs.children[0].children)
+        assert children[0] is dash.ranking
+        for slider in dash.sliders.values():
+            assert slider in children
+        assert children[-1] is dash.summary
+        assert "best compromise" in dash.summary.value
+
+    def test_each_mission_tab_holds_its_floors_and_card(self, dash, data):
+        for position, mission in enumerate(m["name"] for m in data["missions"]):
+            children = list(dash.tabs.children[position + 1].children)
+            for slider in dash.requirements[mission].values():
+                assert slider in children
+            assert children[-1] is dash.cards[mission]
+
+    def test_plots_share_one_row_height(self, dash):
+        assert dash.parcoords.height_px == dash.scatter.height_px == 330
+        assert dash.viewer.height_px == 430
+
+
+class TestParetoToggle:
+    """The dominated-candidate filter: dominance over -cost and the
+    thresholded mission metrics, ties surviving, weights ignored."""
+
+    def test_front_matches_brute_force(self, dash, data):
+        names = [m["name"] for m in data["missions"]]
+        rows = [
+            (
+                -float(cand["cost"]),
+                *(float(row["metric"][n]) for n in names),
+            )
+            for cand, row in zip(data["candidates"], dash.live, strict=True)
+        ]
+        eligible = [any(row["feasible"].values()) for row in dash.live]
+
+        def dominated(i):
+            return any(
+                eligible[j]
+                and all(b >= a for a, b in zip(rows[i], rows[j], strict=True))
+                and rows[j] != rows[i]
+                for j in range(len(rows))
+            )
+
+        brute = [eligible[i] and not dominated(i) for i in range(len(rows))]
+        assert dash.front == brute
+        assert 0 < sum(brute) < len(rows)
+
+    def test_toggle_filters_every_linked_view(self, dash, data):
+        full = json.loads(dash.parcoords.table_json)
+        assert len(full["lines"]) == len(data["candidates"])
+        dash.pareto_toggle.value = True
+        front = [i for i, on in enumerate(dash.front) if on]
+        assert dash.pool == front
+        pruned = json.loads(dash.parcoords.table_json)
+        assert len(pruned["lines"]) == len(front)
+        scatter = json.loads(dash.scatter.payload_json)
+        assert len(scatter["points"]) == len(front)
+        assert all(p["feasible"] for p in scatter["points"])
+        assert set(dash.picks) <= set(front)
+        assert "non-dominated" in dash.ranking.value
+        dash.pareto_toggle.value = False
+        assert len(json.loads(dash.parcoords.table_json)["lines"]) == len(data["candidates"])
+
+    def test_weights_never_change_the_front(self, dash):
+        before = list(dash.front)
+        dash.sliders["intercept"].value = 100
+        dash.sliders["ISR"].value = 0
+        assert dash.front == before  # MOE re-weights, dominance holds still
+
+    def test_thresholds_do_change_the_front(self, dash):
+        before = list(dash.front)
+        dash.requirements["ISR"]["stationMinutes"].value = 120.0
+        assert dash.front != before  # metrics re-filtered, front re-derived
 
 
 class TestDashboardWiring:

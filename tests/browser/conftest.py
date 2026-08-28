@@ -224,6 +224,10 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     )
     (root / "examples").mkdir()
     shutil.copyfile(REPO / "examples" / "drone.sysml", root / "examples" / "drone.sysml")
+    # the dashboard scenario bakes the real multi-mission catalog
+    shutil.copyfile(
+        REPO / "examples" / "uav_missions.sysml", root / "examples" / "uav_missions.sysml"
+    )
     for name, build in SCENARIO_NOTEBOOKS.items():
         (root / name).write_text(json.dumps(build(), indent=1), encoding="utf-8")
 

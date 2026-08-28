@@ -11,22 +11,34 @@ definitions (a component catalog) onto a CP-SAT model:
   variant's values, in exact fixed-point (per-attribute scale = lcm of the
   value denominators).
 * derived assembly attributes -> fixed-point arithmetic over those
-  variables (``+ - * /``; division introduces an auxiliary variable via
-  ``add_division_equality`` with floor rounding at 1e-6 resolution).
+  variables: ``+ - * /``, constant non-negative integer exponents,
+  ``max()``/``min()`` (native ``add_max_equality``/``add_min_equality``),
+  and ``calc def`` invocations, which are inlined -- the invoked calc's
+  result expression is encoded with the caller's argument values bound to
+  its parameters (recursively; cycles are refused).
 * ``assert constraint`` bodies -> half-reified linear constraints under one
   named enforcement literal each, so :meth:`TradeStudy.explain` can ask
   CP-SAT which requirement subset is sufficient for infeasibility.
 
+Fixed-point error budget (all rounding is one-sided and bounded):
+
+* float constants and variant values are rounded to seven significant
+  decimal digits (relative error <= 5e-7);
+* division results and rescaled intermediates keep at least six
+  significant digits (relative error <= 1e-5 per operation).
+
 Feasible architectures are enumerated (or optimized) by CP-SAT; every
 reported :class:`Architecture` is then re-evaluated *exactly* by the
 interpreter (metrics + a ``verified`` constraint re-check), so fixed-point
-rounding can never misreport a design.
+rounding can never misreport a design.  A mix that CP-SAT's rounded
+arithmetic judges feasible but the interpreter refutes is returned with
+``verified=False`` -- the interpreter stays the sole semantic oracle.
 
-The CP-SAT mapper covers linear-ish catalogs (``+ - * /``).  Models whose
-derived attributes lean on real physics -- ``sqrt``/``pow``, conditionals,
-calc invocations (e.g. ``examples/uav_missions.sysml``) -- are *not*
-encodable and the solver methods raise :class:`AnalysisError`.  The honest
-pattern at catalog scale is then :meth:`TradeStudy.all_architectures` /
+What the mapper still refuses -- with an :class:`AnalysisError` naming the
+innermost unencodable operation -- is arithmetic with no exact fixed-point
+form: ``sqrt``, fractional ``pow``, and ``if``/``else`` conditionals (the
+real physics of ``examples/uav_missions.sysml``'s mission layers).  The
+honest pattern there is :meth:`TradeStudy.all_architectures` /
 :meth:`TradeStudy.evaluate`: walk the (small) Cartesian candidate space and
 let the interpreter evaluate every mix exactly, ``violations`` naming the
 constraints an infeasible mix breaks.
@@ -41,18 +53,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import product
-from math import ceil, floor, lcm
+from math import ceil, floor, gcd, lcm, log10
 from typing import Any, ClassVar
 
 from .. import ast as A
 from .. import model as M
 from ..errors import EvaluationError, MissingExtraError
-from ..interpreter import Interpreter
+from ..interpreter import BUILTINS, Interpreter
 from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
 __all__ = ["Architecture", "TradeStudy", "VariationPoint", "pareto"]
 
-_DIV_SCALE = 10**6  # fixed-point resolution of division results
+_DIGITS = 6  # significant decimal digits kept by rescaled intermediates
+_CONST_DENOM_CAP = 10**_DIGITS  # constants above this are decimal-rounded
 
 
 def _cp() -> Any:
@@ -137,7 +150,21 @@ class _Val:
 
 
 def _frac(value: Any) -> Fraction:
-    return Fraction(str(value)) if isinstance(value, float) else Fraction(value)
+    out = Fraction(str(value)) if isinstance(value, float) else Fraction(value)
+    if out.denominator <= _CONST_DENOM_CAP:
+        return out
+    # seven significant decimal digits (relative error <= 5e-7): keeps every
+    # scale in the encoder a product of 2s and 5s, so rescaling divides evenly
+    mag = floor(log10(abs(out)))
+    quantum = 10 ** max(0, _DIGITS - mag)
+    return Fraction(round(out * quantum), quantum)
+
+
+def _snippet(expr: A.Expr, limit: int = 72) -> str:
+    """A one-line, length-capped rendering of an expression for messages."""
+
+    text = " ".join(expr.to_text().split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 class _Encoder:
@@ -156,6 +183,8 @@ class _Encoder:
         self.study = study
         self.model = model
         self._aux = 0
+        #: inlined-calc scopes: (calc element, parameter name -> value)
+        self._frames: list[tuple[M.Definition | M.Usage, dict[str, _Val]]] = []
 
     # -- numeric ------------------------------------------------------------
 
@@ -165,7 +194,9 @@ class _Encoder:
                 raise AnalysisError(f"literal {expr.value!r} is not numeric")
             return _Val(const=_frac(expr.value))
         if isinstance(expr, (A.FeatureRef, A.ChainAccess)):
-            return self.study._lookup(self, _path(expr))
+            return self._ref(_path(expr))
+        if isinstance(expr, A.Invocation):
+            return self._invoke(expr)
         if isinstance(expr, A.QuantityOp):
             return self.value(expr.base)
         if isinstance(expr, A.Unary) and expr.op in ("-", "+"):
@@ -192,12 +223,145 @@ class _Encoder:
                         out = self.mul(out, base)
                     return out
             raise AnalysisError(
-                f"cannot encode exponent '{expr.to_text()}' for CP-SAT "
+                f"cannot encode exponent '{_snippet(expr)}' for CP-SAT "
                 "(only constant non-negative integer exponents unroll)"
             )
+        if isinstance(expr, A.Conditional):
+            raise AnalysisError(
+                f"'{_snippet(expr, 48)}': a conditional has no fixed-point encoding"
+            )
         raise AnalysisError(
-            f"cannot encode expression '{expr.to_text()}' ({type(expr).__name__}) for CP-SAT"
+            f"cannot encode expression '{_snippet(expr)}' ({type(expr).__name__}) for CP-SAT"
         )
+
+    def _ref(self, path: QName) -> _Val:
+        """Resolve a reference: inlined-calc frame first, then the study."""
+
+        if not self._frames:
+            return self.study._lookup(self, path)
+        calc, frame = self._frames[-1]
+        if len(path) == 1 and path[0] in frame:
+            return frame[path[0]]
+        try:  # calc-scope constant (a package-level value, say)
+            value = self.study.interp.evaluate(A.FeatureRef(path), calc)
+        except EvaluationError as err:
+            raise AnalysisError(
+                f"cannot resolve '{'.'.join(path)}' inside calc '{calc.label}' "
+                "during CP-SAT encoding"
+            ) from err
+        if not is_scalar(value):
+            raise AnalysisError(f"'{'.'.join(path)}' is not numeric ({value!r})")
+        return _Val(const=_frac(value))
+
+    # -- invocations ----------------------------------------------------------
+
+    def _invoke(self, expr: A.Invocation) -> _Val:
+        name = expr.target
+        shadowed = bool(self._frames) and name[0] in self._frames[-1][1]
+        if len(name) == 1 and name[0] in BUILTINS and not shadowed:
+            return self._builtin(name[0], expr)
+        context = self._frames[-1][0] if self._frames else self.study.assembly
+        try:
+            target = self.study.interp.resolver.resolve(name, context)
+        except Exception as err:
+            raise AnalysisError(
+                f"cannot resolve invocation target '{'::'.join(name)}' for CP-SAT"
+            ) from err
+        if isinstance(target, (M.Definition, M.Usage)) and target.kind in ("calc", "constraint"):
+            return self._inline_calc(target, expr)
+        raise AnalysisError(
+            f"cannot encode invocation '{_snippet(expr, 48)}': "
+            f"'{'::'.join(name)}' is not a calc definition"
+        )
+
+    def _builtin(self, name: str, expr: A.Invocation) -> _Val:
+        if expr.named:
+            raise AnalysisError(f"builtin '{name}' takes no named arguments")
+        args = [self.value(a) for a in expr.args]
+        if name in ("max", "min") and args:
+            return self.extremum(name, args)
+        if args and all(a.const is not None for a in args):
+            # constant fold through the interpreter's own builtin (float
+            # semantics, so the proxy matches what re-evaluation computes)
+            result = BUILTINS[name](*(float(a.const) for a in args))  # type: ignore[arg-type]
+            if not is_scalar(result):
+                raise AnalysisError(f"builtin '{name}' did not fold to a number")
+            return _Val(const=_frac(result))
+        raise AnalysisError(
+            f"'{_snippet(expr, 48)}': {name} of a selection-dependent value "
+            "has no fixed-point encoding"
+        )
+
+    def _inline_calc(self, calc: M.Definition | M.Usage, expr: A.Invocation) -> _Val:
+        if any(calc is frame_calc for frame_calc, _ in self._frames):
+            raise AnalysisError(
+                f"recursive invocation of calc '{calc.label}' cannot be inlined for CP-SAT"
+            )
+        members = self.study.interp.resolver.members_of(calc)
+        params = [
+            (m.name, m)
+            for m in members
+            if isinstance(m, M.Usage) and m.direction in ("in", "inout") and m.name
+        ]
+        if len(expr.args) > len(params):
+            raise AnalysisError(f"{calc.label} takes {len(params)} parameters")
+        # arguments are encoded in the CALLER's scope, before the frame opens
+        frame: dict[str, _Val] = {}
+        for (pname, _), arg in zip(params, expr.args, strict=False):
+            frame[pname] = self.value(arg)
+        names = {pname for pname, _ in params}
+        for aname, aexpr in expr.named:
+            if aname not in names:
+                raise AnalysisError(f"{calc.label} has no parameter {aname!r}")
+            frame[aname] = self.value(aexpr)
+        self._frames.append((calc, frame))
+        try:
+            for pname, param in params:  # defaults, in the callee's scope
+                if pname in frame:
+                    continue
+                if param.value is None:
+                    raise AnalysisError(f"missing argument for parameter {pname!r} of {calc.label}")
+                frame[pname] = self.value(param.value.expr)
+            return_expr: A.Expr | None = None
+            for member in members:  # valued locals, mirroring _call_calc
+                if not isinstance(member, M.Usage):
+                    continue
+                if member.direction == "return":
+                    if member.value is not None and return_expr is None:
+                        return_expr = member.value.expr
+                    continue
+                if member.name is None or member.direction in ("in", "inout"):
+                    continue
+                if member.value is not None:
+                    frame[member.name] = self.value(member.value.expr)
+            result = calc.result if calc.result is not None else return_expr
+            if result is None:
+                raise AnalysisError(f"{calc.label} has no result expression")
+            return self.value(result)
+        finally:
+            self._frames.pop()
+
+    # -- arithmetic -----------------------------------------------------------
+
+    def extremum(self, op: str, args: list[_Val]) -> _Val:
+        """``max``/``min`` over fixed-point values (native CP-SAT)."""
+
+        if all(a.const is not None for a in args):
+            pick = max if op == "max" else min
+            return _Val(const=pick(a.const for a in args))  # type: ignore[type-var]
+        args = [self._rescale(a) for a in args]
+        scale = 1
+        for a in args:
+            scale = lcm(scale, a.const.denominator if a.const is not None else a.scale)
+        los = [a.bounds[0] for a in args]
+        his = [a.bounds[1] for a in args]
+        pick = max if op == "max" else min
+        lo, hi = pick(los), pick(his)
+        target = self._new_var(lo, hi, scale)
+        exprs = [self._at(a, scale) for a in args]
+        adder = self.model.add_max_equality if op == "max" else self.model.add_min_equality
+        adder(target, exprs)
+        return _Val(expr=target, scale=scale, lo=lo, hi=hi)
 
     def add(self, a: _Val, b: _Val) -> _Val:
         if a.const is not None and b.const is not None:
@@ -220,6 +384,9 @@ class _Encoder:
             return _Val(
                 expr=b.expr * c.numerator, scale=b.scale * c.denominator, lo=bounds[0], hi=bounds[1]
             )
+        a, b = self._rescale(a), self._rescale(b)
+        if a.const is not None or b.const is not None:  # zero-width bounds folded
+            return self.mul(a, b)
         va, vb = self._as_var(a), self._as_var(b)
         cands = [x * y for x in a.bounds for y in b.bounds]
         lo, hi = min(cands), max(cands)
@@ -239,13 +406,36 @@ class _Encoder:
                 "is not supported (bounds "
                 f"[{b.lo}, {b.hi}])"
             )
-        va, vb = self._as_var(a), self._as_var(b)
+        a, b = self._rescale(a), self._rescale(b)
+        if b.const is not None:
+            return self.div(a, b)
         cands = [x / y for x in a.bounds for y in b.bounds]
         lo, hi = min(cands), max(cands)
-        target = self._new_var(lo, hi, _DIV_SCALE)
-        # value = (va/sa)/(vb/sb) = va*sb / (vb*sa); floor at 1/_DIV_SCALE
-        self.model.add_division_equality(target, va * (b.scale * _DIV_SCALE), vb * a.scale)
-        return _Val(expr=target, scale=_DIV_SCALE, lo=lo, hi=hi)
+        if a.const is not None:  # constant / expression: still a division
+            a = self._materialize(a)
+        va, vb = self._as_var(a), self._as_var(b)
+        # value = (va/sa)/(vb/sb) = va*sb / (vb*sa), quantized to `scale`:
+        # target = va*(sb*scale)/(vb*sa), with the coefficient fraction
+        # reduced so the int64 budget survives large operand scales
+        scale = self._fit_scale(lo, hi)
+        while scale >= 1:
+            g = gcd(b.scale * scale, a.scale)
+            ncoef, dcoef = b.scale * scale // g, a.scale // g
+            bound = max(abs(floor(a.lo * a.scale)), abs(ceil(a.hi * a.scale))) * ncoef
+            if bound < 2**62:
+                break
+            scale //= 10  # trade resolution for range
+        else:
+            raise AnalysisError(
+                "fixed-point division overflows CP-SAT's integer domain: "
+                "evaluate mixes exactly with all_architectures()/evaluate() instead"
+            )
+        # truncation slop: the quotient may fall one quantum outside the
+        # exact interval, so the declared domain widens by 1/scale
+        lo, hi = lo - Fraction(1, scale), hi + Fraction(1, scale)
+        target = self._new_var(lo, hi, scale)
+        self.model.add_division_equality(target, va * ncoef, vb * dcoef)
+        return _Val(expr=target, scale=scale, lo=lo, hi=hi)
 
     # -- boolean ------------------------------------------------------------
 
@@ -284,7 +474,7 @@ class _Encoder:
             )
             self._compare(diff, expr.op, literal)
             return
-        raise AnalysisError(f"cannot encode constraint '{expr.to_text()}' for CP-SAT")
+        raise AnalysisError(f"cannot encode constraint '{_snippet(expr)}' for CP-SAT")
 
     def _compare(self, diff: _Val, op: str, literal: Any) -> None:
         if diff.const is not None:  # statically decided
@@ -306,6 +496,62 @@ class _Encoder:
         self.model.add(con).only_enforce_if(literal)
 
     # -- plumbing -----------------------------------------------------------
+
+    @staticmethod
+    def _fit_scale(lo: Fraction, hi: Fraction) -> int:
+        """A power-of-ten scale keeping ~:data:`_DIGITS` significant digits."""
+
+        maxabs = max(abs(lo), abs(hi))
+        if maxabs == 0:
+            return 1
+        return int(10 ** max(0, _DIGITS + 1 - ceil(log10(float(maxabs)) + 1)))
+
+    def _rescale(self, v: _Val) -> _Val:
+        """Requantize an oversized fixed-point value to ~:data:`_DIGITS`
+        significant digits (one floor division, error <= 1/new scale)."""
+
+        if v.const is not None:
+            return v
+        if v.lo == v.hi:  # bounds always contain the value: it is constant
+            return _Val(const=v.lo)
+        want = self._fit_scale(v.lo, v.hi)
+        if v.scale <= want:
+            return v
+        # the largest divisor of scale of the form 2^i * 5^j that fits `want`
+        # (scales are products of decimal denominators, so this finds one)
+        twos = fives = 0
+        rest = v.scale
+        while rest % 2 == 0:
+            twos, rest = twos + 1, rest // 2
+        while rest % 5 == 0:
+            fives, rest = fives + 1, rest // 5
+        best = 1
+        for i in range(twos + 1):
+            if 2**i > want:
+                break
+            for j in range(fives + 1):
+                cand = 2**i * 5**j
+                if cand > want:
+                    break
+                best = max(best, cand)
+        if best >= v.scale:
+            return v
+        # truncation slop: widen the declared domain by one quantum
+        lo, hi = v.lo - Fraction(1, best), v.hi + Fraction(1, best)
+        target = self._new_var(lo, hi, best)
+        self.model.add_division_equality(target, v.expr, v.scale // best)
+        return _Val(expr=target, scale=best, lo=lo, hi=hi)
+
+    def _materialize(self, v: _Val) -> _Val:
+        """A constant as a (fixed) variable-backed value."""
+
+        assert v.const is not None
+        return _Val(
+            expr=self.model.new_constant(v.const.numerator) * 1,
+            scale=v.const.denominator,
+            lo=v.const,
+            hi=v.const,
+        )
 
     def _common_scale(self, a: _Val, b: _Val) -> int:
         scale = 1
@@ -460,7 +706,13 @@ class TradeStudy:
         encoder = _Encoder(self, model)
         self._encoder_sel = sel
         for name, expr in self.derived_order:
-            self._derived_vals[name] = encoder.value(expr)
+            try:
+                self._derived_vals[name] = encoder.value(expr)
+            except AnalysisError as err:
+                raise AnalysisError(
+                    f"CP-SAT cannot encode derived attribute '{name}' -- {err}; "
+                    "the interpreter path (all_architectures()/evaluate()) stays exact"
+                ) from err
 
         literals = []
         for con in named_members(self.interp, self.assembly, ("constraint",)):
@@ -468,7 +720,13 @@ class TradeStudy:
             if body is None:
                 continue
             lit = model.new_bool_var(con.name or con.label)
-            encoder.constrain(body, lit)
+            try:
+                encoder.constrain(body, lit)
+            except AnalysisError as err:
+                raise AnalysisError(
+                    f"CP-SAT cannot encode constraint '{con.name or con.label}' -- {err}; "
+                    "the interpreter path (all_architectures()/evaluate()) stays exact"
+                ) from err
             literals.append(lit)
             if enforce:
                 model.add_bool_and([lit])

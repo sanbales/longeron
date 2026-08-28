@@ -4,30 +4,38 @@ One :func:`mission_dashboard` call composes the existing house widgets
 (:func:`longeron.analysis.viz.parcoords`,
 :func:`longeron.analysis.viewer3d.mesh_viewer`) with plain ipywidgets into
 the single artifact that ties requirements -> architectures ->
-performance -> cost:
+performance -> cost.  The layout is built to fit one 1080p screen
+(1920x950 content area) without vertical scrolling:
 
-* a MISSION REQUIREMENTS panel -- one slider per requirement threshold
-  (ISR station floor; logistics payload and radius floors; intercept
-  target speed), defaults and constraint identities read from the
-  model's own requirement attributes.  Moving a slider re-evaluates
-  feasibility live: each candidate's per-mission equipment options were
-  baked with their achieved values, so re-filtering is pure Python over
-  small data (:func:`apply_thresholds`);
-* a MISSION PRIORITIES panel -- one 0-100 weight slider per mission,
-  plus a top-N slider sizing the 3D lineup;
-* the parallel-coordinates widget over the cross-mission metrics PLUS a
-  computed ``MOE`` axis (the weighted compromise score) -- brushing an
+* a HEADER STRIP -- the title, a PARETO-ONLY toggle button (see below),
+  and the top-N slider sizing the 3D lineup;
+* a PLOT ROW -- the parallel-coordinates widget over the cross-mission
+  metrics PLUS a computed ``MOE`` axis (the weighted compromise score)
+  side by side with a compact MOE-vs-cost scatter; brushing a parcoords
   axis downselects the candidate pool, and the whole table re-bakes in
   place as sliders move (brushes survive by axis name);
-* a compact MOE-vs-cost scatter with the 2D Pareto front of the
-  currently feasible candidates highlighted (cost minimized, MOE
-  maximized);
-* per-mission requirement cards -- the best compromise's numeric margin
-  against every constraint (green holds / red broken), threshold rows
-  tracking the sliders live;
-* the 3D viewer with the top-N compromises in an adaptive grid
-  (:func:`longeron.analysis.geometry.lineup`: 4 -> 2x2, 6 -> 2x3), each
-  cell captioned in-scene.
+* a CONTROL ROW -- one ipywidgets ``Tab`` next to the 3D viewer.  Tab 0
+  summarizes all three missions: the best compromise, the mission
+  priority sliders (one 0-100 weight per mission) feeding the MOE, and a
+  per-mission scorecard.  Tabs 1-3 hold one mission each: its
+  requirement-threshold sliders (defaults and constraint identities read
+  from the model's own requirement attributes) and its requirement
+  margin card (green holds / red broken, threshold rows tracking the
+  sliders live).  The 3D viewer sits BESIDE the tab, so slider moves and
+  their geometric consequences share one glance: the top-N compromises
+  render to scale in an adaptive grid
+  (:func:`longeron.analysis.geometry.lineup`), each cell captioned
+  in-scene.
+
+The PARETO-ONLY toggle filters dominated candidates out of the linked
+views.  Dominance is over the study's objective axes -- cost (minimized)
+and every mission's primary metric (maximized) as currently thresholded:
+candidate ``a`` is dominated when some candidate ``b`` is at least as
+good on every axis and not identical on all of them, so exact ties
+survive (:func:`pareto_mask`, pure and unit-tested).  Candidates feasible
+for no mission never join the front.  The dominated set ignores the
+priority WEIGHTS on purpose: re-prioritizing must never change which
+designs are efficient, only which efficient design wins.
 
 All linking runs in Python via traitlets observers -- the candidate
 table is a couple hundred rows, so every front-end stays a dumb painter
@@ -79,6 +87,7 @@ __all__ = [
     "compromise_scores",
     "mission_dashboard",
     "mission_dashboard_data",
+    "pareto_mask",
 ]
 
 #: score deducted (times the mission's weight) when a candidate cannot
@@ -332,20 +341,37 @@ def compromise_scores(
     return scores
 
 
-def _front_flags(points: Sequence[tuple[float, float]], eligible: Sequence[bool]) -> list[bool]:
-    """Non-dominated flags under (min x, max y), over the eligible points."""
+def pareto_mask(
+    objectives: Sequence[Sequence[float]], eligible: Sequence[bool] | None = None
+) -> list[bool]:
+    """Non-dominated flags, larger-is-better on every objective axis.
 
+    ``a`` is dominated when some eligible ``b`` is >= on every axis and
+    differs on at least one -- so exact ties survive together (the same
+    weak-dominance convention as :func:`longeron.analysis.trades.pareto`).
+    Ineligible rows are flagged ``False`` and never dominate anyone.
+    Orient minimized axes (cost) by negation before calling.
+    """
+
+    ok = list(eligible) if eligible is not None else [True] * len(objectives)
+    rows = [tuple(float(v) for v in row) for row in objectives]
     flags: list[bool] = []
-    for i, (x, y) in enumerate(points):
-        if not eligible[i]:
+    for i, row in enumerate(rows):
+        if not ok[i]:
             flags.append(False)
             continue
         dominated = any(
-            eligible[j] and other[0] <= x and other[1] >= y and other != (x, y)
-            for j, other in enumerate(points)
+            ok[j] and all(x >= y for x, y in zip(other, row, strict=True)) and other != row
+            for j, other in enumerate(rows)
         )
         flags.append(not dominated)
     return flags
+
+
+def _front_flags(points: Sequence[tuple[float, float]], eligible: Sequence[bool]) -> list[bool]:
+    """Non-dominated flags under (min x, max y), over the eligible points."""
+
+    return pareto_mask([(-x, y) for x, y in points], eligible)
 
 
 # ---------------------------------------------------------------------------
@@ -547,24 +573,57 @@ def _card_html(
     )
 
 
+def _summary_html(
+    row: Mapping[str, Any],
+    metric_of: Mapping[str, str],
+    mission_names: Sequence[str],
+) -> str:
+    """The all-missions scorecard for one candidate (tab 0)."""
+
+    lines = []
+    for name in mission_names:
+        feasible = row["feasible"][name]
+        color = _OK if feasible else _BAD
+        verdict = "feasible" if feasible else "infeasible"
+        lines.append(
+            f'<tr><td style="padding-right:10px"><b>{name}</b></td>'
+            f'<td style="color:#8a8f98; padding-right:10px">{metric_of[name]}</td>'
+            f'<td style="text-align:right; font-variant-numeric:tabular-nums; '
+            f'padding-right:10px">{row["metric"][name]:.1f}</td>'
+            f'<td style="color:{color}">{verdict}</td></tr>'
+        )
+    return (
+        f'<div style="{_CARD_STYLE}"><b>best compromise, mission by '
+        f'mission</b><table style="margin-top:4px; border-spacing:0; '
+        f'font-size:11px">{"".join(lines)}</table></div>'
+    )
+
+
 def mission_dashboard(
     source: M.Model | Mapping[str, Any],
     *,
     missions: Mapping[str, tuple[str, str]] | None = None,
-    width_px: int = 920,
+    width_px: int = 1500,
 ) -> Any:
     """The linked mission-compromise dashboard (an ipywidgets ``VBox``).
 
     ``source`` is either a loaded model (the candidate table is baked
     via :func:`mission_dashboard_data`, a half-minute of interpreter
-    time) or an already-prepared data dict from that function.  The
-    returned layout exposes its pieces for scripting and tests:
+    time) or an already-prepared data dict from that function.
+    ``width_px`` is the TOTAL dashboard width; the default fills a 1080p
+    screen, and the fixed row heights keep the whole surface under ~900
+    px so nothing scrolls (see the module docstring for the layout).
+
+    The returned layout exposes its pieces for scripting and tests:
     ``.sliders`` (mission -> priority IntSlider), ``.requirements``
     (mission -> key -> threshold FloatSlider), ``.top_n``,
-    ``.parcoords``, ``.scatter``, ``.viewer``, ``.cards``, ``.data``,
-    ``.live`` (the current :func:`apply_thresholds` table), ``.picks``
-    (the current top-N candidate indices), and ``.scores`` (the MOE per
-    candidate).
+    ``.pareto_toggle`` (dominated-candidate filter), ``.tabs`` (summary +
+    one tab per mission), ``.parcoords``, ``.scatter``, ``.viewer``,
+    ``.cards``, ``.summary``, ``.data``, ``.live`` (the current
+    :func:`apply_thresholds` table), ``.front`` (per-candidate
+    non-dominated flags), ``.pool`` (the candidate indices currently in
+    view), ``.picks`` (the current top-N candidate indices), and
+    ``.scores`` (the MOE per candidate).
     """
 
     from . import geometry, viewer3d, viz  # local: keeps import cheap
@@ -578,6 +637,14 @@ def mission_dashboard(
     shared = data["shared"]
     specs: Mapping[str, Sequence[Mapping[str, Any]]] = data.get("thresholds", {})
     has_cost = bool(candidates) and candidates[0]["cost"] is not None
+
+    # one-screen budget: header (~40) + plot row (~360) + control row
+    # (~470) stays under ~900 px of content height
+    scatter_w, plot_h = 400, 330
+    pc_w = max(700, width_px - scatter_w - 40)
+    tab_w = 640
+    viewer_w = max(560, width_px - tab_w - 40)
+    viewer_h = 430
 
     req_sliders: dict[str, dict[str, Any]] = {
         name: {
@@ -614,17 +681,28 @@ def mission_dashboard(
         max=8,
         description="lineup N",
         continuous_update=True,
-        style={"description_width": "88px"},
-        layout=widgets.Layout(width="264px"),
+        style={"description_width": "64px"},
+        layout=widgets.Layout(width="220px"),
+    )
+    pareto_toggle = widgets.ToggleButton(
+        value=False,
+        description="Pareto only",
+        tooltip=(
+            "show only non-dominated candidates (cost minimized, every "
+            "mission metric maximized; ties survive; priority weights "
+            "never change the front)"
+        ),
+        layout=widgets.Layout(width="110px"),
     )
     cards = {name: widgets.HTML() for name in mission_names}
     ranking = widgets.HTML()
+    summary = widgets.HTML()
     viewer = viewer3d.mesh_viewer(
         {"unit": "m", "parts": [], "bounds": [[0, 0, 0], [0, 0, 0]]},
-        width_px=width_px,
-        height_px=int(width_px * 0.45),
+        width_px=viewer_w,
+        height_px=viewer_h,
     )
-    scatter = _scatter_class()(width_px=380, height_px=300)
+    scatter = _scatter_class()(width_px=scatter_w, height_px=plot_h)
 
     geo_study = studies[mission_names[0]]
     mesh_cache: dict[int, dict[str, Any]] = {}
@@ -672,15 +750,32 @@ def mission_dashboard(
             rows.append(entry)
         return rows
 
+    def _objectives(live: list[dict[str, Any]]) -> list[tuple[float, ...]]:
+        """The dominance axes: -cost (so larger is better) + mission metrics."""
+
+        return [
+            (
+                *((-float(candidates[i]["cost"]),) if has_cost else ()),
+                *(float(live[i]["metric"][name]) for name in mission_names),
+            )
+            for i in range(len(candidates))
+        ]
+
     floors0 = _floors()
     live0 = apply_thresholds(candidates, floors0)
     scores0 = compromise_scores(live0, dict.fromkeys(mission_names, 50.0))
-    pc = viz.parcoords(_rows(live0, scores0), axes=axes, width_px=width_px)
+    pc = viz.parcoords(_rows(live0, scores0), axes=axes, width_px=pc_w, height_px=plot_h)
+    # fixed-size row members: HBox children default to flex-shrink 1, and a
+    # shrunk parcoords/tab bar is exactly the cramped layout this replaces
+    for widget, w in ((pc, pc_w), (scatter, scatter_w), (viewer, viewer_w)):
+        widget.layout = widgets.Layout(width=f"{w}px", flex="0 0 auto")
 
     box = widgets.VBox()
     box.live = live0
     box.scores = scores0
     box.picks = []
+    box.front = []
+    box.pool = list(range(len(candidates)))
 
     def _recompute(_change: Any = None) -> None:
         floors = _floors()
@@ -690,19 +785,29 @@ def mission_dashboard(
         box.live = live
         box.scores = scores
 
-        table = json.dumps(viz.parcoords_payload(_rows(live, scores), axes))
+        eligible = [any(row["feasible"].values()) for row in live]
+        front = pareto_mask(_objectives(live), eligible)
+        box.front = front
+        pool = [i for i, on in enumerate(front) if on] if pareto_toggle.value else None
+        if not pool:  # toggle off, or nothing eligible at these thresholds
+            pool = list(range(len(candidates)))
+        box.pool = pool
+
+        rows = _rows(live, scores)
+        table = json.dumps(viz.parcoords_payload([rows[i] for i in pool], axes))
         if pc.table_json != table:  # identical re-bakes stay silent
             pc.table_json = table
 
-        subset = pc.selected_indices() or list(range(len(candidates)))
+        brushed = [pool[j] for j in pc.selected_indices() if 0 <= j < len(pool)]
+        subset = brushed or pool
         order = sorted(subset, key=lambda i: -scores[i])
         picks = order[: int(top_n.value)]
         box.picks = picks
 
         if has_cost:
-            points = [(float(candidates[i]["cost"]), scores[i]) for i in range(len(candidates))]
-            eligible = [any(live[i]["feasible"].values()) for i in range(len(candidates))]
-            fronts = _front_flags(points, eligible)
+            points = [(float(candidates[i]["cost"]), scores[i]) for i in pool]
+            shown_eligible = [eligible[i] for i in pool]
+            fronts = _front_flags(points, shown_eligible)
             pick_set = set(picks)
             scatter.payload_json = json.dumps(
                 {
@@ -718,14 +823,14 @@ def mission_dashboard(
                     ],
                     "points": [
                         {
-                            "x": round(points[i][0], 2),
-                            "y": round(points[i][1], 4),
-                            "front": fronts[i],
-                            "feasible": eligible[i],
-                            "pick": i in pick_set,
-                            "label": candidates[i]["label"],
+                            "x": round(points[j][0], 2),
+                            "y": round(points[j][1], 4),
+                            "front": fronts[j],
+                            "feasible": shown_eligible[j],
+                            "pick": index in pick_set,
+                            "label": candidates[index]["label"],
                         }
-                        for i in range(len(candidates))
+                        for j, index in enumerate(pool)
                     ],
                 }
             )
@@ -760,15 +865,18 @@ def mission_dashboard(
                     specs.get(name, ()),
                     floors.get(name, {}),
                 )
-            feasible_now = sum(1 for row in live if any(row["feasible"].values()))
+            summary.value = _summary_html(live[best], metric_of, mission_names)
+            feasible_now = sum(1 for flag in eligible if flag)
+            front_now = sum(1 for flag in front if flag)
             ranking.value = (
                 '<div style="font-family:Helvetica,Arial,sans-serif; '
                 'font-size:12px; color:#2b2d31"><b>best compromise</b> '
                 f"&#9733; {candidates[best]['label']}<br>"
                 f'<span style="color:#8a8f98">{feasible_now} of '
                 f"{len(candidates)} candidates fly &ge; 1 mission at these "
-                f"thresholds; {len(subset)} in the brushed pool. Sliders "
-                "and brushes recompute everything live.</span></div>"
+                f"thresholds; {front_now} non-dominated; {len(subset)} in "
+                "view. Sliders, brushes, and the Pareto toggle recompute "
+                "everything live.</span></div>"
             )
 
     for slider in weight_sliders.values():
@@ -777,43 +885,72 @@ def mission_dashboard(
         for slider in sliders_by_key.values():
             slider.observe(_recompute, names="value")
     top_n.observe(_recompute, names="value")
+    pareto_toggle.observe(_recompute, names="value")
     pc.observe(_recompute, names="selected")
 
     def _section(text: str) -> Any:
         return widgets.HTML(f'<div style="{_SECTION_STYLE}">{text}</div>')
 
-    header = widgets.HTML(
-        '<div style="font-family:Helvetica,Arial,sans-serif">'
-        "<b>Mission compromise</b> "
-        '<span style="color:#8a8f98; font-size:11px">requirements '
-        "re-filter the candidates; priorities re-weight the MOE "
-        "(infeasible missions cost "
-        f"{INFEASIBLE_PENALTY:g}&times; their weight); brush any axis "
-        "to downselect</span></div>"
-    )
-    requirement_panel = widgets.VBox(
+    header = widgets.HBox(
         [
-            _section("mission requirements"),
-            *(slider for name in mission_names for slider in req_sliders[name].values()),
+            widgets.HTML(
+                '<div style="font-family:Helvetica,Arial,sans-serif">'
+                "<b>Mission compromise</b> "
+                '<span style="color:#8a8f98; font-size:11px">requirements '
+                "re-filter the candidates; priorities re-weight the MOE "
+                "(infeasible missions cost "
+                f"{INFEASIBLE_PENALTY:g}&times; their weight); brush any "
+                "axis to downselect; the toggle hides dominated designs "
+                "(min cost, max mission metrics)</span></div>",
+                layout=widgets.Layout(flex="1 1 auto"),
+            ),
+            pareto_toggle,
+            top_n,
+        ],
+        layout=widgets.Layout(align_items="center", width=f"{width_px}px"),
+    )
+    summary_tab = widgets.VBox(
+        [
+            ranking,
+            _section("mission priorities"),
+            *(weight_sliders[n] for n in mission_names),
+            summary,
         ]
     )
-    priority_panel = widgets.VBox(
-        [_section("mission priorities"), *(weight_sliders[n] for n in mission_names), top_n]
+    mission_tabs = [
+        widgets.VBox(
+            [
+                _section("requirement floors"),
+                *req_sliders[name].values(),
+                cards[name],
+            ]
+        )
+        for name in mission_names
+    ]
+    tabs = widgets.Tab(
+        children=[summary_tab, *mission_tabs],
+        layout=widgets.Layout(width=f"{tab_w}px", height=f"{viewer_h + 34}px", flex="0 0 auto"),
     )
+    tabs.set_title(0, "all missions")
+    for position, name in enumerate(mission_names, start=1):
+        tabs.set_title(position, name)
+    row = widgets.Layout(flex_flow="row nowrap", width=f"{width_px}px")
     box.children = [
         header,
-        widgets.HBox([requirement_panel, priority_panel, ranking]),
-        pc,
-        widgets.HBox([scatter, *cards.values()]),
-        viewer,
+        widgets.HBox([pc, scatter], layout=row),
+        widgets.HBox([tabs, viewer], layout=row),
     ]
+    box.layout = widgets.Layout(width=f"{width_px + 8}px")
     box.sliders = weight_sliders
     box.requirements = req_sliders
     box.top_n = top_n
+    box.pareto_toggle = pareto_toggle
+    box.tabs = tabs
     box.parcoords = pc
     box.scatter = scatter
     box.viewer = viewer
     box.cards = cards
+    box.summary = summary
     box.ranking = ranking
     box.data = data
     box._recompute = _recompute

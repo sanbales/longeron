@@ -552,6 +552,45 @@ print(json.dumps({
 
 
 #: filename -> builder; the session fixture writes these into the lab root
+def dashboard_notebook() -> dict[str, Any]:
+    """Scenario: the mission-compromise dashboard on one 1080p screen.
+
+    Cell 0 bakes and displays the dashboard over the real multi-mission
+    catalog (copied into the lab root by the session fixture).  Cell 1 is
+    the checker: one JSON line of kernel-side dashboard state (candidate
+    count, pool/front sizes, toggle state, tab titles, the top pick's
+    airframe) that tests re-read after driving the browser.
+    """
+
+    return _notebook(
+        """
+import longeron
+from longeron.analysis import dashboard
+
+model = longeron.load("examples/uav_missions.sysml")
+dash = dashboard.mission_dashboard(model)
+dash
+""",
+        """
+import json
+
+print(
+    json.dumps(
+        {
+            "candidates": len(dash.data["candidates"]),
+            "pool": len(dash.pool),
+            "front": sum(dash.front),
+            "toggle": dash.pareto_toggle.value,
+            "tabs": [dash.tabs.get_title(i) for i in range(len(dash.tabs.children))],
+            "picks": len(dash.picks),
+            "top": dash.data["candidates"][dash.picks[0]]["selection"]["airframe"],
+        }
+    )
+)
+""",
+    )
+
+
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "toolbar_scenario.ipynb": toolbar_notebook,
@@ -561,4 +600,5 @@ SCENARIO_NOTEBOOKS = {
     "hbox_fit_scenario.ipynb": hbox_fit_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,
     "app_scenario.ipynb": app_notebook,
+    "dashboard_scenario.ipynb": dashboard_notebook,
 }
