@@ -37,11 +37,15 @@ The sheet, top to bottom:
   references, multiplicity, direction.  Units are FIRST-CLASS
   (maintainer finding): a value carrying a bracket unit shows compactly
   in the value field (``1.5 kg``, committed back with the reference
-  intact), the typed-by row keeps the TYPE but names the unit beside it
-  (``Real [kg]`` -- type and unit are different facts, both visible,
-  neither masquerading as the other), and a dedicated **unit** row gives
-  the symbol + dimension (``kg \u2014 mass``) from the model's derived
-  unit table (:func:`longeron.units.unit_table`);
+  intact -- a bare-number commit keeps the current unit too), the
+  typed-by row keeps the TYPE but names the unit beside it (``Real
+  [kg]`` -- type and unit are different facts, both visible, neither
+  masquerading as the other), and a dedicated **unit** row gives the
+  symbol + dimension (``kg \u2014 mass``) from the model's derived unit
+  table (:func:`longeron.units.unit_table`); a committed value carrying
+  a fake or wrong-dimension unit is refused by the edit seam
+  (:func:`longeron.edit.set_attribute_value`) and lands in the error
+  strip, the field reverting to the last good value;
 * **relationship rows**: every relationship kind the explorer's tree
   admits (connections, bindings, interfaces, allocations, flows,
   messages, satisfies, verifies, imports, exposes, aliases,
@@ -101,10 +105,11 @@ from . import edit
 from . import model as M
 from .app import _TAB_ICON_CSS, _AppSweeper
 from .ast import QuantityOp, expr_to_text
+from .edit import _dim_label
 from .errors import EditError
 from .explorer import _chip, _display_name, _family, _import_shape, _is_relationship
 from .interpreter import Interpreter
-from .units import Dim, UnitTable, unit_table
+from .units import unit_table
 
 __all__ = ["Inspector"]
 
@@ -269,18 +274,6 @@ def _bracket_unit(element: M.Element) -> str | None:
         if isinstance(expr, QuantityOp):
             return expr_to_text(expr.unit)
     return None
-
-
-def _dim_label(table: UnitTable, dim: Dim) -> str:
-    """A human dimension name (``mass``) from the table's quantity
-    vocabulary (the bare lowercase-first keys are the quantity
-    attributes: ``mass``, ``temperatureDifference``); the SI-base
-    formula when no quantity names the dimension."""
-
-    for key, quantity_dim in table._quantities.items():
-        if "::" not in key and key[:1].islower() and quantity_dim == dim:
-            return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", key).lower()
-    return table.format_dim(dim)
 
 
 def _declaration_text(element: M.Element) -> str | None:
@@ -605,14 +598,21 @@ class Inspector(W.VBox):
     def _compact_to_bracket(self, element: M.Element, text: str) -> str:
         """``0.4 kg`` -> ``0.4 [SI::kg]``: a committed compact value keeps
         the CURRENT measurement reference (the parser's spelling is the
-        bracket form); anything else passes through verbatim."""
+        bracket form), and a bare number does too -- the field displayed
+        ``0.38 kg``, so ``0.42`` means a new magnitude in the same unit,
+        never a silently dropped one; anything else passes through
+        verbatim."""
 
         reference = _bracket_unit(element)
         if reference is None:
             return text
         label, _ = self._unit_facts(element)  # type: ignore[arg-type]
-        if label and text.endswith(f" {label}"):
+        if label is None:
+            return text  # unresolvable current unit: the field showed raw text
+        if text.endswith(f" {label}"):
             return f"{text[: -len(label) - 1].rstrip()} [{reference}]"
+        if re.fullmatch(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", text.strip()):
+            return f"{text.strip()} [{reference}]"
         return text
 
     @staticmethod

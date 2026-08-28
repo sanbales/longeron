@@ -13,6 +13,7 @@ import pytest
 import longeron
 from longeron import edit
 from longeron import model as M
+from longeron.ast import expr_to_text
 from longeron.errors import EditError
 from longeron.interpreter import Interpreter, Resolver
 
@@ -453,6 +454,150 @@ class TestSetAttributeValue:
         model = cascade_model()
         with pytest.raises(EditError):
             edit.set_attribute_value(model, "P::Nope::x", "1.0")
+
+
+# ---------------------------------------------------------------------------
+# set_attribute_value: the unit gate (semantics, not just syntax)
+# ---------------------------------------------------------------------------
+
+UNITED = """
+package P {
+    part def Chassis {
+        attribute mass : Real = 0.38 [SI::kg];
+        attribute payload : MassValue = 1.0 [SI::kg];
+        attribute count : Real = 4.0;
+    }
+}
+"""
+
+
+def united_model():
+    return longeron.loads(UNITED)
+
+
+def value_text(model, qname):
+    value = model.find(qname).value
+    return expr_to_text(value.expr) if value is not None else None
+
+
+class TestSetAttributeValueUnits:
+    """The maintainer's integrity hole, closed: a value write carrying a
+    fake or wrong-dimension unit is refused BEFORE anything mutates --
+    honest refusal over corruption, through the same machinery the
+    dimensional lint uses."""
+
+    def test_fake_unit_is_refused_and_the_model_untouched(self):
+        model = united_model()
+        before = longeron.to_sysml(model)
+        old = model.find("P::Chassis::mass").value
+        with pytest.raises(EditError, match=r"unit 'SI::kgg' does not resolve"):
+            edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::kgg]")
+        assert model.find("P::Chassis::mass").value is old
+        assert longeron.to_sysml(model) == before  # deep-compare: untouched
+
+    def test_fake_unit_refusal_suggests_the_nearest_real_units(self):
+        model = united_model()
+        with pytest.raises(EditError, match=r"did you mean 'SI::kg'"):
+            edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::kgg]")
+
+    def test_wrong_dimension_is_refused_naming_both_dimensions(self):
+        # the typing pins the dimension (MassValue -> mass); a real unit
+        # of another dimension is a semantic conflict, not a value
+        model = united_model()
+        before = longeron.to_sysml(model)
+        with pytest.raises(EditError, match=r"is mass-typed; 's' \[s\] is duration"):
+            edit.set_attribute_value(model, "P::Chassis::payload", "0.42 [SI::s]")
+        assert longeron.to_sysml(model) == before
+
+    def test_wrong_dimension_through_a_literal_scale_is_refused(self):
+        # the lint's meaning propagation: '2 * 1.0 [SI::s]' is still time
+        model = united_model()
+        with pytest.raises(EditError, match="is mass-typed"):
+            edit.set_attribute_value(model, "P::Chassis::payload", "2 * 1.0 [SI::s]")
+
+    def test_same_dimension_unit_change_is_accepted(self):
+        # SI::g is a real mass unit: the value means what it says
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "0.42 [SI::g]")
+        assert value_text(model, "P::Chassis::payload") == "0.42 [SI::g]"
+        assert_resolves_clean(model)
+        assert_fixpoint(model)
+
+    def test_correct_bracket_spelling_is_accepted(self):
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::kg]")
+        assert value_text(model, "P::Chassis::mass") == "0.42 [SI::kg]"
+        assert_resolves_clean(model)
+        assert_fixpoint(model)
+
+    def test_bare_number_passes_the_gate(self):
+        # a bare number has no dimension fact (validate's own posture);
+        # the inspector layer re-attaches the current unit before committing
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "0.42")
+        assert value_text(model, "P::Chassis::payload") == "0.42"
+
+    def test_unit_on_a_never_united_attribute_is_accepted_if_real(self):
+        # adding units is legitimate -- but only real ones
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::count", "5.0 [SI::kg]")
+        assert value_text(model, "P::Chassis::count") == "5.0 [SI::kg]"
+        with pytest.raises(EditError, match=r"unit 'SI::kgg' does not resolve"):
+            edit.set_attribute_value(model, "P::Chassis::count", "5.0 [SI::kgg]")
+
+    def test_previous_value_unit_pins_when_typing_does_not(self):
+        # THE maintainer scenario: 'mass : Real = 0.38 [SI::kg]' -- Real
+        # pins nothing, but the current value measures mass; replacing it
+        # with a duration is refused (a deliberate re-dimensioning takes
+        # validate=False, a silent one is corruption)
+        model = united_model()
+        before = longeron.to_sysml(model)
+        with pytest.raises(
+            EditError,
+            match=r"current value of 'P::Chassis::mass' is 'kg' \[mass\]; "
+            r"'s' \[s\] is duration; pass validate=False to override",
+        ):
+            edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::s]")
+        assert longeron.to_sysml(model) == before
+
+    def test_deliberate_redimensioning_takes_validate_false(self):
+        model = united_model()
+        tracker = edit.track(model)
+        edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::s]", validate=False)
+        assert value_text(model, "P::Chassis::mass") == "0.42 [SI::s]"
+        assert [c.op for c in tracker.changes] == ["set_value"]
+
+    def test_same_dimension_change_on_a_real_typed_attribute_is_accepted(self):
+        # the previous-value pin is a DIMENSION pin, not a unit pin
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::mass", "380.0 [SI::g]")
+        assert value_text(model, "P::Chassis::mass") == "380.0 [SI::g]"
+
+    def test_compound_annotations_check_every_reference(self):
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::count", "9.81 [SI::m / SI::s ** 2]")
+        assert value_text(model, "P::Chassis::count") == "9.81 [SI::m / SI::s ** 2]"
+        with pytest.raises(EditError, match=r"unit 'SI::ss' does not resolve"):
+            edit.set_attribute_value(model, "P::Chassis::count", "9.81 [SI::m / SI::ss ** 2]")
+
+    def test_validate_false_bypasses_the_gate(self):
+        # the documented escape hatch: a deliberate unchecked write stores
+        # and records; the lint still sees it afterwards
+        model = united_model()
+        tracker = edit.track(model)
+        edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::kgg]", validate=False)
+        assert value_text(model, "P::Chassis::mass") == "0.42 [SI::kgg]"
+        assert [c.op for c in tracker.changes] == ["set_value"]
+        assert any(d.code == "unresolved-unit" for d in longeron.validate(model))
+
+    def test_refused_attempts_record_nothing(self):
+        model = united_model()
+        tracker = edit.track(model)
+        with pytest.raises(EditError):
+            edit.set_attribute_value(model, "P::Chassis::mass", "0.42 [SI::kgg]")
+        with pytest.raises(EditError):
+            edit.set_attribute_value(model, "P::Chassis::payload", "0.42 [SI::s]")
+        assert tracker.changes == [] and not tracker.dirty
 
 
 # ---------------------------------------------------------------------------

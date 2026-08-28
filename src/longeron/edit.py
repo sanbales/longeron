@@ -39,6 +39,18 @@ rename that would silently re-bind *any* reference (name capture through
 shadowing) is rolled back and refused.  A rename that silently breaks
 references is worse than no rename.
 
+**Value writes validate semantics, not just syntax.**
+:func:`set_attribute_value` applies the same philosophy to units: a new
+expression carrying a measurement reference that does not resolve
+(``0.42 [SI::kgg]``), or whose dimension contradicts the attribute's
+quantity typing (``0.42 [SI::s]`` on a ``MassValue``) or -- when the
+typing pins nothing -- the current value's own unit (``0.42 [SI::s]``
+replacing ``0.38 [SI::kg]``), is refused before anything mutates --
+through the very machinery ``validate``'s dimensional lint uses, so the
+edit seam and the lint share one truth.  ``validate=False`` is the
+documented escape hatch for deliberate unchecked writes (including
+deliberate re-dimensioning).
+
 Known blind spots, matching ``validate``'s own: metadata *value* bodies
 (``level = 3;`` inside ``@Safety``) resolve against the metadata
 definition only one level deep, and references that reach an element
@@ -57,6 +69,8 @@ simply "there are recorded changes since the last :meth:`Tracker.mark_saved`".
 from __future__ import annotations
 
 import dataclasses
+import difflib
+import re
 import weakref
 from collections.abc import Callable, Iterator
 from typing import Any, NamedTuple
@@ -68,6 +82,7 @@ from .ast import expr_to_text
 from .errors import EditError, ResolutionError, SysMLError
 from .export import doc_comment_body
 from .interpreter import Resolver
+from .units import Dim, UnitTable
 
 __all__ = [
     "Change",
@@ -756,12 +771,41 @@ def _check_name(new_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def set_attribute_value(model: M.Model, attr_or_qname: M.Usage | str, text: str | None) -> M.Usage:
+def set_attribute_value(
+    model: M.Model,
+    attr_or_qname: M.Usage | str,
+    text: str | None,
+    *,
+    validate: bool = True,
+) -> M.Usage:
     """Set (or clear) a usage's value from expression text.
 
     ``text`` is parsed with the package's expression parser
     (:func:`longeron.parse_expression`); a syntax error raises
     :class:`~longeron.errors.EditError` carrying the parse diagnostics.
+
+    Semantics are validated *before* anything mutates (the module's
+    honest-refusal philosophy, applied to values): every measurement
+    reference the new expression carries must resolve against the
+    model's unit vocabulary -- ``0.42 [SI::kgg]`` raises
+    :class:`~longeron.errors.EditError` naming the fake unit and the
+    nearest real spellings -- and when the usage's typing pins a
+    quantity dimension (``payload : MassValue``) the new value's derived
+    dimension must agree: ``0.42 [SI::s]`` on a mass-typed attribute is
+    refused stating both dimensions, while ``0.42 [SI::g]`` is a real
+    mass unit and passes.  When the typing pins nothing (``mass : Real``)
+    but the CURRENT value carries a resolvable unit, that unit's
+    dimension is the pin instead -- replacing a ``[SI::kg]`` value with a
+    ``[SI::s]`` one is refused stating both dimensions and the
+    ``validate=False`` override (a deliberate re-dimensioning is
+    legitimate, a silent one is corruption).  A unit on a previously
+    unit-less attribute is accepted as long as it resolves (adding units
+    is legitimate), and a bare number always passes -- its dimension is
+    unknown, exactly as ``validate`` treats it.  The model is untouched
+    by any refusal, and refused attempts record nothing on the tracker.
+    ``validate=False`` skips this semantic gate for deliberate unchecked
+    writes (syntax is still required).
+
     The existing value's ``default =`` / ``:=`` flags are preserved; a
     usage without a value gets a plain ``=`` binding.  ``None`` (or
     blank text) removes the value entirely.  Returns the usage.
@@ -790,6 +834,8 @@ def set_attribute_value(model: M.Model, attr_or_qname: M.Usage | str, text: str 
         expr = parse_expression(text)
     except SysMLError as err:
         raise EditError(f"cannot parse {text!r} as an expression: {err}") from err
+    if validate:
+        _check_value_units(model, target, expr, resolver)
     target.value = M.FeatureValue(
         expr=expr,
         is_default=old.is_default if old else False,
@@ -802,6 +848,125 @@ def set_attribute_value(model: M.Model, attr_or_qname: M.Usage | str, text: str 
         {"text": expr_to_text(expr), "previous": expr_to_text(old.expr) if old else None},
     )
     return target
+
+
+def _check_value_units(model: M.Model, target: M.Usage, expr: A.Expr, resolver: Resolver) -> None:
+    """The unit gate on value writes: refuse fakes and dimension conflicts.
+
+    Deliberately reuses the dimensional lint's machinery
+    (:mod:`longeron.validation`) so the edit seam and ``validate`` share
+    one truth: measurement references resolve with the same stdlib-aware
+    lookup behind ``unresolved-unit``, and the pinned dimension is the
+    lint's own declared-meaning derivation -- the quantity typing first,
+    the current value's resolved unit when the typing pins nothing.
+    References that resolve
+    but that the unit table cannot derive contribute no dimension --
+    exactly ``validate``'s posture -- so a real-but-underivable unit is
+    never refused.
+    """
+
+    from .validation import _Checker  # lazy: keep edit's import surface light
+
+    checker = _Checker(model, library=resolver.library)
+    scope = target.owner or model
+    missing: list[str] = []
+    for ref in _unit_refs(expr):
+        name = "::".join(ref.parts)
+        if name in missing:
+            continue
+        if _resolve_or_none(checker.resolver, ref.parts, scope) is None:
+            missing.append(name)
+    if missing:
+        table = checker._units()
+        raise EditError(
+            "; ".join(
+                f"unit {name!r} does not resolve"
+                + (f" (did you mean {hint}?)" if (hint := _nearest_units(table, name)) else "")
+                for name in missing
+            )
+        )
+    meaning = checker._unit_meaning(target, expr, report=False)
+    if meaning is None:
+        return  # no unit fact in the new value (bare number): nothing to check
+    pinned = checker._quantity_typing_meaning(target)
+    if pinned is not None and len(pinned.dim.exp) == len(meaning.dim.exp):
+        if meaning.dim != pinned.dim:
+            table = checker._units()
+            raise EditError(
+                f"attribute {target.qualified_name or target.label!r} is "
+                f"{_dim_label(table, pinned.dim)}-typed; "
+                f"{meaning.display(table)} is {_dim_label(table, meaning.dim)}"
+            )
+        return
+    if pinned is not None:
+        return  # foreign basis: incomparable
+    # typing pins nothing: the CURRENT value's resolved unit is the pin
+    # (the maintainer's own scenario -- 'mass : Real = 0.38 [SI::kg]')
+    if target.value is None:
+        return
+    previous = checker._unit_meaning(target, target.value.expr, report=False)
+    if previous is None or len(previous.dim.exp) != len(meaning.dim.exp):
+        return  # no resolvable unit fact on the old value, or a foreign basis
+    if meaning.dim != previous.dim:
+        table = checker._units()
+        prev_unit = previous.label or previous.ident or table.format_dim(previous.dim)
+        raise EditError(
+            f"current value of {target.qualified_name or target.label!r} is "
+            f"{prev_unit!r} [{_dim_label(table, previous.dim)}]; "
+            f"{meaning.display(table)} is {_dim_label(table, meaning.dim)}; "
+            "pass validate=False to override"
+        )
+
+
+def _unit_refs(expr: A.Expr, in_unit: bool = False) -> Iterator[A.FeatureRef]:
+    """Every measurement reference in ``expr``: the name references inside
+    the bracket annotations of its quantity nodes, at any depth (units
+    compose, so an annotation may be ``SI::m / SI::s ** 2``)."""
+
+    if isinstance(expr, A.QuantityOp):
+        yield from _unit_refs(expr.base, in_unit)
+        yield from _unit_refs(expr.unit, True)
+        return
+    if in_unit and isinstance(expr, A.FeatureRef):
+        yield expr
+        return
+    for f in dataclasses.fields(expr):
+        value = getattr(expr, f.name)
+        if isinstance(value, A.Expr):
+            yield from _unit_refs(value, in_unit)
+        elif isinstance(value, tuple):
+            for item in value:
+                if isinstance(item, A.Expr):
+                    yield from _unit_refs(item, in_unit)
+                elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], A.Expr):
+                    yield from _unit_refs(item[1], in_unit)  # (name, expr) pairs
+
+
+def _nearest_units(table: UnitTable, name: str) -> str | None:
+    """Up to two nearest real unit spellings, as a ``'SI::kg' or 'SI::g'``
+    message fragment (``None`` when nothing is close)."""
+
+    picks: list[str] = []
+    for candidate in difflib.get_close_matches(name, list(table._by_key), n=6):
+        info = table.lookup(candidate)
+        if info is not None and not any(table.lookup(p) is info for p in picks):
+            picks.append(candidate)
+        if len(picks) == 2:
+            break
+    return " or ".join(repr(p) for p in picks) if picks else None
+
+
+def _dim_label(table: UnitTable, dim: Dim) -> str:
+    """A human dimension name (``mass``) from the table's quantity
+    vocabulary (the bare lowercase-first keys are the quantity
+    attributes: ``mass``, ``temperatureDifference``); the SI-base
+    formula when no quantity names the dimension.  Shared by the
+    refusal messages here and the inspector's unit row."""
+
+    for key, quantity_dim in table._quantities.items():
+        if "::" not in key and key[:1].islower() and quantity_dim == dim:
+            return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", key).lower()
+    return table.format_dim(dim)
 
 
 # ---------------------------------------------------------------------------

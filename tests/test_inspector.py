@@ -540,6 +540,72 @@ class TestEdits:
         app.inspector._value_field.value = ""
         assert rig_model.find("Rig::Chassis::mass").value is None
 
+    def test_fake_unit_commit_lands_in_the_error_strip(self, monkeypatch):
+        # the maintainer's integrity hole: a fake unit must be REFUSED at
+        # commit -- error strip, field reverted to the compact display
+        # (never the raw expression), model untouched, row not dirtied
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        from longeron.ast import expr_to_text
+
+        before = expr_to_text(model.find("Drone::Battery::mass").value.expr)
+        app.inspector._value_field.value = "0.42 [SI::kgg]"
+        assert app.inspector._error.layout.display is None
+        assert "unit &#x27;SI::kgg&#x27; does not resolve" in app.inspector._error.value
+        assert "did you mean" in app.inspector._error.value
+        assert app.inspector._value_field.value == "0.38 kg"  # compact, not raw
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == before
+        name, _ = _row_widgets(app)
+        assert "lgx-app-dirty" not in name._dom_classes
+        assert not edit.track(model).dirty
+        # a later good commit clears the strip
+        app.inspector._value_field.value = "0.42 kg"
+        assert app.inspector._error.layout.display == "none"
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.42 [SI::kg]"
+
+    def test_wrong_dimension_commit_reverts_and_reports(self, monkeypatch, rig_model):
+        # payload : MassValue pins the dimension; SI::s is a real unit of
+        # the WRONG one -- refused stating both dimensions
+        app = _open_lab(monkeypatch)
+        app.add_model(rig_model)
+        ex = app.explore_model(rig_model)
+        ex.select("Rig::Chassis::payload")
+        app.inspector._value_field.value = "5.0 [SI::s]"
+        assert "is mass-typed" in app.inspector._error.value
+        assert "is duration" in app.inspector._error.value
+        assert app.inspector._value_field.value == ""  # reverted: it had no value
+        assert rig_model.find("Rig::Chassis::payload").value is None
+        assert not edit.track(rig_model).dirty
+
+    def test_bare_number_commit_keeps_the_current_unit(self, monkeypatch):
+        # the field displayed '0.38 kg'; committing '0.42' means a new
+        # magnitude in the same unit, never a silently dropped reference
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "0.42"
+        assert app.inspector._value_field.value == "0.42 kg"
+        from longeron.ast import expr_to_text
+
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.42 [SI::kg]"
+
+    def test_same_dimension_unit_change_commits_and_renormalizes(self, monkeypatch):
+        # '420.0 [SI::g]' on a kg attribute: a real unit, same dimension --
+        # accepted verbatim (the value means what it says), shown compactly
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "420.0 [SI::g]"
+        assert app.inspector._error.layout.display == "none"
+        assert app.inspector._value_field.value == "420.0 g"
+        from longeron.ast import expr_to_text
+
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "420.0 [SI::g]"
+
 
 # ---------------------------------------------------------------------------
 # the dirty / save / push chrome
