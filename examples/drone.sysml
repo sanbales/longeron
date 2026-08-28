@@ -246,6 +246,37 @@ package Drone {
         attribute motorOutUsableThrust : Real =
             failsafeRotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
 
+        // ----- the payload envelope -------------------------------------
+        // Two ceilings cap the payload, and WHICH one binds is a family
+        // axis of its own: the airframe's book takeoff-weight limit, or
+        // the thrust needed to keep FlightEnvelope's hover margin.
+        // emptyMass backs the payload out of the mass roll-up, so every
+        // ceiling below reads directly in kg of payload.
+        attribute emptyMass : Real = totalMass - payloadMass;       // kg
+        // FlightEnvelope's hover-margin floor lives here so the
+        // requirement and the inversion below share ONE figure
+        attribute hoverMarginFloor : Real = 1.8;
+        // ceiling (a): the book maximum-takeoff-weight limit
+        attribute mtowPayload : Real = maxTakeoffMass - emptyMass;  // kg
+        // ceiling (b): FlightEnvelope inverted for payload.  The margin
+        // is linear in totalMass and thrustPerRotor does not depend on
+        // payload, so the inversion is exact algebra:
+        //   effN * T / (m * g) >= floor  <=>
+        //   payload <= effN * T / (floor * g) - emptyMass
+        attribute thrustLimitPayload : Real = effectiveRotorCount
+            * thrustPerRotor / (hoverMarginFloor * 9.81) - emptyMass;   // kg
+        attribute maxPayload : Real =
+            min(mtowPayload, thrustLimitPayload);                   // kg
+        // the same inversion for FailSafeHover: the payload at which
+        // motor-out hover stops holding.  Negative means the craft
+        // cannot keep motor-out hover even EMPTY (the quad and the
+        // tri); a value past maxPayload means every payload the
+        // envelope admits survives a failure (the X8, whose 0.498 kg
+        // ceiling the takeoff limit closes first -- the exact envelope
+        // bound verify.prove attributes to takeoffMassLimit).
+        attribute failsafePayload : Real =
+            motorOutUsableThrust / 9.81 - emptyMass;                // kg
+
         // the flight controller's commanded-attitude cap: comfort and
         // controllability, far below the physics ceiling
         attribute maxOperationalTilt : Real = 25.0 [SI::'°'];
@@ -282,6 +313,28 @@ package Drone {
         // pack endurance at the hover draw: the family's efficiency axis
         attribute hoverMinutes : Real = HoverTime(
             capacity = battery.capacity, current = hoverCurrent * 1000.0);
+
+        // ----- cruise endurance and range -------------------------------
+        // Sortie practice holds a landing reserve: the flight plan may
+        // spend only part of the pack, and the rest stays in hand for
+        // the approach, the landing, and LiPo health.  0.2 is a nominal
+        // planning figure, not a measured one.
+        attribute reserveFraction : Real = 0.2;
+        attribute cruiseMinutes : Real = HoverTime(
+            capacity = battery.capacity * (1.0 - reserveFraction),
+            current = cruiseCurrent * 1000.0);                   // min
+        // still-air range at max cruise, km: speed times the reserved
+        // pack's cruise endurance.  Both factors move with payloadMass:
+        // speed rises slowly with mass at the capped tilt, the draw
+        // rises faster, so range falls as the payload grows -- the
+        // payload-range diagram of tutorial T4.
+        attribute cruiseRange : Real =
+            maxCruiseSpeed * cruiseMinutes * 60.0 / 1000.0;      // km
+        // the carrying-work figure, in the fleet's kg-km convention.
+        // uav_missions' payloadRangeKgKm prices delivery RADIUS (out
+        // and back); this one prices one-way still-air range -- same
+        // units, compare with care.
+        attribute payloadRangeKgKm : Real = payloadMass * cruiseRange;
 
         part chassis : Frame;
         part battery : Battery;
@@ -663,7 +716,7 @@ package Drone {
             ThrustToWeight(
                 thrust = drone.effectiveRotorCount * drone.thrustPerRotor,
                 mass = drone.totalMass
-            ) >= 1.8
+            ) >= drone.hoverMarginFloor
         }
     }
 

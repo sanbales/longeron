@@ -2,7 +2,9 @@
 
 One abstract MultiRotor, four configurations -- QuadCopter, TriCopter,
 HexaCopter, CoaxX8 -- and the axes they trade: mass, usable thrust,
-hover current, endurance, cruise speed, motor-out tolerance, and cost.
+hover current, endurance, cruise speed, motor-out tolerance, cost,
+the payload envelope (which limit binds, and what redundancy costs in
+kg), and still-air range.
 The tests pin the family matrix (no configuration wins everything), the
 N-arm parametric geometry each configuration renders to, the
 config-keyed scene seam, the M0 population fan-outs, and the verify
@@ -145,13 +147,17 @@ class TestFamilyMatrix:
         endurance = {n: s["hoverMinutes"] for n, s in slots.items()}
         cost = {n: s["totalCost"] for n, s in slots.items()}
         cruise = {n: s["maxCruiseSpeed"] for n, s in slots.items()}
-        payload_ceiling = {n: s["maxTakeoffMass"] - s["totalMass"] for n, s in slots.items()}
+        max_payload = {n: s["maxPayload"] for n, s in slots.items()}
+        rng = {n: s["cruiseRange"] for n, s in slots.items()}
         redundant = {n: s["motorOutUsableThrust"] > s["totalMass"] * 9.81 for n, s in slots.items()}
 
         assert max(endurance, key=endurance.get) == "QuadCopter"
         assert min(cost, key=cost.get) == "TriCopter"
         assert max(cruise, key=cruise.get) == "CoaxX8"
-        assert max(payload_ceiling, key=payload_ceiling.get) == "HexaCopter"
+        assert max(max_payload, key=max_payload.get) == "HexaCopter"
+        # range at the 0.2 kg reference payload: the X8's speed edges the
+        # quad's endurance by 0.06 km -- but the X8 already loses on cost
+        assert max(rng, key=rng.get) == "CoaxX8"
         assert redundant == {
             "QuadCopter": False,
             "TriCopter": False,
@@ -162,6 +168,8 @@ class TestFamilyMatrix:
         assert min(endurance, key=endurance.get) == "HexaCopter"
         assert max(cost, key=cost.get) == "CoaxX8"
         assert min(cruise, key=cruise.get) == "TriCopter"
+        assert min(rng, key=rng.get) == "TriCopter"
+        assert min(max_payload, key=max_payload.get) == "QuadCopter"
 
     def test_satisfy_edges(self, model):
         from longeron import model as M
@@ -176,6 +184,128 @@ class TestFamilyMatrix:
         assert ("FailSafeHover", "QuadCopter") not in edges  # the missing edge
         assert ("FailSafeHover", "TriCopter") not in edges
         assert ("mission", "TriCopter") not in edges
+
+
+class TestPayloadEnvelope:
+    """maxPayload, failsafePayload, and the payload-range axis: the
+    carrying-capacity numbers the family matrix was missing."""
+
+    def test_which_limit_binds(self, instances):
+        # emptyMass backs the stock payload out of the roll-up, and
+        # maxPayload is the lesser of the two ceilings
+        for name, inst in instances.items():
+            s = inst.slots
+            assert s["emptyMass"] == pytest.approx(s["totalMass"] - 0.2), name
+            assert s["maxPayload"] == min(s["mtowPayload"], s["thrustLimitPayload"]), name
+        # the tri runs out of thrust before it runs out of book MTOW;
+        # every other envelope is closed by the takeoff-weight limit
+        binding = {
+            n: "thrust" if i.slots["thrustLimitPayload"] < i.slots["mtowPayload"] else "MTOW"
+            for n, i in instances.items()
+        }
+        assert binding == {
+            "QuadCopter": "MTOW",
+            "TriCopter": "thrust",
+            "HexaCopter": "MTOW",
+            "CoaxX8": "MTOW",
+        }
+
+    def test_max_payload_values(self, instances):
+        expected = {
+            "QuadCopter": 0.290,  # 1.5 kg MTOW - 1.210 kg empty
+            "TriCopter": 0.3042,  # 3 x thrust / (1.8 g) - 1.110 kg empty
+            "HexaCopter": 0.842,  # 2.4 kg MTOW - 1.558 kg empty
+            "CoaxX8": 0.498,  # 2.0 kg MTOW - 1.502 kg empty
+        }
+        for name, value in expected.items():
+            assert instances[name].slots["maxPayload"] == pytest.approx(value, abs=0.0005), name
+
+    def test_failsafe_payload_prices_redundancy(self, instances):
+        fs = {n: i.slots["failsafePayload"] for n, i in instances.items()}
+        # negative: the quad and the tri fail motor-out hover even empty
+        # (the quad's hunt shrinks its catch to payloadMass = 0.0)
+        assert fs["QuadCopter"] < 0.0
+        assert fs["TriCopter"] < 0.0
+        # the hexa's redundancy price in kg: motor-out flying keeps only
+        # 0.44 of its 0.84 kg envelope
+        assert fs["HexaCopter"] == pytest.approx(0.4445, abs=0.0005)
+        assert fs["HexaCopter"] < instances["HexaCopter"].slots["maxPayload"]
+        # the X8 keeps its WHOLE envelope: its motor-out ceiling sits far
+        # past the takeoff limit (prove's UNSAT-safe verdict, as algebra)
+        assert fs["CoaxX8"] > instances["CoaxX8"].slots["maxPayload"]
+
+    def test_failsafe_payload_is_the_verdict_boundary(self, interp, instances):
+        # FailSafeHover flips exactly at failsafePayload
+        edge = instances["HexaCopter"].slots["failsafePayload"]
+        below = interp.instantiate("Drone::HexaCopter", payloadMass=edge - 1e-6)
+        above = interp.instantiate("Drone::HexaCopter", payloadMass=edge + 1e-6)
+        assert interp.check_requirement("Drone::FailSafeHover", subject=below).satisfied
+        assert not interp.check_requirement("Drone::FailSafeHover", subject=above).satisfied
+
+    def test_failsafe_payload_agrees_with_hunts_bisected_edge(self, model, instances):
+        # the closed-form boundary must agree with verify.hunt's
+        # oracle-bisected edge on the same requirement
+        pytest.importorskip("hypothesis")
+        from longeron.analysis import verify
+
+        report = verify.hunt(
+            model,
+            "Drone::HexaCopter",
+            requirements=("Drone::FailSafeHover",),
+            free=("payloadMass",),
+            seed=0,
+            max_examples=60,
+        )
+        edge = next(b for b in report.boundaries if "motorOutHover" in b.violated)
+        assert instances["HexaCopter"].slots["failsafePayload"] == pytest.approx(
+            edge.value, abs=0.001
+        )
+
+    def test_x8_envelope_bound_matches_the_proof(self, instances):
+        # verify.prove pins the X8's exact envelope bound at 249/500 kg
+        # from takeoffMassLimit; the model's mtowPayload IS that bound
+        assert instances["CoaxX8"].slots["mtowPayload"] == pytest.approx(249.0 / 500.0)
+        assert instances["CoaxX8"].slots["maxPayload"] == pytest.approx(0.498)
+
+    def test_cruise_range_at_reference_payload(self, instances):
+        # 20% landing reserve on the pack, the max-cruise draw, and the
+        # stock 0.2 kg payload
+        expected = {
+            "QuadCopter": 19.43,
+            "TriCopter": 13.14,
+            "HexaCopter": 17.14,
+            "CoaxX8": 19.49,
+        }
+        for name, km in expected.items():
+            s = instances[name].slots
+            assert s["reserveFraction"] == 0.2
+            assert s["cruiseMinutes"] == pytest.approx(
+                5200.0 * 0.8 / (s["cruiseCurrent"] * 1000.0) * 60.0
+            ), name
+            assert s["cruiseRange"] == pytest.approx(km, abs=0.01), name
+            assert s["payloadRangeKgKm"] == pytest.approx(0.2 * s["cruiseRange"]), name
+
+    def test_range_falls_as_payload_grows(self, interp, instances):
+        # every configuration's payload-range curve is monotone falling
+        # (speed rises ~sqrt(mass) at the capped tilt, the draw rises
+        # ~mass^1.5, so range goes as 1/mass)
+        for name in CONFIGS:
+            ceiling = instances[name].slots["maxPayload"]
+            ranges = [
+                interp.instantiate(f"Drone::{name}", payloadMass=p).slots["cruiseRange"]
+                for p in (0.0, ceiling / 2.0, ceiling)
+            ]
+            assert ranges[0] > ranges[1] > ranges[2], name
+
+    def test_quad_and_x8_range_curves_cross(self, interp):
+        # empty, the lighter quad out-ranges the X8; at the reference
+        # payload the X8's faster cruise has already taken the lead
+        quad_empty = interp.instantiate("Drone::QuadCopter", payloadMass=0.0).slots
+        x8_empty = interp.instantiate("Drone::CoaxX8", payloadMass=0.0).slots
+        assert quad_empty["cruiseRange"] > x8_empty["cruiseRange"]
+        quad_ref = interp.instantiate("Drone::QuadCopter").slots
+        x8_ref = interp.instantiate("Drone::CoaxX8").slots
+        assert x8_ref["cruiseRange"] > quad_ref["cruiseRange"]
 
 
 class TestFamilyGeometry:
