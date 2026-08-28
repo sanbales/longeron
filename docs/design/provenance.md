@@ -1,8 +1,15 @@
 # Design: data provenance — evidence-linked models
 
-> Status: DRAFT (2026-08-28). Open questions at the end carry
-> recommendations; nothing is ratified. Target: a 0.12+ arc, after
-> the curriculum rebuild.
+> Status: RATIFIED (2026-08-28) -- the maintainer answered all five
+> open questions, each as recommended: in-model SourceEvidence
+> metadata (Q1); quote-primary anchoring with optional bbox (Q2); the
+> license-clean stack -- pypdf/pdfminer.six behind [evidence], OCR
+> optional, PyMuPDF never ships (Q3); evidence-drift always warns,
+> unevidenced-value is opt-in posture, coverage() reports honestly
+> either way (Q4); layers 1-2 land as an 0.12 arc after the
+> curriculum rebuild with the real-parts model as first customer,
+> layer 3 rides the next inspector touch, layer 4 is its own later
+> arc (Q5).
 
 The maintainer's charge, near-verbatim: *"if we have PDFs of spec
 sheets, we could store those and link them to the justification for a
