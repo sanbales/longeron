@@ -285,8 +285,8 @@ class TestPilotNavigability:
 
     def test_relationship_and_node_counts(self, drone_records):
         relationships = self._relationships(drone_records)
-        assert len(relationships) == 182  # pymbe LPG edges
-        assert len(drone_records) - len(relationships) == 175  # pymbe LPG nodes
+        assert len(relationships) == 263  # pymbe LPG edges
+        assert len(drone_records) - len(relationships) == 227  # pymbe LPG nodes
 
     def test_every_endpoint_resolves(self, drone_records):
         ids = {r["@id"] for r in drone_records}
@@ -306,40 +306,38 @@ class TestPilotNavigability:
             for ref in r["target"]
         }
         assert owned == {
-            "payloadMass",
+            # own members only: the shared equipment and physics chain
+            # moved to the abstract MultiRotor base when the TriCopter
+            # configuration split the family (inherited features are
+            # reached through the Specialization edge, pymbe-style)
+            "rotorCount",
             "totalMass",
-            "maxTakeoffMass",
             "thrustPerRotor",
             "frontalArea",
-            "dragArea",
-            "continuousThrustFraction",
-            "usableThrust",
-            "maxOperationalTilt",
-            "maxTilt",
-            "cruiseTilt",
             "maxCruiseSpeed",
-            "chassis",
-            "battery",
             "motors",
             "propellers",
-            "camera",
-            "takeoffMassLimit",
-            "canHover",
+            "phaseLeads",
         }
 
     def test_through_feature_typing(self, drone_records):
         # pymbe: partUsage.throughFeatureTyping -> its definition
         names = {r["@id"]: r.get("declaredName") for r in drone_records}
         typed = {
-            names[r["source"][0]["@id"]]: names[r["target"][0]["@id"]]
+            (names[r["source"][0]["@id"]], names[r["target"][0]["@id"]])
             for r in self._relationships(drone_records)
             if r["@type"] == "FeatureTyping"
         }
-        assert typed["chassis"] == "Frame"
-        assert typed["battery"] == "Battery"
-        assert typed["motors"] == "Motor"
-        assert typed["propellers"] == "Propeller"
-        assert typed["camera"] == "Camera"
+        # chassis is typed twice: Frame on the MultiRotor base, TriFrame
+        # on the TriCopter's redefinition -- so assert pairs, not a map
+        assert ("chassis", "Frame") in typed
+        assert ("chassis", "TriFrame") in typed
+        assert ("battery", "Battery") in typed
+        assert ("motors", "Motor") in typed
+        assert ("frontMotors", "Motor") in typed
+        assert ("tailMotor", "Motor") in typed
+        assert ("propellers", "Propeller") in typed
+        assert ("camera", "Camera") in typed
 
 
 GARAGE_MODEL = """

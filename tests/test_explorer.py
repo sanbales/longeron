@@ -159,13 +159,17 @@ class TestTreeData:
         nodes, _ = _tree_data(drone_model)
         drone = nodes[0]  # flattened: the lone package IS the root
         assert drone["id"] == "Drone"
-        quad = _find(drone["children"], "Drone::QuadCopter")
-        assert quad is not None
-        battery = _find(quad["children"], "Drone::QuadCopter::battery")
+        # the shared equipment lives on the abstract base...
+        base = _find(drone["children"], "Drone::MultiRotor")
+        assert base is not None
+        battery = _find(base["children"], "Drone::MultiRotor::battery")
         assert battery is not None
+        # ...and each configuration owns its rotor population
+        quad = _find(drone["children"], "Drone::QuadCopter")
+        assert _find(quad["children"], "Drone::QuadCopter::motors") is not None
         # and NOT reachable as a sibling of the package
-        siblings = [c for c in drone["children"] if c["id"] != "Drone::QuadCopter"]
-        assert _find(siblings, "Drone::QuadCopter::battery") is None
+        siblings = [c for c in drone["children"] if c["id"] != "Drone::MultiRotor"]
+        assert _find(siblings, "Drone::MultiRotor::battery") is None
 
     def test_node_ids_are_qualified_names(self, drone_model):
         _, index = _tree_data(drone_model)
@@ -184,8 +188,8 @@ class TestTreeData:
             "Drone::FlightEnvelope": ("requirement def", "requirement"),
             "Drone::FlightMode": ("enum def", "data"),
             "Drone::HoverTime": ("calc def", "behavior"),
-            "Drone::QuadCopter::battery": ("part", "structure"),
-            "Drone::QuadCopter::payloadMass": ("attribute", "data"),
+            "Drone::MultiRotor::battery": ("part", "structure"),
+            "Drone::MultiRotor::payloadMass": ("attribute", "data"),
         }
         for node_id, (badge, kind) in cases.items():
             node = _find(nodes, node_id)
@@ -196,12 +200,12 @@ class TestTreeData:
         nodes, _ = _tree_data(drone_model)
         quad = _find(nodes, "Drone::QuadCopter")
         assert quad["has_children"] is True and quad["children"]
-        leaf = _find(nodes, "Drone::QuadCopter::payloadMass")
+        leaf = _find(nodes, "Drone::MultiRotor::payloadMass")
         assert leaf["has_children"] is False and "children" not in leaf
 
     def test_typed_usages_carry_a_type_suffix(self, drone_model):
         nodes, _ = _tree_data(drone_model)
-        battery = _find(nodes, "Drone::QuadCopter::battery")
+        battery = _find(nodes, "Drone::MultiRotor::battery")
         assert battery["suffix"] == " : Battery"
 
     def test_anonymous_elements_get_unique_synthetic_ids(self):
@@ -411,13 +415,13 @@ def test_relationships_present_in_tree_REGRESSION_GUARD(rels_model):
 
     Forensic note (2026-08-30): a 'tree relationships vanished' regression
     was reported against the drone example.  The feature (6ca066f) was in
-    fact INTACT -- ``examples/drone.sysml`` simply declares no
-    relationships (no satisfy/connect/import/... statements), so its tree
-    honestly shows none.  This guard pins the feature itself, loudly, on
-    a model that HAS one of every kind: if a merge ever drops the
-    ``_is_relationship`` / ``_in_tree`` / ``_tree_data`` hunks, this
-    fails by NAME.  If the drone tree is expected to show relationships,
-    the fix belongs in drone.sysml (add the declarations), not here.
+    fact INTACT -- at the time ``examples/drone.sysml`` simply declared no
+    relationships, so its tree honestly showed none.  (The drone model has
+    since gained real declarations -- satisfy/connect/flow/allocate/
+    dependency -- pinned by ``test_drone_tree_shows_its_relationships``.)
+    This guard pins the feature itself, loudly, on a model that HAS one of
+    every kind: if a merge ever drops the ``_is_relationship`` /
+    ``_in_tree`` / ``_tree_data`` hunks, this fails by NAME.
     """
 
     nodes, _index = _tree_data(rels_model)
@@ -433,6 +437,35 @@ def test_relationships_present_in_tree_REGRESSION_GUARD(rels_model):
     badges = {node["badge"] for node in rows}
     expected = {badge for _f, _l, badge in TestRelationshipClassification.TABLE.values()}
     assert badges == expected, f"missing relationship kinds: {expected - badges}"
+
+
+def test_drone_tree_shows_its_relationships(drone_model):
+    """The flagship example now DECLARES relationships (the 2026-08-30
+    finding's real fix): the explorer tree carries a row for each --
+    the power/control wiring, the satisfy edges, the state-machine
+    allocation, and the planning dependency."""
+
+    nodes, _index = _tree_data(drone_model)
+
+    def walk(items):
+        for node in items:
+            yield node
+            yield from walk(node.get("children", []))
+
+    rows = [node for node in walk(nodes) if node["kind"] == "relationship"]
+    from collections import Counter
+
+    badges = Counter(node["badge"] for node in rows)
+    assert badges == {
+        "connection": 6,  # powerHarness, controlLink, phaseLeads,
+        #                   frontLeads, tailLead, tiltLinkage
+        "satisfy": 4,  # FlightEnvelope x2, mission, installation (quad only)
+        "flow": 1,  # dcBus: battery.voltage -> esc.busVoltage
+        "allocation": 1,  # FlightStates -> FlightController
+        "dependency": 1,  # PlanBattery -> HoverTime
+    }
+    labels = {node["label"] for node in rows}
+    assert "satisfy mission" in labels  # by the quad; the tri busts it
 
 
 class TestRelationshipToggle:
@@ -579,7 +612,7 @@ class TestApplicableKinds:
         cases = {
             "Drone": ("structure", "requirements"),
             "Drone::QuadCopter": ("structure", "requirements"),
-            "Drone::QuadCopter::battery": ("structure", "requirements"),
+            "Drone::MultiRotor::battery": ("structure", "requirements"),
             "Drone::FlightStates": ("structure", "state", "requirements"),
             "Drone::FlightStates::idle": ("structure", "state", "requirements"),
             "Drone::PlanBattery": ("structure", "action", "requirements"),
@@ -650,8 +683,11 @@ class TestRequirementsView:
         widget = requirements_view(drone_model)
         ids = _diagram_node_ids(widget)
         assert "Drone::FlightEnvelope" in ids
-        # non-requirement structure stays out of the projection
-        assert "Drone::QuadCopter" not in ids
+        # the satisfying configurations are pulled in through their
+        # satisfy edges; UNwired structure stays out of the projection
+        assert "Drone::QuadCopter" in ids
+        assert "Drone::TriCopter" in ids
+        assert "Drone::Battery" not in ids
 
     def test_nested_candidates_never_duplicate_node_ids(self, uav_model):
         widget = requirements_view(uav_model)
@@ -785,7 +821,9 @@ class TestExplorer:
         ex.kind = "requirements"
         ids = _diagram_node_ids(ex.diagram)
         assert "Drone::FlightEnvelope" in ids
-        assert "Drone::QuadCopter" not in ids
+        # wired in by its satisfy edges; unwired structure stays out
+        assert "Drone::QuadCopter" in ids
+        assert "Drone::Battery" not in ids
 
     def test_structure_scope_element_mode(self, drone_model):
         ex = explore(drone_model, structure_scope="element")

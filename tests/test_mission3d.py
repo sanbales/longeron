@@ -498,6 +498,27 @@ class TestModelPhysics:
         )
         assert {r.name: r for r in bust.table()}["missionTime"].utility == 0.0
 
+    def test_tricopter_busts_the_budget_the_quad_meets(self, drone_interp):
+        """The sub-architecture difference, measured: same route, same
+        physics chain, but the TriCopter's 12-deg yaw-authority tilt cap
+        drops cruise speed enough to bust the 6-minute mission budget
+        the QuadCopter meets at 4.45 min."""
+        from longeron.analysis.scoreboard import scoreboard
+
+        quad = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
+        tri = mission3d.mission_values(
+            drone_interp, ATLANTA, ground_alt=300.0, assembly="Drone::TriCopter"
+        )
+        assert quad["missionMinutes"] == pytest.approx(4.455, abs=0.01)
+        assert tri["cruiseTiltDeg"] == pytest.approx(12.0)  # the servo's cap
+        assert tri["cruiseSpeedMps"] == pytest.approx(12.64, abs=0.01)
+        assert tri["missionMinutes"] == pytest.approx(6.13, abs=0.01)  # > budget
+        model = drone_interp.model
+        tri_row = {r.name: r for r in scoreboard(model, values=tri).table()}["missionTime"]
+        assert tri_row.utility == 0.0  # red: past ramp0 = the 6-min budget
+        quad_row = {r.name: r for r in scoreboard(model, values=quad).table()}["missionTime"]
+        assert quad_row.utility > 0.7  # green, with headroom
+
 
 # -- CZML payload --------------------------------------------------------------
 

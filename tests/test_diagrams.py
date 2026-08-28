@@ -129,11 +129,16 @@ class TestStructure:
         widget = diagrams.structure_diagram(drone_model)
         envelope = next(n for n in _walk(widget.source.value) if n.id == "Drone::FlightEnvelope")
         texts = " | ".join(label.text for label in envelope.labels)
-        assert "subject drone : QuadCopter" in texts
+        assert "subject drone : MultiRotor" in texts
         assert "require hoverMargin" in texts
-        quad = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter")
-        quad_texts = " | ".join(label.text for label in quad.labels)
-        assert "assert takeoffMassLimit" in quad_texts
+        # the installation requirement's subject stays the concrete quad
+        install = next(n for n in _walk(widget.source.value) if n.id == "Drone::installation")
+        install_texts = " | ".join(label.text for label in install.labels)
+        assert "subject drone : QuadCopter" in install_texts
+        # the shared constraints render on the abstract base
+        base = next(n for n in _walk(widget.source.value) if n.id == "Drone::MultiRotor")
+        base_texts = " | ".join(label.text for label in base.labels)
+        assert "assert takeoffMassLimit" in base_texts
 
     def test_typing_edges(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)

@@ -1,7 +1,12 @@
 // A demonstration SysML v2 model exercising the longeron package:
 // structure, calculations, constraints, requirements, actions, and states.
 package Drone {
-    doc /* A small quad-copter drone, modeled for the longeron demo. */
+    doc /* A small multi-rotor drone family, modeled for the longeron demo:
+           one abstract MultiRotor airframe and two concrete configurations
+           that specialize it -- the stock four-rotor QuadCopter and the
+           lighter three-rotor TriCopter.  The configurations differ by the
+           redefined rotor populations and sizing knobs; the physics chain,
+           equipment, and constraints are shared. */
 
     // ----- structure ---------------------------------------------------
 
@@ -31,6 +36,15 @@ package Drone {
         attribute mass : Real = 0.42 [SI::kg];   // incl. FC, wiring, camera mount
     }
 
+    part def TriFrame :> Frame {
+        doc /* The tricopter plate: two front arms and one long rear boom.
+               One arm fewer than the quad and less plate area, but the
+               boom carries the tilt-mount hardpoint.  Same build-allowance
+               convention as Frame: FC, wiring, and camera mount ride in
+               this figure. */
+        attribute mass : Real = 0.35 [SI::kg];
+    }
+
     part def Camera {
         doc /* The forward-looking mission camera.  Placement offsets are
                metres from the airframe origin (the top-plate centre) in
@@ -46,33 +60,53 @@ package Drone {
         attribute fieldOfView : Real = 50.0 [SI::'°'];
     }
 
-    part def QuadCopter {
-        attribute payloadMass : Real = 0.2 [SI::kg];
-        attribute totalMass : Real =
-            chassis.mass + battery.mass + 4.0 * 0.048 + 4.0 * 0.012 + payloadMass;
-        attribute maxTakeoffMass : Real = 1.5 [SI::kg];
-        // per-rotor static thrust from the fitted motor + propeller (all
-        // four stations are the same variant, so ->head() reads the
-        // per-unit value off the homogeneous [4] populations)
-        attribute thrustPerRotor : Real = PropThrust(
-            kV = motors.kV->head(),
-            voltage = battery.voltage,
-            diameter = propellers.diameter->head()
-        );
+    part def SpeedController {
+        doc /* The 4-in-1 electronic speed controller: one board, one
+               drive channel per rotor (the tricopter leaves the fourth
+               channel spare).  Its mass rides in the Frame's build
+               allowance, with the FC and wiring. */
+        attribute busVoltage : Real = 11.1 [SI::V];   // rated pack input
+        attribute maxCurrent : Real = 60.0 [SI::A];   // continuous, all channels
+    }
 
-        // ----- attitude / cruise performance (see the Attitude calc
-        // defs below for the derivation) -------------------------------
-        // parasite drag area CdA, built up bluff-body style (the
-        // uav_missions.sysml BluffFrameDrag idiom): ~0.024 m^2 of frontal
-        // area (body + battery stack + four arms + motor cans + props in
-        // edgewise flow) times Cd ~1.1 for an open frame
-        attribute frontalArea : Real = 0.024;               // m^2
+    part def FlightController {
+        doc /* Runs the attitude loops and the FlightStates protocol.
+               Mass rides in the Frame's build allowance. */
+        attribute loopRate : Real = 500.0 [SI::Hz];
+    }
+
+    part def YawServo {
+        doc /* The rear-boom tilt servo of a tricopter: yaw torque comes
+               from vectoring the tail rotor, not from rotor-pair torque
+               balance as on a quad.  A small metal-gear servo plus its
+               linkage. */
+        attribute mass : Real = 0.026 [SI::kg];
+        attribute travel : Real = 20.0 [SI::'°'];    // tilt each side of vertical
+    }
+
+    // ----- the airframe family ------------------------------------------
+
+    abstract part def MultiRotor {
+        doc /* Everything the configurations share: the equipment bay
+               (pack, ESC, flight controller, camera), the parasite-drag
+               and attitude physics, the electrical wiring, and the
+               hover/takeoff constraints.  Concrete configurations
+               redefine the sizing knobs (rotorCount, frontalArea,
+               thrustPerRotor, totalMass) and the rotor populations --
+               the redefined multiplicities ARE the architecture
+               difference. */
+        attribute payloadMass : Real = 0.2 [SI::kg];
+        attribute rotorCount : Real;         // redefined per configuration
+        attribute totalMass : Real;          // redefined per configuration, kg
+        attribute maxTakeoffMass : Real = 1.5 [SI::kg];
+        attribute thrustPerRotor : Real;     // redefined per configuration, N
+        attribute frontalArea : Real;        // redefined per configuration, m^2
         attribute dragArea : Real = frontalArea * 1.1;      // parasite CdA, m^2
         // sustained flight runs partial throttle: motor thermals and
         // control headroom hold CONTINUOUS thrust to ~55% of bench static
         attribute continuousThrustFraction : Real = 0.55;
         attribute usableThrust : Real =
-            4.0 * thrustPerRotor * continuousThrustFraction;    // N, continuous
+            rotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
         // the flight controller's commanded-attitude cap: comfort and
         // controllability, far below the physics ceiling
         attribute maxOperationalTilt : Real = 25.0 [SI::'°'];
@@ -84,20 +118,106 @@ package Drone {
             thrustN = usableThrust,
             opsCapDeg = maxOperationalTilt
         );                                                   // deg, commanded
-        attribute maxCruiseSpeed : Real = MaxCruiseSpeed(
-            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
-        );                                                   // m/s
+        // the headline performance number is computed per configuration
+        // (one line off this shared chain): MaxCruiseSpeed at cruiseTilt
+        attribute maxCruiseSpeed : Real;     // redefined per configuration, m/s
 
         part chassis : Frame;
         part battery : Battery;
-        part motors : Motor[4];
-        part propellers : Propeller[4];
+        part esc : SpeedController;
+        part flightController : FlightController;
+        part propellers : Propeller[*];      // redefined per configuration
         part camera : Camera;
+
+        // ----- electrical & control wiring -----------------------------
+        // the pack's main lead feeds the ESC's DC bus...
+        connection powerHarness connect battery to esc;
+        flow dcBus from battery.voltage to esc.busVoltage;
+        // ...and the FC commands every drive channel (DShot signals)
+        connection controlLink connect flightController to esc;
 
         assert constraint takeoffMassLimit { totalMass <= maxTakeoffMass }
         assert constraint canHover {
-            4.0 * thrustPerRotor > totalMass * 9.81
+            rotorCount * thrustPerRotor > totalMass * 9.81
         }
+    }
+
+    part def QuadCopter :> MultiRotor {
+        doc /* The stock four-rotor configuration: symmetric X frame,
+               one 10-inch slow-fly propeller per corner.  Meets every
+               requirement at stock -- the reference airframe of the
+               tutorials. */
+        attribute rotorCount : Real :>> rotorCount = 4.0;
+        // motor/prop per-unit masses restated as catalog literals (0.048
+        // and 0.012 kg) so the roll-up stays a flat arithmetic chain
+        attribute totalMass : Real :>> totalMass =
+            chassis.mass + battery.mass + 4.0 * 0.048 + 4.0 * 0.012 + payloadMass;
+        // per-rotor static thrust from the fitted motor + propeller (all
+        // four stations are the same variant, so ->head() reads the
+        // per-unit value off the homogeneous [4] populations)
+        attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
+            kV = motors.kV->head(),
+            voltage = battery.voltage,
+            diameter = propellers.diameter->head()
+        );
+        // parasite drag area CdA, built up bluff-body style (the
+        // uav_missions.sysml BluffFrameDrag idiom): ~0.024 m^2 of frontal
+        // area (body + battery stack + four arms + motor cans + props in
+        // edgewise flow) times Cd ~1.1 for an open frame
+        attribute frontalArea : Real :>> frontalArea = 0.024;   // m^2
+        attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
+            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
+        );                                                   // 18.7 m/s
+
+        part motors : Motor[4];
+        part propellers : Propeller[4] :>> propellers;
+
+        // one phase-lead bundle per corner: the [4] population fans out
+        connection phaseLeads connect esc to motors;
+    }
+
+    part def TriCopter :> MultiRotor {
+        doc /* The three-rotor configuration: two front arms plus a rear
+               boom whose motor tilts on a yaw servo.  One motor, one
+               propeller, and one arm lighter than the quad -- but yaw
+               authority now comes from vectoring the tail rotor, and
+               this build's small servo runs out of torque against the
+               drag load beyond ~12 deg of commanded pitch, so the FC
+               caps commanded attitude there.  The classic tricopter
+               tradeoff, visible in the numbers: it hovers with margin
+               (canHover holds, thrust/weight ~2.5) yet cruises so
+               slowly that the demo sortie busts the 6-minute mission
+               budget the quad meets with room to spare. */
+        attribute rotorCount : Real :>> rotorCount = 3.0;
+        // same catalog motors and props as the quad, one fewer of each,
+        // plus the tail servo; the lighter TriFrame carries the boom
+        attribute totalMass : Real :>> totalMass =
+            chassis.mass + battery.mass + 3.0 * 0.048 + 3.0 * 0.012
+            + yawServo.mass + payloadMass;
+        attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
+            kV = frontMotors.kV->head(),
+            voltage = battery.voltage,
+            diameter = propellers.diameter->head()
+        );
+        // three arms instead of four, but the long boom and the exposed
+        // tilt mechanism give most of that saving back
+        attribute frontalArea : Real :>> frontalArea = 0.022;   // m^2
+        // the yaw-authority cap (see the doc comment above)
+        attribute maxOperationalTilt : Real :>> maxOperationalTilt = 12.0 [SI::'°'];
+        attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
+            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
+        );                                                   // 12.6 m/s
+
+        part chassis : TriFrame :>> chassis;
+        part frontMotors : Motor[2];
+        part tailMotor : Motor;
+        part propellers : Propeller[3] :>> propellers;
+        part yawServo : YawServo;
+
+        connection frontLeads connect esc to frontMotors;
+        connection tailLead connect esc to tailMotor;
+        // the yaw mechanism: the servo vectors the tail rotor
+        connection tiltLinkage connect yawServo to tailMotor;
     }
 
     enum def FlightMode { manual; altitudeHold; autonomous; }
@@ -141,14 +261,16 @@ package Drone {
     // so theta_max = arccos(m g / T) at the usable thrust T, and the
     // drag balance gives tan(theta) = 0.5 rho CdA v^2 / (m g) -- invert
     // for the fastest level cruise a commanded tilt sustains.  At the
-    // stock point (T/W ~ 3.0) the full-throttle ceiling would be ~70 deg
-    // and even the continuous-thrust (55%) ceiling is ~53 deg --
+    // quad's stock point (T/W ~ 3.0) the full-throttle ceiling would be
+    // ~70 deg and even the continuous-thrust (55%) ceiling is ~53 deg --
     // unrealistically sporty, so the COMMANDED tilt is the min() of the
-    // physics cap and the operational comfort cap (25 deg), both visible
-    // as QuadCopter attributes.  First-order honest: sea-level rho,
-    // rotor induced effects and frame lift ignored, drag purely
-    // parasitic.  Stock numbers: cruiseTilt 25 deg -> 18.7 m/s;
-    // mission time over tutorial 10's 3.9 km Atlanta loop ~4.5 min.
+    // physics cap and the operational comfort cap, both visible as
+    // MultiRotor attributes.  First-order honest: sea-level rho, rotor
+    // induced effects and frame lift ignored, drag purely parasitic.
+    // Stock numbers: the quad cruises at its 25-deg comfort cap ->
+    // 18.7 m/s, mission time over tutorial 10's 3.9 km Atlanta loop
+    // ~4.5 min; the tricopter's 12-deg yaw-authority cap -> 12.6 m/s
+    // and ~6.1 min, past the 6-minute budget.
 
     calc def MaxTilt {
         doc /* The altitude-hold tilt ceiling, degrees: arccos(m g / T)
@@ -215,11 +337,16 @@ package Drone {
     }
 
     requirement def FlightEnvelope {
-        doc /* The drone shall hover with a comfortable thrust margin. */
-        subject drone : QuadCopter;
+        doc /* The drone shall hover with a comfortable thrust margin --
+               any configuration: the subject is the abstract airframe,
+               and rotorCount scales the per-rotor thrust. */
+        subject drone : MultiRotor;
         assume constraint { drone.totalMass > 0.0 }
         require constraint hoverMargin {
-            ThrustToWeight(thrust = 4.0 * drone.thrustPerRotor, mass = drone.totalMass) >= 1.8
+            ThrustToWeight(
+                thrust = drone.rotorCount * drone.thrustPerRotor,
+                mass = drone.totalMass
+            ) >= 1.8
         }
     }
 
@@ -232,7 +359,9 @@ package Drone {
                a deterministic volume-quadrature estimate of the same
                measures otherwise), injected into the scoreboard as
                values= bindings for the unvalued attributes below --
-               see tutorial 10. */
+               see tutorial 10.  The subject stays the QuadCopter: the
+               parametric CAD build the measures run against is the
+               quad's. */
         subject drone : QuadCopter;
         attribute occludedFraction : Real;    // measured: airframe volume inside the view cone / cone volume
         attribute discOverlapVolume : Real;   // measured: m^3 of prop-disc overlap with other components
@@ -272,8 +401,9 @@ package Drone {
                achievable speeds (MissionTime over maxCruiseSpeed at
                cruiseTilt), injected into the scoreboard as a values=
                binding for the unvalued attribute below -- see
-               tutorial 10. */
-        subject drone : QuadCopter;
+               tutorial 10.  The subject is the abstract airframe: pass
+               either configuration as the assembly to score it. */
+        subject drone : MultiRotor;
         attribute missionMinutes : Real;   // measured: MissionTime over the route legs
 
         requirement missionTime {
@@ -289,6 +419,26 @@ package Drone {
             require constraint timeBudget { missionMinutes <= budget }
         }
     }
+
+    // ----- architecture wiring: who satisfies what -----------------------
+    // The quad meets every requirement at stock: tutorial 10 measures the
+    // installation numbers on its CAD build and the mission legs at its
+    // 18.7 m/s cruise.  The tricopter holds the flight envelope with room
+    // to spare (thrust/weight ~2.5), but its 12-deg yaw-authority tilt cap
+    // drops cruise to 12.6 m/s and the demo sortie takes ~6.1 min -- past
+    // the 6-minute budget -- so it earns NO mission satisfy edge.  The
+    // missing edge is the point.
+    satisfy FlightEnvelope by QuadCopter;
+    satisfy FlightEnvelope by TriCopter;
+    satisfy mission by QuadCopter;
+    satisfy installation by QuadCopter;
+
+    // The flight-state protocol runs on the flight controller; sortie
+    // battery planning leans on the endurance calc it calls.  (The
+    // dependency stays anonymous: it is a statement about PlanBattery,
+    // not a nameable thing of its own.)
+    allocate FlightStates to FlightController;
+    dependency from PlanBattery to HoverTime;
 
     // ----- behavior -----------------------------------------------------
 

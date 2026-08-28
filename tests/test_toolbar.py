@@ -664,7 +664,7 @@ class TestSearchMatching:
         assert search.hit_ids == {
             "Drone::Battery",
             "Drone::PlanBattery",  # title 'PlanBattery' contains 'battery'
-            "Drone::QuadCopter::battery",
+            "Drone::MultiRotor::battery",  # the shared pack, on the base
         }
         assert search.match_count == 3
 
@@ -676,8 +676,14 @@ class TestSearchMatching:
     def test_usage_titles_include_their_type(self, widget):
         search = _search(widget)
         search.query = "motor"
-        # the def by title, the usage via 'motors : Motor [4]' / its qname
-        assert search.hit_ids == {"Drone::Motor", "Drone::QuadCopter::motors"}
+        # the def by title, the usages via 'motors : Motor [4]' etc. --
+        # the TriCopter split its population into front pair + tail
+        assert search.hit_ids == {
+            "Drone::Motor",
+            "Drone::QuadCopter::motors",
+            "Drone::TriCopter::frontMotors",
+            "Drone::TriCopter::tailMotor",
+        }
 
     def test_count_is_displayed(self, widget):
         search = _search(widget)
@@ -839,4 +845,9 @@ class TestHighlightApplication:
         search.query = "motor"
         for tree in (widget.source.value, widget.view.source.value):
             ids = {n.id for n in _iter_nodes(tree) if SEARCH_HIT_CSS in _classes(n)}
-            assert ids == {"Drone::Motor", "Drone::QuadCopter::motors"}
+            assert ids == {
+                "Drone::Motor",
+                "Drone::QuadCopter::motors",
+                "Drone::TriCopter::frontMotors",
+                "Drone::TriCopter::tailMotor",
+            }

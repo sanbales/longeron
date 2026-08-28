@@ -64,8 +64,9 @@ class TestNominalPopulation:
 
     def test_individuals_filter_by_classifier(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        # quad + chassis + battery + camera + 4 motors + 4 propellers
-        assert len(it.individuals()) == 12
+        # quad + chassis + battery + esc + flight controller + camera
+        # + 4 motors + 4 propellers
+        assert len(it.individuals()) == 14
         assert len(it.individuals("Drone::Motor")) == 4
         assert len(it.individuals("Drone::Propeller")) == 4
 
@@ -128,6 +129,36 @@ class TestRollup:
     def test_feature_name_evaluates_its_declared_expression(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
         assert it.rollup("totalMass") == pytest.approx(1.24, rel=1e-12)
+
+
+class TestTriCopterPopulation:
+    """The three-rotor sub-architecture: the M1 multiplicities differ
+    ([2] front pair + a singleton tail vs the quad's homogeneous [4]),
+    so the M0 fan-out differs -- three motor individuals, not four."""
+
+    def test_population_fans_out_three_rotors(self, drone):
+        it = m0.interpret(drone, "Drone::TriCopter")
+        assert [r.id for r in it.root.slots["frontMotors"]] == [
+            f"Drone::TriCopter#0.frontMotors#{i}" for i in range(2)
+        ]
+        assert it.root.slots["tailMotor"].id == "Drone::TriCopter#0.tailMotor"
+        assert len(it.individuals("Drone::Motor")) == 3
+        assert len(it.individuals("Drone::Propeller")) == 3
+
+    def test_rotor_mass_rolls_up_over_three_individuals(self, drone):
+        it = m0.interpret(drone, "Drone::TriCopter")
+        rotor_mass = it.rollup("sum(frontMotors.mass) + tailMotor.mass")
+        assert rotor_mass == pytest.approx(3 * 0.048, rel=1e-12)
+
+    def test_tricopter_is_lighter_but_hovers(self, drone):
+        it = m0.interpret(drone, "Drone::TriCopter")
+        assert it.root.slots["totalMass"] == pytest.approx(1.136, rel=1e-12)
+        assert it.root.slots["totalMass"] < 1.24  # lighter than the quad
+        # canHover holds, with LESS margin than the quad's ~3.0
+        thrust = 3.0 * it.root.slots["thrustPerRotor"]
+        weight = it.root.slots["totalMass"] * 9.81
+        assert thrust > weight
+        assert 2.4 < thrust / weight < 3.0
 
 
 class TestRandomStrategy:

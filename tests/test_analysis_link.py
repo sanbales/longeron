@@ -20,10 +20,13 @@ from longeron.analysis import viewer3d
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 QUAD_MAP = {
-    "frame": "Drone::QuadCopter::chassis",
+    # chassis and battery are shared equipment: since the TriCopter
+    # split, their usages live on the abstract MultiRotor base (motors
+    # and the propellers redefinition are the QuadCopter's own)
+    "frame": "Drone::MultiRotor::chassis",
     "motors": "Drone::QuadCopter::motors",
     "props": "Drone::QuadCopter::propellers",
-    "battery": "Drone::QuadCopter::battery",
+    "battery": "Drone::MultiRotor::battery",
 }
 
 ALL_KEYS = sorted(set(QUAD_MAP.values()))
@@ -86,12 +89,22 @@ class TestSelectionKeys:
         }
 
     def test_container_matches_the_nested_keys(self, drone_model):
-        assert self.resolve(drone_model, ["Drone::QuadCopter"]) == set(ALL_KEYS)
+        # textual nesting: the configuration matches its OWN feature
+        # keys, the abstract base matches the shared-equipment keys,
+        # and the package matches everything
+        assert self.resolve(drone_model, ["Drone::QuadCopter"]) == {
+            "Drone::QuadCopter::motors",
+            "Drone::QuadCopter::propellers",
+        }
+        assert self.resolve(drone_model, ["Drone::MultiRotor"]) == {
+            "Drone::MultiRotor::chassis",
+            "Drone::MultiRotor::battery",
+        }
         assert self.resolve(drone_model, ["Drone"]) == set(ALL_KEYS)
 
     def test_definition_matches_every_usage_typed_by_it(self, drone_model):
         assert self.resolve(drone_model, ["Drone::Motor"]) == {"Drone::QuadCopter::motors"}
-        assert self.resolve(drone_model, ["Drone::Frame"]) == {"Drone::QuadCopter::chassis"}
+        assert self.resolve(drone_model, ["Drone::Frame"]) == {"Drone::MultiRotor::chassis"}
         assert isinstance(drone_model.find("Drone::Motor"), M.Definition)
 
     def test_unrelated_selection_matches_nothing(self, drone_model):
@@ -101,7 +114,7 @@ class TestSelectionKeys:
     def test_untagged_names_only_match_themselves(self, drone_model):
         # a bare part name is not a qualified name: model selections
         # never reach it, so an untagged scene stays inert
-        assert self.resolve(drone_model, ["Drone::QuadCopter"]) == set(ALL_KEYS)
+        assert self.resolve(drone_model, ["Drone"]) == set(ALL_KEYS)
         esc = link.selection_keys(drone_model, [drone_model.find("Drone")], ["esc"])
         assert esc == set()
 
@@ -117,7 +130,10 @@ class TestLinkSelection:
         structure.view.selection.ids = ["Drone::Motor"]
         assert json.loads(viewer.highlight_json) == ["Drone::QuadCopter::motors"]
         structure.view.selection.ids = ["Drone::QuadCopter"]
-        assert json.loads(viewer.highlight_json) == ALL_KEYS
+        assert json.loads(viewer.highlight_json) == [
+            "Drone::QuadCopter::motors",
+            "Drone::QuadCopter::propellers",
+        ]
 
     def test_no_match_clears_instead_of_dimming_everything(self, linked):
         structure, viewer, _unlink = linked
@@ -130,14 +146,14 @@ class TestLinkSelection:
 
     def test_pick_selects_the_diagram_node_and_round_trips(self, linked):
         structure, viewer, _unlink = linked
-        viewer.picked_json = json.dumps(["Drone::QuadCopter::battery"])
-        assert list(structure.view.selection.ids) == ["Drone::QuadCopter::battery"]
+        viewer.picked_json = json.dumps(["Drone::MultiRotor::battery"])
+        assert list(structure.view.selection.ids) == ["Drone::MultiRotor::battery"]
         # the diagram selection then drives the forward path back to 3D
-        assert json.loads(viewer.highlight_json) == ["Drone::QuadCopter::battery"]
+        assert json.loads(viewer.highlight_json) == ["Drone::MultiRotor::battery"]
 
     def test_pick_of_untagged_or_background_clears(self, linked):
         structure, viewer, _unlink = linked
-        viewer.picked_json = json.dumps(["Drone::QuadCopter::battery"])
+        viewer.picked_json = json.dumps(["Drone::MultiRotor::battery"])
         viewer.picked_json = json.dumps(["esc"])  # no model identity
         assert list(structure.view.selection.ids) == []
         assert viewer.highlight_json == "[]"
@@ -147,10 +163,10 @@ class TestLinkSelection:
         structure.view.selection.ids = ["Drone::Motor"]
         unlink()
         assert viewer.highlight_json == "[]"  # cleared on disposal
-        structure.view.selection.ids = ["Drone::QuadCopter::battery"]
+        structure.view.selection.ids = ["Drone::MultiRotor::battery"]
         assert viewer.highlight_json == "[]"
         viewer.picked_json = json.dumps(["Drone::QuadCopter::motors"])
-        assert list(structure.view.selection.ids) == ["Drone::QuadCopter::battery"]
+        assert list(structure.view.selection.ids) == ["Drone::MultiRotor::battery"]
         unlink()  # idempotent
 
     def test_link_without_part_map_leaves_the_scene_inert(self, drone_model):
@@ -169,8 +185,8 @@ class TestLinkSelection:
         for trait in ("mesh_json", "mesh_b_json"):
             parts = json.loads(getattr(viewer, trait))["parts"]
             assert [p.get("key") for p in parts] == [*QUAD_MAP.values(), None]
-        structure.view.selection.ids = ["Drone::QuadCopter::battery"]
-        assert json.loads(viewer.highlight_json) == ["Drone::QuadCopter::battery"]
+        structure.view.selection.ids = ["Drone::MultiRotor::battery"]
+        assert json.loads(viewer.highlight_json) == ["Drone::MultiRotor::battery"]
         unlink()
 
 
