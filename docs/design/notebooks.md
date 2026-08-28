@@ -161,6 +161,10 @@ proved ceiling), and Z3 answers requirement *consistency*. The inline
 the violations describe the SAME truth the reader has traded since T4.
 
 **T7. Geometry and the mission** *(10, trimmed)*
+*(Maintainer requirement, added 2026-08-28: selecting a
+configuration -- or any of its parts -- in the linked views renders
+THAT configuration's geometry in the 3D scene. The family arc's
+config-keyed geometry API is the enabler; T7 owns the UX.)*
 The question: the model claims the camera sees the ground and the
 props clear the hull — who measured? M1 vs M0 side by side; the CAD
 scene as a rendering of the M0 population; geometric requirements
