@@ -8,6 +8,9 @@ prove is the layout contract and the front-end round trip:
   screen shows everything without vertical scrolling;
 * clicking the ``Pareto only`` ToggleButton reaches the kernel and prunes
   the candidate pool in place;
+* hovering a lineup card shows its front justification and traces that
+  candidate's line in the parallel coordinates (the projection defect:
+  a front pick can look dominated in the cost-MOE plane);
 * the missions render as ONE tab set whose tabs actually switch;
 * dragging a priority slider re-ranks the 3D lineup that sits BESIDE it.
 
@@ -82,13 +85,13 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.wait_for_selector(".jp-OutputArea .widget-vbox", timeout=120_000)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
 
-    # -- baked state: 216 candidates, one tab set, toggle off ---------------
+    # -- baked state: 288 candidates, one tab set, toggle off ---------------
     state = lab.run_cell_json(1)
-    assert state["candidates"] == 216
+    assert state["candidates"] == 288
     assert state["tabs"] == ["all missions", "ISR", "logistics", "intercept"]
     assert state["toggle"] is False
-    assert state["pool"] == 216
-    assert 0 < state["front"] < 216
+    assert state["pool"] == 288
+    assert 0 < state["front"] < 288
 
     # -- (1) the whole dashboard fits a 1080p content area ------------------
     root = lab.page.locator(".jp-OutputArea .widget-vbox").first
@@ -105,11 +108,30 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle = lab.page.get_by_role("button", name="Pareto only")
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is True)
-    assert state["pool"] == state["front"] < 216
+    assert state["pool"] == state["front"] < 288
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_pareto_on.png"))
+
+    # -- (2b) the reported scenario: 'Pareto only' at N=8 shows picks that
+    # LOOK dominated in the scatter; their lineup cards must say where
+    # each earns its front membership, and hovering a card must trace
+    # that candidate's line in the parallel coordinates.  The lineup-N
+    # readout is contenteditable: type 8 (one kernel update; dragging the
+    # short header track fires a recompute storm and is gesture-flaky)
+    row = lab.page.locator(".widget-hslider").filter(has_text="lineup N").first
+    readout = row.locator(".widget-readout").first
+    readout.click()
+    readout.fill("8")
+    readout.press("Enter")
+    state = _poll_checker(lab, lambda s: s["picks"] == 8)
+    card = lab.page.locator(".longeron-lineup-card", has_text="tops every pick").first
+    card.scroll_into_view_if_needed()
+    card.hover()
+    lab.page.wait_for_selector(".longeron-pc-line.hover", timeout=15_000)
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_lineup_justification.png"))
+
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is False)
-    assert state["pool"] == 216
+    assert state["pool"] == 288
 
     # -- (3) the mission tabs switch: ISR shows its floors and card ---------
     lab.page.locator(".jp-OutputArea .lm-TabBar-tab", has_text="ISR").first.click()

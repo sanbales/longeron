@@ -144,6 +144,57 @@ class TestFrontFlags:
         assert dashboard._front_flags(points, [False, True]) == [False, True]
 
 
+class TestFrontJustifications:
+    """The pure alibi contract: a full-space front member that looks
+    dominated in the drawn plane names the hidden metric(s) on which it
+    strictly beats EVERY point that 2-D-dominates it."""
+
+    def test_names_the_metric_that_beats_every_plane_beater(self):
+        points = [(100.0, 0.9), (110.0, 0.5)]  # the second looks dominated
+        metrics = [{"a": 5.0, "b": 9.0}, {"a": 7.0, "b": 1.0}]
+        whys = dashboard.front_justifications(points, metrics, [True, True])
+        assert whys[0] == "front: unbeaten in this plane"
+        assert whys[1] == "front: a 7 tops every pick that beats it in this plane"
+
+    def test_off_front_rows_get_none(self):
+        points = [(100.0, 0.9), (110.0, 0.5)]
+        metrics = [{"a": 5.0}, {"a": 1.0}]
+        assert dashboard.front_justifications(points, metrics, [True, False]) == [
+            "front: unbeaten in this plane",
+            None,
+        ]
+
+    def test_every_winning_metric_is_named(self):
+        points = [(1.0, 1.0), (2.0, 0.5)]
+        metrics = [{"a": 1.0, "b": 1.0}, {"a": 2.0, "b": 3.0}]
+        whys = dashboard.front_justifications(points, metrics, [True, True])
+        assert whys[1] == "front: a 2, b 3 top every pick that beats it in this plane"
+
+    def test_only_metrics_beating_all_beaters_qualify(self):
+        # the last row is beaten by BOTH others; only "b" clears both
+        points = [(1.0, 1.0), (1.5, 0.9), (2.0, 0.5)]
+        metrics = [{"a": 9.0, "b": 1.0}, {"a": 1.0, "b": 2.0}, {"a": 5.0, "b": 3.0}]
+        whys = dashboard.front_justifications(points, metrics, [True, True, True])
+        assert whys[2] == "front: b 3 tops every pick that beats it in this plane"
+
+    def test_exact_plane_ties_never_count_as_beaters(self):
+        points = [(1.0, 1.0), (1.0, 1.0)]
+        metrics = [{"a": 2.0}, {"a": 1.0}]
+        whys = dashboard.front_justifications(points, metrics, [True, True])
+        assert whys == ["front: unbeaten in this plane"] * 2
+
+    def test_greedy_cover_when_no_single_metric_beats_every_beater(self):
+        """Real-data shape (teardrop quads at 'Pareto only'): each beater
+        trails somewhere, but no one metric covers ALL beaters.  The line
+        then names a minimal covering set, joined by 'or'."""
+
+        points = [(1.0, 1.0), (1.5, 0.9), (2.0, 0.5)]
+        metrics = [{"a": 9.0, "b": 1.0}, {"a": 1.0, "b": 9.0}, {"a": 5.0, "b": 5.0}]
+        whys = dashboard.front_justifications(points, metrics, [True, True, True])
+        expect = "front: every pick that beats it in this plane trails it on a 5 or b 5"
+        assert whys[2] == expect
+
+
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
@@ -220,6 +271,7 @@ def _reset(dash, request):
             slider.value = spec["default"]
     dash.top_n.value = 4
     dash.parcoords.selected = "[]"
+    dash.lineup.hover = -1
 
 
 class TestDashboardLayout:
@@ -230,7 +282,7 @@ class TestDashboardLayout:
         header, plot_row, control_row = dash.children
         assert list(header.children)[-2:] == [dash.pareto_toggle, dash.top_n]
         assert list(plot_row.children) == [dash.parcoords, dash.scatter]
-        assert list(control_row.children) == [dash.tabs, dash.viewer]
+        assert list(control_row.children) == [dash.tabs, dash.lineup, dash.viewer]
 
     def test_missions_are_one_tab(self, dash, data):
         names = [m["name"] for m in data["missions"]]
@@ -311,6 +363,110 @@ class TestParetoToggle:
         before = list(dash.front)
         dash.requirements["ISR"]["stationMinutes"].value = 120.0
         assert dash.front != before  # metrics re-filtered, front re-derived
+
+
+class TestFrontJustificationsLive:
+    """THE reported legibility defect: 'Pareto only' at N=8 keeps picks
+    that LOOK dominated in the cost-MOE scatter (148-151 sit below-right
+    of 172/173).  The filter is correct -- dominance spans all four
+    objectives -- so the display must say where each pick wins."""
+
+    @staticmethod
+    def _pareto_n8(dash):
+        dash.pareto_toggle.value = True
+        dash.top_n.value = 8
+
+    def test_every_front_member_has_a_justification(self, dash):
+        self._pareto_n8(dash)
+        assert all(dash.front[i] for i in dash.picks)  # the filter was never wrong
+        for point in json.loads(dash.scatter.payload_json)["points"]:
+            assert point["why"], point  # 4-D front members, all justified
+
+    def test_the_looks_dominated_picks_name_station_minutes(self, dash):
+        self._pareto_n8(dash)
+        cards = {dash.pool[c["line"]]: c for c in json.loads(dash.lineup.cards_json)}
+        for index in (148, 149, 150, 151):
+            assert index in dash.picks
+            why = cards[index]["why"]
+            assert why.startswith("front: stationMinutes ")
+            assert why.endswith("tops every pick that beats it in this plane")
+
+    def test_named_metrics_really_beat_all_plane_beaters(self, dash, data):
+        """Honesty, brute-forced, over every front member in the pool:
+        a 'tops' line names metrics that each strictly beat the SAME
+        metric of every 2-D dominator; a 'trails it on' line names a set
+        such that every 2-D dominator strictly trails on at least one."""
+
+        self._pareto_n8(dash)
+        metric_of = {m["name"]: m["metric"] for m in data["missions"]}
+        pool = dash.pool
+        points = [(float(data["candidates"][i]["cost"]), dash.scores[i]) for i in pool]
+        payload = json.loads(dash.scatter.payload_json)
+        beaten = 0
+        for j, index in enumerate(pool):
+            why = payload["points"][j]["why"]
+            beaters = [
+                k
+                for k, (bx, by) in enumerate(points)
+                if bx <= points[j][0] and by >= points[j][1] and (bx, by) != points[j]
+            ]
+            if not beaters:
+                assert why == "front: unbeaten in this plane"
+                continue
+            beaten += 1
+            named = [name for name, metric in metric_of.items() if metric in why]
+            assert named, why  # non-domination guarantees hidden winners
+            mine = {name: dash.live[index]["metric"][name] for name in named}
+            if "trails it on" in why:
+                for k in beaters:  # every beater trails on some named metric
+                    assert any(mine[n] > dash.live[pool[k]]["metric"][n] for n in named)
+            else:
+                for name in named:  # every named metric beats every beater
+                    assert all(mine[name] > dash.live[pool[k]]["metric"][name] for k in beaters)
+        assert beaten >= 4  # picks 148-151 at least
+
+
+class TestLineupCards:
+    """The pick cards and their hover trace into the parallel coordinates."""
+
+    def test_cards_align_with_picks(self, dash, data):
+        cards = json.loads(dash.lineup.cards_json)
+        assert len(cards) == len(dash.picks) == 4
+        assert cards[0]["mark"] == "\u2605 "
+        for card, index in zip(cards, dash.picks, strict=True):
+            assert card["label"] == data["candidates"][index]["label"]
+            assert dash.pool[card["line"]] == index
+            assert card["moe"] == f"{dash.scores[index]:+.2f}"
+            assert card["cost"] == f"{data['candidates'][index]['cost']:.0f}"
+
+    def test_dominated_picks_say_so(self, dash, data):
+        dominated = [i for i, on in enumerate(dash.front) if not on]
+        dash.parcoords.selected = json.dumps(dominated)  # pool = identity here
+        cards = json.loads(dash.lineup.cards_json)
+        assert cards
+        assert not any(card["front"] for card in cards)
+        assert all(card["why"].startswith("dominated") for card in cards)
+
+    def test_card_hover_traces_the_parcoords_line(self, dash):
+        assert dash.parcoords.highlight == -1
+        dash.lineup.hover = 7
+        assert dash.parcoords.highlight == 7
+        dash.lineup.hover = -1
+        assert dash.parcoords.highlight == -1
+
+    def test_recompute_resets_a_stale_trace(self, dash):
+        dash.lineup.hover = 2
+        dash.top_n.value = 5  # cards re-baked: the old line index is stale
+        assert dash.lineup.hover == -1
+        assert dash.parcoords.highlight == -1
+
+    def test_frontend_seams(self, dash):
+        # the composed parcoords ESM keeps ONE export and gains the hook
+        assert dash.parcoords._esm.count("export default") == 1
+        assert "change:highlight" in dash.parcoords._esm
+        assert "change:table_json" in dash.parcoords._esm  # live re-bakes
+        assert "change:cards_json" in dash.lineup._esm
+        assert "why" in dash.scatter._esm  # the tooltip carries the alibi
 
 
 class TestDashboardWiring:

@@ -25,7 +25,11 @@ performance -> cost.  The layout is built to fit one 1080p screen
   their geometric consequences share one glance: the top-N compromises
   render to scale in an adaptive grid
   (:func:`longeron.analysis.geometry.lineup`), each cell captioned
-  in-scene.
+  in-scene.  A column of LINEUP CARDS sits between the tab and the
+  viewer: one card per pick (rank, mix, MOE, cost, and -- for front
+  members -- a one-line justification, see below).  Hovering or
+  clicking a card highlights that candidate's line in the parallel
+  coordinates, where every dominance axis is visible.
 
 The PARETO-ONLY toggle filters dominated candidates out of the linked
 views.  Dominance is over the study's objective axes -- cost (minimized)
@@ -36,6 +40,17 @@ survive (:func:`pareto_mask`, pure and unit-tested).  Candidates feasible
 for no mission never join the front.  The dominated set ignores the
 priority WEIGHTS on purpose: re-prioritizing must never change which
 designs are efficient, only which efficient design wins.
+
+The MOE-vs-cost scatter is a 2-D PROJECTION of that 4-axis dominance
+space, so a front member can sit below-right of another point and still
+be non-dominated: it wins on an axis the plane hides.  The dashboard
+says so explicitly (:func:`front_justifications`, pure and unit-tested):
+every front member's scatter tooltip and lineup card carry one line
+naming hidden metrics against the points that 2-D-dominate it in the
+drawn plane -- either one metric that strictly beats ALL of them, or (no
+single metric covers every dominator) a minimal set of metrics such that
+EVERY dominator strictly trails on at least one.  Non-domination over
+cost plus those metrics guarantees a winning metric per dominator.
 
 All linking runs in Python via traitlets observers -- the candidate
 table is a couple hundred rows, so every front-end stays a dumb painter
@@ -85,6 +100,7 @@ __all__ = [
     "INFEASIBLE_PENALTY",
     "apply_thresholds",
     "compromise_scores",
+    "front_justifications",
     "mission_dashboard",
     "mission_dashboard_data",
     "pareto_mask",
@@ -374,6 +390,67 @@ def _front_flags(points: Sequence[tuple[float, float]], eligible: Sequence[bool]
     return pareto_mask([(-x, y) for x, y in points], eligible)
 
 
+def front_justifications(
+    points: Sequence[tuple[float, float]],
+    metrics: Sequence[Mapping[str, float]],
+    front: Sequence[bool],
+) -> list[str | None]:
+    """One-line alibis for front members drawn in a 2-D projection (pure).
+
+    ``front`` flags non-domination over the FULL objective space;
+    ``points`` are the drawn plane (x minimized, y maximized); ``metrics``
+    hold each row's values on the axes the plane hides (larger is
+    better).  A front member can be 2-D-dominated in the plane yet stay
+    efficient, so every front row gets one compact line about its plane
+    dominators (its "beaters"): the metric(s) on which it strictly beats
+    ALL of them when such metrics exist, otherwise a greedy minimal
+    metric set such that EVERY beater strictly trails on at least one
+    (non-domination over cost plus these metrics guarantees each beater
+    trails somewhere, but no single metric need cover them all).  Front
+    rows nothing 2-D-dominates are called unbeaten; rows off the front
+    get ``None``.  Exact plane ties never count as beaters (they overlap
+    in the plot, so they cannot mislead).
+    """
+
+    from .viz import _fmt  # the house number formatting
+
+    rows = [(float(x), float(y)) for x, y in points]
+    out: list[str | None] = []
+    for i, on in enumerate(front):
+        if not on:
+            out.append(None)
+            continue
+        x, y = rows[i]
+        beaters = [
+            j for j, (bx, by) in enumerate(rows) if bx <= x and by >= y and (bx, by) != (x, y)
+        ]
+        if not beaters:
+            out.append("front: unbeaten in this plane")
+            continue
+        keys = list(metrics[i])
+        mine = {key: float(metrics[i][key]) for key in keys}
+        wins_of = {j: {key for key in keys if mine[key] > float(metrics[j][key])} for j in beaters}
+        if any(not wins for wins in wins_of.values()):
+            # ponytail: unreachable when ``front`` comes from pareto_mask over cost+metrics
+            out.append("front: non-dominated over the full objectives")
+            continue
+        full = [key for key in keys if all(key in wins_of[j] for j in beaters)]
+        if full:
+            named = ", ".join(f"{key} {_fmt(mine[key])}" for key in full)
+            verb = "tops" if len(full) == 1 else "top"
+            out.append(f"front: {named} {verb} every pick that beats it in this plane")
+            continue
+        cover: list[str] = []  # greedy set cover: small, deterministic, honest
+        left = set(beaters)
+        while left:
+            best = max(keys, key=lambda key: sum(1 for j in left if key in wins_of[j]))
+            cover.append(best)
+            left -= {j for j in left if best in wins_of[j]}
+        named = " or ".join(f"{key} {_fmt(mine[key])}" for key in cover)
+        out.append(f"front: every pick that beats it in this plane trails it on {named}")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # the MOE-vs-cost scatter (house anywidget: Python bakes, JS paints)
 # ---------------------------------------------------------------------------
@@ -450,7 +527,8 @@ function render({ model, el }) {
       const title = document.createElementNS(NS, "title");
       title.textContent = p.label + "\n" + P.xlabel + " " + p.x.toFixed(0) +
         " \u00b7 " + P.ylabel + " " + p.y.toFixed(2) +
-        (p.feasible ? "" : "  (infeasible everywhere)");
+        (p.feasible ? "" : "  (infeasible everywhere)") +
+        (p.why ? "\n" + p.why : "");
       dot.appendChild(title);
     }
   }
@@ -501,6 +579,143 @@ def _scatter_class() -> type[anywidget.AnyWidget]:
 
     _SCATTER_CLS = MoeFrontWidget
     return MoeFrontWidget
+
+
+# ---------------------------------------------------------------------------
+# the lineup cards (house anywidget: Python bakes, JS paints; hover syncs)
+# ---------------------------------------------------------------------------
+
+_LINEUP_ESM = r"""
+function render({ model, el }) {
+  el.classList.add("longeron-lineup");
+  let pinned = -1;
+  const send = (line) => { model.set("hover", line); model.save_changes(); };
+
+  function draw() {
+    el.innerHTML = "";
+    pinned = -1;
+    const head = document.createElement("div");
+    head.className = "longeron-lineup-head";
+    head.textContent = "lineup \u00b7 hover traces the line";
+    el.appendChild(head);
+    for (const card of JSON.parse(model.get("cards_json"))) {
+      const div = document.createElement("div");
+      div.className = "longeron-lineup-card";
+      div.innerHTML = "<b>" + card.mark + card.label + "</b>" +
+        "<div class='longeron-lineup-nums'>MOE " + card.moe +
+        (card.cost ? " \u00b7 $" + card.cost : "") + "</div>" +
+        (card.why ? "<div class='longeron-lineup-why" +
+          (card.front ? "" : " dominated") + "'>" + card.why + "</div>" : "");
+      div.addEventListener("mouseenter", () => {
+        if (pinned < 0) send(card.line);
+      });
+      div.addEventListener("mouseleave", () => {
+        if (pinned < 0) send(-1);
+      });
+      div.addEventListener("click", () => {
+        pinned = pinned === card.line ? -1 : card.line;
+        for (const sib of el.querySelectorAll(".longeron-lineup-card"))
+          sib.classList.remove("pinned");
+        if (pinned >= 0) div.classList.add("pinned");
+        send(card.line);
+      });
+      el.appendChild(div);
+    }
+  }
+
+  model.on("change:cards_json", draw);
+  draw();
+}
+export default { render };
+"""
+
+_LINEUP_CSS = """
+.longeron-lineup { font-family: Helvetica, Arial, sans-serif;
+  overflow-y: auto; }
+.longeron-lineup-head { font-size: 10px; font-weight: 600; color: #6b7078;
+  letter-spacing: 0.06em; text-transform: uppercase; margin: 2px 0 4px; }
+.longeron-lineup-card { border: 1px solid #e2e2e2; border-radius: 6px;
+  padding: 5px 8px; margin-bottom: 5px; background: #fcfcfb;
+  font-size: 11px; line-height: 1.35; cursor: pointer; }
+.longeron-lineup-card:hover { border-color: #2f6b8f; }
+.longeron-lineup-card.pinned { border-color: #2f6b8f; background: #f2f7fa; }
+.longeron-lineup-nums { color: #6b7078;
+  font-variant-numeric: tabular-nums; }
+.longeron-lineup-why { color: #2f6b8f; margin-top: 2px; }
+.longeron-lineup-why.dominated { color: #8a8f98; }
+"""
+
+_LINEUP_CLS: type[anywidget.AnyWidget] | None = None
+
+
+def _lineup_class() -> type[anywidget.AnyWidget]:
+    global _LINEUP_CLS
+    if _LINEUP_CLS is not None:
+        return _LINEUP_CLS
+    try:
+        import anywidget as _anywidget
+        import traitlets
+    except ImportError as err:
+        raise MissingExtraError("the lineup cards", "anywidget", "viz") from err
+
+    class LineupCardsWidget(_anywidget.AnyWidget):
+        """One card per lineup pick, with its front justification."""
+
+        _esm = _LINEUP_ESM
+        _css = _LINEUP_CSS
+        cards_json = traitlets.Unicode("[]").tag(sync=True)
+        #: parcoords line index under the pointer (JS -> Python; -1 = none)
+        hover = traitlets.Int(-1).tag(sync=True)
+
+    _LINEUP_CLS = LineupCardsWidget
+    return LineupCardsWidget
+
+
+# the dashboard's parcoords: the house widget plus a Python-driven
+# ``highlight`` line index that re-uses the existing hover style -- the
+# lineup cards drive it through a traitlets observer, so a card points
+# at its candidate across every dominance axis at once
+_PC_HIGHLIGHT_JS = r"""
+function renderHighlight(ctx) {
+  render(ctx);
+  const { model, el } = ctx;
+  const apply = () => {
+    const on = model.get("highlight");
+    el.querySelectorAll(".longeron-pc-line").forEach((path, i) =>
+      path.classList.toggle("hover", i === on));
+  };
+  model.on("change:highlight", apply);
+  model.on("change:table_json", apply);  // registered after draw: runs after re-bakes
+  apply();
+}
+export default { render: renderHighlight };
+"""
+
+_PC_HL_CLS: type[anywidget.AnyWidget] | None = None
+
+
+def _highlight_parcoords_class() -> type[anywidget.AnyWidget]:
+    global _PC_HL_CLS
+    if _PC_HL_CLS is not None:
+        return _PC_HL_CLS
+    from . import viz
+
+    base = viz._parcoords_class()
+    import traitlets
+
+    esm = viz._PC_ESM.replace("export default { render };", _PC_HIGHLIGHT_JS.strip())
+    if esm == viz._PC_ESM:  # the export seam moved: fail loud, never silently unhighlighted
+        raise AnalysisError("viz._PC_ESM lost its export line; update _PC_HIGHLIGHT_JS")
+
+    class HighlightParCoordsWidget(base):  # type: ignore[valid-type,misc]
+        """House parcoords + a highlighted line index driven from Python."""
+
+        _esm = esm
+        #: line index drawn with the hover style (Python -> JS; -1 = none)
+        highlight = traitlets.Int(-1).tag(sync=True)
+
+    _PC_HL_CLS = HighlightParCoordsWidget
+    return HighlightParCoordsWidget
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +834,9 @@ def mission_dashboard(
     (mission -> key -> threshold FloatSlider), ``.top_n``,
     ``.pareto_toggle`` (dominated-candidate filter), ``.tabs`` (summary +
     one tab per mission), ``.parcoords``, ``.scatter``, ``.viewer``,
-    ``.cards``, ``.summary``, ``.data``, ``.live`` (the current
+    ``.cards``, ``.summary``, ``.lineup`` (the pick cards; its ``hover``
+    trait carries the parcoords line index a card points at, mirrored to
+    ``.parcoords.highlight``), ``.data``, ``.live`` (the current
     :func:`apply_thresholds` table), ``.front`` (per-candidate
     non-dominated flags), ``.pool`` (the candidate indices currently in
     view), ``.picks`` (the current top-N candidate indices), and
@@ -643,7 +860,8 @@ def mission_dashboard(
     scatter_w, plot_h = 400, 330
     pc_w = max(700, width_px - scatter_w - 40)
     tab_w = 640
-    viewer_w = max(560, width_px - tab_w - 40)
+    lineup_w = 200
+    viewer_w = max(560, width_px - tab_w - lineup_w - 60)
     viewer_h = 430
 
     req_sliders: dict[str, dict[str, Any]] = {
@@ -703,6 +921,7 @@ def mission_dashboard(
         height_px=viewer_h,
     )
     scatter = _scatter_class()(width_px=scatter_w, height_px=plot_h)
+    lineup = _lineup_class()()
 
     geo_study = studies[mission_names[0]]
     mesh_cache: dict[int, dict[str, Any]] = {}
@@ -764,11 +983,20 @@ def mission_dashboard(
     floors0 = _floors()
     live0 = apply_thresholds(candidates, floors0)
     scores0 = compromise_scores(live0, dict.fromkeys(mission_names, 50.0))
-    pc = viz.parcoords(_rows(live0, scores0), axes=axes, width_px=pc_w, height_px=plot_h)
+    table0 = viz.parcoords_payload(_rows(live0, scores0), axes)
+    pc = _highlight_parcoords_class()(
+        table_json=json.dumps(table0),
+        selected=json.dumps(list(range(len(table0["lines"])))),
+        width_px=pc_w,
+        height_px=plot_h,
+    )
     # fixed-size row members: HBox children default to flex-shrink 1, and a
     # shrunk parcoords/tab bar is exactly the cramped layout this replaces
     for widget, w in ((pc, pc_w), (scatter, scatter_w), (viewer, viewer_w)):
         widget.layout = widgets.Layout(width=f"{w}px", flex="0 0 auto")
+    lineup.layout = widgets.Layout(
+        width=f"{lineup_w}px", height=f"{viewer_h + 34}px", flex="0 0 auto"
+    )
 
     box = widgets.VBox()
     box.live = live0
@@ -804,10 +1032,16 @@ def mission_dashboard(
         picks = order[: int(top_n.value)]
         box.picks = picks
 
+        whys: list[str | None] = [None] * len(pool)
         if has_cost:
             points = [(float(candidates[i]["cost"]), scores[i]) for i in pool]
             shown_eligible = [eligible[i] for i in pool]
             fronts = _front_flags(points, shown_eligible)
+            whys = front_justifications(
+                points,
+                [{metric_of[n]: live[i]["metric"][n] for n in mission_names} for i in pool],
+                [front[i] for i in pool],
+            )
             pick_set = set(picks)
             scatter.payload_json = json.dumps(
                 {
@@ -829,11 +1063,31 @@ def mission_dashboard(
                             "feasible": shown_eligible[j],
                             "pick": index in pick_set,
                             "label": candidates[index]["label"],
+                            "why": whys[j],
                         }
                         for j, index in enumerate(pool)
                     ],
                 }
             )
+
+        line_of = {index: j for j, index in enumerate(pool)}
+        lineup.cards_json = json.dumps(
+            [
+                {
+                    "mark": "\u2605 " if rank == 0 else f"{rank + 1} \u00b7 ",
+                    "label": candidates[i]["label"],
+                    "moe": f"{scores[i]:+.2f}",
+                    "cost": f"{candidates[i]['cost']:.0f}" if has_cost else "",
+                    "front": front[i],
+                    "why": (whys[line_of[i]] or "")
+                    if front[i]
+                    else "dominated: the Pareto toggle would hide it",
+                    "line": line_of[i],
+                }
+                for rank, i in enumerate(picks)
+            ]
+        )
+        lineup.hover = -1  # cards re-baked: any hover trace is stale
 
         meshes = [_mesh(i) for i in picks]
         labels = [
@@ -888,6 +1142,11 @@ def mission_dashboard(
     pareto_toggle.observe(_recompute, names="value")
     pc.observe(_recompute, names="selected")
 
+    def _trace(_change: Any = None) -> None:
+        pc.highlight = int(lineup.hover)
+
+    lineup.observe(_trace, names="hover")
+
     def _section(text: str) -> Any:
         return widgets.HTML(f'<div style="{_SECTION_STYLE}">{text}</div>')
 
@@ -901,7 +1160,10 @@ def mission_dashboard(
                 "(infeasible missions cost "
                 f"{INFEASIBLE_PENALTY:g}&times; their weight); brush any "
                 "axis to downselect; the toggle hides dominated designs "
-                "(min cost, max mission metrics)</span></div>",
+                "(min cost, max mission metrics); dominance spans all four "
+                "objectives &mdash; the scatter is only a projection, so a "
+                "front pick's card and tooltip name the hidden axes it "
+                "wins</span></div>",
                 layout=widgets.Layout(flex="1 1 auto"),
             ),
             pareto_toggle,
@@ -938,7 +1200,7 @@ def mission_dashboard(
     box.children = [
         header,
         widgets.HBox([pc, scatter], layout=row),
-        widgets.HBox([tabs, viewer], layout=row),
+        widgets.HBox([tabs, lineup, viewer], layout=row),
     ]
     box.layout = widgets.Layout(width=f"{width_px + 8}px")
     box.sliders = weight_sliders
@@ -951,6 +1213,7 @@ def mission_dashboard(
     box.viewer = viewer
     box.cards = cards
     box.summary = summary
+    box.lineup = lineup
     box.ranking = ranking
     box.data = data
     box._recompute = _recompute
