@@ -1,8 +1,19 @@
 # Geometry as model content (design)
 
-> **Status: DRAFT.** Open questions with recommendations are at the
-> end, one recommendation per question. Nothing in this document is
-> implemented. It records design intent for the geometry arc.
+> **Status: RATIFIED (2026-08-28).** The maintainer answered all ten
+> open questions, each as recommended: standard union + extension
+> cut/intersect (Q1); three extension libraries -- LongeronGeometry,
+> LongeronAero, LongeronKinematics (Q2); JupyterCAD as document
+> format only, zero-dependency .jcad export, no dependency (Q3);
+> cadquery stays unchanged (Q4); phase 1 opens the 0.13 arc --
+> nothing in 0.11/0.12, though the 0.12 model authoring leaves
+> attribute names envelope-ready (Q5); the stated fidelity ceiling
+> (Q6); joints specialize the standard transformation vocabulary
+> (Q7); poses layered across M1 attributes, named-pose states, and
+> M0 facts (Q8); articulation envelopes sampled through the existing
+> engines (Q9); kinematics waits for the static slice (Q10). Nothing
+> in this document is implemented yet; it is the contract for the
+> 0.13 geometry arc.
 
 The maintainer's charge, near-verbatim: *"beef up the CAD modeling
 concept in SysMLv2 -- define rough geometries (prime shapes, boolean
