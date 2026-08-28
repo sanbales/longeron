@@ -47,9 +47,16 @@ quantity typing (``0.42 [SI::s]`` on a ``MassValue``) or -- when the
 typing pins nothing -- the current value's own unit (``0.42 [SI::s]``
 replacing ``0.38 [SI::kg]``), is refused before anything mutates --
 through the very machinery ``validate``'s dimensional lint uses, so the
-edit seam and the lint share one truth.  ``validate=False`` is the
-documented escape hatch for deliberate unchecked writes (including
-deliberate re-dimensioning).
+edit seam and the lint share one truth.  The *compact* quantity form the
+inspector displays commits too: ``17 g`` (or ``17g``) resolves the
+symbol through the same derived unit table the display uses and is
+rewritten to the canonical bracket expression (``17 [SI::g]``) for
+storage; a symbol the model never names but that decomposes through the
+model's own prefix vocabulary (``17 mg``) rescales into the prefix's
+reference unit (``0.017 [SI::g]``) -- model-derived, never invented --
+and an ambiguous or unknown symbol is refused, never guessed.
+``validate=False`` is the documented escape hatch for deliberate
+unchecked writes (including deliberate re-dimensioning).
 
 Known blind spots, matching ``validate``'s own: metadata *value* bodies
 (``level = 3;`` inside ``@Safety``) resolve against the metadata
@@ -73,6 +80,7 @@ import difflib
 import re
 import weakref
 from collections.abc import Callable, Iterator
+from decimal import Decimal
 from typing import Any, NamedTuple
 
 from . import ast as A
@@ -82,7 +90,7 @@ from .ast import expr_to_text
 from .errors import EditError, ResolutionError, SysMLError
 from .export import doc_comment_body
 from .interpreter import Resolver
-from .units import Dim, UnitTable
+from .units import Dim, UnitInfo, UnitTable, unit_table
 
 __all__ = [
     "Change",
@@ -806,6 +814,19 @@ def set_attribute_value(
     ``validate=False`` skips this semantic gate for deliberate unchecked
     writes (syntax is still required).
 
+    The compact quantity form the inspector displays commits as well:
+    ``17 g`` / ``17g`` -- a number, optional space, one unit symbol --
+    resolves the symbol through the model's derived unit table (the very
+    table the display reads) and stores the canonical bracket expression
+    ``17 [SI::g]``; the dimension gates above apply to it unchanged.  A
+    symbol the model does not name but that decomposes through the
+    model's own prefix vocabulary (``17 mg``) is rescaled into the
+    prefix's reference unit and stored as ``0.017 [SI::g]``.  An
+    ambiguous decomposition is refused naming every candidate, and an
+    unknown symbol is refused with the nearest real spellings.  The
+    rewrite is form normalization, so it applies under ``validate=False``
+    too.
+
     The existing value's ``default =`` / ``:=`` flags are preserved; a
     usage without a value gets a plain ``=`` binding.  ``None`` (or
     blank text) removes the value entirely.  Returns the usage.
@@ -830,9 +851,13 @@ def set_attribute_value(
         return target
     from .builder import parse_expression
 
+    compact = _COMPACT_VALUE.fullmatch(text)
+    rewritten = _compact_quantity(model, compact.group(1), compact.group(2)) if compact else None
     try:
-        expr = parse_expression(text)
+        expr = parse_expression(rewritten if rewritten is not None else text)
     except SysMLError as err:
+        if compact is not None:  # '17 xyz': a unit problem, not a syntax one
+            raise EditError(_unknown_symbol_message(model, compact.group(2))) from err
         raise EditError(f"cannot parse {text!r} as an expression: {err}") from err
     if validate:
         _check_value_units(model, target, expr, resolver)
@@ -848,6 +873,72 @@ def set_attribute_value(
         {"text": expr_to_text(expr), "previous": expr_to_text(old.expr) if old else None},
     )
     return target
+
+
+#: the compact quantity form the inspector DISPLAYS ('17 g', '17g'):
+#: a number, optional space, one symbol-shaped token (first char never
+#: an operator or bracket, so '2 +' and '17 -3' stay ordinary
+#: expressions).  A token that resolves to nothing falls through to the
+#: ordinary expression parse before it is refused as an unknown unit.
+_COMPACT_VALUE = re.compile(
+    r"\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)[ \t]*"
+    r"([^\s\d+\-*/^%<>=!&|(),.;:?@#\[\]{}'\"~\\`][^\s\[\]]*)\s*"
+)
+
+
+def _compact_quantity(model: M.Model, number: str, symbol: str) -> str | None:
+    """The canonical bracket rewrite of a compact quantity, or ``None``.
+
+    ``symbol`` resolves through the same derived table the inspector's
+    display uses (:func:`longeron.units.unit_table` -- one truth): a
+    named unit rewrites in place (``'17', 'g'`` -> ``'17 [SI::g]'``); a
+    symbol the model never names but that decomposes through the model's
+    own prefix vocabulary rescales into the prefix's reference unit
+    (``'17', 'mg'`` -> ``'0.017 [SI::g]'`` via ``SIPrefixes::milli`` --
+    model-derived, never invented).  An ambiguous decomposition raises
+    :class:`~longeron.errors.EditError` naming every candidate; a symbol
+    that resolves to nothing returns ``None`` (the caller falls back to
+    the ordinary expression parse).
+    """
+
+    table = unit_table(model)
+    info = table.lookup(symbol)
+    if info is not None:
+        return f"{number} [{_bracket_ref(info)}]"
+    splits = table.prefix_splits(symbol)
+    if len(splits) > 1:
+        candidates = " or ".join(
+            f"{key!r} + {base.label!r} ({_bracket_ref(base)})" for key, _, base in splits
+        )
+        raise EditError(
+            f"unit {symbol!r} is ambiguous: {candidates}; "
+            "spell the value with an explicit bracket unit"
+        )
+    if splits:
+        _, factor, base = splits[0]
+        magnitude = repr(float(Decimal(number) * Decimal(repr(factor))))
+        return f"{magnitude} [{_bracket_ref(base)}]"
+    return None
+
+
+def _bracket_ref(info: UnitInfo) -> str:
+    """The canonical bracket spelling of a table unit: the package
+    prefix of its qualified name plus its display label (``SI::g``),
+    quoted where the label needs it (``SI::'km/h'``)."""
+
+    from .export import fmt_name, fmt_qname
+
+    package, sep, last = info.qname.rpartition("::")
+    label = info.symbol or info.name or last
+    return (fmt_qname(package) + "::" if sep else "") + fmt_name(label)
+
+
+def _unknown_symbol_message(model: M.Model, symbol: str) -> str:
+    """The unknown-compact-symbol refusal, with did-you-mean hints."""
+
+    table = unit_table(model)
+    hint = _nearest_units(table, symbol)
+    return f"unit {symbol!r} does not resolve" + (f" (did you mean {hint}?)" if hint else "")
 
 
 def _check_value_units(model: M.Model, target: M.Usage, expr: A.Expr, resolver: Resolver) -> None:

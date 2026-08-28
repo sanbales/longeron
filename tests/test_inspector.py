@@ -606,6 +606,56 @@ class TestEdits:
 
         assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "420.0 [SI::g]"
 
+    def test_compact_symbol_commit_round_trips(self, monkeypatch):
+        # THE maintainer finding: the sheet DISPLAYS '0.39 kg', so typing
+        # back what the tool shows -- '390 g' -- must commit.  The symbol
+        # resolves through the same table the display reads, stores as
+        # the canonical bracket expression, the field re-displays the
+        # compact form, and the unit / typed-by rows follow ('g -- mass')
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "390 g"
+        assert app.inspector._error.layout.display == "none"
+        assert app.inspector._value_field.value == "390 g"
+        from longeron.ast import expr_to_text
+
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "390 [SI::g]"
+        rows = _static_rows(app.inspector)
+        assert ("unit", "g \u2014 mass") in rows
+        assert ("typed by", "Real [g]") in rows
+
+    def test_prefixed_symbol_commit_stores_model_derived(self, monkeypatch):
+        # 'mg' is no unit the stdlib NAMES: it decomposes through the
+        # model's own prefix algebra (SIPrefixes::milli) and stores
+        # rescaled in grams; the sheet then shows the canonical compact
+        # form -- the honest spelling of a unit the model has no name for
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "17 mg"
+        assert app.inspector._error.layout.display == "none"
+        assert app.inspector._value_field.value == "0.017 g"
+        from longeron.ast import expr_to_text
+
+        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.017 [SI::g]"
+        assert ("unit", "g \u2014 mass") in _static_rows(app.inspector)
+
+    def test_compact_wrong_dimension_lands_in_the_error_strip(self, monkeypatch):
+        # '17 s' typed compactly on a kg-valued attribute: the dimension
+        # gates apply to the compact form unchanged
+        app = _open_lab(monkeypatch)
+        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        ex = app.explore_model(model)
+        ex.select("Drone::Battery::mass")
+        app.inspector._value_field.value = "17 s"
+        assert app.inspector._error.layout.display is None
+        assert "pass validate=False to override" in app.inspector._error.value
+        assert app.inspector._value_field.value == "0.39 kg"  # reverted
+        assert not edit.track(model).dirty
+
 
 # ---------------------------------------------------------------------------
 # the dirty / save / push chrome

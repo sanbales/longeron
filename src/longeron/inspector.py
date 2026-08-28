@@ -36,8 +36,11 @@ The sheet, top to bottom:
   blank): kind, typed by / specializes / subsets / redefines /
   references, multiplicity, direction.  Units are FIRST-CLASS
   (maintainer finding): a value carrying a bracket unit shows compactly
-  in the value field (``1.5 kg``, committed back with the reference
-  intact -- a bare-number commit keeps the current unit too), the
+  in the value field (``1.5 kg``) and typing the compact form back
+  commits (``17 g`` -- the edit seam resolves the symbol through the
+  same derived table the display reads, prefix vocabulary included, so
+  ``17 mg`` stores model-derived as ``0.017 [SI::g]``; a bare-number
+  commit keeps the current unit too), the
   typed-by row keeps the TYPE but names the unit beside it (``Real
   [kg]`` -- type and unit are different facts, both visible, neither
   masquerading as the other), and a dedicated **unit** row gives the
@@ -596,12 +599,15 @@ class Inspector(W.VBox):
         return expr_to_text(expr)
 
     def _compact_to_bracket(self, element: M.Element, text: str) -> str:
-        """``0.4 kg`` -> ``0.4 [SI::kg]``: a committed compact value keeps
-        the CURRENT measurement reference (the parser's spelling is the
-        bracket form), and a bare number does too -- the field displayed
-        ``0.38 kg``, so ``0.42`` means a new magnitude in the same unit,
-        never a silently dropped one; anything else passes through
-        verbatim."""
+        """``0.42`` -> ``0.42 [SI::kg]``: a committed bare number keeps
+        the CURRENT measurement reference -- the field displayed ``0.38
+        kg``, so ``0.42`` means a new magnitude in the same unit, never a
+        silently dropped one.  Symbol-bearing compact forms (``0.42 kg``,
+        ``17 g``, ``17 mg``) pass through verbatim: the edit seam itself
+        resolves them against the same unit table the display reads and
+        stores the canonical bracket expression
+        (:func:`longeron.edit.set_attribute_value` -- one truth for the
+        display and the commit path)."""
 
         reference = _bracket_unit(element)
         if reference is None:
@@ -609,8 +615,6 @@ class Inspector(W.VBox):
         label, _ = self._unit_facts(element)  # type: ignore[arg-type]
         if label is None:
             return text  # unresolvable current unit: the field showed raw text
-        if text.endswith(f" {label}"):
-            return f"{text[: -len(label) - 1].rstrip()} [{reference}]"
         if re.fullmatch(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", text.strip()):
             return f"{text.strip()} [{reference}]"
         return text
@@ -709,8 +713,11 @@ class Inspector(W.VBox):
             self._fail(self._value_field, current, str(err))
             return
         self._clear_error()
-        # normalize what the user typed to the sheet's own rendering
-        self._assign(self._value_field, self._value_text(element))
+        # re-render the whole sheet, not just the field: a same-dimension
+        # unit change moves the unit row and the typed-by suffix too
+        # ('g -- mass' after a '17 g' commit on a kg attribute), and the
+        # field itself re-normalizes to the sheet's own compact rendering
+        self._render_sheet()
 
     # -- endpoint navigation --------------------------------------------------------
 

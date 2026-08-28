@@ -143,12 +143,17 @@ class UnitTable:
     definitions (``MassValue``), and unit definitions (``MassUnit``) --
     which the lint uses to type attributes declared by quantity
     subsetting.  User-registered overrides (:func:`register_unit`) are
-    consulted first.
+    consulted first.  ``prefixes`` carries the model's own prefix
+    vocabulary (``SIPrefixes``: symbol and long name -> factor), which
+    :meth:`prefix_splits` composes onto named units for symbols the
+    model never names itself (``mg``).
     """
 
     def __init__(self, base_symbols: tuple[str, ...] = ()):
         #: symbols of the base units, in vector order (``('m', 'kg', ...)``)
         self.base_symbols = base_symbols
+        #: prefix spelling -> conversion factor (``'m'``/``'milli'`` -> 1e-3)
+        self.prefixes: dict[str, float] = {}
         self._by_key: dict[str, UnitInfo] = {}
         self._quantities: dict[str, Dim] = {}
 
@@ -175,6 +180,8 @@ class UnitTable:
             self._by_key.setdefault(key, info)
         for key, dim in other._quantities.items():
             self._quantities.setdefault(key, dim)
+        for key, factor in other.prefixes.items():
+            self.prefixes.setdefault(key, factor)
 
     # -- lookup -------------------------------------------------------------
 
@@ -196,6 +203,35 @@ class UnitTable:
         if found is None and "::" in qname:
             found = self._quantities.get(qname.rsplit("::", 1)[-1])
         return found
+
+    def prefix_splits(self, ref: str) -> list[tuple[str, float, UnitInfo]]:
+        """Model-derived prefix decompositions of a symbol the table does
+        not name: ``('m', 1e-3, <gram>)`` for ``mg``.
+
+        Empty when the symbol IS a named unit (a name the model chose
+        always wins -- ``mm`` is millimetre, never decomposed) or when
+        nothing decomposes.  Only linear-scale bases compose, matching
+        the model's own ``ConversionByPrefix`` pattern.  More than one
+        entry means the spelling is genuinely ambiguous in scope;
+        callers refuse rather than guess.
+        """
+
+        name = ref.rsplit("::", 1)[-1]
+        if self.lookup(name) is not None:
+            return []
+        splits: list[tuple[str, float, UnitInfo]] = []
+        seen: set[tuple[float, str]] = set()
+        for key, factor in sorted(self.prefixes.items()):
+            if not name.startswith(key) or len(name) <= len(key):
+                continue
+            base = self.lookup(name[len(key) :])
+            if base is None or base.scale != "linear":
+                continue
+            ident = (factor, base.qname)
+            if ident not in seen:
+                seen.add(ident)
+                splits.append((key, factor, base))
+        return splits
 
     @property
     def dimensionless(self) -> Dim:
@@ -451,6 +487,11 @@ class _Derivation:
             self.entries[id(usage)] = self._info(usage, Dim(exp), 1.0, "linear")
 
         self._derive_prefixes()
+        for usage in self.attributes:
+            factor = self.prefixes.get(id(usage))
+            if factor is not None:
+                for key in self._prefix_keys(usage):
+                    table.prefixes.setdefault(key, factor)
         candidates = [u for u in self.attributes if id(u) not in self.entries if self._is_unit(u)]
         pending = candidates
         progress = True
@@ -530,6 +571,18 @@ class _Derivation:
                         self.prefixes[id(usage)] = _eval_number(expr)
                     except _Underivable:
                         pass
+
+    def _prefix_keys(self, usage: M.Usage) -> list[str]:
+        """Spellings of a prefix declaration: its own name / short name
+        plus its definitional ``symbol`` and ``longName`` members
+        (``milli``, ``m``)."""
+
+        keys = [n for n in (usage.name, usage.short_name) if n]
+        for member in ("symbol", "longName"):
+            expr = _member_value(usage, member)
+            if isinstance(expr, A.Literal) and isinstance(expr.value, str) and expr.value:
+                keys.append(expr.value)
+        return keys
 
     def _conversion(self, usage: M.Usage) -> tuple[Dim, float] | None:
         """(dim, si-factor) via a ``unitConversion`` member, if derivable now."""

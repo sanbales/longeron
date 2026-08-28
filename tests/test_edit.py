@@ -601,6 +601,134 @@ class TestSetAttributeValueUnits:
 
 
 # ---------------------------------------------------------------------------
+# set_attribute_value: the compact quantity form ('17 g', '17 mg')
+# ---------------------------------------------------------------------------
+
+AMBIGUOUS = """
+package Arms {
+    private import MeasurementReferences::*;
+    attribute <am> armspan : LengthUnit {
+        :>> unitConversion : ConversionByConvention {
+            :>> referenceUnit = SI::m;
+            :>> conversionFactor = 0.7;
+        }
+    }
+    part def Rig { attribute reach : Real = 1.0 [SI::m]; }
+}
+"""
+
+
+class TestCompactValueInput:
+    """The maintainer's input-form asymmetry, closed: the inspector
+    DISPLAYS '0.017 kg' but the commit path only took the bracket
+    spelling.  The compact form the tool itself shows now commits --
+    the symbol resolves through the same derived table the display
+    uses, is rewritten to the canonical bracket expression for storage,
+    and the dimension gates apply to it unchanged."""
+
+    def test_number_space_symbol_commits_canonically(self):
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "17 g")
+        assert value_text(model, "P::Chassis::payload") == "17 [SI::g]"
+        assert_resolves_clean(model)
+        assert_fixpoint(model)
+
+    def test_no_space_form_is_accepted(self):
+        # '17g' is what a hurried hand types: the grammar is a number,
+        # OPTIONAL space, one symbol token
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "17g")
+        assert value_text(model, "P::Chassis::payload") == "17 [SI::g]"
+
+    def test_prefixed_symbol_rescales_through_the_model_prefix(self):
+        # the stdlib names no 'mg' -- but it SHIPS the prefix algebra
+        # (SIPrefixes::milli, conversionFactor 1E-3, and the
+        # ConversionByPrefix pattern), so 'mg' decomposes through the
+        # model's own definitions and stores rescaled in the reference
+        # unit: model-derived, never invented
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "17 mg")
+        assert value_text(model, "P::Chassis::payload") == "0.017 [SI::g]"
+        assert_resolves_clean(model)
+        assert_fixpoint(model)
+
+    def test_the_dimension_gate_sees_through_the_prefix(self):
+        # 'ms' composes to milli-second: still time, still refused on a
+        # mass-typed attribute -- the typing pin applies unchanged
+        model = united_model()
+        with pytest.raises(EditError, match="is mass-typed"):
+            edit.set_attribute_value(model, "P::Chassis::payload", "17 ms")
+
+    def test_compact_time_on_a_mass_pinned_value_is_refused(self):
+        # the previous-value pin applies unchanged too (THE maintainer
+        # scenario, typed compactly)
+        model = united_model()
+        with pytest.raises(EditError, match=r"pass validate=False to override"):
+            edit.set_attribute_value(model, "P::Chassis::mass", "17 s")
+
+    def test_unknown_symbol_refuses_with_hints(self):
+        model = united_model()
+        before = longeron.to_sysml(model)
+        with pytest.raises(EditError, match=r"unit 'kgg' does not resolve \(did you mean 'kg'"):
+            edit.set_attribute_value(model, "P::Chassis::mass", "17 kgg")
+        with pytest.raises(EditError, match=r"unit 'xyz' does not resolve"):
+            edit.set_attribute_value(model, "P::Chassis::mass", "17 xyz")
+        assert longeron.to_sysml(model) == before
+
+    def test_ambiguous_symbol_refuses_naming_the_candidates(self):
+        # a user package naming 'am' makes 'dam' mean two different
+        # lengths (deci-am vs deca-m): refused, never guessed
+        model = longeron.loads(AMBIGUOUS)
+        with pytest.raises(
+            EditError,
+            match=r"unit 'dam' is ambiguous: 'd' \+ 'am' \(Arms::am\) or 'da' \+ 'm' \(SI::m\)",
+        ):
+            edit.set_attribute_value(model, "Arms::Rig::reach", "17 dam")
+
+    def test_bracket_spelling_of_an_unnamed_prefix_unit_still_refuses(self):
+        # 'SI::mg' is NOT a model element; the stored text must resolve,
+        # so the bracket spelling keeps its honest refusal -- the compact
+        # form is the accepted spelling for prefix-composed units
+        model = united_model()
+        with pytest.raises(EditError, match=r"unit 'SI::mg' does not resolve"):
+            edit.set_attribute_value(model, "P::Chassis::payload", "17 [SI::mg]")
+
+    def test_validate_false_still_normalizes_the_form(self):
+        # the rewrite is form normalization, not validation: the escape
+        # hatch skips the dimension gate, never the canonical spelling
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::mass", "17 s", validate=False)
+        assert value_text(model, "P::Chassis::mass") == "17 [SI::s]"
+
+    def test_tracker_records_the_canonical_stored_form(self):
+        model = united_model()
+        tracker = edit.track(model)
+        edit.set_attribute_value(model, "P::Chassis::payload", "17 mg")
+        assert tracker.changes[-1].detail["text"] == "0.017 [SI::g]"
+
+    def test_expression_values_are_untouched(self):
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::payload", "2 * 0.5 [SI::kg]")
+        assert value_text(model, "P::Chassis::payload") == "2 * 0.5 [SI::kg]"
+
+    def test_arithmetic_still_parses_as_arithmetic(self):
+        # '17 -3' fits the number-token shape but '-3' names no unit:
+        # it falls through to the ordinary expression parse
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::count", "17 -3")
+        assert value_text(model, "P::Chassis::count") == "17 - 3"
+
+    def test_quoted_symbol_spellings_round_trip(self):
+        # a compound symbol ('km/h') needs the quoted-name form in the
+        # stored bracket expression
+        model = united_model()
+        edit.set_attribute_value(model, "P::Chassis::count", "100 km/h")
+        assert value_text(model, "P::Chassis::count") == "100 [SI::'km/h']"
+        assert_resolves_clean(model)
+        assert_fixpoint(model)
+
+
+# ---------------------------------------------------------------------------
 # set_doc
 # ---------------------------------------------------------------------------
 

@@ -144,6 +144,64 @@ class TestDerivedTable:
         assert root.exp[0] == Fraction(1, 2)
 
 
+class TestPrefixVocabulary:
+    """The model's own prefix algebra (``SIPrefixes``), exposed on the
+    table: symbols the stdlib never NAMES (``mg``) decompose through its
+    ``UnitPrefix`` declarations -- model-derived, never invented."""
+
+    def test_prefix_factors_come_from_the_model(self):
+        # SIPrefixes.sysml: milli's conversionFactor is 1E-3, keyed on
+        # both the declared name and the definitional symbol member
+        prefixes = U.standard_unit_table().prefixes
+        assert prefixes["m"] == pytest.approx(1e-3)
+        assert prefixes["milli"] == pytest.approx(1e-3)
+        assert prefixes["Ki"] == 1024.0  # the binary family rides along
+
+    def test_mg_decomposes_to_milli_gram(self):
+        splits = U.standard_unit_table().prefix_splits("mg")
+        assert len(splits) == 1
+        key, factor, base = splits[0]
+        assert key == "m"
+        assert factor == pytest.approx(1e-3)
+        assert base.qname == "SI::gram"
+
+    def test_named_units_are_never_decomposed(self):
+        # 'mm' IS SI::millimetre: a name the model chose always wins
+        assert U.standard_unit_table().prefix_splits("mm") == []
+
+    def test_unknown_symbols_do_not_decompose(self):
+        assert U.standard_unit_table().prefix_splits("xyz") == []
+
+    def test_offset_scale_bases_do_not_compose(self):
+        # a prefix on an interval scale is not the model's
+        # ConversionByPrefix pattern (linear references only)
+        assert U.standard_unit_table().prefix_splits("m\u00b0C") == []
+
+    def test_ambiguous_decompositions_list_every_candidate(self):
+        # a user package naming 'am' makes 'dam' genuinely ambiguous:
+        # deci-am vs deca-m -- both come back, the caller refuses
+        model = longeron.loads("""
+            package Arms {
+                private import MeasurementReferences::*;
+                attribute <am> armspan : LengthUnit {
+                    :>> unitConversion : ConversionByConvention {
+                        :>> referenceUnit = SI::m;
+                        :>> conversionFactor = 0.7;
+                    }
+                }
+            }
+        """)
+        splits = U.unit_table(model).prefix_splits("dam")
+        assert {(key, base.qname) for key, _, base in splits} == {
+            ("d", "Arms::armspan"),
+            ("da", "SI::metre"),
+        }
+
+    def test_model_prefixes_ride_along_on_absorb(self):
+        model = longeron.loads("package Empty {}")
+        assert U.unit_table(model).prefixes["milli"] == pytest.approx(1e-3)
+
+
 class TestRegistry:
     """User-registerable overrides and foreign unit packages."""
 
