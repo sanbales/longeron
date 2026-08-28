@@ -1,21 +1,30 @@
 """Browser-truth: the mission dashboard on one 1080p screen.
 
 The kernel-side tests (tests/test_analysis_dashboard.py) prove the pareto
-mask, the tab structure, and the traitlet wiring.  What only a browser can
-prove is the layout contract and the front-end round trip:
+mask, the tab structure, the state-matrix invariant, and the traitlet
+wiring.  What only a browser can prove is the layout contract and the
+front-end round trip:
 
-* the whole dashboard renders inside a 1920x950 content area, so a 1080p
-  screen shows everything without vertical scrolling;
+* the whole dashboard renders inside a 1920x950 content area AND fills
+  the available output width (the fluid layout), so a 1080p screen shows
+  everything without vertical scrolling;
+* the lineup-N slider keeps a usable track in the header strip;
 * clicking the ``Pareto only`` ToggleButton reaches the kernel and prunes
   the candidate pool in place;
 * hovering a lineup card shows its front justification and traces that
   candidate's line in the parallel coordinates (the projection defect:
   a front pick can look dominated in the cost-MOE plane);
+* a BRUSH gesture on a parcoords axis syncs its interval to the kernel,
+  and a card selected while brushing stays visible: the selection violet
+  is distinct from the brush blue, on the card border, the traced
+  parcoords line, and the scatter halo at once;
+* clicking a 3D model in the lineup selects its card (and the background
+  clears the selection) -- the reverse direction of the selection seam;
 * the missions render as ONE tab set whose tabs actually switch;
 * dragging a priority slider re-ranks the 3D lineup that sits BESIDE it.
 
 Each stage saves a PNG under ``build/evidence/`` -- the review artifacts
-for the T4 dashboard rework.
+for the T4 dashboard polish.
 """
 
 from __future__ import annotations
@@ -93,7 +102,9 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     assert state["pool"] == 288
     assert 0 < state["front"] < 288
 
-    # -- (1) the whole dashboard fits a 1080p content area ------------------
+    # -- (1) the whole dashboard fits a 1080p content area AND fills the
+    # available output width (finding 3: no more fixed 1500 px on a wide
+    # screen; the fluid rows stretch, the row heights hold the budget)
     root = lab.page.locator(".jp-OutputArea .widget-vbox").first
     root.evaluate("el => el.scrollIntoView({block: 'start'})")  # no stability wait
     lab.page.wait_for_timeout(1500)
@@ -101,7 +112,15 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     assert box is not None
     assert box["width"] <= 1880, f"dashboard too wide for 1920: {box}"
     assert box["height"] <= 950, f"dashboard needs vertical scrolling: {box}"
+    host_w = root.evaluate("el => el.parentElement.clientWidth")
+    assert box["width"] >= 0.95 * host_w, f"dashboard leaves width unused: {box} vs {host_w}"
+    assert box["width"] >= 1450, f"fluid layout narrower than the old fixed one: {box}"
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_full_1920x1080.png"))
+
+    # -- (1b) the lineup-N slider keeps a usable track (finding 2) --------
+    n_row = lab.page.locator(".widget-hslider").filter(has_text="lineup N").first
+    n_track = n_row.locator(".slider-container").first.bounding_box()
+    assert n_track is not None and n_track["width"] >= 200, f"lineup-N track: {n_track}"
 
     # -- (2) the Pareto toggle prunes the pool, then restores it ------------
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_pareto_off.png"))
@@ -147,5 +166,67 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     state = _poll_checker(lab, lambda s: s["top"] == "dartInterceptor")
     assert state["picks"] >= 1
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_intercept_priority.png"))
+    _drag_slider(lab, "ISR", 0.52)  # weights back to neutral for stage 5
+    _drag_slider(lab, "logistics", 0.52)
+    _drag_slider(lab, "intercept", 0.52)
+
+    # -- (5) brush + selection: the violet selection stays visible while
+    # the blue brush is active (finding 4), across card, parcoords line,
+    # and scatter halo at once (finding 5, forward direction)
+    # anchor on the stable container: the svg child is REPLACED by
+    # re-bakes, so a scroll on it races DOM detachment (seen twice at
+    # landing); the container div survives every re-render
+    holder = lab.page.locator(".longeron-parcoords").first
+    holder.scroll_into_view_if_needed()
+    lab.page.wait_for_timeout(400)
+    plot = lab.page.locator(".longeron-parcoords svg").first.bounding_box()
+    assert plot is not None
+    moe_x = plot["x"] + plot["width"] - 56  # the last axis (MOE), M.right = 56
+    lab.page.mouse.move(moe_x, plot["y"] + 0.42 * plot["height"])
+    lab.page.mouse.down()
+    lab.page.mouse.move(moe_x, plot["y"] + 0.78 * plot["height"], steps=10)
+    lab.page.mouse.up()
+    state = _poll_checker(lab, lambda s: "MOE" in s["brushes"])
+    card = lab.page.locator(".longeron-lineup-card").first
+    card.scroll_into_view_if_needed()
+    card.click()
+    state = _poll_checker(lab, lambda s: s["selected"] is not None)
+    pinned = lab.page.locator(".longeron-lineup-card.pinned").first
+    card_border = pinned.evaluate("el => getComputedStyle(el).borderTopColor")
+    brush_stroke = lab.page.locator(".longeron-pc-brush").first.evaluate(
+        "el => getComputedStyle(el).stroke"
+    )
+    assert card_border == "rgb(123, 79, 166)", card_border  # the selection violet
+    assert brush_stroke == "rgb(47, 107, 143)", brush_stroke  # the brush blue
+    assert card_border != brush_stroke
+    assert lab.page.locator(".longeron-pc-line.selected").count() == 1
+    assert lab.page.locator(".longeron-moefront-sel").count() == 1
+    assert state["highlight"] == [f"cand:{state['selected']}"]  # 3D pops too
+    assert state["traced"] >= 0
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_brush_plus_selection.png"))
+
+    # -- (6) the reverse direction: clicking a 3D model selects its card,
+    # a background click clears (finding 5)
+    canvas = lab.page.locator(".longeron-viewer3d canvas").first
+    canvas.scroll_into_view_if_needed()
+    stage = canvas.bounding_box()
+    assert stage is not None
+    lab.page.mouse.click(stage["x"] + 8, stage["y"] + 8)  # sky: clears
+    state = _poll_checker(lab, lambda s: s["selected"] is None)
+    assert lab.page.locator(".longeron-lineup-card.pinned").count() == 0
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_click3d_before.png"))
+    for fx, fy in ((0.5, 0.58), (0.36, 0.6), (0.64, 0.6), (0.5, 0.45), (0.42, 0.68)):
+        lab.page.mouse.click(stage["x"] + fx * stage["width"], stage["y"] + fy * stage["height"])
+        try:
+            state = _poll_checker(lab, lambda s: s["selected"] is not None, timeout=8.0)
+            break
+        except TimeoutError:
+            continue
+    assert state["selected"] is not None, "no 3D model hit at any probe point"
+    pinned = lab.page.locator(".longeron-lineup-card.pinned").first
+    assert state["selected_label"] in pinned.inner_text()
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_click3d_after.png"))
+    lab.page.mouse.click(stage["x"] + 8, stage["y"] + 8)  # tidy: clear again
+    _poll_checker(lab, lambda s: s["selected"] is None)
 
     lab.assert_no_errors()

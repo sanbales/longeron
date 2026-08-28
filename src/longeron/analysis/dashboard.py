@@ -5,7 +5,10 @@ One :func:`mission_dashboard` call composes the existing house widgets
 :func:`longeron.analysis.viewer3d.mesh_viewer`) with plain ipywidgets into
 the single artifact that ties requirements -> architectures ->
 performance -> cost.  The layout is built to fit one 1080p screen
-(1920x950 content area) without vertical scrolling:
+(1920x950 content area) without vertical scrolling: row HEIGHTS are
+fixed while the rows and plots stretch to the container width in their
+design proportions (pass ``width_px`` to pin a fixed total width
+instead):
 
 * a HEADER STRIP -- the title, a PARETO-ONLY toggle button (see below),
   and the top-N slider sizing the 3D lineup;
@@ -13,7 +16,12 @@ performance -> cost.  The layout is built to fit one 1080p screen
   metrics PLUS a computed ``MOE`` axis (the weighted compromise score)
   side by side with a compact MOE-vs-cost scatter; brushing a parcoords
   axis downselects the candidate pool, and the whole table re-bakes in
-  place as sliders move (brushes survive by axis name);
+  place as sliders move (brushes survive by axis name).  The brush
+  INTERVALS sync to the kernel by axis name too, so every recompute
+  derives the brushed subset from the table it just baked -- a toggle
+  flip or slider move can never pair fresh rows with stale brushed row
+  indices -- and a brush that excludes everything empties the picks
+  honestly instead of silently showing the whole pool;
 * a CONTROL ROW -- one ipywidgets ``Tab`` next to the 3D viewer.  Tab 0
   summarizes all three missions: the best compromise, the mission
   priority sliders (one 0-100 weight per mission) feeding the MOE, and a
@@ -27,9 +35,21 @@ performance -> cost.  The layout is built to fit one 1080p screen
   (:func:`longeron.analysis.geometry.lineup`), each cell captioned
   in-scene.  A column of LINEUP CARDS sits between the tab and the
   viewer: one card per pick (rank, mix, MOE, cost, and -- for front
-  members -- a one-line justification, see below).  Hovering or
-  clicking a card highlights that candidate's line in the parallel
-  coordinates, where every dominance axis is visible.
+  members -- a one-line justification, see below).  Hovering a card
+  transiently traces that candidate's line in the parallel coordinates,
+  where every dominance axis is visible.
+
+LINKED SELECTION is one state shared by every view: clicking a lineup
+card -- or a 3D model in the lineup, whose parts carry per-candidate
+identity keys through :func:`longeron.analysis.geometry.lineup` --
+selects that candidate everywhere at once.  The selected card border,
+its scatter halo, its parallel-coordinates line, and its 3D model all
+take the same violet accent (:data:`_SEL`), deliberately distinct from
+the petrol-blue brush (:data:`longeron.analysis.viz.ACCENT`), the
+terracotta top-N rings (:data:`longeron.analysis.viz.WARM`), and the
+green/red verdicts, so a selection stays visible WHILE brushing.
+Selection is sticky until the candidate leaves the visible pool (or the
+background is clicked in 3D); hover stays transient on top of it.
 
 The PARETO-ONLY toggle filters dominated candidates out of the linked
 views.  Dominance is over the study's objective axes -- cost (minimized)
@@ -39,7 +59,10 @@ good on every axis and not identical on all of them, so exact ties
 survive (:func:`pareto_mask`, pure and unit-tested).  Candidates feasible
 for no mission never join the front.  The dominated set ignores the
 priority WEIGHTS on purpose: re-prioritizing must never change which
-designs are efficient, only which efficient design wins.
+designs are efficient, only which efficient design wins.  The toggle
+never silently drops: when the current thresholds leave NOTHING
+eligible the front is empty, and the filtered views empty out with a
+message instead of falling back to the whole (dominated) catalog.
 
 The MOE-vs-cost scatter is a 2-D PROJECTION of that 4-axis dominance
 space, so a front member can sit below-right of another point and still
@@ -455,6 +478,14 @@ def front_justifications(
 # the MOE-vs-cost scatter (house anywidget: Python bakes, JS paints)
 # ---------------------------------------------------------------------------
 
+#: the SELECTION accent, applied identically to the selected card border,
+#: scatter halo, parcoords traced line, and 3D emissive pop.  Violet on
+#: purpose: the blue family belongs to the parcoords brush / frontier
+#: (``viz.ACCENT``), terracotta to the top-N pick rings (``viz.WARM``),
+#: green/red to the requirement verdicts -- so selection takes the one
+#: free channel and stays visible WHILE brushing (maintainer finding).
+_SEL = "#7b4fa6"
+
 _SCATTER_ESM = r"""
 function render({ model, el }) {
   el.classList.add("longeron-moefront");
@@ -462,7 +493,7 @@ function render({ model, el }) {
   function draw() {
     el.innerHTML = "";
     const P = JSON.parse(model.get("payload_json"));
-    const W = model.get("width_px");
+    const W = el.clientWidth || model.get("width_px");
     const H = model.get("height_px");
     const M = { top: 16, right: 14, bottom: 34, left: 52 };
     const NS = "http://www.w3.org/2000/svg";
@@ -516,12 +547,15 @@ function render({ model, el }) {
         d += `H${sx(front[i].x)}V${sy(front[i].y)}`;
       make("path", { d, class: "longeron-moefront-step" }, svg);
     }
-    for (const p of P.points) {
+    const sel = model.get("selected");
+    P.points.forEach((p, j) => {
       const cls = p.front ? "longeron-moefront-dot front"
         : p.feasible ? "longeron-moefront-dot"
         : "longeron-moefront-dot infeasible";
       if (p.pick) make("circle", { cx: sx(p.x), cy: sy(p.y), r: 7,
                                    class: "longeron-moefront-pick" }, svg);
+      if (j === sel) make("circle", { cx: sx(p.x), cy: sy(p.y), r: 10,
+                                      class: "longeron-moefront-sel" }, svg);
       const dot = make("circle", { cx: sx(p.x), cy: sy(p.y),
                                    r: p.front ? 4 : 2.6, class: cls }, svg);
       const title = document.createElementNS(NS, "title");
@@ -530,10 +564,16 @@ function render({ model, el }) {
         (p.feasible ? "" : "  (infeasible everywhere)") +
         (p.why ? "\n" + p.why : "");
       dot.appendChild(title);
-    }
+    });
   }
 
   model.on("change:payload_json", draw);
+  model.on("change:selected", draw);
+  let lastW = el.clientWidth;
+  new ResizeObserver(() => {
+    const w = el.clientWidth;
+    if (w && Math.abs(w - lastW) > 1) { lastW = w; draw(); }
+  }).observe(el);
   draw();
 }
 export default { render };
@@ -552,8 +592,9 @@ _SCATTER_CSS = """
 .longeron-moefront-step { fill: none; stroke: #2f6b8f; stroke-width: 1.3;
   opacity: 0.85; }
 .longeron-moefront-pick { fill: none; stroke: #c2603e; stroke-width: 1.4; }
+.longeron-moefront-sel { fill: none; stroke: %SEL%; stroke-width: 2.2; }
 .longeron-moefront { font-family: Helvetica, Arial, sans-serif; }
-"""
+""".replace("%SEL%", _SEL)
 
 _SCATTER_CLS: type[anywidget.AnyWidget] | None = None
 
@@ -574,6 +615,8 @@ def _scatter_class() -> type[anywidget.AnyWidget]:
         _esm = _SCATTER_ESM
         _css = _SCATTER_CSS
         payload_json = traitlets.Unicode("{}").tag(sync=True)
+        #: index (into ``points``) of the selected candidate; -1 = none
+        selected = traitlets.Int(-1).tag(sync=True)
         width_px = traitlets.Int(360).tag(sync=True)
         height_px = traitlets.Int(300).tag(sync=True)
 
@@ -588,42 +631,46 @@ def _scatter_class() -> type[anywidget.AnyWidget]:
 _LINEUP_ESM = r"""
 function render({ model, el }) {
   el.classList.add("longeron-lineup");
-  let pinned = -1;
   const send = (line) => { model.set("hover", line); model.save_changes(); };
+
+  function mark() {
+    const on = model.get("selected");
+    for (const div of el.querySelectorAll(".longeron-lineup-card")) {
+      const hit = Number(div.dataset.line) === on;
+      div.classList.toggle("pinned", hit);
+      if (hit) div.scrollIntoView({ block: "nearest" });
+    }
+  }
 
   function draw() {
     el.innerHTML = "";
-    pinned = -1;
     const head = document.createElement("div");
     head.className = "longeron-lineup-head";
-    head.textContent = "lineup \u00b7 hover traces the line";
+    head.textContent = "lineup \u00b7 hover traces \u00b7 click selects";
     el.appendChild(head);
     for (const card of JSON.parse(model.get("cards_json"))) {
       const div = document.createElement("div");
       div.className = "longeron-lineup-card";
+      div.dataset.line = card.line;
       div.innerHTML = "<b>" + card.mark + card.label + "</b>" +
         "<div class='longeron-lineup-nums'>MOE " + card.moe +
         (card.cost ? " \u00b7 $" + card.cost : "") + "</div>" +
         (card.why ? "<div class='longeron-lineup-why" +
           (card.front ? "" : " dominated") + "'>" + card.why + "</div>" : "");
-      div.addEventListener("mouseenter", () => {
-        if (pinned < 0) send(card.line);
-      });
-      div.addEventListener("mouseleave", () => {
-        if (pinned < 0) send(-1);
-      });
+      div.addEventListener("mouseenter", () => send(card.line));
+      div.addEventListener("mouseleave", () => send(-1));
       div.addEventListener("click", () => {
-        pinned = pinned === card.line ? -1 : card.line;
-        for (const sib of el.querySelectorAll(".longeron-lineup-card"))
-          sib.classList.remove("pinned");
-        if (pinned >= 0) div.classList.add("pinned");
-        send(card.line);
+        model.set("selected",
+                  model.get("selected") === card.line ? -1 : card.line);
+        model.save_changes();
       });
       el.appendChild(div);
     }
+    mark();
   }
 
   model.on("change:cards_json", draw);
+  model.on("change:selected", mark);
   draw();
 }
 export default { render };
@@ -637,13 +684,14 @@ _LINEUP_CSS = """
 .longeron-lineup-card { border: 1px solid #e2e2e2; border-radius: 6px;
   padding: 5px 8px; margin-bottom: 5px; background: #fcfcfb;
   font-size: 11px; line-height: 1.35; cursor: pointer; }
-.longeron-lineup-card:hover { border-color: #2f6b8f; }
-.longeron-lineup-card.pinned { border-color: #2f6b8f; background: #f2f7fa; }
+.longeron-lineup-card:hover { border-color: #20303c; }
+.longeron-lineup-card.pinned { border-color: %SEL%; background: #f6f2f9;
+  box-shadow: inset 0 0 0 1px %SEL%; }
 .longeron-lineup-nums { color: #6b7078;
   font-variant-numeric: tabular-nums; }
 .longeron-lineup-why { color: #2f6b8f; margin-top: 2px; }
 .longeron-lineup-why.dominated { color: #8a8f98; }
-"""
+""".replace("%SEL%", _SEL)
 
 _LINEUP_CLS: type[anywidget.AnyWidget] | None = None
 
@@ -666,30 +714,45 @@ def _lineup_class() -> type[anywidget.AnyWidget]:
         cards_json = traitlets.Unicode("[]").tag(sync=True)
         #: parcoords line index under the pointer (JS -> Python; -1 = none)
         hover = traitlets.Int(-1).tag(sync=True)
+        #: parcoords line index of the SELECTED card (two-way; -1 = none):
+        #: card clicks write it, and Python writes it back when a 3D model
+        #: is clicked or a re-bake re-seats the selection
+        selected = traitlets.Int(-1).tag(sync=True)
 
     _LINEUP_CLS = LineupCardsWidget
     return LineupCardsWidget
 
 
-# the dashboard's parcoords: the house widget plus a Python-driven
-# ``highlight`` line index that re-uses the existing hover style -- the
-# lineup cards drive it through a traitlets observer, so a card points
-# at its candidate across every dominance axis at once
+# the dashboard's parcoords: the house widget plus (a) a Python-driven
+# ``highlight`` line index reusing the existing hover style plus a sticky
+# ``traced`` selection line in the selection accent -- the lineup cards
+# drive both through traitlets observers; (b) brush INTERVALS synced by
+# axis name so the kernel recomputes the brushed subset itself; (c) a
+# fluid draw width so the plot row can flex (finding 3)
 _PC_HIGHLIGHT_JS = r"""
 function renderHighlight(ctx) {
   render(ctx);
   const { model, el } = ctx;
   const apply = () => {
-    const on = model.get("highlight");
-    el.querySelectorAll(".longeron-pc-line").forEach((path, i) =>
-      path.classList.toggle("hover", i === on));
+    const hov = model.get("highlight");
+    const sel = model.get("traced");
+    el.querySelectorAll(".longeron-pc-line").forEach((path, i) => {
+      path.classList.toggle("hover", i === hov);
+      path.classList.toggle("selected", i === sel);
+    });
   };
   model.on("change:highlight", apply);
+  model.on("change:traced", apply);
   model.on("change:table_json", apply);  // registered after draw: runs after re-bakes
   apply();
 }
 export default { render: renderHighlight };
 """
+
+_PC_SEL_CSS = """
+.longeron-pc-line.selected:not(.hover) { stroke: %SEL%; stroke-width: 2.2;
+  opacity: 1; }
+""".replace("%SEL%", _SEL)
 
 _PC_HL_CLS: type[anywidget.AnyWidget] | None = None
 
@@ -703,19 +766,116 @@ def _highlight_parcoords_class() -> type[anywidget.AnyWidget]:
     base = viz._parcoords_class()
     import traitlets
 
-    esm = viz._PC_ESM.replace("export default { render };", _PC_HIGHLIGHT_JS.strip())
-    if esm == viz._PC_ESM:  # the export seam moved: fail loud, never silently unhighlighted
-        raise AnalysisError("viz._PC_ESM lost its export line; update _PC_HIGHLIGHT_JS")
+    surgeries = (
+        # fluid width: the dashboard rows flex, so draw at the measured
+        # host width (width_px stays the pre-layout fallback)
+        (
+            'const W = model.get("width_px");',
+            'const W = el.clientWidth || model.get("width_px");',
+        ),
+        # sync the brush INTERVALS by axis name alongside the passing
+        # rows: the kernel recomputes the brushed subset against the
+        # CURRENT pool, so no transition can consult stale row indices
+        (
+            'model.set("selected", JSON.stringify(active));',
+            'model.set("selected", JSON.stringify(active));\n'
+            "      const named = {};\n"
+            "      brushes.forEach((b, k) => { if (b) named[axes[k].name] = b; });\n"
+            '      model.set("brushes", JSON.stringify(named));',
+        ),
+        # re-draw when the flexed host resizes
+        (
+            'model.on("change:table_json", draw);',
+            'model.on("change:table_json", draw);\n'
+            "  let lastW = el.clientWidth;\n"
+            "  new ResizeObserver(() => {\n"
+            "    const w = el.clientWidth;\n"
+            "    if (w && Math.abs(w - lastW) > 1) { lastW = w; draw(); }\n"
+            "  }).observe(el);",
+        ),
+        ("export default { render };", _PC_HIGHLIGHT_JS.strip()),
+    )
+    esm = viz._PC_ESM
+    for old, new in surgeries:
+        patched = esm.replace(old, new)
+        if patched == esm:  # the seam moved: fail loud, never silently broken
+            raise AnalysisError(f"viz._PC_ESM lost its seam {old!r}; update dashboard.py")
+        esm = patched
 
     class HighlightParCoordsWidget(base):  # type: ignore[valid-type,misc]
-        """House parcoords + a highlighted line index driven from Python."""
+        """House parcoords + highlight/selection lines + synced brushes."""
 
         _esm = esm
+        _css = viz._PC_CSS + _PC_SEL_CSS
         #: line index drawn with the hover style (Python -> JS; -1 = none)
         highlight = traitlets.Int(-1).tag(sync=True)
+        #: line index drawn with the SELECTION accent (Python -> JS)
+        traced = traitlets.Int(-1).tag(sync=True)
+        #: JSON object {axis name: [lo, hi]} of the live brush intervals
+        #: in normalized t-space (JS -> Python; "{}" = no brush)
+        brushes = traitlets.Unicode("{}").tag(sync=True)
 
     _PC_HL_CLS = HighlightParCoordsWidget
     return HighlightParCoordsWidget
+
+
+_DASH_VIEWER_CLS: type[anywidget.AnyWidget] | None = None
+
+
+def _dash_viewer_class() -> type[anywidget.AnyWidget]:
+    """The house 3D viewer, dashboard-tuned.
+
+    Three ESM patches: the canvas keeps a FIXED height (``height_px``)
+    while filling the flexed host width, so a fluid dashboard never
+    grows past the one-screen budget; the linked-selection emissive
+    accent is pinned to the dashboard's selection violet (:data:`_SEL`)
+    so the 3D pop matches the card/scatter/parcoords selection exactly
+    (the base widget's JupyterLab brand blue reads too close to the
+    parcoords brush blue -- the maintainer finding); and every click
+    stamps ``picked_json`` with a monotonic counter so repeat clicks
+    (background after a card-made selection, the same part twice) still
+    change the trait and reach the kernel -- state alone would silently
+    swallow them.
+    """
+
+    global _DASH_VIEWER_CLS
+    if _DASH_VIEWER_CLS is not None:
+        return _DASH_VIEWER_CLS
+    from . import viewer3d
+
+    surgeries = (
+        ("height = Math.round(w / aspect);", 'height = model.get("height_px");'),
+        (
+            "const accent = (getComputedStyle(el)\n"
+            '      .getPropertyValue("--jp-brand-color2") || "").trim() || "#2196f3";',
+            f'const accent = "{_SEL}";',
+        ),
+        (
+            "const raycaster = new THREE.Raycaster();",
+            "const raycaster = new THREE.Raycaster();\n  let pickStamp = 0;",
+        ),
+        (
+            'model.set("picked_json",\n'
+            "              JSON.stringify(hit ? [hit.object.userData.key] : []));",
+            'model.set("picked_json", JSON.stringify(\n'
+            "      hit ? [hit.object.userData.key, ++pickStamp] : [++pickStamp]));",
+        ),
+    )
+    esm = viewer3d._ESM
+    for old, new in surgeries:
+        patched = esm.replace(old, new)
+        if patched == esm:  # the seam moved: fail loud, never silently broken
+            raise AnalysisError(f"viewer3d._ESM lost its seam {old!r}; update dashboard.py")
+        esm = patched
+    base = viewer3d._viewer_class()
+
+    class DashboardViewerWidget(base):  # type: ignore[valid-type,misc]
+        """Mesh viewer with a fixed height + the dashboard selection accent."""
+
+        _esm = esm
+
+    _DASH_VIEWER_CLS = DashboardViewerWidget
+    return DashboardViewerWidget
 
 
 # ---------------------------------------------------------------------------
@@ -818,32 +978,39 @@ def mission_dashboard(
     source: M.Model | Mapping[str, Any],
     *,
     missions: Mapping[str, tuple[str, str]] | None = None,
-    width_px: int = 1500,
+    width_px: int | None = None,
 ) -> Any:
     """The linked mission-compromise dashboard (an ipywidgets ``VBox``).
 
     ``source`` is either a loaded model (the candidate table is baked
     via :func:`mission_dashboard_data`, a half-minute of interpreter
-    time) or an already-prepared data dict from that function.
-    ``width_px`` is the TOTAL dashboard width; the default fills a 1080p
-    screen, and the fixed row heights keep the whole surface under ~900
-    px so nothing scrolls (see the module docstring for the layout).
+    time) or an already-prepared data dict from that function.  By
+    default the layout is FLUID: rows and plots stretch to the container
+    width in their design proportions while the row heights stay fixed,
+    so the dashboard fills any screen without ever needing vertical
+    scroll at 1080p.  Pass ``width_px`` to pin a fixed total width
+    instead (see the module docstring for the layout).
 
     The returned layout exposes its pieces for scripting and tests:
     ``.sliders`` (mission -> priority IntSlider), ``.requirements``
     (mission -> key -> threshold FloatSlider), ``.top_n``,
     ``.pareto_toggle`` (dominated-candidate filter), ``.tabs`` (summary +
-    one tab per mission), ``.parcoords``, ``.scatter``, ``.viewer``,
-    ``.cards``, ``.summary``, ``.lineup`` (the pick cards; its ``hover``
-    trait carries the parcoords line index a card points at, mirrored to
-    ``.parcoords.highlight``), ``.data``, ``.live`` (the current
+    one tab per mission), ``.parcoords`` (its ``brushes`` trait carries
+    the live brush intervals by axis name; ``traced`` the selected line),
+    ``.scatter``, ``.viewer``, ``.cards``, ``.summary``, ``.lineup``
+    (the pick cards; ``hover`` carries the transient parcoords line
+    index, mirrored to ``.parcoords.highlight``; ``selected`` the sticky
+    selected card line), ``.data``, ``.live`` (the current
     :func:`apply_thresholds` table), ``.front`` (per-candidate
     non-dominated flags), ``.pool`` (the candidate indices currently in
-    view), ``.picks`` (the current top-N candidate indices), and
-    ``.scores`` (the MOE per candidate).
+    view -- EMPTY when the toggle is on and nothing is eligible),
+    ``.picks`` (the current top-N candidate indices), ``.scores`` (the
+    MOE per candidate), ``.selected`` (the selected candidate index, or
+    ``None``), and ``.select(index)`` (drive the linked selection from
+    Python; ``None`` clears).
     """
 
-    from . import geometry, viewer3d, viz  # local: keeps import cheap
+    from . import geometry, viz  # local: keeps import cheap
 
     widgets = _ipywidgets()
     data = dict(source) if isinstance(source, Mapping) else mission_dashboard_data(source, missions)
@@ -856,12 +1023,16 @@ def mission_dashboard(
     has_cost = bool(candidates) and candidates[0]["cost"] is not None
 
     # one-screen budget: header (~40) + plot row (~360) + control row
-    # (~470) stays under ~900 px of content height
+    # (~470) stays under ~900 px of content height.  Row HEIGHTS are
+    # FIXED; the pixel widths below are the design proportions (and the
+    # exact widths when ``width_px`` pins the layout)
+    fluid = width_px is None
+    base_w = 1500 if width_px is None else int(width_px)
     scatter_w, plot_h = 400, 330
-    pc_w = max(700, width_px - scatter_w - 40)
+    pc_w = max(700, base_w - scatter_w - 40)
     tab_w = 640
     lineup_w = 200
-    viewer_w = max(560, width_px - tab_w - lineup_w - 60)
+    viewer_w = max(560, base_w - tab_w - lineup_w - 60)
     viewer_h = 430
 
     req_sliders: dict[str, dict[str, Any]] = {
@@ -900,7 +1071,8 @@ def mission_dashboard(
         description="lineup N",
         continuous_update=True,
         style={"description_width": "64px"},
-        layout=widgets.Layout(width="220px"),
+        # a usable track: never shrunk by the header's flexing blurb
+        layout=widgets.Layout(width="380px", min_width="380px", flex="0 0 auto"),
     )
     pareto_toggle = widgets.ToggleButton(
         value=False,
@@ -910,13 +1082,13 @@ def mission_dashboard(
             "mission metric maximized; ties survive; priority weights "
             "never change the front)"
         ),
-        layout=widgets.Layout(width="110px"),
+        layout=widgets.Layout(width="110px", flex="0 0 auto"),
     )
     cards = {name: widgets.HTML() for name in mission_names}
     ranking = widgets.HTML()
     summary = widgets.HTML()
-    viewer = viewer3d.mesh_viewer(
-        {"unit": "m", "parts": [], "bounds": [[0, 0, 0], [0, 0, 0]]},
+    viewer = _dash_viewer_class()(
+        mesh_json=json.dumps({"unit": "m", "parts": [], "bounds": [[0, 0, 0], [0, 0, 0]]}),
         width_px=viewer_w,
         height_px=viewer_h,
     )
@@ -931,7 +1103,12 @@ def mission_dashboard(
             from .trades import Architecture
 
             arch = Architecture(selection=dict(candidates[index]["selection"]), metrics={})
-            mesh_cache[index] = geometry.mission_geometry(geo_study, arch)
+            mesh = geometry.mission_geometry(geo_study, arch)
+            # per-candidate identity keys: :func:`geometry.lineup` carries
+            # them through its label prefixes, so a 3D click can name its
+            # candidate and the selection can pop the whole model
+            mesh["parts"] = [{**part, "key": f"cand:{index}"} for part in mesh["parts"]]
+            mesh_cache[index] = mesh
         return mesh_cache[index]
 
     margin_cache: dict[tuple[str, tuple[tuple[str, str], ...]], dict[str, Any]] = {}
@@ -990,10 +1167,21 @@ def mission_dashboard(
         width_px=pc_w,
         height_px=plot_h,
     )
-    # fixed-size row members: HBox children default to flex-shrink 1, and a
-    # shrunk parcoords/tab bar is exactly the cramped layout this replaces
-    for widget, w in ((pc, pc_w), (scatter, scatter_w), (viewer, viewer_w)):
-        widget.layout = widgets.Layout(width=f"{w}px", flex="0 0 auto")
+    # fixed-HEIGHT row members; fluid mode lets the two plots split the
+    # plot row in their design ratio (grow factors = design widths, zero
+    # basis) and the 3D viewer absorb the control row's slack, while the
+    # tab set and the cards column keep their design widths.  Fixed mode
+    # pins everything (HBox children default to flex-shrink 1, and a
+    # shrunk parcoords/tab bar is exactly the cramped layout this replaces)
+    if fluid:
+        pc.layout = widgets.Layout(flex=f"{pc_w} 1 0px", min_width="480px", overflow="hidden")
+        scatter.layout = widgets.Layout(
+            flex=f"{scatter_w} 1 0px", min_width="260px", overflow="hidden"
+        )
+        viewer.layout = widgets.Layout(flex="1 1 0px", min_width="420px", overflow="hidden")
+    else:
+        for widget, w in ((pc, pc_w), (scatter, scatter_w), (viewer, viewer_w)):
+            widget.layout = widgets.Layout(width=f"{w}px", flex="0 0 auto")
     lineup.layout = widgets.Layout(
         width=f"{lineup_w}px", height=f"{viewer_h + 34}px", flex="0 0 auto"
     )
@@ -1004,6 +1192,30 @@ def mission_dashboard(
     box.picks = []
     box.front = []
     box.pool = list(range(len(candidates)))
+    box.selected = None  # the ONE linked-selection state (candidate index)
+
+    syncing = {"on": False}  # guards the selection fan-out re-entrancy
+
+    def _apply_selection() -> None:
+        """Repaint every view from the one selection state (violet)."""
+
+        sel = box.selected
+        pos = box.pool.index(sel) if sel in box.pool else -1
+        picked = sel is not None and sel in box.picks
+        syncing["on"] = True
+        try:
+            lineup.selected = pos if picked else -1
+            pc.traced = pos
+            scatter.selected = pos
+            viewer.highlight([f"cand:{sel}"] if picked else [])
+        finally:
+            syncing["on"] = False
+
+    def _select(index: int | None) -> None:
+        """Select one candidate in every linked view (``None`` clears)."""
+
+        box.selected = index if index in box.pool else None
+        _apply_selection()
 
     def _recompute(_change: Any = None) -> None:
         floors = _floors()
@@ -1016,24 +1228,51 @@ def mission_dashboard(
         eligible = [any(row["feasible"].values()) for row in live]
         front = pareto_mask(_objectives(live), eligible)
         box.front = front
-        pool = [i for i, on in enumerate(front) if on] if pareto_toggle.value else None
-        if not pool:  # toggle off, or nothing eligible at these thresholds
-            pool = list(range(len(candidates)))
+        # the toggle NEVER silently drops: an empty front (nothing
+        # eligible at these thresholds) empties the filtered views and
+        # says so below, instead of falling back to the whole catalog
+        pool = (
+            [i for i, on in enumerate(front) if on]
+            if pareto_toggle.value
+            else list(range(len(candidates)))
+        )
         box.pool = pool
 
         rows = _rows(live, scores)
-        table = json.dumps(viz.parcoords_payload([rows[i] for i in pool], axes))
+        payload = (
+            viz.parcoords_payload([rows[i] for i in pool], axes)
+            if pool
+            else {"axes": viz.parcoords_payload(rows, axes)["axes"], "lines": []}
+        )
+        table = json.dumps(payload)
         if pc.table_json != table:  # identical re-bakes stay silent
             pc.table_json = table
 
-        brushed = [pool[j] for j in pc.selected_indices() if 0 <= j < len(pool)]
-        subset = brushed or pool
+        # the brushed subset, recomputed KERNEL-SIDE from the synced
+        # intervals against the table just baked: a toggle flip or slider
+        # move can never pair fresh rows with stale brushed row indices,
+        # and a brush that excludes everything empties the picks honestly
+        brush_map: dict[str, Any] = json.loads(pc.brushes or "{}")
+        if brush_map:
+            at = {axis["name"]: k for k, axis in enumerate(payload["axes"])}
+            subset = [
+                pool[j]
+                for j, line in enumerate(payload["lines"])
+                if all(
+                    lo <= line["t"][at[name]] <= hi
+                    for name, (lo, hi) in brush_map.items()
+                    if name in at
+                )
+            ]
+        else:  # the scripting seam: ``selected`` positions in the current table
+            brushed = [pool[j] for j in pc.selected_indices() if 0 <= j < len(pool)]
+            subset = brushed or pool
         order = sorted(subset, key=lambda i: -scores[i])
         picks = order[: int(top_n.value)]
         box.picks = picks
 
         whys: list[str | None] = [None] * len(pool)
-        if has_cost:
+        if has_cost and pool:
             points = [(float(candidates[i]["cost"]), scores[i]) for i in pool]
             shown_eligible = [eligible[i] for i in pool]
             fronts = _front_flags(points, shown_eligible)
@@ -1069,6 +1308,8 @@ def mission_dashboard(
                     ],
                 }
             )
+        elif has_cost:  # empty pool: an honest empty scatter, not a stale one
+            scatter.payload_json = json.dumps({"points": []})
 
         line_of = {index: j for j, index in enumerate(pool)}
         lineup.cards_json = json.dumps(
@@ -1132,6 +1373,28 @@ def mission_dashboard(
                 "view. Sliders, brushes, and the Pareto toggle recompute "
                 "everything live.</span></div>"
             )
+        else:  # honest empty state: say WHY there is nothing to pick
+            note = (
+                "no candidate flies any mission at these thresholds, so "
+                "the Pareto front is empty &mdash; relax the requirement "
+                "floors or release the toggle"
+                if not pool
+                else "the brush excludes every candidate in view &mdash; "
+                "move or clear it to get picks back"
+            )
+            empty = f'<div style="{_CARD_STYLE}; color:#8a8f98">{note}</div>'
+            for name in mission_names:
+                cards[name].value = empty
+            summary.value = empty
+            ranking.value = (
+                '<div style="font-family:Helvetica,Arial,sans-serif; '
+                f'font-size:12px; color:{_BAD}"><b>no picks</b> &mdash; '
+                f"{note}</div>"
+            )
+
+        if box.selected not in line_of:  # the selection left the visible pool
+            box.selected = None
+        _apply_selection()
 
     for slider in weight_sliders.values():
         slider.observe(_recompute, names="value")
@@ -1141,11 +1404,26 @@ def mission_dashboard(
     top_n.observe(_recompute, names="value")
     pareto_toggle.observe(_recompute, names="value")
     pc.observe(_recompute, names="selected")
+    pc.observe(_recompute, names="brushes")
 
     def _trace(_change: Any = None) -> None:
         pc.highlight = int(lineup.hover)
 
     lineup.observe(_trace, names="hover")
+
+    def _on_card_select(_change: Any = None) -> None:
+        if syncing["on"]:
+            return
+        line = int(lineup.selected)
+        _select(box.pool[line] if 0 <= line < len(box.pool) else None)
+
+    def _on_pick(_change: Any = None) -> None:
+        keys = json.loads(viewer.picked_json or "[]")
+        hit = next((k for k in keys if str(k).startswith("cand:")), None)
+        _select(int(hit[5:]) if hit else None)
+
+    lineup.observe(_on_card_select, names="selected")
+    viewer.observe(_on_pick, names="picked_json")
 
     def _section(text: str) -> Any:
         return widgets.HTML(f'<div style="{_SECTION_STYLE}">{text}</div>')
@@ -1163,13 +1441,14 @@ def mission_dashboard(
                 "(min cost, max mission metrics); dominance spans all four "
                 "objectives &mdash; the scatter is only a projection, so a "
                 "front pick's card and tooltip name the hidden axes it "
-                "wins</span></div>",
-                layout=widgets.Layout(flex="1 1 auto"),
+                "wins; click a card or a 3D model to select a candidate "
+                "across every view</span></div>",
+                layout=widgets.Layout(flex="1 1 auto", min_width="0"),
             ),
             pareto_toggle,
             top_n,
         ],
-        layout=widgets.Layout(align_items="center", width=f"{width_px}px"),
+        layout=widgets.Layout(align_items="center", width="100%" if fluid else f"{base_w}px"),
     )
     summary_tab = widgets.VBox(
         [
@@ -1196,13 +1475,13 @@ def mission_dashboard(
     tabs.set_title(0, "all missions")
     for position, name in enumerate(mission_names, start=1):
         tabs.set_title(position, name)
-    row = widgets.Layout(flex_flow="row nowrap", width=f"{width_px}px")
+    row = widgets.Layout(flex_flow="row nowrap", width="100%" if fluid else f"{base_w}px")
     box.children = [
         header,
         widgets.HBox([pc, scatter], layout=row),
         widgets.HBox([tabs, lineup, viewer], layout=row),
     ]
-    box.layout = widgets.Layout(width=f"{width_px + 8}px")
+    box.layout = widgets.Layout(width="100%" if fluid else f"{base_w + 8}px")
     box.sliders = weight_sliders
     box.requirements = req_sliders
     box.top_n = top_n
@@ -1216,6 +1495,7 @@ def mission_dashboard(
     box.lineup = lineup
     box.ranking = ranking
     box.data = data
+    box.select = _select
     box._recompute = _recompute
     _recompute()
     return box

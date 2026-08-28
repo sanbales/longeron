@@ -3,6 +3,8 @@ scoring/threshold contracts, and the live traitlet wiring (no browser
 needed)."""
 
 import json
+import random
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -270,8 +272,12 @@ def _reset(dash, request):
             spec = next(s for ss in dash.data["thresholds"].values() for s in ss if s["key"] == key)
             slider.value = spec["default"]
     dash.top_n.value = 4
+    dash.parcoords.brushes = "{}"
     dash.parcoords.selected = "[]"
     dash.lineup.hover = -1
+    dash.select(None)
+    dash.viewer.picked_json = "[]"
+    dash.tabs.selected_index = 0
 
 
 class TestDashboardLayout:
@@ -461,11 +467,15 @@ class TestLineupCards:
         assert dash.parcoords.highlight == -1
 
     def test_frontend_seams(self, dash):
-        # the composed parcoords ESM keeps ONE export and gains the hook
+        # the composed parcoords ESM keeps ONE export and gains the hooks
         assert dash.parcoords._esm.count("export default") == 1
         assert "change:highlight" in dash.parcoords._esm
+        assert "change:traced" in dash.parcoords._esm  # sticky selection
+        assert 'model.set("brushes"' in dash.parcoords._esm  # interval sync
         assert "change:table_json" in dash.parcoords._esm  # live re-bakes
         assert "change:cards_json" in dash.lineup._esm
+        assert "change:selected" in dash.lineup._esm  # card click-select
+        assert "change:selected" in dash.scatter._esm  # selection halo
         assert "why" in dash.scatter._esm  # the tooltip carries the alibi
 
 
@@ -594,3 +604,310 @@ class TestDashboardWiring:
     def test_scatter_rerenders_on_payload_change(self, dash):
         assert "change:payload_json" in dash.scatter._esm
         assert "change:table_json" in dash.parcoords._esm  # live re-bakes
+
+
+class TestSelectionSeam:
+    """FINDING 5: ONE selection state, every view agrees, both directions
+    -- card click -> scatter halo + parcoords traced line + 3D pop, and
+    3D click -> card -- with hover left transient on top."""
+
+    def test_card_click_selects_everywhere(self, dash):
+        target = dash.picks[1]
+        line = dash.pool.index(target)
+        dash.lineup.selected = line  # what the JS card click writes
+        assert dash.selected == target
+        assert dash.parcoords.traced == line
+        assert dash.scatter.selected == line
+        assert json.loads(dash.viewer.highlight_json) == [f"cand:{target}"]
+
+    def test_3d_click_selects_the_card(self, dash):
+        target = dash.picks[2]
+        # the real wire format: the hit key plus a monotonic click stamp
+        dash.viewer.picked_json = json.dumps([f"cand:{target}", 1])
+        assert dash.selected == target
+        assert dash.pool[dash.lineup.selected] == target
+        assert dash.parcoords.traced == dash.pool.index(target)
+        assert json.loads(dash.viewer.highlight_json) == [f"cand:{target}"]
+
+    def test_3d_background_click_clears(self, dash):
+        dash.select(dash.picks[0])
+        dash.viewer.picked_json = json.dumps([2])  # background click, stamped
+        assert dash.selected is None
+        assert dash.lineup.selected == -1
+        assert dash.parcoords.traced == -1
+        assert dash.scatter.selected == -1
+        assert json.loads(dash.viewer.highlight_json) == []
+
+    def test_3d_clicks_always_reach_the_kernel(self, dash):
+        """Repeat clicks must still change the trait: the patched viewer
+        stamps every pick, so background-after-card and same-part-twice
+        cannot be swallowed by trait equality."""
+
+        assert "++pickStamp" in dash.viewer._esm
+
+    def test_lineup_scene_carries_candidate_keys(self, dash):
+        scene = json.loads(dash.viewer.mesh_json)
+        keys = {part["key"] for part in scene["parts"]}
+        assert keys == {f"cand:{i}" for i in dash.picks}
+
+    def test_selection_survives_recompute_and_reseats_the_line(self, dash):
+        target = dash.picks[0]
+        dash.select(target)
+        dash.pareto_toggle.value = True  # pool shrinks: the line index moves
+        assert target in dash.picks  # the top pick is on the front
+        assert dash.selected == target
+        assert dash.pool[dash.parcoords.traced] == target
+        assert dash.pool[dash.lineup.selected] == target
+
+    def test_selection_clears_when_the_candidate_leaves_the_pool(self, dash):
+        dominated = next(i for i, on in enumerate(dash.front) if not on)
+        dash.select(dominated)
+        assert dash.selected == dominated
+        dash.pareto_toggle.value = True  # dominated: out of the pool now
+        assert dash.selected is None
+        assert dash.parcoords.traced == -1
+        assert dash.lineup.selected == -1
+
+    def test_hover_stays_transient_over_a_selection(self, dash):
+        target = dash.picks[1]
+        dash.select(target)
+        dash.lineup.hover = 7
+        assert dash.parcoords.highlight == 7  # the transient channel
+        assert dash.parcoords.traced == dash.pool.index(target)  # the sticky one
+        dash.lineup.hover = -1
+        assert dash.parcoords.highlight == -1
+        assert dash.selected == target
+
+    def test_the_selection_accent_is_distinct_and_consistent(self, dash):
+        """FINDING 4: the selection violet everywhere; never the brush
+        blue, the warm pick rings, or the verdict green/red."""
+
+        from longeron.analysis import viz
+
+        sel = dashboard._SEL
+        assert sel not in {viz.ACCENT, viz.WARM, dashboard._OK, dashboard._BAD}
+        assert f"stroke: {sel}" in dash.parcoords._css  # traced line
+        assert f"border-color: {sel}" in dash.lineup._css  # pinned card
+        assert f"stroke: {sel}" in dash.scatter._css  # scatter halo
+        assert f'const accent = "{sel}";' in dash.viewer._esm  # 3D emissive
+        # the brush keeps its own blue -- the collision this replaces
+        assert f"stroke: {viz.ACCENT}" in dash.parcoords._css
+
+
+class TestFluidLayout:
+    """FINDINGS 2+3: the default layout fills the container width at
+    fixed row heights (the 1080p no-scroll budget holds at any width);
+    the lineup-N slider keeps a usable track in the header strip."""
+
+    def test_default_is_fluid_full_width(self, dash):
+        assert dash.layout.width == "100%"
+        for row in dash.children:
+            assert row.layout.width == "100%"
+        # the plots split the plot row in their design ratio; the 3D
+        # viewer absorbs the control row's slack
+        assert dash.parcoords.layout.flex == "1060 1 0px"
+        assert dash.scatter.layout.flex == "400 1 0px"
+        assert dash.viewer.layout.flex == "1 1 0px"
+
+    def test_width_px_still_pins_the_fixed_layout(self, data):
+        pinned = dashboard.mission_dashboard(data, width_px=1500)
+        assert pinned.layout.width == "1508px"
+        assert pinned.parcoords.layout.width == "1060px"
+        assert pinned.scatter.layout.width == "400px"
+        assert pinned.viewer.layout.width == "600px"
+
+    def test_lineup_n_slider_track_is_usable(self, dash):
+        assert dash.top_n.layout.width == "380px"
+        assert dash.top_n.layout.flex == "0 0 auto"  # the blurb flexes, not it
+        assert dash.pareto_toggle.layout.flex == "0 0 auto"
+
+    def test_widgets_draw_at_the_measured_host_width(self, dash):
+        # the front-ends re-draw on host resize instead of scaling the svg
+        # (viewBox scaling would grow the HEIGHT and break the budget)
+        assert "ResizeObserver" in dash.parcoords._esm
+        assert "ResizeObserver" in dash.scatter._esm
+        assert 'el.clientWidth || model.get("width_px")' in dash.parcoords._esm
+        assert 'el.clientWidth || model.get("width_px")' in dash.scatter._esm
+        # the 3D canvas keeps its fixed height while its width flexes
+        assert 'height = model.get("height_px");' in dash.viewer._esm
+
+
+class TestParetoStateMatrix:
+    """FINDING 1 pinned: drive toggle x brush x thresholds x priorities x
+    lineup-N x tabs and hold ONE invariant after every transition --
+    toggle ON means every pick satisfies the pareto mask recomputed for
+    the CURRENT thresholds -- plus cross-view agreement and HONEST empty
+    states.  The two leaks this pins down: an empty front silently fell
+    back to the whole (dominated) catalog with the toggle still pressed,
+    and a brush that excluded everything silently showed full-pool picks
+    (both routine once a toggle flip or slider move re-normalized the
+    axes under a saved brush).  The brush drives the kernel-authoritative
+    ``brushes`` intervals -- exactly what the front-end syncs -- so the
+    checks are exact with no browser round trip.  The full 1713-step
+    hunt log lives in build/evidence/finding1_state_matrix*.log."""
+
+    @staticmethod
+    def _assert_coherent(dash):
+        names = [m["name"] for m in dash.data["missions"]]
+        cands = dash.data["candidates"]
+        eligible = [any(r["feasible"].values()) for r in dash.live]
+        objectives = [
+            (-float(cands[i]["cost"]), *(float(dash.live[i]["metric"][n]) for n in names))
+            for i in range(len(cands))
+        ]
+        front = dashboard.pareto_mask(objectives, eligible)
+        assert dash.front == front  # never stale vs the CURRENT thresholds
+        front_set = {i for i, on in enumerate(front) if on}
+        if dash.pareto_toggle.value:
+            assert set(dash.pool) == front_set  # empty front = empty pool
+            assert set(dash.picks) <= front_set, "PARETO LEAK"
+        else:
+            assert dash.pool == list(range(len(cands)))
+        # the brushed subset, recomputed independently from the intervals
+        table = json.loads(dash.parcoords.table_json)
+        assert len(table["lines"]) == len(dash.pool)
+        brush_map = json.loads(dash.parcoords.brushes or "{}")
+        member = list(dash.pool)
+        if brush_map:
+            at = {axis["name"]: k for k, axis in enumerate(table["axes"])}
+            member = [
+                dash.pool[j]
+                for j, line in enumerate(table["lines"])
+                if all(lo <= line["t"][at[a]] <= hi for a, (lo, hi) in brush_map.items() if a in at)
+            ]
+        expect = sorted(member, key=lambda i: -dash.scores[i])[: int(dash.top_n.value)]
+        assert list(dash.picks) == expect
+        # every view agrees with the picks
+        cards = json.loads(dash.lineup.cards_json)
+        assert [c["label"] for c in cards] == [cands[i]["label"] for i in dash.picks]
+        assert all(dash.pool[c["line"]] == i for c, i in zip(cards, dash.picks, strict=True))
+        if dash.pareto_toggle.value:
+            assert not any(c["why"].startswith("dominated") for c in cards)
+        points = json.loads(dash.scatter.payload_json)["points"]
+        assert len(points) == len(dash.pool)
+        assert {dash.pool[j] for j, p in enumerate(points) if p["pick"]} == set(dash.picks)
+        scene = json.loads(dash.viewer.mesh_json)
+        assert len(scene.get("labels", [])) == len(dash.picks)
+        if not dash.picks:
+            assert "no picks" in dash.ranking.value
+
+    def test_brush_and_toggle_in_both_orders(self, dash):
+        for axis in ("MOE", "cost", "stationMinutes"):
+            for first in ("brush", "toggle"):
+                steps = [
+                    lambda a=axis: setattr(dash.parcoords, "brushes", json.dumps({a: [0.5, 1.0]})),
+                    lambda: setattr(dash.pareto_toggle, "value", True),
+                ]
+                if first == "toggle":
+                    steps.reverse()
+                steps += [
+                    lambda: setattr(dash.requirements["ISR"]["stationMinutes"], "value", 60.0),
+                    lambda: setattr(dash.top_n, "value", 8),
+                    lambda: setattr(dash.sliders["intercept"], "value", 100),
+                    lambda: setattr(dash.pareto_toggle, "value", False),
+                    lambda: setattr(dash.pareto_toggle, "value", True),
+                    lambda: setattr(dash.parcoords, "brushes", "{}"),
+                ]
+                for step in steps:
+                    step()
+                    self._assert_coherent(dash)
+                dash.pareto_toggle.value = False
+                dash.requirements["ISR"]["stationMinutes"].value = 25.0
+                dash.sliders["intercept"].value = 50
+                dash.top_n.value = 4
+
+    def test_empty_front_empties_every_view_honestly(self, dash):
+        dash.pareto_toggle.value = True
+        for sliders in dash.requirements.values():
+            for slider in sliders.values():
+                slider.value = slider.max
+        assert sum(dash.front) == 0  # precondition: nothing is eligible
+        assert dash.pool == [] and dash.picks == []
+        assert json.loads(dash.parcoords.table_json)["lines"] == []
+        assert json.loads(dash.scatter.payload_json)["points"] == []
+        assert json.loads(dash.lineup.cards_json) == []
+        assert json.loads(dash.viewer.mesh_json)["parts"] == []
+        assert "no picks" in dash.ranking.value
+        assert "relax the requirement floors" in dash.ranking.value
+        self._assert_coherent(dash)
+        for sliders in dash.requirements.values():  # relaxing restores
+            for key, slider in sliders.items():
+                spec = next(
+                    s for ss in dash.data["thresholds"].values() for s in ss if s["key"] == key
+                )
+                slider.value = spec["default"]
+        assert dash.picks
+        assert dash.pool == [i for i, on in enumerate(dash.front) if on]
+        self._assert_coherent(dash)
+
+    def test_all_excluding_brush_empties_the_picks(self, dash):
+        # brush into a real hole between two adjacent MOE line positions
+        table = json.loads(dash.parcoords.table_json)
+        k = [axis["name"] for axis in table["axes"]].index("MOE")
+        ts = sorted({line["t"][k] for line in table["lines"]})
+        lo, hi = max(pairwise(ts), key=lambda ab: ab[1] - ab[0])
+        assert hi - lo > 4e-4, "no brushable hole on the MOE axis"
+        dash.parcoords.brushes = json.dumps({"MOE": [lo + (hi - lo) / 4, hi - (hi - lo) / 4]})
+        assert dash.picks == []
+        assert "brush excludes every candidate" in dash.ranking.value
+        self._assert_coherent(dash)
+        dash.parcoords.brushes = "{}"  # clearing restores the picks
+        assert len(dash.picks) == 4
+        self._assert_coherent(dash)
+
+    def test_brush_intervals_survive_pool_changes(self, dash):
+        """The reported suspect: the pool re-bakes under a live brush.
+        Intervals are re-applied to the CURRENT table kernel-side, so
+        picks always agree with the brush -- no stale row indices, no
+        front-end round trip needed."""
+
+        dash.parcoords.brushes = json.dumps({"cost": [0.0, 0.4]})
+        assert dash.picks  # the cheap end holds candidates
+        self._assert_coherent(dash)
+        dash.pareto_toggle.value = True  # pool + axis scales change
+        self._assert_coherent(dash)
+        dash.requirements["ISR"]["stationMinutes"].value = 60.0
+        self._assert_coherent(dash)
+        dash.sliders["logistics"].value = 0
+        self._assert_coherent(dash)
+        dash.pareto_toggle.value = False
+        self._assert_coherent(dash)
+
+    def test_random_walk_holds_the_invariant(self, dash):
+        rng = random.Random(4)
+        axes = ["MOE", "cost", "stationMinutes", "payloadRangeKgKm", "maxTargetSpeed"]
+        maxes = {
+            m: {k: s.max for k, s in sliders.items()} for m, sliders in dash.requirements.items()
+        }
+        brushes: dict = {}
+
+        def step():
+            roll = rng.random()
+            if roll < 0.15:
+                dash.pareto_toggle.value = not dash.pareto_toggle.value
+            elif roll < 0.35:
+                lo = round(rng.random() * 0.8, 3)
+                brushes[rng.choice(axes)] = [
+                    lo,
+                    round(lo + 0.05 + rng.random() * (1 - lo - 0.05), 3),
+                ]
+                dash.parcoords.brushes = json.dumps(brushes)
+            elif roll < 0.45:
+                brushes.pop(rng.choice(axes), None)
+                dash.parcoords.brushes = json.dumps(brushes)
+            elif roll < 0.65:
+                mission = rng.choice(list(dash.requirements))
+                key = rng.choice(list(dash.requirements[mission]))
+                dash.requirements[mission][key].value = round(rng.random() * maxes[mission][key], 1)
+            elif roll < 0.8:
+                dash.sliders[rng.choice(list(dash.sliders))].value = rng.choice(
+                    [0, 25, 50, 75, 100]
+                )
+            elif roll < 0.9:
+                dash.top_n.value = rng.randint(2, 8)
+            else:
+                dash.tabs.selected_index = rng.randint(0, len(dash.tabs.children) - 1)
+
+        for _ in range(120):
+            step()
+            self._assert_coherent(dash)

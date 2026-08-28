@@ -559,7 +559,9 @@ def dashboard_notebook() -> dict[str, Any]:
     catalog (copied into the lab root by the session fixture).  Cell 1 is
     the checker: one JSON line of kernel-side dashboard state (candidate
     count, pool/front sizes, toggle state, tab titles, the top pick's
-    airframe) that tests re-read after driving the browser.
+    airframe, and the linked-selection state -- selected candidate,
+    traced parcoords line, live brush intervals, 3D highlight keys) that
+    tests re-read after driving the browser.
     """
 
     return _notebook(
@@ -583,7 +585,20 @@ print(
             "toggle": dash.pareto_toggle.value,
             "tabs": [dash.tabs.get_title(i) for i in range(len(dash.tabs.children))],
             "picks": len(dash.picks),
-            "top": dash.data["candidates"][dash.picks[0]]["selection"]["airframe"],
+            "top": (
+                dash.data["candidates"][dash.picks[0]]["selection"]["airframe"]
+                if dash.picks
+                else None
+            ),
+            "selected": dash.selected,
+            "selected_label": (
+                dash.data["candidates"][dash.selected]["label"]
+                if dash.selected is not None
+                else None
+            ),
+            "traced": dash.parcoords.traced,
+            "brushes": json.loads(dash.parcoords.brushes or "{}"),
+            "highlight": json.loads(dash.viewer.highlight_json or "[]"),
         }
     )
 )
