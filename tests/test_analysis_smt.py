@@ -26,7 +26,7 @@ class TestConsistency:
         result = system.check()
         assert result.status == "sat"
         assert result.witness["payloadMass"] == pytest.approx(0.2)
-        assert result.witness["totalMass"] == pytest.approx(1.24)
+        assert result.witness["totalMass"] == pytest.approx(1.41)
 
     def test_calc_invocations_inline(self, drone):
         system = smt.to_smt(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
@@ -72,7 +72,7 @@ class TestDesignSpace:
         )
         bound, result = system.maximize("payloadMass")
         assert result.status == "sat"
-        assert Fraction(bound) == Fraction(23, 50)  # 0.46, exact
+        assert Fraction(bound) == Fraction(29, 100)  # 0.29, exact
 
     def test_strict_bound_is_open(self, drone):
         # only canHover (strict >): the supremum is reported with -epsilon
@@ -80,8 +80,8 @@ class TestDesignSpace:
         bound, result = system.maximize("payloadMass", exclude=("QuadCopter::takeoffMassLimit",))
         assert result.status == "sat"
         assert "epsilon" in bound
-        # 4 * thrustPerRotor / 9.81 - 1.04, interpreter-exact: ~2.6865 kg
-        assert bound.startswith(str(Fraction(6588538914198359, 2452500000000000)))
+        # 4 * thrustPerRotor / 9.81 - 1.21, interpreter-exact: ~2.1841 kg
+        assert bound.startswith(str(Fraction(89274526868647, 40875000000000)))
 
     def test_witness_respects_free_variable(self, drone):
         system = smt.to_smt(drone, "Drone::QuadCopter", free=("payloadMass",))

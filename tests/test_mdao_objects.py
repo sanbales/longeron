@@ -190,7 +190,7 @@ class TestEntityBinding:
         # no variation points: no interpretation materialized, no entities
         assert build.interpretation is None
         assert build.entities == {}
-        assert build.problem.get_val("totalMass")[0] == pytest.approx(1.24)
+        assert build.problem.get_val("totalMass")[0] == pytest.approx(1.41)
 
     def test_interpretation_parity_on_scalar_model(self):
         drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
@@ -352,9 +352,9 @@ class TestRecordCase:
         snapshot = mdao.record_case(build)
         assert build.interpretation is not None  # record_case asked
         assert snapshot.root.id == "Drone::QuadCopter#0"
-        assert snapshot.root.slots["totalMass"] == pytest.approx(1.24)
+        assert snapshot.root.slots["totalMass"] == pytest.approx(1.41)
         # per-index independents land on the population's individuals
-        assert snapshot.root.slots["motors"][0].slots["kV"] == pytest.approx(920.0)
+        assert snapshot.root.slots["motors"][0].slots["kV"] == pytest.approx(935.0)
 
     def test_snapshot_is_json_clean(self, rig):
         snapshot = mdao.record_case(rig)
@@ -712,10 +712,10 @@ class TestUavIntegration:
             "UavMissions::IsrUav",
             selection={
                 "airframe": "vtolWing",
-                "motors": "stdMotor",
-                "props": "slimProp",
-                "battery": "packMax",
-                "sensor": "stareEoIr",
+                "motors": "mn4006",
+                "props": "apc11x55",
+                "battery": "liion6s6p",
+                "sensor": "zenmuseH20",
                 "material": "carbonFiber",
             },
         )
@@ -731,16 +731,16 @@ class TestUavIntegration:
             "sensor",
         ]
         station_std = float(prob.get_val("stationMinutes")[0])
-        assert station_std == pytest.approx(147.39, abs=0.05)  # IsrPrime's freeze
-        mdao.bind_entity(build, "motors", "UavMissions::EcoMotor")
+        assert station_std == pytest.approx(208.74, abs=0.05)  # IsrPrime's freeze
+        mdao.bind_entity(build, "motors", "UavMissions::SunnySkyX4112s")
         prob.run_model()
         station_eco = float(prob.get_val("stationMinutes")[0])
         assert station_eco != pytest.approx(station_std, abs=1.0)
         snapshot = mdao.record_case(build)
-        assert snapshot.selection["motors"] == "EcoMotor"
+        assert snapshot.selection["motors"] == "SunnySkyX4112s"
         assert snapshot.root.slots["stationMinutes"] == pytest.approx(station_eco)
         assert [ind.id for ind in snapshot.root.slots["motors"]] == [
             f"UavMissions::IsrUav#0.motors#{i}" for i in range(4)
         ]
-        # roll-ups run over the recorded population (4 x EcoMotor)
-        assert snapshot.rollup("sum(motors.mass)") == pytest.approx(4 * 0.058)
+        # roll-ups run over the recorded population (4 x SunnySkyX4112s)
+        assert snapshot.rollup("sum(motors.mass)") == pytest.approx(4 * 0.183)

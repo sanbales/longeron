@@ -111,7 +111,7 @@ class TestDomains:
             requirements=("Drone::FlightEnvelope",),
         )
         dom = domains["payloadMass"]
-        assert dom.lo == pytest.approx(-1.04)
+        assert dom.lo == pytest.approx(-1.21)
         assert dom.hi is None  # honestly unbounded above under assumptions
         assert any("unbounded" in note for note in dom.mined_from)
 
@@ -325,13 +325,13 @@ class TestHunt:
         assert "takeoffMassLimit [assert]" in report.violations
         ce = report.counterexamples[0]
         assert ce.source == "hunt"
-        assert ce.bindings["payloadMass"] > 0.46
+        assert ce.bindings["payloadMass"] > 0.29
         edges = {b.violated: b.value for b in report.boundaries}
-        # the exact interpreter-bisected edges (closed forms: 0.46 kg from
-        # the takeoff budget; ~2.6865 kg where four rotors stop out-lifting)
-        assert edges["takeoffMassLimit [assert]"] == pytest.approx(0.46, abs=1e-6)
+        # the exact interpreter-bisected edges (closed forms: 0.29 kg from
+        # the takeoff budget; ~2.1841 kg where four rotors stop out-lifting)
+        assert edges["takeoffMassLimit [assert]"] == pytest.approx(0.29, abs=1e-6)
         if "canHover [assert]" in edges:  # found whenever sampling reached it
-            assert edges["canHover [assert]"] == pytest.approx(2.686458, abs=1e-4)
+            assert edges["canHover [assert]"] == pytest.approx(2.184086, abs=1e-4)
 
     def test_catch_materializes_as_identified_individuals(self, drone):
         report = verify.hunt(
@@ -489,8 +489,12 @@ class TestCover:
 
     def test_nonlinear_catalog_recall_still_measured(self, uav):
         report = verify.cover(uav, "UavMissions::IsrUav", t=2)
-        assert report.coverage.exhaustive == 648
-        assert report.coverage.recall == 1.0
+        assert report.coverage.exhaustive == 864
+        # the pairwise array misses isrLift -- a genuine >=3-way
+        # interaction (survey gimbal + Antigravity motors + big pack) --
+        # and the measured recall reports the miss honestly
+        assert report.coverage.recall == pytest.approx(5.0 / 6.0)
+        assert "isrLift" not in report.violations
         assert report.status == "violated"
 
     def test_cover_catch_materializes_via_from_architecture(self, catalog):
@@ -524,7 +528,7 @@ class TestProve:
         assert by_name["QuadCopter::takeoffMassLimit"].status == "violation"
         assert report.status == "violated"
         proof = report.proofs[0]
-        assert proof.bound == "23/50"  # exact rational: max payload, 0.46 kg
+        assert proof.bound == "29/100"  # exact rational: max payload, 0.29 kg
         assert proof.binding_constraint == "QuadCopter::takeoffMassLimit"
 
     def test_witnesses_are_interpreter_confirmed(self, drone):

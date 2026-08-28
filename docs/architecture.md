@@ -91,8 +91,10 @@ Deeper design rationale for major subsystems:
 design/conformance
 design/m0-interpretations
 design/mdao-objects
+design/notebooks
 design/ocl-stance
 design/openmbee-integration
+design/provenance
 design/units
 design/verify
 design/view-persistence

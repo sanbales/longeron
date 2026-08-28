@@ -147,7 +147,7 @@ class TestFrontFlags:
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
-        assert len(data["candidates"]) == 4 * 3 * 3 * 3 * 2
+        assert len(data["candidates"]) == 4 * 3 * 3 * 4 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_thresholds_anchored_in_the_model(self, data):
@@ -186,7 +186,7 @@ class TestDashboardData:
         for cand, row in zip(data["candidates"][:20], live[:20], strict=False):
             best_feasible = any(
                 study.evaluate({**cand["selection"], "sensor": sensor}).verified
-                for sensor in ("pathfinderEO", "stareEoIr", "hawkeyeGimbal")
+                for sensor in ("runcamSplit", "zenmuseH20", "gremsyT3")
             )
             assert row["feasible"]["ISR"] == best_feasible
 
@@ -424,7 +424,7 @@ class TestDashboardWiring:
             [
                 i
                 for i, c in enumerate(data["candidates"])
-                if c["label"].startswith("dartInterceptor/sprintMotor/slim")
+                if c["label"].startswith("dartInterceptor/at4120/apc11x55")
             ]
         )
         log_card = dash.cards["logistics"].value

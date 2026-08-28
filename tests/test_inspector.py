@@ -375,7 +375,7 @@ class TestSheet:
 
     def test_value_field_shows_compact_units(self, monkeypatch):
         # maintainer QA: units are FIRST-CLASS in the sheet -- the value
-        # field shows the magnitude + unit symbol compactly ('0.38 kg',
+        # field shows the magnitude + unit symbol compactly ('0.39 kg',
         # never the raw '0.38 [SI::kg]' expression), the typed-by row
         # keeps the TYPE but names the unit beside it ('Real [kg]'), and
         # a dedicated unit row gives the symbol + dimension
@@ -383,7 +383,7 @@ class TestSheet:
         model = app.load_path(ROOT / "examples" / "drone.sysml")
         ex = app.explore_model(model)
         ex.select("Drone::Battery::mass")
-        assert app.inspector._value_field.value == "0.38 kg"
+        assert app.inspector._value_field.value == "0.39 kg"
         rows = _static_rows(app.inspector)
         assert ("typed by", "Real [kg]") in rows
         assert ("unit", "kg \u2014 mass") in rows
@@ -555,7 +555,7 @@ class TestEdits:
         assert app.inspector._error.layout.display is None
         assert "unit &#x27;SI::kgg&#x27; does not resolve" in app.inspector._error.value
         assert "did you mean" in app.inspector._error.value
-        assert app.inspector._value_field.value == "0.38 kg"  # compact, not raw
+        assert app.inspector._value_field.value == "0.39 kg"  # compact, not raw
         assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == before
         name, _ = _row_widgets(app)
         assert "lgx-app-dirty" not in name._dom_classes
@@ -580,7 +580,7 @@ class TestEdits:
         assert not edit.track(rig_model).dirty
 
     def test_bare_number_commit_keeps_the_current_unit(self, monkeypatch):
-        # the field displayed '0.38 kg'; committing '0.42' means a new
+        # the field displayed '0.39 kg'; committing '0.42' means a new
         # magnitude in the same unit, never a silently dropped reference
         app = _open_lab(monkeypatch)
         model = app.load_path(ROOT / "examples" / "drone.sysml")

@@ -383,10 +383,14 @@ class TestAttitude:
 
 # -- the drone model's own attitude/mission physics ----------------------------
 
-#: hand-computed stock design point of examples/drone.sysml
-THRUST_N = 0.11 * 1.225 * (0.75 * 920.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
-USABLE_N = 4.0 * THRUST_N * 0.55  # continuousThrustFraction
-MASS_KG = 0.42 + 0.38 + 4.0 * 0.048 + 4.0 * 0.012 + 0.2
+#: hand-computed stock design point of examples/drone.sysml (EMAX MT2213
+#: on APC 10x4.5MR, PropThrust's calibrated Ct = 0.097)
+THRUST_N = 0.097 * 1.225 * (0.75 * 935.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
+USABLE_N = 4.0 * THRUST_N * 0.59  # continuousThrustFraction (65%-throttle cap)
+#: F450 frame + bay (pack, ESC, FC, GPS, RX, telemetry, gear, harness)
+#: + 4 x (motor + prop) + payload
+BAY_KG = 0.39 + 0.012 + 0.039 + 0.032 + 0.017 + 0.028 + 0.08 + 0.05
+MASS_KG = 0.282 + BAY_KG + 4.0 * 0.055 + 4.0 * 0.015 + 0.2
 CDA_M2 = 0.024 * 1.1  # frontalArea x bluff-body Cd
 MAX_TILT_DEG = math.degrees(math.acos(MASS_KG * 9.81 / USABLE_N))
 CRUISE_SPEED = math.sqrt(MASS_KG * 9.81 * math.tan(math.radians(25.0)) / (0.5 * 1.225 * CDA_M2))
@@ -411,13 +415,13 @@ class TestModelPhysics:
         quad = drone_interp.instantiate("Drone::QuadCopter")
         assert quad.slots["thrustPerRotor"] == pytest.approx(THRUST_N)
         assert quad.slots["usableThrust"] == pytest.approx(USABLE_N)
-        assert quad.slots["maxTilt"] == pytest.approx(MAX_TILT_DEG)  # ~52.8 deg
+        assert quad.slots["maxTilt"] == pytest.approx(MAX_TILT_DEG)  # ~45.2 deg
         # ...but the COMMANDED tilt is ops-capped: min(physics, 25 deg)
         assert quad.slots["cruiseTilt"] == 25.0
 
     def test_max_cruise_speed_is_the_drag_balance(self, drone_interp):
         quad = drone_interp.instantiate("Drone::QuadCopter")
-        assert quad.slots["maxCruiseSpeed"] == pytest.approx(CRUISE_SPEED)  # ~18.7 m/s
+        assert quad.slots["maxCruiseSpeed"] == pytest.approx(CRUISE_SPEED)  # ~20.0 m/s
 
     def test_tilt_for_speed_inverts_max_cruise_speed(self, drone_interp):
         quad = drone_interp.instantiate("Drone::QuadCopter")
@@ -454,21 +458,21 @@ class TestModelPhysics:
         assert values["routeM"] == pytest.approx(route)  # ~3.9 km
         assert values["cruiseTiltDeg"] == 25.0
         assert values["cruiseSpeedMps"] == pytest.approx(CRUISE_SPEED)
-        assert values["missionMinutes"] == pytest.approx(expected)  # ~4.5 min
+        assert values["missionMinutes"] == pytest.approx(expected)  # ~4.2 min
         assert values["missionMinutes"] < 6.0  # inside the model's budget
 
     def test_mission_values_payload_what_if_busts_the_budget(self, drone_interp):
-        # a 1 kg payload eats the continuous-thrust margin: the tilt
+        # a 0.78 kg payload eats the continuous-thrust margin: the tilt
         # ceiling collapses below the ops cap, cruise slows, budget busts
-        bust = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.0)
-        mass = MASS_KG + 0.8
+        bust = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=0.78)
+        mass = MASS_KG + 0.58
         tilt = math.degrees(math.acos(mass * 9.81 / USABLE_N))
         speed = math.sqrt(mass * 9.81 * math.tan(math.radians(tilt)) / (0.5 * 1.225 * CDA_M2))
-        assert bust["cruiseTiltDeg"] == pytest.approx(tilt)  # ~5.5 deg
-        assert bust["cruiseSpeedMps"] == pytest.approx(speed)  # ~11 m/s
-        assert bust["missionMinutes"] > 6.0  # budget bust (~6.9 min)
+        assert bust["cruiseTiltDeg"] == pytest.approx(tilt)  # ~6.4 deg
+        assert bust["cruiseSpeedMps"] == pytest.approx(speed)  # ~11.6 m/s
+        assert bust["missionMinutes"] > 6.0  # budget bust (~6.6 min)
         # past the continuous-thrust ceiling: infinite, not a crash
-        over = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.2)
+        over = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0, payload_mass=0.85)
         assert over["cruiseSpeedMps"] == 0.0
         assert math.isinf(over["missionMinutes"])
 
@@ -487,32 +491,32 @@ class TestModelPhysics:
         )
         row = {r.name: r for r in green.table()}["missionTime"]
         assert row.unit == "min"
-        assert row.raw == pytest.approx(4.455, abs=0.01)
+        assert row.raw == pytest.approx(4.238, abs=0.01)
         # smaller-is-better between ramp0=6 (budget) and ramp1=4
         assert row.utility == pytest.approx((6.0 - row.raw) / 2.0)
         bust = scoreboard(
             model,
             values=mission3d.mission_values(
-                drone_interp, ATLANTA, ground_alt=300.0, payload_mass=1.0
+                drone_interp, ATLANTA, ground_alt=300.0, payload_mass=0.78
             ),
         )
         assert {r.name: r for r in bust.table()}["missionTime"].utility == 0.0
 
     def test_tricopter_busts_the_budget_the_quad_meets(self, drone_interp):
         """The sub-architecture difference, measured: same route, same
-        physics chain, but the TriCopter's 12-deg yaw-authority tilt cap
+        physics chain, but the TriCopter's 11-deg yaw-authority tilt cap
         drops cruise speed enough to bust the 6-minute mission budget
-        the QuadCopter meets at 4.45 min."""
+        the QuadCopter meets at 4.24 min."""
         from longeron.analysis.scoreboard import scoreboard
 
         quad = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
         tri = mission3d.mission_values(
             drone_interp, ATLANTA, ground_alt=300.0, assembly="Drone::TriCopter"
         )
-        assert quad["missionMinutes"] == pytest.approx(4.455, abs=0.01)
-        assert tri["cruiseTiltDeg"] == pytest.approx(12.0)  # the servo's cap
-        assert tri["cruiseSpeedMps"] == pytest.approx(12.64, abs=0.01)
-        assert tri["missionMinutes"] == pytest.approx(6.13, abs=0.01)  # > budget
+        assert quad["missionMinutes"] == pytest.approx(4.238, abs=0.01)
+        assert tri["cruiseTiltDeg"] == pytest.approx(11.0)  # the servo's cap
+        assert tri["cruiseSpeedMps"] == pytest.approx(12.43, abs=0.01)
+        assert tri["missionMinutes"] == pytest.approx(6.22, abs=0.01)  # > budget
         model = drone_interp.model
         tri_row = {r.name: r for r in scoreboard(model, values=tri).table()}["missionTime"]
         assert tri_row.utility == 0.0  # red: past ramp0 = the 6-min budget

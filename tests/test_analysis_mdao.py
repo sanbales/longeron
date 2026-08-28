@@ -27,9 +27,9 @@ class TestCalcComponent:
         prob.setup()
         prob.set_val("hover.capacity", 5200.0)
         prob.run_model()
-        assert prob.get_val("hover.result")[0] == pytest.approx(26.0)
-        # default input (current = 12000.0) was picked up from the model
-        assert prob.get_val("hover.current")[0] == pytest.approx(12000.0)
+        assert prob.get_val("hover.result")[0] == pytest.approx(5200.0 / 13400.0 * 60.0)
+        # default input (current = 13400.0) was picked up from the model
+        assert prob.get_val("hover.current")[0] == pytest.approx(13400.0)
 
     def test_non_calc_rejected(self, drone):
         interp = longeron.Interpreter(drone)
@@ -38,8 +38,8 @@ class TestCalcComponent:
 
 
 #: per-rotor static thrust of the stock motor + propeller (PropThrust at
-#: kV=920, V=11.1, d=0.254 -- see examples/drone.sysml)
-THRUST_PER_ROTOR = 0.11 * 1.225 * (0.75 * 920.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
+#: kV=935, V=11.1, d=0.254, Ct calibrated to 0.097 -- see examples/drone.sysml)
+THRUST_PER_ROTOR = 0.097 * 1.225 * (0.75 * 935.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
 
 
 @pytest.fixture(scope="module")
@@ -51,19 +51,19 @@ def build(drone):
 
 class TestBuildProblem:
     def test_part_tree_evaluates(self, build):
-        assert build.problem.get_val("totalMass")[0] == pytest.approx(1.24)
-        assert build.problem.get_val("chassis.mass")[0] == pytest.approx(0.42)
+        assert build.problem.get_val("totalMass")[0] == pytest.approx(1.41)
+        assert build.problem.get_val("chassis.mass")[0] == pytest.approx(0.282)
 
     def test_constraint_margins(self, build):
         p = build.problem
-        assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(0.26)
+        assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(0.09)
         assert p.get_val("canHover_margin")[0] == pytest.approx(
-            4.0 * THRUST_PER_ROTOR - 1.24 * 9.81
+            4.0 * THRUST_PER_ROTOR - 1.41 * 9.81
         )
 
     def test_requirement_margin(self, build):
-        # ThrustToWeight(4 * thrustPerRotor, 1.24) - 1.8, through the calc def
-        expected = 4.0 * THRUST_PER_ROTOR / (1.24 * 9.81) - 1.8
+        # ThrustToWeight(4 * thrustPerRotor, 1.41) - 1.8, through the calc def
+        expected = 4.0 * THRUST_PER_ROTOR / (1.41 * 9.81) - 1.8
         assert build.problem.get_val("hoverMargin_margin")[0] == pytest.approx(expected)
         assert "FlightEnvelope::hoverMargin" in build.constraints
 
@@ -72,8 +72,8 @@ class TestBuildProblem:
         p = build.problem
         p.set_val("payloadMass", 0.9)
         p.run_model()
-        assert p.get_val("totalMass")[0] == pytest.approx(1.94)
-        assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(-0.44)
+        assert p.get_val("totalMass")[0] == pytest.approx(2.11)
+        assert p.get_val("takeoffMassLimit_margin")[0] == pytest.approx(-0.61)
 
     def test_bookkeeping(self, build):
         assert "payloadMass" in build.independents
@@ -110,7 +110,7 @@ class TestExternalAnalysisBinding:
         build = mdao.build_problem(missions, "UavMissions::IsrPrime")
         build.problem.run_model()
         # first-order body: buildup CdA parasite + induced at 15 m/s
-        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(78.841, abs=0.01)
+        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(75.913, abs=0.01)
         assert build.externals == {}
 
     def test_external_fidelity_swaps_the_component(self, missions):
@@ -120,11 +120,11 @@ class TestExternalAnalysisBinding:
         build.problem.run_model()
         power = build.problem.get_val("loiterPowerW")[0]
         assert build.externals == {"loiterPowerW": "uav_aero:CruisePowerPolar"}
-        assert power == pytest.approx(84.27, abs=0.5)  # Re + stall terms
+        assert power == pytest.approx(81.04, abs=0.5)  # Re + stall terms
         # the external output composes with interpreter-backed components
         station = build.problem.get_val("stationMinutes")[0]
         energy = build.problem.get_val("usableEnergyJ")[0]
-        assert station == pytest.approx(energy / (power + 22.0) / 60.0, rel=1e-6)
+        assert station == pytest.approx(energy / (power + 18.0) / 60.0, rel=1e-6)
 
     def test_qualified_fidelity_key(self, missions):
         build = mdao.build_problem(
@@ -153,7 +153,7 @@ class TestExternalAnalysisBinding:
             assert build.problem.run_driver().success
             optima[name] = float(build.problem.get_val("loiterSpeed")[0])
         assert optima["model"] == pytest.approx(11.0, abs=1e-3)  # at stall
-        assert optima["external"] > 12.0  # the polar backs off the stall
+        assert optima["external"] > 11.5  # the polar backs off the stall
 
     def test_unknown_fidelity_key_is_loud(self, missions):
         with pytest.raises(longeron.analysis.AnalysisError, match="never bound"):
@@ -327,9 +327,9 @@ class TestDisciplineGrouping:
 
     def test_flat_promoted_names_keep_working(self, grouped):
         p = grouped.problem
-        assert p.get_val("stationMinutes")[0] == pytest.approx(147.386, abs=0.01)
+        assert p.get_val("stationMinutes")[0] == pytest.approx(208.736, abs=0.01)
         assert p.get_val("dragArea")[0] == pytest.approx(0.019574, abs=1e-6)
-        assert p.get_val("massKg")[0] == pytest.approx(5.5528, abs=1e-3)
+        assert p.get_val("massKg")[0] == pytest.approx(5.1468, abs=1e-3)
 
     def test_external_component_joins_its_discipline(self, missions):
         from openmdao.core.component import Component
@@ -360,6 +360,6 @@ class TestOptimization:
         p.set_val("payloadMass", 0.1)
         result = p.run_driver()
         assert result.success
-        # takeoffMassLimit binds: totalMass = 1.04 + payload <= 1.5
-        assert p.get_val("payloadMass")[0] == pytest.approx(0.46, abs=1e-6)
+        # takeoffMassLimit binds: totalMass = 1.21 + payload <= 1.5
+        assert p.get_val("payloadMass")[0] == pytest.approx(0.29, abs=1e-6)
         assert p.get_val("totalMass")[0] == pytest.approx(1.5, abs=1e-6)

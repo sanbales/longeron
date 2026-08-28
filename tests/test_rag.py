@@ -113,7 +113,7 @@ def test_neighborhood_hops_expand_monotonically(model):
     two = {c["id"] for c in rag.neighborhood(model, "UavMissions::IsrUav", hops=2)}
     assert one < two
     # hop 2 reaches the sensor catalog through SensorChoice
-    assert "UavMissions::StareEoIr" in two
+    assert "UavMissions::ZenmuseH20" in two
 
 
 def test_neighborhood_resolves_member_names_to_their_chunk(model):

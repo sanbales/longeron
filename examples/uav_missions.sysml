@@ -19,14 +19,19 @@
 // evaluate(): enumerate the Cartesian candidate space and let the
 // interpreter score every mix exactly (see notebook 07).
 package UavMissions {
-    doc /* Multi-mission UAV catalog: four airframe families, tiered
-           components, a structural-material trade, and three mission
-           contexts with executable physics (drag buildup + tube sizing
-           included).  The calc defs are organized into DISCIPLINE
-           packages (Aerodynamics, Propulsion, Structures, Performance)
-           and the variation points into a Catalog package -- the model's
-           own structure is what groups the generated OpenMDAO problem
-           into the classic discipline blocks of an N2 diagram. */
+    doc /* Multi-mission UAV catalog: four airframe families, real COTS
+           propulsion and payload options, a battery-chemistry trade, a
+           structural-material trade, and three mission contexts with
+           executable physics (drag buildup + tube sizing included).  The
+           airframes are fictional; the motors, propellers, packs, and
+           payloads are real commercial parts -- normal drone practice.
+           Every component spec is a NOMINAL manufacturer figure (catalog
+           masses, label C-ratings, street prices); these are teaching
+           examples, not engineering data.  The calc defs are organized
+           into DISCIPLINE packages (Aerodynamics, Propulsion, Structures,
+           Performance) and the variation points into a Catalog package --
+           the model's own structure is what groups the generated OpenMDAO
+           problem into the classic discipline blocks of an N2 diagram. */
 
     private import Aerodynamics::*;
     private import Propulsion::*;
@@ -277,6 +282,7 @@ package UavMissions {
         attribute motorCount : Integer;     // populated motor stations
         attribute diskAreaFactor : Real;    // total disk area / one prop disk
         attribute hoverThrustFactor : Real; // req. thrust/weight (0 = rail)
+        attribute climbDrawFraction : Real; // sustained climb-out draw / full power
         attribute payloadCapacity : Real;   // kg
         attribute hoverOpsSec : Real;       // hover budget per sortie, s
         attribute fuselageLength : Real;    // m (geometry)
@@ -351,7 +357,7 @@ package UavMissions {
         attribute frameFrontalArea : Real = 0.050;  // m^2, forward flight
         attribute dragArea : Real =
             BluffFrameDrag(frontalArea = frameFrontalArea);
-        attribute mass : Real = 0.78;   attribute cost : Real = 95.0;
+        attribute mass : Real = 0.78;   attribute cost : Real = 120.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
@@ -360,6 +366,7 @@ package UavMissions {
         attribute motorCount : Integer = 4;
         attribute diskAreaFactor : Real = 4.0;
         attribute hoverThrustFactor : Real = 1.6;
+        attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 6.0;
         attribute hoverOpsSec : Real = 90.0;
         attribute fuselageLength : Real = 0.0;
@@ -384,7 +391,7 @@ package UavMissions {
                                             diameter = fuselageDiameter),
                 formFactor = BodyFormFactor(length = fuselageLength,
                                             diameter = fuselageDiameter));
-        attribute mass : Real = 0.98;   attribute cost : Real = 200.0;
+        attribute mass : Real = 0.98;   attribute cost : Real = 320.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
@@ -393,6 +400,7 @@ package UavMissions {
         attribute motorCount : Integer = 4;
         attribute diskAreaFactor : Real = 4.0;
         attribute hoverThrustFactor : Real = 1.5;
+        attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 1.0;
         attribute hoverOpsSec : Real = 60.0;
         attribute armCount : Integer = 4;
@@ -422,18 +430,19 @@ package UavMissions {
             + 4.0 * SkinFrictionDrag(    // wingtip motor pods
                 wettedArea = BodyWettedArea(length = 0.12, diameter = 0.045),
                 formFactor = BodyFormFactor(length = 0.12, diameter = 0.045)));
-        attribute mass : Real = 1.90;   attribute cost : Real = 480.0;
+        attribute mass : Real = 1.90;   attribute cost : Real = 950.0;
         attribute oswald : Real = 0.82;   attribute tipPropBonus : Real = 1.28;
         attribute loiterSpeed : Real = 15.0;
         attribute cruiseSpeed : Real = 21.0;
         attribute motorCount : Integer = 4;
         attribute diskAreaFactor : Real = 3.3;  // 2 main + 2 smaller tips
-        attribute hoverThrustFactor : Real = 1.45;
+        attribute hoverThrustFactor : Real = 1.35;  // wing-assisted climb-out
+        attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 5.5;
         attribute hoverOpsSec : Real = 120.0;
         attribute armCount : Integer = 0;      // rotors ride the wingtips
         attribute sparRadius : Real = 0.012;   // fits the 12% root section
-        attribute designGrossKg : Real = 6.0;  // packMax + heavy payload
+        attribute designGrossKg : Real = 6.0;  // big pack + heavy payload
     }
     part def DartInterceptor :> Airframe {
         // slender lathed body + thin wing + cruciform fins, all skin
@@ -454,97 +463,140 @@ package UavMissions {
             + SkinFrictionDrag(          // cruciform tail fins
                 wettedArea = WingWettedArea(planformArea = tailArea),
                 formFactor = WingFormFactor(thicknessRatio = 0.09)));
-        attribute mass : Real = 1.08;   attribute cost : Real = 300.0;
+        attribute mass : Real = 1.08;   attribute cost : Real = 680.0;
         attribute oswald : Real = 0.72;   attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 24.0;
         attribute cruiseSpeed : Real = 30.0;
         attribute motorCount : Integer = 1;   // single pusher
         attribute diskAreaFactor : Real = 1.0;
         attribute hoverThrustFactor : Real = 0.0;  // rail-launched
-        attribute payloadCapacity : Real = 0.9;
+        attribute climbDrawFraction : Real = 1.0;  // the dash IS the sustained draw
+        attribute payloadCapacity : Real = 0.6;
         attribute hoverOpsSec : Real = 0.0;
         attribute armCount : Integer = 0;      // no rotor arms
         attribute sparRadius : Real = 0.008;   // thin 9% section
         attribute designGrossKg : Real = 2.2;  // launch mass + margin
     }
 
-    part def EcoMotor :> Motor {
-        attribute mass : Real = 0.058;  attribute cost : Real = 26.0;
-        attribute maxThrust : Real = 17.0;
-        attribute maxPowerW : Real = 260.0;
-        attribute efficiency : Real = 0.80;
-        attribute maxPropDiameter : Real = 0.33;
-    }
-    part def StdMotor :> Motor {
-        attribute mass : Real = 0.092;  attribute cost : Real = 52.0;
-        attribute maxThrust : Real = 30.0;
-        attribute maxPowerW : Real = 480.0;
+    // Motors: three real tiers.  The Antigravity is the efficiency play
+    // (68 g, big slow props, gentle power); the X4112S is the all-round
+    // lifter but tops out at a 14 in prop; the AT4120 is a 2 kW
+    // fixed-wing power plant whose watts no li-ion pack can feed.
+    // maxThrust is the matched-prop static figure at 6S, nominal.
+    part def TMotorMn4006 :> Motor {
+        doc /* T-Motor Antigravity MN4006 KV380 (nominal). */
+        attribute mass : Real = 0.068;  attribute cost : Real = 96.0;
+        attribute maxThrust : Real = 20.0;
+        attribute maxPowerW : Real = 420.0;
         attribute efficiency : Real = 0.85;
-        attribute maxPropDiameter : Real = 0.55;
+        attribute maxPropDiameter : Real = 0.46;
     }
-    part def SprintMotor :> Motor {
-        attribute mass : Real = 0.150;  attribute cost : Real = 110.0;
-        attribute maxThrust : Real = 42.0;
-        attribute maxPowerW : Real = 950.0;
-        attribute efficiency : Real = 0.88;
-        attribute maxPropDiameter : Real = 0.55;
+    part def SunnySkyX4112s :> Motor {
+        doc /* SunnySky X4112S KV485 (nominal). */
+        attribute mass : Real = 0.183;  attribute cost : Real = 88.0;
+        attribute maxThrust : Real = 33.0;
+        attribute maxPowerW : Real = 800.0;
+        attribute efficiency : Real = 0.83;
+        attribute maxPropDiameter : Real = 0.36;   // 14 in: the 15 in lifter needs mn4006/at4120
+    }
+    part def TMotorAt4120 :> Motor {
+        doc /* T-Motor AT4120 KV250, a fixed-wing power plant (nominal). */
+        attribute mass : Real = 0.320;  attribute cost : Real = 158.0;
+        attribute maxThrust : Real = 45.0;
+        attribute maxPowerW : Real = 2000.0;
+        attribute efficiency : Real = 0.87;
+        attribute maxPropDiameter : Real = 0.42;
     }
 
-    part def SlimProp :> Propeller {
-        attribute mass : Real = 0.012;  attribute cost : Real = 11.0;
-        attribute diameter : Real = 0.24;
+    // Props: real APC electrics plus a T-Motor carbon lifter.  Pitch
+    // buys cruise efficiency; diameter buys disk area (cheap hover).
+    part def Apc11x55e :> Propeller {
+        doc /* APC 11x5.5E thin electric (nominal). */
+        attribute mass : Real = 0.022;  attribute cost : Real = 6.0;
+        attribute diameter : Real = 0.2794;
         attribute cruiseEff : Real = 0.82;
     }
-    part def CruiseProp :> Propeller {
-        attribute mass : Real = 0.018;  attribute cost : Real = 14.0;
-        attribute diameter : Real = 0.33;
+    part def Apc13x65e :> Propeller {
+        doc /* APC 13x6.5E thin electric (nominal). */
+        attribute mass : Real = 0.028;  attribute cost : Real = 9.0;
+        attribute diameter : Real = 0.3302;
         attribute cruiseEff : Real = 0.74;
     }
-    part def LifterProp :> Propeller {
-        attribute mass : Real = 0.042;  attribute cost : Real = 32.0;
-        attribute diameter : Real = 0.51;
+    part def TMotor15x5cf :> Propeller {
+        doc /* T-Motor P15x5 carbon-fiber lifter (nominal). */
+        attribute mass : Real = 0.031;  attribute cost : Real = 46.0;
+        attribute diameter : Real = 0.381;
         attribute cruiseEff : Real = 0.66;
     }
 
-    part def PackLite :> Battery {
-        attribute mass : Real = 0.50;   attribute cost : Real = 70.0;
-        attribute energyWh : Real = 90.0;
-        attribute maxPowerW : Real = 1100.0;
+    // Batteries: the chemistry axis.  Three Tattu 6S LiPos trade energy
+    // for punch (35C down to 15C as capacity grows), and the li-ion pack
+    // (energy-cell 18650s, NCR18650GA class) carries ~25% more energy
+    // per kilogram at a TENTH of the discharge ceiling: endurance vs
+    // punch, resolved differently by each mission.  maxPowerW is
+    // C-rating x capacity x nominal voltage, rounded.
+    part def Tattu6s5200 :> Battery {
+        doc /* Tattu 5.2 Ah 6S 35C LiPo (nominal). */
+        attribute mass : Real = 0.78;   attribute cost : Real = 95.0;
+        attribute energyWh : Real = 115.0;
+        attribute maxPowerW : Real = 4000.0;
     }
-    part def PackMid :> Battery {
-        attribute mass : Real = 0.98;   attribute cost : Real = 130.0;
-        attribute energyWh : Real = 180.0;
-        attribute maxPowerW : Real = 2000.0;
+    part def Tattu6s10000 :> Battery {
+        doc /* Tattu 10 Ah 6S 25C LiPo (nominal). */
+        attribute mass : Real = 1.32;   attribute cost : Real = 185.0;
+        attribute energyWh : Real = 222.0;
+        attribute maxPowerW : Real = 5550.0;
     }
-    part def PackMax :> Battery {
-        attribute mass : Real = 1.95;   attribute cost : Real = 250.0;
-        attribute energyWh : Real = 360.0;
-        attribute maxPowerW : Real = 3200.0;
+    part def Tattu6s16000 :> Battery {
+        doc /* Tattu 16 Ah 6S 15C LiPo (nominal). */
+        attribute mass : Real = 1.92;   attribute cost : Real = 265.0;
+        attribute energyWh : Real = 355.0;
+        attribute maxPowerW : Real = 5300.0;
+    }
+    part def LiIon6s6p :> Battery {
+        doc /* 6S6P li-ion pack of NCR18650GA-class energy cells
+               (nominal): 447 Wh at 1.89 kg, but the 10 A cell ceiling
+               caps the pack near 1.3 kW. */
+        attribute mass : Real = 1.89;   attribute cost : Real = 310.0;
+        attribute energyWh : Real = 447.0;
+        attribute maxPowerW : Real = 1300.0;
     }
 
-    part def PathfinderEO :> SensorPackage {
-        attribute mass : Real = 0.20;   attribute cost : Real = 90.0;
-        attribute powerW : Real = 7.0;  attribute grade : Integer = 1;
+    // Sensors: the ISR payload ladder, street-priced -- the optic, not
+    // the airframe, dominates an ISR bird's invoice.
+    part def RuncamSplit4 :> SensorPackage {
+        doc /* RunCam Split 4 fixed nose camera with mount and DVR
+               (nominal). */
+        attribute mass : Real = 0.10;   attribute cost : Real = 85.0;
+        attribute powerW : Real = 4.0;  attribute grade : Integer = 1;
     }
-    part def StareEoIr :> SensorPackage {
-        attribute mass : Real = 0.95;   attribute cost : Real = 420.0;
-        attribute powerW : Real = 22.0; attribute grade : Integer = 2;
+    part def ZenmuseH20 :> SensorPackage {
+        doc /* DJI Zenmuse H20 stabilized EO zoom gimbal (nominal). */
+        attribute mass : Real = 0.68;   attribute cost : Real = 4600.0;
+        attribute powerW : Real = 18.0; attribute grade : Integer = 2;
     }
-    part def HawkeyeGimbal :> SensorPackage {
-        attribute mass : Real = 1.90;   attribute cost : Real = 1100.0;
-        attribute powerW : Real = 55.0; attribute grade : Integer = 3;
+    part def GremsyT3A7r :> SensorPackage {
+        doc /* Gremsy T3V3 gimbal + Sony a7R survey camera kit
+               (nominal). */
+        attribute mass : Real = 1.90;   attribute cost : Real = 6800.0;
+        attribute powerW : Real = 30.0; attribute grade : Integer = 3;
     }
 
+    // Cargo bays: real drop hardware -- servo release cradles in two
+    // sizes and a powered winch bay for the big parcels.
     part def ParcelBayS :> CargoBay {
-        attribute bayMass : Real = 0.12;  attribute bayCost : Real = 15.0;
+        doc /* Gannet-style servo release + 1 kg cradle (nominal). */
+        attribute bayMass : Real = 0.12;  attribute bayCost : Real = 90.0;
         attribute payloadKg : Real = 1.0;
     }
     part def ParcelBayM :> CargoBay {
-        attribute bayMass : Real = 0.25;  attribute bayCost : Real = 30.0;
+        doc /* Dual-servo release frame + 2.5 kg cradle (nominal). */
+        attribute bayMass : Real = 0.25;  attribute bayCost : Real = 180.0;
         attribute payloadKg : Real = 2.5;
     }
     part def ParcelBayL :> CargoBay {
-        attribute bayMass : Real = 0.45;  attribute bayCost : Real = 55.0;
+        doc /* Powered winch bay, 4 kg line rating (nominal). */
+        attribute bayMass : Real = 0.45;  attribute bayCost : Real = 320.0;
         attribute payloadKg : Real = 4.0;
     }
 
@@ -579,24 +631,25 @@ package UavMissions {
             variant part dartInterceptor : DartInterceptor;
         }
         variation part def MotorChoice :> Motor {
-            variant part ecoMotor : EcoMotor;
-            variant part stdMotor : StdMotor;
-            variant part sprintMotor : SprintMotor;
+            variant part mn4006 : TMotorMn4006;
+            variant part x4112s : SunnySkyX4112s;
+            variant part at4120 : TMotorAt4120;
         }
         variation part def PropChoice :> Propeller {
-            variant part slimProp : SlimProp;
-            variant part cruiseProp : CruiseProp;
-            variant part lifterProp : LifterProp;
+            variant part apc11x55 : Apc11x55e;
+            variant part apc13x65 : Apc13x65e;
+            variant part tm15x5 : TMotor15x5cf;
         }
         variation part def BatteryChoice :> Battery {
-            variant part packLite : PackLite;
-            variant part packMid : PackMid;
-            variant part packMax : PackMax;
+            variant part tattu5200 : Tattu6s5200;
+            variant part tattu10000 : Tattu6s10000;
+            variant part tattu16000 : Tattu6s16000;
+            variant part liion6s6p : LiIon6s6p;
         }
         variation part def SensorChoice :> SensorPackage {
-            variant part pathfinderEO : PathfinderEO;
-            variant part stareEoIr : StareEoIr;
-            variant part hawkeyeGimbal : HawkeyeGimbal;
+            variant part runcamSplit : RuncamSplit4;
+            variant part zenmuseH20 : ZenmuseH20;
+            variant part gremsyT3 : GremsyT3A7r;
         }
         variation part def CargoChoice :> CargoBay {
             variant part parcelBayS : ParcelBayS;
@@ -623,8 +676,8 @@ package UavMissions {
                material, so the material choice is a real mass-vs-cost
                trade axis. */
 
-        attribute avionicsMass : Real = 0.18;   // kg: FC, GPS, radios
-        attribute avionicsCost : Real = 140.0;
+        attribute avionicsMass : Real = 0.16;   // kg: Pixhawk-class FC, GPS, radios
+        attribute avionicsCost : Real = 420.0;  // USD, street
         attribute armTubeRadius : Real = 0.008; // m, rotor-arm tube
         attribute minWallM : Real = 0.0005;     // manufacturing gauge floor
 
@@ -681,8 +734,13 @@ package UavMissions {
         // selection compatibility
         assert constraint propFit {
             props.diameter <= motors.maxPropDiameter }
+        // the pack must sustain the climb-out draw: the airframe's
+        // sustained fraction of full power on every motor.  This is the
+        // constraint the li-ion pack's 10 A cells feel: plenty of
+        // watt-hours, a tenth of the LiPo discharge ceiling.
         assert constraint packPower {
-            battery.maxPowerW >= airframe.motorCount * motors.maxPowerW }
+            battery.maxPowerW >= airframe.climbDrawFraction
+                * airframe.motorCount * motors.maxPowerW }
     }
 
     // ----- mission 1: ISR ---------------------------------------------------------
@@ -825,8 +883,9 @@ package UavMissions {
 
     part def IsrPrime {
         doc /* The ISR trade winner frozen as a concrete sizing context:
-               the component mix is baked in (vtolWing + stdMotor +
-               slimProp + packMax + stareEoIr + carbonFiber), the loiter
+               the component mix is baked in (vtolWing + mn4006
+               Antigravity motors + apc11x55 props + the liion6s6p energy
+               pack + zenmuseH20 gimbal + carbonFiber spar), the loiter
                speed stays continuous -- and the chain from configuration
                to time-on-station is spelled out discipline by discipline
                with the shared calc defs, so the generated OpenMDAO
@@ -838,19 +897,19 @@ package UavMissions {
         attribute loiterSpeed : Real = 15.0;    // m/s -- the design variable
 
         // frozen winner configuration (catalog values of the mix above)
-        attribute emptyMassKg : Real = 5.396;   // shell+avionics+pack+motors/props+sensor
+        attribute emptyMassKg : Real = 4.99;    // shell+avionics+pack+motors/props+sensor
         attribute fuselageLength : Real = 0.95;
         attribute fuselageDiameter : Real = 0.12;
         attribute span : Real = 2.6;
         attribute wingArea : Real = 0.624;
         attribute secondaryWingArea : Real = 0.387;
         attribute spanEff : Real = 1.0496;      // 0.82 Oswald x 1.28 tip props
-        attribute propEff : Real = 0.697;       // slim prop x std motor
-        attribute sensorPowerW : Real = 22.0;
-        attribute batteryWh : Real = 360.0;     // packMax
+        attribute propEff : Real = 0.697;       // APC 11x5.5E x Antigravity motor
+        attribute sensorPowerW : Real = 18.0;   // Zenmuse H20
+        attribute batteryWh : Real = 447.0;     // liion6s6p
         attribute hoverOpsSec : Real = 120.0;   // takeoff + landing budget
-        attribute diskArea : Real =             // 3.3 disks x slim prop
-            3.3 * 3.141592653589793 * 0.24 * 0.24 / 4.0;
+        attribute diskArea : Real =             // 3.3 disks x 11 in prop
+            3.3 * 3.141592653589793 * 0.2794 * 0.2794 / 4.0;
         attribute designGrossKg : Real = 6.0;
         attribute sparRadius : Real = 0.012;
         attribute minWallM : Real = 0.0005;     // manufacturing gauge floor

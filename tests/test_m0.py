@@ -58,15 +58,16 @@ class TestNominalPopulation:
 
     def test_attributes_evaluated_per_individual(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        assert all(r.slots["mass"] == 0.048 for r in it.root.slots["motors"])
-        assert all(r.slots["mass"] == 0.012 for r in it.root.slots["propellers"])
-        assert it.root.slots["totalMass"] == 1.24  # same value instantiate computes
+        assert all(r.slots["mass"] == 0.055 for r in it.root.slots["motors"])
+        assert all(r.slots["mass"] == 0.015 for r in it.root.slots["propellers"])
+        assert it.root.slots["totalMass"] == 1.41  # same value instantiate computes
 
     def test_individuals_filter_by_classifier(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        # quad + chassis + battery + esc + flight controller + camera
+        # quad + chassis + battery + esc + flight controller + gps
+        # + receiver + telemetry + landing gear + camera
         # + 4 motors + 4 propellers
-        assert len(it.individuals()) == 14
+        assert len(it.individuals()) == 18
         assert len(it.individuals("Drone::Motor")) == 4
         assert len(it.individuals("Drone::Propeller")) == 4
 
@@ -114,21 +115,21 @@ class TestSequences:
         it = m0.interpret(drone, "Drone::QuadCopter")
         seqs = it.sequences("motors.mass")
         assert len(seqs) == 4
-        assert all(len(seq) == 3 and seq[2] == 0.048 for seq in seqs)
+        assert all(len(seq) == 3 and seq[2] == 0.055 for seq in seqs)
         assert {seq[1].id for seq in seqs} == {r.id for r in it.root.slots["motors"]}
 
 
 class TestRollup:
     def test_aggregates_over_actual_individuals(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        # drone.sysml hardcodes '4.0 * 0.048 + 4.0 * 0.012' at M1; M0 sums
+        # drone.sysml hardcodes '4.0 * 0.055 + 4.0 * 0.015' at M1; M0 sums
         # the real motor and propeller individuals
-        assert it.rollup("sum(motors.mass)") == pytest.approx(0.192, rel=1e-12)
-        assert it.rollup("sum(propellers.mass)") == pytest.approx(0.048, rel=1e-12)
+        assert it.rollup("sum(motors.mass)") == pytest.approx(0.22, rel=1e-12)
+        assert it.rollup("sum(propellers.mass)") == pytest.approx(0.06, rel=1e-12)
 
     def test_feature_name_evaluates_its_declared_expression(self, drone):
         it = m0.interpret(drone, "Drone::QuadCopter")
-        assert it.rollup("totalMass") == pytest.approx(1.24, rel=1e-12)
+        assert it.rollup("totalMass") == pytest.approx(1.41, rel=1e-12)
 
 
 class TestTriCopterPopulation:
@@ -148,17 +149,17 @@ class TestTriCopterPopulation:
     def test_rotor_mass_rolls_up_over_three_individuals(self, drone):
         it = m0.interpret(drone, "Drone::TriCopter")
         rotor_mass = it.rollup("sum(frontMotors.mass) + tailMotor.mass")
-        assert rotor_mass == pytest.approx(3 * 0.048, rel=1e-12)
+        assert rotor_mass == pytest.approx(3 * 0.055, rel=1e-12)
 
     def test_tricopter_is_lighter_but_hovers(self, drone):
         it = m0.interpret(drone, "Drone::TriCopter")
-        assert it.root.slots["totalMass"] == pytest.approx(1.136, rel=1e-12)
-        assert it.root.slots["totalMass"] < 1.24  # lighter than the quad
-        # canHover holds, with LESS margin than the quad's ~3.0
+        assert it.root.slots["totalMass"] == pytest.approx(1.31, rel=1e-12)
+        assert it.root.slots["totalMass"] < 1.41  # lighter than the quad
+        # canHover holds, with LESS margin than the quad's ~2.4
         thrust = 3.0 * it.root.slots["thrustPerRotor"]
         weight = it.root.slots["totalMass"] * 9.81
         assert thrust > weight
-        assert 2.4 < thrust / weight < 3.0
+        assert 1.8 < thrust / weight < 2.1
 
 
 class TestRandomStrategy:

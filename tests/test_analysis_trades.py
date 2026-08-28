@@ -557,15 +557,15 @@ class TestUavMissionCoverage:
     def test_cpsat_agrees_with_the_interpreter_on_the_platform(self, platform):
         """The fixed-point tolerance contract: after the interpreter
         re-verification, CP-SAT's feasible set is EXACTLY the
-        interpreter's (no false admits survive, none of the 216 mixes
+        interpreter's (no false admits survive, none of the 288 mixes
         is lost to rounding)."""
 
         got = {tuple(sorted(a.selection.items())) for a in platform.enumerate()}
         exact = platform.all_architectures()
         want = {tuple(sorted(a.selection.items())) for a in exact if a.verified}
-        assert len(exact) == 216
+        assert len(exact) == 288
         assert got == want
-        assert len(got) == 120
+        assert len(got) == 166
 
     def test_optimization_agrees_with_the_interpreter(self, platform):
         best = platform.minimize("baseCost")
@@ -610,11 +610,12 @@ class TestThrustParametric:
     def thrust(self, interp, **kwargs):
         return interp.call("Drone::PropThrust", **kwargs)
 
-    def test_stock_design_point_matches_the_old_lumped_rating(self, drone_interp):
-        # within 2% of the pre-split model's 9.0 N per rotor
-        stock = self.thrust(drone_interp, kV=920.0, voltage=11.1, diameter=0.254)
-        assert stock == pytest.approx(9.139, abs=1e-3)
-        assert stock == pytest.approx(9.0, rel=0.02)
+    def test_stock_design_point_matches_the_bench_table(self, drone_interp):
+        # the calibrated fit lands on the MT2213 bench table's 850 g
+        # (8.34 N) full-throttle point
+        stock = self.thrust(drone_interp, kV=935.0, voltage=11.1, diameter=0.254)
+        assert stock == pytest.approx(8.324, abs=1e-3)
+        assert stock == pytest.approx(0.850 * 9.81, rel=0.02)
 
     def test_monotonic_in_diameter_over_the_catalog_range(self, drone_interp):
         # 5" .. 12" props at the stock motor: strictly increasing, d^4-fast
@@ -632,11 +633,12 @@ class TestThrustParametric:
     def test_catalog_thrust_terms_match_the_parametric(self, catalog, drone_interp):
         # the catalog's per-motor thrustTerm is PropThrust with Ct factored
         # out to the propeller's kt, precomputed to 4 significant digits
+        # (PropThrust's own Ct is calibrated to 0.097 -- divide it back out)
         interp = longeron.Interpreter(catalog)
         for motor, kv in (("Emax2306", 2400.0), ("TMotorF60", 1750.0), ("SunnySky2212", 920.0)):
             inst = interp.instantiate(f"DroneCatalog::{motor}")
             expected = (
                 self.thrust(drone_interp, kV=kv, voltage=inst.slots["voltage"], diameter=0.0254)
-                / 0.11
+                / 0.097
             )
             assert inst.slots["thrustTerm"] == pytest.approx(expected, rel=5e-3), motor

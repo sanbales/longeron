@@ -163,7 +163,7 @@ def test_sparql_variation_points_and_variants(graph):
             """,
         )
     )
-    assert len(rows) == 21  # 4+3+3+3+3+3+2 variants over 7 variation points
+    assert len(rows) == 22  # 4+3+3+4+3+3+2 variants over 7 variation points
     assert (str(rows[0].point), str(rows[0].variant), str(rows[0].target)) == (
         "AirframeChoice",
         "boxQuad",

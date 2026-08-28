@@ -3,55 +3,83 @@
 package Drone {
     doc /* A small multi-rotor drone family, modeled for the longeron demo:
            one abstract MultiRotor airframe and two concrete configurations
-           that specialize it -- the stock four-rotor QuadCopter and the
-           lighter three-rotor TriCopter.  The configurations differ by the
-           redefined rotor populations and sizing knobs; the physics chain,
-           equipment, and constraints are shared. */
+           that specialize it -- the stock four-rotor QuadCopter (an F450-
+           class build from real commercial parts) and the lighter
+           three-rotor TriCopter re-specced from the same catalog.  The
+           configurations differ by the redefined rotor populations and
+           sizing knobs; the physics chain, equipment, and constraints are
+           shared.
+
+           Every component spec below is a NOMINAL manufacturer figure
+           (catalog masses, bench-table thrust points, C-ratings).  These
+           are teaching examples, not engineering data: real builds vary
+           unit to unit, and no number here was measured on this airframe. */
 
     // ----- structure ---------------------------------------------------
 
     part def Battery {
+        doc /* Tattu 5200 mAh 3S1P 35C LiPo -- the classic F450-class pack.
+               capacity and cRating are the label figures; together they
+               bound the pack's continuous discharge (35 C x 5.2 Ah =
+               182 A), one input to the current budget below. */
         attribute capacity : Real = 5200.0;      // mAh (no ampere-hour unit in the vendored SI)
+        attribute cRating : Real = 35.0;         // C, continuous discharge (label figure)
         attribute voltage : Real = 11.1 [SI::V]; // 3S LiPo nominal
-        attribute mass : Real = 0.38 [SI::kg];
+        attribute mass : Real = 0.39 [SI::kg];
     }
 
     part def Motor {
-        doc /* A 2212-class brushless outrunner.  kV is the motor velocity
-               constant in rpm per volt (no such unit in the vendored SI). */
-        attribute kV : Real = 920.0;             // rpm/V
-        attribute maxCurrent : Real = 16.0 [SI::A];
-        attribute mass : Real = 0.048 [SI::kg];
+        doc /* EMAX MT2213-935KV, a 2212-class brushless outrunner.  kV is
+               the motor velocity constant in rpm per volt (no such unit in
+               the vendored SI).  Nominal bench table with the matched
+               10x4.5 propeller at 11.1 V (thrust / current by throttle):
+
+                    50%   360 g    3.3 A
+                    65%   505 g    5.5 A
+                    75%   620 g    7.5 A
+                    85%   715 g    9.3 A
+                   100%   850 g   12.0 A
+
+               PropThrust is calibrated to the 100% point; MotorCurrent
+               reproduces the current column within a few percent. */
+        attribute kV : Real = 935.0;             // rpm/V
+        attribute maxCurrent : Real = 12.0 [SI::A];  // full throttle, 10x4.5 prop, 11.1 V
+        attribute mass : Real = 0.055 [SI::kg];
     }
 
     part def Propeller {
-        doc /* A 10x4.5 slow-fly propeller; discArea is the swept disc. */
+        doc /* APC 10x4.5MR, the multi-rotor slow-fly workhorse; discArea
+               is the swept disc. */
         attribute diameter : Real = 0.254 [SI::m];   // 10 in
         attribute pitch : Real = 0.1143 [SI::m];     // 4.5 in
-        attribute mass : Real = 0.012 [SI::kg];
+        attribute mass : Real = 0.015 [SI::kg];
         attribute discArea : Real = pi * (diameter / 2.0) ** 2.0;   // m^2
     }
 
     part def Frame {
-        attribute mass : Real = 0.42 [SI::kg];   // incl. FC, wiring, camera mount
+        doc /* DJI Flame Wheel F450: molded arms on plates with an
+               integrated power-distribution board.  Bare frame kit mass;
+               the equipment bay parts and the harness allowance carry
+               everything else. */
+        attribute mass : Real = 0.282 [SI::kg];
     }
 
     part def TriFrame :> Frame {
-        doc /* The tricopter plate: two front arms and one long rear boom.
-               One arm fewer than the quad and less plate area, but the
-               boom carries the tilt-mount hardpoint.  Same build-allowance
-               convention as Frame: FC, wiring, and camera mount ride in
-               this figure. */
-        attribute mass : Real = 0.35 [SI::kg];
+        doc /* The tricopter plate: two front arms and one long rear boom,
+               an RCExplorer-style conversion cut from the same plate
+               stock.  One arm fewer than the quad and less plate area,
+               but the boom carries the tilt-mount hardpoint.  Bare frame
+               mass, same convention as Frame. */
+        attribute mass : Real = 0.24 [SI::kg];
     }
 
     part def Camera {
-        doc /* The forward-looking mission camera.  Placement offsets are
-               metres from the airframe origin (the top-plate centre) in
-               the geometry frame (+x forward, +y up); azimuth yaws the
+        doc /* The forward-looking mission camera (a small EO board camera;
+               its mass rides in the harness allowance).  Placement offsets
+               are metres from the airframe origin (the top-plate centre)
+               in the geometry frame (+x forward, +y up); azimuth yaws the
                boresight left of +x, elevation pitches it above the
-               horizon.  Lens and mount mass ride in the Frame's build
-               allowance. */
+               horizon. */
         attribute x : Real = 0.06 [SI::m];
         attribute y : Real = 0.0 [SI::m];
         attribute z : Real = 0.0 [SI::m];
@@ -61,26 +89,54 @@ package Drone {
     }
 
     part def SpeedController {
-        doc /* The 4-in-1 electronic speed controller: one board, one
+        doc /* Hobbywing XRotor Micro 40A 4-in-1 BLHeli_32: one board, one
                drive channel per rotor (the tricopter leaves the fourth
-               channel spare).  Its mass rides in the Frame's build
-               allowance, with the FC and wiring. */
-        attribute busVoltage : Real = 11.1 [SI::V];   // rated pack input
-        attribute maxCurrent : Real = 60.0 [SI::A];   // continuous, all channels
+               channel spare).  A modern 4-in-1 standing in for the classic
+               four separate 30 A ESCs of an F450 build.  Its per-channel
+               and board ratings are two of the ceilings in the current
+               budget below. */
+        attribute busVoltage : Real = 11.1 [SI::V];   // pack input (rated 3-6S)
+        attribute maxCurrentPerMotor : Real = 40.0 [SI::A];  // continuous, per channel
+        attribute maxCurrent : Real = 160.0 [SI::A]; // continuous, all channels
+        attribute mass : Real = 0.012 [SI::kg];
     }
 
     part def FlightController {
-        doc /* Runs the attitude loops and the FlightStates protocol.
-               Mass rides in the Frame's build allowance. */
-        attribute loopRate : Real = 500.0 [SI::Hz];
+        doc /* Holybro Pixhawk 6C Mini running ArduPilot: the attitude
+               loops and the FlightStates protocol.  loopRate is the
+               ArduPilot main-loop default. */
+        attribute loopRate : Real = 400.0 [SI::Hz];
+        attribute mass : Real = 0.039 [SI::kg];
+    }
+
+    part def GpsModule {
+        doc /* Holybro M9N GPS/compass puck on its mast. */
+        attribute mass : Real = 0.032 [SI::kg];
+    }
+
+    part def Receiver {
+        doc /* FrSky X8R RC receiver. */
+        attribute mass : Real = 0.017 [SI::kg];
+    }
+
+    part def TelemetryRadio {
+        doc /* Holybro SiK telemetry radio V3 (915 MHz, 100 mW) with
+               antenna: the ground-station link. */
+        attribute mass : Real = 0.028 [SI::kg];
+    }
+
+    part def LandingGear {
+        doc /* F450 tall landing skid set: keeps the camera and the pack
+               clear of the ground. */
+        attribute mass : Real = 0.08 [SI::kg];
     }
 
     part def YawServo {
         doc /* The rear-boom tilt servo of a tricopter: yaw torque comes
                from vectoring the tail rotor, not from rotor-pair torque
-               balance as on a quad.  A small metal-gear servo plus its
-               linkage. */
-        attribute mass : Real = 0.026 [SI::kg];
+               balance as on a quad.  An EMAX ES08MA II metal-gear micro
+               servo plus its linkage. */
+        attribute mass : Real = 0.012 [SI::kg];
         attribute travel : Real = 20.0 [SI::'°'];    // tilt each side of vertical
     }
 
@@ -88,25 +144,56 @@ package Drone {
 
     abstract part def MultiRotor {
         doc /* Everything the configurations share: the equipment bay
-               (pack, ESC, flight controller, camera), the parasite-drag
-               and attitude physics, the electrical wiring, and the
+               (pack, ESC, flight controller, GPS, RC and telemetry links,
+               landing gear, camera), the parasite-drag and attitude
+               physics, the current budget, the electrical wiring, and the
                hover/takeoff constraints.  Concrete configurations
                redefine the sizing knobs (rotorCount, frontalArea,
-               thrustPerRotor, totalMass) and the rotor populations --
-               the redefined multiplicities ARE the architecture
-               difference. */
+               thrustPerRotor, motorMaxCurrent, totalMass) and the rotor
+               populations -- the redefined multiplicities ARE the
+               architecture difference. */
         attribute payloadMass : Real = 0.2 [SI::kg];
         attribute rotorCount : Real;         // redefined per configuration
         attribute totalMass : Real;          // redefined per configuration, kg
         attribute maxTakeoffMass : Real = 1.5 [SI::kg];
         attribute thrustPerRotor : Real;     // redefined per configuration, N
+        attribute motorMaxCurrent : Real;    // redefined per configuration, A
         attribute frontalArea : Real;        // redefined per configuration, m^2
         attribute dragArea : Real = frontalArea * 1.1;      // parasite CdA, m^2
-        // sustained flight runs partial throttle: motor thermals and
-        // control headroom hold CONTINUOUS thrust to ~55% of bench static
-        attribute continuousThrustFraction : Real = 0.55;
+        // wiring, straps, camera and mounts: the build allowance that no
+        // single catalog part owns
+        attribute harnessMass : Real = 0.05 [SI::kg];
+        // the equipment bay, summed once for both configurations
+        attribute bayMass : Real = battery.mass + esc.mass
+            + flightController.mass + gps.mass + receiver.mass
+            + telemetry.mass + landingGear.mass + harnessMass;
+        // FC + GPS + RC receiver + telemetry: ~6 W at 11.1 V
+        attribute avionicsCurrent : Real = 0.5 [SI::A];
+
+        // ----- the continuous-thrust ceiling ----------------------------
+        // Sustained flight runs partial throttle.  The autonomy stack
+        // plans cruise-long collective at no more than 65% throttle --
+        // gust response and climb authority must stay in hand -- and the
+        // MT2213 bench table puts 65% throttle at 505 g of the 850 g
+        // static point: a 0.59 thrust fraction.
+        attribute sustainedThrustFraction : Real = 0.59;
+        // The electrical ceilings, expressed as thrust fractions through
+        // the propeller law I ~ T^1.5 (so T/Tmax = (I/Imax)^(2/3)): the
+        // ESC channel rating and the pack's C-rating each cap the current
+        // a motor may draw continuously.  On this build both ratios
+        // exceed 1 and clamp to 1 -- the throttle cap binds, and the doc
+        // on each part says which rating would bind first on a leaner
+        // build.
+        attribute escThrustFraction : Real =
+            pow(min(1.0, esc.maxCurrentPerMotor / motorMaxCurrent), 2.0 / 3.0);
+        attribute packThrustFraction : Real =
+            pow(min(1.0, battery.capacity / 1000.0 * battery.cRating
+                / (rotorCount * motorMaxCurrent)), 2.0 / 3.0);
+        attribute continuousThrustFraction : Real = min(
+            sustainedThrustFraction, min(escThrustFraction, packThrustFraction));
         attribute usableThrust : Real =
             rotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
+
         // the flight controller's commanded-attitude cap: comfort and
         // controllability, far below the physics ceiling
         attribute maxOperationalTilt : Real = 25.0 [SI::'°'];
@@ -122,10 +209,33 @@ package Drone {
         // (one line off this shared chain): MaxCruiseSpeed at cruiseTilt
         attribute maxCruiseSpeed : Real;     // redefined per configuration, m/s
 
+        // ----- the current budget ---------------------------------------
+        // MotorCurrent rolls the bench table up to the airframe: total
+        // draw at hover (thrust = weight) and at max cruise (thrust =
+        // weight / cos(tilt)), plus the avionics rail.  The pack's
+        // C-rating x capacity and the ESC board rating bound both.
+        attribute hoverCurrent : Real = rotorCount * MotorCurrent(
+            thrustN = totalMass * 9.81 / rotorCount,
+            maxThrustN = thrustPerRotor,
+            maxCurrentA = motorMaxCurrent
+        ) + avionicsCurrent;                                 // A, at hover
+        attribute cruiseCurrent : Real = rotorCount * MotorCurrent(
+            thrustN = totalMass * 9.81
+                / cos(cruiseTilt * pi / 180.0) / rotorCount,
+            maxThrustN = thrustPerRotor,
+            maxCurrentA = motorMaxCurrent
+        ) + avionicsCurrent;                                 // A, at max cruise
+        attribute packMaxCurrent : Real =
+            battery.capacity / 1000.0 * battery.cRating;     // A, continuous
+
         part chassis : Frame;
         part battery : Battery;
         part esc : SpeedController;
         part flightController : FlightController;
+        part gps : GpsModule;
+        part receiver : Receiver;
+        part telemetry : TelemetryRadio;
+        part landingGear : LandingGear;
         part propellers : Propeller[*];      // redefined per configuration
         part camera : Camera;
 
@@ -140,26 +250,41 @@ package Drone {
         assert constraint canHover {
             rotorCount * thrustPerRotor > totalMass * 9.81
         }
+        // the current budget holds at hover and at max cruise: the pack's
+        // continuous discharge clears both draws, and the ESC board
+        // rating clears the cruise draw (stock quad: 13.4 A hover /
+        // 15.4 A cruise against 182 A pack and 160 A ESC)
+        assert constraint hoverCurrentBudget {
+            hoverCurrent <= packMaxCurrent
+        }
+        assert constraint cruiseCurrentBudget {
+            cruiseCurrent <= packMaxCurrent
+        }
+        assert constraint escCurrentBudget {
+            cruiseCurrent <= esc.maxCurrent
+        }
     }
 
     part def QuadCopter :> MultiRotor {
-        doc /* The stock four-rotor configuration: symmetric X frame,
-               one 10-inch slow-fly propeller per corner.  Meets every
-               requirement at stock -- the reference airframe of the
+        doc /* The stock four-rotor configuration: a DJI F450 frame with
+               one EMAX MT2213 and one APC 10x4.5MR per corner.  Meets
+               every requirement at stock -- the reference airframe of the
                tutorials. */
         attribute rotorCount : Real :>> rotorCount = 4.0;
-        // motor/prop per-unit masses restated as catalog literals (0.048
-        // and 0.012 kg) so the roll-up stays a flat arithmetic chain
+        // motor/prop per-unit masses restated as catalog literals (0.055
+        // and 0.015 kg) so the roll-up stays a flat arithmetic chain
         attribute totalMass : Real :>> totalMass =
-            chassis.mass + battery.mass + 4.0 * 0.048 + 4.0 * 0.012 + payloadMass;
-        // per-rotor static thrust from the fitted motor + propeller (all
-        // four stations are the same variant, so ->head() reads the
-        // per-unit value off the homogeneous [4] populations)
+            chassis.mass + bayMass + 4.0 * 0.055 + 4.0 * 0.015 + payloadMass;
+        // per-rotor static thrust from the calibrated motor + propeller
+        // fit (all four stations are the same variant, so ->head() reads
+        // the per-unit value off the homogeneous [4] populations)
         attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
             kV = motors.kV->head(),
             voltage = battery.voltage,
             diameter = propellers.diameter->head()
         );
+        attribute motorMaxCurrent : Real :>> motorMaxCurrent =
+            motors.maxCurrent->head();
         // parasite drag area CdA, built up bluff-body style (the
         // uav_missions.sysml BluffFrameDrag idiom): ~0.024 m^2 of frontal
         // area (body + battery stack + four arms + motor cans + props in
@@ -167,7 +292,7 @@ package Drone {
         attribute frontalArea : Real :>> frontalArea = 0.024;   // m^2
         attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
             tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
-        );                                                   // 18.7 m/s
+        );                                                   // 20.0 m/s
 
         part motors : Motor[4];
         part propellers : Propeller[4] :>> propellers;
@@ -180,33 +305,35 @@ package Drone {
         doc /* The three-rotor configuration: two front arms plus a rear
                boom whose motor tilts on a yaw servo.  One motor, one
                propeller, and one arm lighter than the quad -- but yaw
-               authority now comes from vectoring the tail rotor, and
-               this build's small servo runs out of torque against the
-               drag load beyond ~12 deg of commanded pitch, so the FC
-               caps commanded attitude there.  The classic tricopter
-               tradeoff, visible in the numbers: it hovers with margin
-               (canHover holds, thrust/weight ~2.5) yet cruises so
-               slowly that the demo sortie busts the 6-minute mission
-               budget the quad meets with room to spare. */
+               authority now comes from vectoring the tail rotor, and the
+               12 g ES08MA II runs out of torque against the drag load
+               beyond ~11 deg of commanded pitch, so the FC caps commanded
+               attitude there.  The classic tricopter tradeoff, visible in
+               the numbers: it hovers with margin (canHover holds,
+               thrust/weight ~1.9) yet cruises so slowly that the demo
+               sortie busts the 6-minute mission budget the quad meets
+               with room to spare. */
         attribute rotorCount : Real :>> rotorCount = 3.0;
         // same catalog motors and props as the quad, one fewer of each,
         // plus the tail servo; the lighter TriFrame carries the boom
         attribute totalMass : Real :>> totalMass =
-            chassis.mass + battery.mass + 3.0 * 0.048 + 3.0 * 0.012
+            chassis.mass + bayMass + 3.0 * 0.055 + 3.0 * 0.015
             + yawServo.mass + payloadMass;
         attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
             kV = frontMotors.kV->head(),
             voltage = battery.voltage,
             diameter = propellers.diameter->head()
         );
-        // three arms instead of four, but the long boom and the exposed
-        // tilt mechanism give most of that saving back
-        attribute frontalArea : Real :>> frontalArea = 0.022;   // m^2
+        attribute motorMaxCurrent : Real :>> motorMaxCurrent =
+            frontMotors.maxCurrent->head();
+        // three arms instead of four, but the long boom, the exposed tilt
+        // mechanism, and the skids give the whole saving back
+        attribute frontalArea : Real :>> frontalArea = 0.024;   // m^2
         // the yaw-authority cap (see the doc comment above)
-        attribute maxOperationalTilt : Real :>> maxOperationalTilt = 12.0 [SI::'°'];
+        attribute maxOperationalTilt : Real :>> maxOperationalTilt = 11.0 [SI::'°'];
         attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
             tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
-        );                                                   // 12.6 m/s
+        );                                                   // 12.4 m/s
 
         part chassis : TriFrame :>> chassis;
         part frontMotors : Motor[2];
@@ -228,23 +355,38 @@ package Drone {
         doc /* Static thrust of a fixed-pitch propeller on a brushless
                motor: the standard propeller relation T = Ct * rho * n^2 *
                d^4 (momentum / blade-element theory), with rho = 1.225
-               kg/m^3 sea-level air, Ct = 0.11 a typical static thrust
-               coefficient for slow-fly props, and the loaded rev rate
-               n = 0.75 * kV * V / 60 rev/s (a loaded motor holds roughly
-               three quarters of its unloaded kV * V speed).  At the stock
-               design point (920 rpm/V, 11.1 V, 10 in) this gives 9.14 N
-               per rotor -- within 2% of the 9.0 N the pre-split model
-               lumped onto its Rotor. */
+               kg/m^3 sea-level air and the loaded rev rate n = 0.75 * kV
+               * V / 60 rev/s (a loaded motor holds roughly three quarters
+               of its unloaded kV * V speed).  Ct = 0.097 is CALIBRATED to
+               the MT2213 bench table: at the stock design point (935
+               rpm/V, 11.1 V, 10 in) the fit gives 8.32 N = 848 g, on the
+               table's 850 g full-throttle point. */
         in kV : Real;         // rpm/V
         in voltage : Real;    // V
         in diameter : Real;   // m
         return : Real =
-            0.11 * 1.225 * (0.75 * kV * voltage / 60.0) ** 2.0 * diameter ** 4.0;
+            0.097 * 1.225 * (0.75 * kV * voltage / 60.0) ** 2.0 * diameter ** 4.0;
+    }
+
+    calc def MotorCurrent {
+        doc /* Motor current at partial thrust, constant voltage: shaft
+               power follows T^1.5 (momentum theory), so I = Imax *
+               (T / Tmax)^1.5.  Anchored at the bench table's full-throttle
+               point, the fit reproduces the table's current column within
+               a few percent: it predicts 3.3 A at 360 g, 5.5 A at 505 g,
+               7.5 A at 620 g, and 9.3 A at 715 g. */
+        in thrustN : Real;     // commanded thrust, N
+        in maxThrustN : Real;  // full-throttle thrust, N
+        in maxCurrentA : Real; // full-throttle current, A
+        return : Real = maxCurrentA * pow(thrustN / maxThrustN, 1.5);
     }
 
     calc def HoverTime {
+        doc /* Pack endurance at a constant draw, minutes.  The default
+               current is the QuadCopter's computed hover draw (hoverCurrent,
+               ~13.4 A = 13400 mA), rounded up. */
         in capacity : Real;             // mAh
-        in current : Real = 12000.0;    // mA at hover
+        in current : Real = 13400.0;    // mA at hover
         return : Real = capacity / current * 60.0;   // minutes
     }
 
@@ -261,16 +403,16 @@ package Drone {
     // so theta_max = arccos(m g / T) at the usable thrust T, and the
     // drag balance gives tan(theta) = 0.5 rho CdA v^2 / (m g) -- invert
     // for the fastest level cruise a commanded tilt sustains.  At the
-    // quad's stock point (T/W ~ 3.0) the full-throttle ceiling would be
-    // ~70 deg and even the continuous-thrust (55%) ceiling is ~53 deg --
+    // quad's stock point (T/W ~ 2.4) the full-throttle ceiling would be
+    // ~65 deg and even the continuous-thrust (59%) ceiling is ~45 deg --
     // unrealistically sporty, so the COMMANDED tilt is the min() of the
     // physics cap and the operational comfort cap, both visible as
     // MultiRotor attributes.  First-order honest: sea-level rho, rotor
     // induced effects and frame lift ignored, drag purely parasitic.
     // Stock numbers: the quad cruises at its 25-deg comfort cap ->
-    // 18.7 m/s, mission time over tutorial 10's 3.9 km Atlanta loop
-    // ~4.5 min; the tricopter's 12-deg yaw-authority cap -> 12.6 m/s
-    // and ~6.1 min, past the 6-minute budget.
+    // 20.0 m/s, mission time over tutorial 10's 3.9 km Atlanta loop
+    // ~4.2 min; the tricopter's 11-deg yaw-authority cap -> 12.4 m/s
+    // and ~6.2 min, past the 6-minute budget.
 
     calc def MaxTilt {
         doc /* The altitude-hold tilt ceiling, degrees: arccos(m g / T)
@@ -423,9 +565,9 @@ package Drone {
     // ----- architecture wiring: who satisfies what -----------------------
     // The quad meets every requirement at stock: tutorial 10 measures the
     // installation numbers on its CAD build and the mission legs at its
-    // 18.7 m/s cruise.  The tricopter holds the flight envelope with room
-    // to spare (thrust/weight ~2.5), but its 12-deg yaw-authority tilt cap
-    // drops cruise to 12.6 m/s and the demo sortie takes ~6.1 min -- past
+    // 20.0 m/s cruise.  The tricopter holds the flight envelope with
+    // margin (thrust/weight ~1.9), but its 11-deg yaw-authority tilt cap
+    // drops cruise to 12.4 m/s and the demo sortie takes ~6.2 min -- past
     // the 6-minute budget -- so it earns NO mission satisfy edge.  The
     // missing edge is the point.
     satisfy FlightEnvelope by QuadCopter;

@@ -311,7 +311,7 @@ def grand_dashboard(
     station_requirement: str = "UavMissions::IsrStation",
     station_var: str = "stationMinutes",
     loiter_var: str = "loiterSpeed",
-    what_if_station: float = 240.0,
+    what_if_station: float = 420.0,
     values: Mapping[str, Any] | None = None,
     waypoints: Sequence[Sequence[float]] = ATLANTA_LOOP,
     events: Sequence[Any] = FLIGHT_EVENTS,

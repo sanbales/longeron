@@ -256,7 +256,7 @@ class TestSplitInstances:
 
 
 #: the stock examples/drone.sysml design point (see the model's defaults)
-STOCK = {"prop_diameter_in": 10.0, "motor_mass": 0.048, "battery_mass": 0.38, "esc_mass": 0.012}
+STOCK = {"prop_diameter_in": 10.0, "motor_mass": 0.055, "battery_mass": 0.39, "esc_mass": 0.012}
 STOCK_CAMERA = {
     "x": 0.06,
     "y": 0.0,
@@ -670,24 +670,24 @@ WINGED = {
     "wing_area": 0.624,
     "taper": 0.6,
     "fuselage_length": 0.95,
-    "prop_diameter": 0.24,
-    "motor_mass": 0.092,
-    "battery_mass": 1.95,
+    "prop_diameter": 0.2794,
+    "motor_mass": 0.183,
+    "battery_mass": 1.92,
 }
 DART = {
     "body_length": 1.25,
     "wing_span": 1.05,
     "wing_area": 0.179,
     "taper": 0.5,
-    "prop_diameter": 0.24,
-    "motor_mass": 0.15,
-    "battery_mass": 0.5,
+    "prop_diameter": 0.2794,
+    "motor_mass": 0.32,
+    "battery_mass": 0.78,
 }
 TEARDROP = {
     "fuselage_length": 0.62,
-    "prop_diameter": 0.24,
-    "motor_mass": 0.092,
-    "battery_mass": 0.98,
+    "prop_diameter": 0.2794,
+    "motor_mass": 0.183,
+    "battery_mass": 1.32,
 }
 
 
@@ -762,12 +762,15 @@ class TestWingedVtolGeometry:
     def test_to_scale_span(self):
         mesh = geometry.winged_vtol_geometry(**WINGED)
         lo, hi = mesh["bounds"]
-        # z extent: wing tips plus the wingtip lift disks (radius 0.12)
-        assert hi[2] == pytest.approx(2.6 / 2 + 0.12, abs=1e-3)
-        assert lo[2] == pytest.approx(-(2.6 / 2 + 0.12), abs=1e-3)
+        # z extent: wing tips plus the wingtip lift disks (prop radius)
+        assert hi[2] == pytest.approx(2.6 / 2 + 0.2794 / 2, abs=1e-3)
+        assert lo[2] == pytest.approx(-(2.6 / 2 + 0.2794 / 2), abs=1e-3)
         # the 2.6 m wing dwarfs the quad frame
         quad = geometry.drone_geometry(
-            prop_diameter_in=0.33 / geometry.IN, motor_mass=0.092, battery_mass=0.98, esc_mass=0.014
+            prop_diameter_in=0.3302 / geometry.IN,
+            motor_mass=0.183,
+            battery_mass=1.32,
+            esc_mass=0.014,
         )
         assert (hi[2] - lo[2]) > 2.5 * (quad["bounds"][1][2] - quad["bounds"][0][2])
 
@@ -839,10 +842,10 @@ class TestWingedVtolGeometry:
         assert wing_thick < 0.1 * wing_span
         assert tail_thick < 0.1 * tail_span
 
-    @pytest.mark.parametrize("prop_diameter", [0.24, 0.33, 0.51])
+    @pytest.mark.parametrize("prop_diameter", [0.2794, 0.3302, 0.381, 0.51])
     def test_no_two_props_intersect(self, prop_diameter):
         """The reported overlap bug, encoded: every pair of prop disks is
-        strictly AABB-separated, even for the largest catalog prop."""
+        strictly AABB-separated, even for props past the catalog's 15 in."""
 
         mesh = geometry.winged_vtol_geometry(**{**WINGED, "prop_diameter": prop_diameter})
         props = next(p for p in mesh["parts"] if p["name"] == "props")
@@ -1002,7 +1005,7 @@ class TestTeardropQuadGeometry:
         assert len(disks) == 4
         for lo, hi in disks:
             assert hi[1] - lo[1] < 0.004  # horizontal: wafer-thin in Y
-            assert hi[0] - lo[0] == pytest.approx(0.24, abs=1e-3)
+            assert hi[0] - lo[0] == pytest.approx(0.2794, abs=1e-3)
         for i in range(4):
             for j in range(i + 1, 4):
                 assert _disjoint(disks[i], disks[j]), (i, j)
@@ -1050,9 +1053,9 @@ class TestMissionBridge:
             return mission_study.evaluate(
                 {
                     "airframe": airframe,
-                    "motors": "stdMotor",
-                    "props": "slimProp",
-                    "battery": "packMid",
+                    "motors": "x4112s",
+                    "props": "apc11x55",
+                    "battery": "tattu10000",
                     "material": "aluminum",
                 }
             )
@@ -1077,9 +1080,9 @@ class TestMissionBridge:
             arch = mission_study.evaluate(
                 {
                     "airframe": "boxQuad",
-                    "motors": "sprintMotor",
-                    "props": "lifterProp",  # long arms: stiffness governs
-                    "battery": "packMid",
+                    "motors": "at4120",
+                    "props": "tm15x5",  # long arms: stiffness governs
+                    "battery": "tattu10000",
                     "material": material,
                 }
             )
@@ -1098,26 +1101,26 @@ class TestMissionBridge:
         arch = mission_study.evaluate(
             {
                 "airframe": "vtolWing",
-                "motors": "ecoMotor",
-                "props": "lifterProp",
-                "battery": "packLite",
+                "motors": "mn4006",
+                "props": "tm15x5",
+                "battery": "tattu5200",
                 "material": "carbonFiber",
             }
         )
         params = geometry.mission_params(mission_study, arch)
         assert params["wing_span"] == 2.6
         assert params["wing_area"] == 0.624
-        assert params["prop_diameter"] == 0.51
-        assert params["motor_mass"] == 0.058
-        assert params["battery_mass"] == 0.5
+        assert params["prop_diameter"] == 0.381
+        assert params["motor_mass"] == 0.068
+        assert params["battery_mass"] == 0.78
 
     def test_missing_point_is_loud(self, mission_study):
         arch = mission_study.evaluate(
             {
                 "airframe": "boxQuad",
-                "motors": "stdMotor",
-                "props": "slimProp",
-                "battery": "packMid",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu10000",
                 "material": "aluminum",
             }
         )

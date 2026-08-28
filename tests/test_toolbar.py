@@ -680,6 +680,7 @@ class TestSearchMatching:
         # the TriCopter split its population into front pair + tail
         assert search.hit_ids == {
             "Drone::Motor",
+            "Drone::MotorCurrent",
             "Drone::QuadCopter::motors",
             "Drone::TriCopter::frontMotors",
             "Drone::TriCopter::tailMotor",
@@ -847,6 +848,7 @@ class TestHighlightApplication:
             ids = {n.id for n in _iter_nodes(tree) if SEARCH_HIT_CSS in _classes(n)}
             assert ids == {
                 "Drone::Motor",
+                "Drone::MotorCurrent",
                 "Drone::QuadCopter::motors",
                 "Drone::TriCopter::frontMotors",
                 "Drone::TriCopter::tailMotor",

@@ -36,8 +36,8 @@ def main() -> None:
         status = "PASS" if result.passed else "FAIL"
         print(f"  [{status}] {result.name}: {result.expression}")
 
-    heavy = interp.instantiate("Drone::QuadCopter", payloadMass=0.8)
-    print("\nwith 0.8 kg payload:")
+    heavy = interp.instantiate("Drone::QuadCopter", payloadMass=0.6)
+    print("\nwith 0.6 kg payload:")
     for result in interp.check(heavy):
         status = "PASS" if result.passed else "FAIL"
         print(f"  [{status}] {result.name}: {result.expression}")
