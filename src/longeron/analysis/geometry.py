@@ -2,8 +2,11 @@
 
 Builds to-scale UAVs from a mix's catalog attribute values with plain
 triangle meshes (stdlib ``math`` only).  Four airframe families are
-supported: the plain quad-copter (:func:`drone_geometry` -- frame sized
-from prop diameter + tip clearance), the streamlined teardrop-body quad
+supported: the N-arm multirotor (:func:`drone_geometry` -- arms every
+``360 / N`` degrees, sized from prop diameter + tip clearance; a 3-arm
+frame grows a tail boom, ``coaxial=True`` stacks counter-rotating motor
+pairs on every arm, and the default is the classic quad), the
+streamlined teardrop-body quad
 (:func:`teardrop_quad_geometry` -- a lathed low-drag bullet stood on end,
 its long axis normal to the planar rotor quad around it), the cruciform
 tail-sitter VTOL (:func:`winged_vtol_geometry` -- a minimal lathed
@@ -111,6 +114,13 @@ _PROP_CLEARANCE = 0.02  # m: prop-tip to prop-tip clearance
 _PLATE_THICKNESS = 0.003
 _ARM_WIDTH = 0.013
 _ARM_THICKNESS = 0.005
+#: rear-boom reach over the regular arm reach on a 3-arm frame: the
+#: RCExplorer-style tail boom carries the tilt mount and visibly reads
+#: as a boom, not a fourth arm
+_TRI_BOOM_RATIO = 1.3
+#: m: standoff drop of a coax pair's lower motor below its arm (20 mm
+#: standoff posts -- clears the battery brick under the centre plate)
+_COAX_DROP = 0.02
 
 #: per-part colors: muted categorical set at roughly constant lightness
 COLORS = {
@@ -343,6 +353,59 @@ def board_thickness(mass: float) -> float:
     return min(max(thickness, 0.004), 0.014)
 
 
+def _arm_angles(arm_count: int) -> list[float]:
+    """Arm azimuths (radians about +Y, matching ``atan2(z, x)`` of the
+    arm's tip direction, applied via ``_rotate_y(arm, -angle)``) for an
+    N-arm frame.
+
+    Arms sit every ``360 / N`` degrees at the odd multiples of
+    ``pi / N`` -- the flight-controller \"X\" convention: no arm points
+    straight forward, so the nose (and the mission camera) stays clear.
+    Ordering pairs mirror arms front to back (``+pi/N, -pi/N, +3pi/N,
+    ...``); an odd N ends with the single rear arm at ``pi`` -- on a
+    tricopter, the tail boom.  The quad's four angles reproduce the
+    legacy ``atan2(+-1, +-1)`` layout exactly.
+    """
+
+    if arm_count < 3:
+        raise AnalysisError(f"a multirotor frame needs at least 3 arms (got {arm_count!r})")
+    angles: list[float] = []
+    k = 1
+    while len(angles) < arm_count:
+        angles.append(k * pi / arm_count)
+        if len(angles) < arm_count:
+            angles.append(-k * pi / arm_count)
+        k += 2
+    return angles
+
+
+def _rotor_stations(arm_count: int, spacing: float) -> list[tuple[float, float, float, float]]:
+    """Per-arm ``(angle, x, z, reach)`` motor stations for an N-arm frame.
+
+    Adjacent rotor axes sit ``spacing`` apart on a circle of radius
+    ``spacing / (2 sin(pi / N))``, so the derived prop discs just clear
+    each other for every N.  On a 3-arm frame the rear station rides
+    ``_TRI_BOOM_RATIO`` further out: the tail boom.  The 4-arm case is
+    computed the exact legacy way (``+-spacing/2`` on each axis) so the
+    stock quad stays byte-stable.
+    """
+
+    angles = _arm_angles(arm_count)
+    if arm_count == 4:
+        reach = (spacing / 2) * 2**0.5
+        signs = ((1, 1), (1, -1), (-1, 1), (-1, -1))
+        return [
+            (angle, mx * spacing / 2, mz * spacing / 2, reach)
+            for angle, (mx, mz) in zip(angles, signs, strict=True)
+        ]
+    radius = spacing / (2.0 * sin(pi / arm_count))
+    stations = []
+    for angle in angles:
+        reach = radius * (_TRI_BOOM_RATIO if arm_count == 3 and angle == pi else 1.0)
+        stations.append((angle, reach * cos(angle), reach * sin(angle), reach))
+    return stations
+
+
 # ---------------------------------------------------------------------------
 # the drone assembly
 # ---------------------------------------------------------------------------
@@ -388,6 +451,8 @@ def drone_geometry(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
+    arm_count: int = 4,
+    coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
     arm_width: float = _ARM_WIDTH,
     segments: int = 24,
@@ -395,14 +460,26 @@ def drone_geometry(
     motor_spacing: float | None = None,
     camera: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
-    """A to-scale quad-copter mesh dict from catalog attribute values.
+    """A to-scale multirotor mesh dict from catalog attribute values.
+
+    ``arm_count`` sets the frame family: arms radiate every ``360 / N``
+    degrees (:func:`_arm_angles` -- the \"X\" convention, nose clear),
+    a 3-arm frame stretches its single rear arm into the tail boom
+    (``_TRI_BOOM_RATIO``), and the default 4 reproduces the classic
+    quad byte-for-byte.  ``coaxial`` stacks a counter-rotating pair on
+    every arm: the upper motor rides the arm top exactly like the flat
+    build, the lower hangs ``_COAX_DROP`` beneath it on a drawn
+    standoff post, and its prop disc spins below -- two discs per arm,
+    both stamped in ``split_instances`` mode.
 
     The frame is *derived*: adjacent motors sit one prop diameter plus
-    ``_PROP_CLEARANCE`` apart, so a 10-inch cruiser genuinely dwarfs a
-    5-inch racer.  ``motor_spacing`` overrides that derivation with a
-    FIXED motor-to-motor distance -- a real frame does not grow when a
-    bigger prop is bolted onto it, so a prop-swap what-if passes the
-    stock spacing and lets :func:`disc_overlap` judge the result.
+    ``_PROP_CLEARANCE`` apart (for any N, on the circle that spacing
+    implies), so a 10-inch cruiser genuinely dwarfs a 5-inch racer and
+    a hexa is honestly wider than a quad.  ``motor_spacing`` overrides
+    that derivation with a FIXED adjacent motor-to-motor distance -- a
+    real frame does not grow when a bigger prop is bolted onto it, so a
+    prop-swap what-if passes the stock spacing and lets
+    :func:`disc_overlap` judge the result.
     ``arm_thickness``/``arm_width`` default to the demo
     heuristics; callers with load-sized arm tubes (see
     :func:`mission_geometry`) pass the sized outer diameter so heavier-
@@ -410,10 +487,12 @@ def drone_geometry(
     a single mesh (one draw call each in the viewer).
 
     ``split_instances`` keeps the motor and prop instances as separate
-    parts -- ``motor1`` .. ``motor4`` and ``prop1`` .. ``prop4``, the
-    same names and order as the :func:`to_cadquery` assembly children --
-    so each can carry its own identity key (e.g. an M0 individual id,
-    see :func:`tag_parts`) for per-instance linked selection.  The
+    parts -- ``motor1`` .. ``motorR`` and ``prop1`` .. ``propR`` for
+    ``R`` rotors, the same names and order as the :func:`to_cadquery`
+    assembly children (coaxial builds count the uppers first, arm by
+    arm, then the lowers in the same arm order) -- so each can carry
+    its own identity key (e.g. an M0 individual id, see
+    :func:`tag_parts`) for per-instance linked selection.  The
     geometry is a pure re-partition: concatenating the instance parts
     reproduces the merged part exactly, and the default (``False``)
     output is unchanged.  Split mode additionally stamps the analytic
@@ -438,26 +517,35 @@ def drone_geometry(
     spacing = prop_d + _PROP_CLEARANCE if motor_spacing is None else motor_spacing
     if spacing <= 0:
         raise AnalysisError(f"motor spacing must be positive (got {spacing!r})")
+    arm_stations = _rotor_stations(arm_count, spacing)
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
 
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
-    arm_reach = (spacing / 2) * 2**0.5  # centre -> motor axis, in XZ
     motor_y = arm_thickness / 2 + motor_h / 2
     prop_y = arm_thickness / 2 + motor_h + 0.002 + 0.00125
+    # the coax pair's lower station mirrors the upper below the arm,
+    # dropped on a standoff post so the disc clears the battery brick
+    low_motor_y = -(arm_thickness / 2 + _COAX_DROP + motor_h / 2)
+    low_prop_y = -(arm_thickness / 2 + _COAX_DROP + motor_h + 0.002 + 0.00125)
 
-    arms, motors, props = [], [], []
-    arm_length = arm_reach + motor_d / 2
-    for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
-        angle = atan2(mz, mx)
+    arms, posts, motors, props = [], [], [], []
+    for angle, x, z, reach in arm_stations:
+        arm_length = reach + motor_d / 2
         arm = _box(arm_length, arm_thickness, arm_width, cx=arm_length / 2)
         arms.append((_rotate_y(arm[0], -angle), arm[1]))
-        x, z = mx * spacing / 2, mz * spacing / 2
         motors.append(_cylinder(motor_d / 2, motor_h, x, motor_y, z, segments))
         props.append(_cylinder(prop_d / 2, 0.0025, x, prop_y, z, max(segments, 32)))
+    if coaxial:
+        for _angle, x, z, _reach in arm_stations:
+            posts.append(
+                _cylinder(0.004, _COAX_DROP, x, -(arm_thickness / 2 + _COAX_DROP / 2), z, segments)
+            )
+            motors.append(_cylinder(motor_d / 2, motor_h, x, low_motor_y, z, segments))
+            props.append(_cylinder(prop_d / 2, 0.0025, x, low_prop_y, z, max(segments, 32)))
 
-    frame = _merge(_box(plate_side, _PLATE_THICKNESS, plate_side), *arms)
+    frame = _merge(_box(plate_side, _PLATE_THICKNESS, plate_side), *arms, *posts)
     battery = _box(bat_l, bat_w, bat_h, cy=-(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2))
     esc = _box(_BOARD_SIDE, esc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t / 2)
 
@@ -469,9 +557,11 @@ def drone_geometry(
         body = (_translate(body[0], params["x"], params["y"], params["z"]), body[1])
         camera_part.append(("camera", body, 1.0))
 
-    stations = [
-        (mx * spacing / 2, mz * spacing / 2) for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1))
-    ]
+    # rotor stations in instance order: the uppers arm by arm, then (for
+    # a coax build) the lowers in the same arm order, one disc each
+    discs = [(x, prop_y, z) for _angle, x, z, _reach in arm_stations]
+    if coaxial:
+        discs += [(x, low_prop_y, z) for _angle, x, z, _reach in arm_stations]
     if split_instances:
         parts: list[tuple[str, Mesh, float]] = [
             ("frame", frame, 1.0),
@@ -482,25 +572,29 @@ def drone_geometry(
             *camera_part,
         ]
         instance_colors = {
-            f"{kind}{i + 1}": COLORS[f"{kind}s"] for kind in ("motor", "prop") for i in range(4)
+            f"{kind}{i + 1}": COLORS[f"{kind}s"]
+            for kind in ("motor", "prop")
+            for i in range(len(discs))
         }
         mesh = _pack(parts, colors=instance_colors)
         mesh["discs"] = [
             {
                 "part": f"prop{i + 1}",
-                "center": [round(x, 5), round(prop_y, 5), round(z, 5)],
+                "center": [round(x, 5), round(y, 5), round(z, 5)],
                 "normal": [0.0, 1.0, 0.0],
                 "radius": round(prop_d / 2, 5),
                 "thickness": 0.0025,
                 "exclude": [f"motor{i + 1}", f"prop{i + 1}"],
             }
-            for i, (x, z) in enumerate(stations)
+            for i, (x, y, z) in enumerate(discs)
         ]
         mesh["cad"] = {
             "prop_diameter_in": prop_diameter_in,
             "motor_mass": motor_mass,
             "battery_mass": battery_mass,
             "esc_mass": esc_mass,
+            "arm_count": arm_count,
+            "coaxial": coaxial,
             "arm_thickness": arm_thickness,
             "arm_width": arm_width,
             "motor_spacing": motor_spacing,
@@ -1915,6 +2009,8 @@ def to_cadquery(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
+    arm_count: int = 4,
+    coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
     arm_width: float = _ARM_WIDTH,
     motor_spacing: float | None = None,
@@ -1925,12 +2021,16 @@ def to_cadquery(
     Returns a ``cadquery.Assembly`` with one named, colored child per
     part -- ready for ``assembly.export("drone.step")`` or downstream
     CAD -- built from the same sizing inputs as :func:`drone_geometry`
-    (``motor_spacing`` fixes the motor-to-motor distance for prop-swap
-    what-ifs, ``camera`` mounts the mission camera body and takes the
-    ``Camera`` part's attribute names).  These exact solids are what the
-    CAD-native geometric checks (:func:`occlusion_report` /
-    :func:`overlap_report`) boolean-intersect.  Kept separate from the
-    mesh pipeline so the viewer never depends on the OCC kernel.
+    (``arm_count``/``coaxial`` pick the frame family and the coax
+    stacking, ``motor_spacing`` fixes the adjacent motor-to-motor
+    distance for prop-swap what-ifs, ``camera`` mounts the mission
+    camera body and takes the ``Camera`` part's attribute names).  The
+    child names and order match ``drone_geometry``'s
+    ``split_instances`` parts (coax lowers follow the uppers).  These
+    exact solids are what the CAD-native geometric checks
+    (:func:`occlusion_report` / :func:`overlap_report`)
+    boolean-intersect.  Kept separate from the mesh pipeline so the
+    viewer never depends on the OCC kernel.
     """
 
     cq = _require_cadquery("longeron.analysis.geometry.to_cadquery")
@@ -1943,16 +2043,15 @@ def to_cadquery(
     spacing = prop_d + _PROP_CLEARANCE if motor_spacing is None else motor_spacing
     if spacing <= 0:
         raise AnalysisError(f"motor spacing must be positive (got {spacing!r})")
+    arm_stations = _rotor_stations(arm_count, spacing)
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
-    arm_reach = (spacing / 2) * 2**0.5
 
     frame = cq.Workplane("XZ").box(plate_side, plate_side, _PLATE_THICKNESS)
-    length = arm_reach + motor_d / 2
-    for mx, mz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
-        angle = atan2(mz, mx)
+    for angle, x, z, reach in arm_stations:
+        length = reach + motor_d / 2
         arm = (
             cq.Workplane("XZ")
             .box(length, arm_width, arm_thickness)
@@ -1960,24 +2059,41 @@ def to_cadquery(
             .rotate((0, 0, 0), (0, 1, 0), -angle * 180.0 / pi)
         )
         frame = frame.union(arm)
+        if coaxial:  # the lower pair member's standoff post
+            post = cq.Solid.makeCylinder(
+                0.004,
+                _COAX_DROP,
+                pnt=cq.Vector(x, -(arm_thickness / 2 + _COAX_DROP), z),
+                dir=cq.Vector(0, 1, 0),
+            )
+            frame = frame.union(post)
+
+    # rotor stations in instance order (uppers, then coax lowers): the
+    # base y of each motor can, matching the mesh's cylinder placement
+    stations = [(x, z, arm_thickness / 2) for _angle, x, z, _reach in arm_stations]
+    if coaxial:
+        stations += [
+            (x, z, -(arm_thickness / 2 + _COAX_DROP + motor_h))
+            for _angle, x, z, _reach in arm_stations
+        ]
 
     assembly = cq.Assembly(name="drone")
     assembly.add(frame, name="frame", color=color("frame"))
-    for i, (mx, mz) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
-        x, z = mx * spacing / 2, mz * spacing / 2
+    for i, (x, z, base_y) in enumerate(stations):
         # global-frame cylinders: axis straight up (+y), like the mesh --
         # a Workplane("XZ").cylinder(direct=...) reads direct in LOCAL
         # plane coordinates and would lay the cans on their sides
         motor = cq.Solid.makeCylinder(
             motor_d / 2,
             motor_h,
-            pnt=cq.Vector(x, arm_thickness / 2, z),
+            pnt=cq.Vector(x, base_y, z),
             dir=cq.Vector(0, 1, 0),
         )
+        prop_base = base_y + motor_h + 0.002 if base_y >= 0 else base_y - 0.002 - 0.0025
         prop = cq.Solid.makeCylinder(
             prop_d / 2,
             0.0025,
-            pnt=cq.Vector(x, arm_thickness / 2 + motor_h + 0.002, z),
+            pnt=cq.Vector(x, prop_base, z),
             dir=cq.Vector(0, 1, 0),
         )
         assembly.add(motor, name=f"motor{i + 1}", color=color("motors"))

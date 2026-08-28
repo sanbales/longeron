@@ -457,9 +457,11 @@ def test_drone_tree_shows_its_relationships(drone_model):
 
     badges = Counter(node["badge"] for node in rows)
     assert badges == {
-        "connection": 6,  # powerHarness, controlLink, phaseLeads,
-        #                   frontLeads, tailLead, tiltLinkage
-        "satisfy": 4,  # FlightEnvelope x2, mission, installation (quad only)
+        "connection": 9,  # powerHarness, controlLink, phaseLeads (quad +
+        #                    hexa), frontLeads, tailLead, tiltLinkage,
+        #                    upperLeads, lowerLeads
+        "satisfy": 10,  # FlightEnvelope x4, mission x3, installation
+        #                 (quad only), FailSafeHover x2 (hexa + X8)
         "flow": 1,  # dcBus: battery.voltage -> esc.busVoltage
         "allocation": 1,  # FlightStates -> FlightController
         "dependency": 1,  # PlanBattery -> HoverTime

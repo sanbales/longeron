@@ -677,13 +677,17 @@ class TestSearchMatching:
         search = _search(widget)
         search.query = "motor"
         # the def by title, the usages via 'motors : Motor [4]' etc. --
-        # the TriCopter split its population into front pair + tail
+        # the TriCopter split its population into front pair + tail, the
+        # hexa keeps one six-wide population, the coax X8 pairs up
         assert search.hit_ids == {
             "Drone::Motor",
             "Drone::MotorCurrent",
             "Drone::QuadCopter::motors",
             "Drone::TriCopter::frontMotors",
             "Drone::TriCopter::tailMotor",
+            "Drone::HexaCopter::motors",
+            "Drone::CoaxX8::upperMotors",
+            "Drone::CoaxX8::lowerMotors",
         }
 
     def test_count_is_displayed(self, widget):
@@ -852,4 +856,7 @@ class TestHighlightApplication:
                 "Drone::QuadCopter::motors",
                 "Drone::TriCopter::frontMotors",
                 "Drone::TriCopter::tailMotor",
+                "Drone::HexaCopter::motors",
+                "Drone::CoaxX8::upperMotors",
+                "Drone::CoaxX8::lowerMotors",
             }

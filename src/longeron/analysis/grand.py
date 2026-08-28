@@ -131,30 +131,54 @@ _GRAND_CSS = (
 def drone_scene(
     model: M.Model, assembly: str = "Drone::QuadCopter"
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """Bake the tagged per-instance mesh for a drone assembly.
+    """Bake the tagged per-instance mesh for a drone-family assembly.
 
     Interprets ``assembly`` at M0 (:func:`longeron.m0.interpret`), sizes
     the parametric mesh from the population's own attribute values
     (:func:`longeron.analysis.geometry.drone_geometry`,
     ``split_instances=True``), and stamps every rendered part with its
-    **M0 individual id** (tutorial 10's identity keys).  The assembly
-    must have the ``examples/drone.sysml`` shape: ``chassis``,
-    ``battery``, ``motors``, ``propellers`` slots, plus an optional
-    ``camera`` whose placement/boresight attributes drive the occlusion
-    checks.  Returns ``(mesh, part_map)``.
+    **M0 individual id** (tutorial 10's identity keys).  The rotor
+    population picks the frame family -- the CONFIG-KEYED rendering
+    seam: a ``motors`` population fans out one arm per member (the quad
+    and the hexa), ``frontMotors`` + ``tailMotor`` build the three-arm
+    tricopter with its tail boom, and ``upperMotors`` + ``lowerMotors``
+    stack the coaxial pairs (uppers take ``motor1..4`` / the first
+    propeller individuals, lowers follow).  The assembly must have the
+    ``examples/drone.sysml`` shape: ``chassis``, ``battery``, and
+    ``propellers`` slots, one of the rotor-population shapes above,
+    plus an optional ``camera`` whose placement/boresight attributes
+    drive the occlusion checks.  Pair with
+    :func:`longeron.analysis.link.owning_config` to resolve a diagram
+    selection anywhere inside a configuration to the configuration
+    this function renders.  Returns ``(mesh, part_map)``.
     """
 
     from .. import m0  # heavier import; keep the module import light
 
     population = m0.interpret(model, assembly)
     slots = population.root.slots
-    missing = [n for n in ("chassis", "battery", "motors", "propellers") if n not in slots]
+    missing = [n for n in ("chassis", "battery", "propellers") if n not in slots]
     if missing:
         raise AnalysisError(
             f"{assembly} is missing the drone-assembly slot(s) {missing} "
             "(drone_scene expects the examples/drone.sysml shape)"
         )
-    motors = list(slots["motors"])
+    coaxial = False
+    if "motors" in slots:
+        motors = list(slots["motors"])
+        arm_count = len(motors)
+    elif "frontMotors" in slots and "tailMotor" in slots:
+        motors = [*slots["frontMotors"], slots["tailMotor"]]
+        arm_count = len(motors)
+    elif "upperMotors" in slots and "lowerMotors" in slots:
+        uppers, lowers = list(slots["upperMotors"]), list(slots["lowerMotors"])
+        motors = uppers + lowers
+        arm_count, coaxial = len(uppers), True
+    else:
+        raise AnalysisError(
+            f"{assembly} declares no rotor population drone_scene knows "
+            "(motors, frontMotors + tailMotor, or upperMotors + lowerMotors)"
+        )
     props = list(slots["propellers"])
     camera = dict(slots["camera"].slots) if "camera" in slots else None
     mesh = geometry.drone_geometry(
@@ -162,6 +186,8 @@ def drone_scene(
         motor_mass=float(motors[0].slots["mass"]),
         battery_mass=float(slots["battery"].slots["mass"]),
         esc_mass=_ESC_MASS,
+        arm_count=arm_count,
+        coaxial=coaxial,
         split_instances=True,
         camera=camera,
     )

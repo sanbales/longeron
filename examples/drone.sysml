@@ -2,18 +2,22 @@
 // structure, calculations, constraints, requirements, actions, and states.
 package Drone {
     doc /* A small multi-rotor drone family, modeled for the longeron demo:
-           one abstract MultiRotor airframe and two concrete configurations
+           one abstract MultiRotor airframe and four concrete configurations
            that specialize it -- the stock four-rotor QuadCopter (an F450-
-           class build from real commercial parts) and the lighter
-           three-rotor TriCopter re-specced from the same catalog.  The
-           configurations differ by the redefined rotor populations and
+           class build from real commercial parts), the lighter three-rotor
+           TriCopter re-specced from the same catalog, the six-rotor
+           HexaCopter on the bigger F550 frame, and the eight-rotor CoaxX8
+           that stacks counter-rotating motor pairs on the F450-size frame.
+           The configurations differ by the redefined rotor populations and
            sizing knobs; the physics chain, equipment, and constraints are
-           shared.
+           shared.  No configuration wins everything: the family trades
+           cost, mass, endurance, footprint, and motor-out tolerance.
 
            Every component spec below is a NOMINAL manufacturer figure
-           (catalog masses, bench-table thrust points, C-ratings).  These
-           are teaching examples, not engineering data: real builds vary
-           unit to unit, and no number here was measured on this airframe. */
+           (catalog masses, bench-table thrust points, C-ratings, street
+           prices).  These are teaching examples, not engineering data:
+           real builds vary unit to unit, and no number here was measured
+           on this airframe. */
 
     // ----- structure ---------------------------------------------------
 
@@ -26,6 +30,7 @@ package Drone {
         attribute cRating : Real = 35.0;         // C, continuous discharge (label figure)
         attribute voltage : Real = 11.1 [SI::V]; // 3S LiPo nominal
         attribute mass : Real = 0.39 [SI::kg];
+        attribute cost : Real = 45.0;            // USD, nominal street price
     }
 
     part def Motor {
@@ -45,6 +50,7 @@ package Drone {
         attribute kV : Real = 935.0;             // rpm/V
         attribute maxCurrent : Real = 12.0 [SI::A];  // full throttle, 10x4.5 prop, 11.1 V
         attribute mass : Real = 0.055 [SI::kg];
+        attribute cost : Real = 17.0;            // USD, nominal street price
     }
 
     part def Propeller {
@@ -53,6 +59,7 @@ package Drone {
         attribute diameter : Real = 0.254 [SI::m];   // 10 in
         attribute pitch : Real = 0.1143 [SI::m];     // 4.5 in
         attribute mass : Real = 0.015 [SI::kg];
+        attribute cost : Real = 4.0;                 // USD, nominal street price
         attribute discArea : Real = pi * (diameter / 2.0) ** 2.0;   // m^2
     }
 
@@ -62,6 +69,7 @@ package Drone {
                the equipment bay parts and the harness allowance carry
                everything else. */
         attribute mass : Real = 0.282 [SI::kg];
+        attribute cost : Real = 39.0;    // USD, nominal kit price
     }
 
     part def TriFrame :> Frame {
@@ -71,6 +79,17 @@ package Drone {
                but the boom carries the tilt-mount hardpoint.  Bare frame
                mass, same convention as Frame. */
         attribute mass : Real = 0.24 [SI::kg];
+        attribute cost : Real = 29.0;    // USD, nominal plate-stock conversion
+    }
+
+    part def HexFrame :> Frame {
+        doc /* DJI Flame Wheel F550: the F450's six-arm sibling -- same
+               molded-arm construction on a wider pair of plates, arms
+               every 60 degrees.  Bare frame kit mass, same convention as
+               Frame; the 2.4 kg book takeoff-weight ceiling rides on the
+               HexaCopter configuration below. */
+        attribute mass : Real = 0.478 [SI::kg];
+        attribute cost : Real = 59.0;    // USD, nominal kit price
     }
 
     part def Camera {
@@ -94,11 +113,15 @@ package Drone {
                channel spare).  A modern 4-in-1 standing in for the classic
                four separate 30 A ESCs of an F450 build.  Its per-channel
                and board ratings are two of the ceilings in the current
-               budget below. */
+               budget below.  The six- and eight-rotor configurations
+               stack a second board for the extra channels; their mass and
+               cost roll-ups carry it as a literal, and the single board's
+               ratings stay the (conservative) budget ceilings. */
         attribute busVoltage : Real = 11.1 [SI::V];   // pack input (rated 3-6S)
         attribute maxCurrentPerMotor : Real = 40.0 [SI::A];  // continuous, per channel
         attribute maxCurrent : Real = 160.0 [SI::A]; // continuous, all channels
         attribute mass : Real = 0.012 [SI::kg];
+        attribute cost : Real = 40.0;    // USD, nominal street price
     }
 
     part def FlightController {
@@ -107,28 +130,33 @@ package Drone {
                ArduPilot main-loop default. */
         attribute loopRate : Real = 400.0 [SI::Hz];
         attribute mass : Real = 0.039 [SI::kg];
+        attribute cost : Real = 210.0;   // USD, nominal street price
     }
 
     part def GpsModule {
         doc /* Holybro M9N GPS/compass puck on its mast. */
         attribute mass : Real = 0.032 [SI::kg];
+        attribute cost : Real = 50.0;    // USD, nominal street price
     }
 
     part def Receiver {
         doc /* FrSky X8R RC receiver. */
         attribute mass : Real = 0.017 [SI::kg];
+        attribute cost : Real = 40.0;    // USD, nominal street price
     }
 
     part def TelemetryRadio {
         doc /* Holybro SiK telemetry radio V3 (915 MHz, 100 mW) with
                antenna: the ground-station link. */
         attribute mass : Real = 0.028 [SI::kg];
+        attribute cost : Real = 50.0;    // USD, nominal street price
     }
 
     part def LandingGear {
         doc /* F450 tall landing skid set: keeps the camera and the pack
                clear of the ground. */
         attribute mass : Real = 0.08 [SI::kg];
+        attribute cost : Real = 10.0;    // USD, nominal street price
     }
 
     part def YawServo {
@@ -137,6 +165,7 @@ package Drone {
                balance as on a quad.  An EMAX ES08MA II metal-gear micro
                servo plus its linkage. */
         attribute mass : Real = 0.012 [SI::kg];
+        attribute cost : Real = 9.0;     // USD, nominal street price
         attribute travel : Real = 20.0 [SI::'°'];    // tilt each side of vertical
     }
 
@@ -154,6 +183,10 @@ package Drone {
                architecture difference. */
         attribute payloadMass : Real = 0.2 [SI::kg];
         attribute rotorCount : Real;         // redefined per configuration
+        // lift-equivalent rotors: rotorCount, except where a rotor works
+        // in another's wake (the CoaxX8 redefines this -- its lower
+        // rotors deliver only coaxEfficiency of their isolated thrust)
+        attribute effectiveRotorCount : Real = rotorCount;
         attribute totalMass : Real;          // redefined per configuration, kg
         attribute maxTakeoffMass : Real = 1.5 [SI::kg];
         attribute thrustPerRotor : Real;     // redefined per configuration, N
@@ -163,10 +196,16 @@ package Drone {
         // wiring, straps, camera and mounts: the build allowance that no
         // single catalog part owns
         attribute harnessMass : Real = 0.05 [SI::kg];
-        // the equipment bay, summed once for both configurations
+        // the equipment bay, summed once for every configuration
         attribute bayMass : Real = battery.mass + esc.mass
             + flightController.mass + gps.mass + receiver.mass
             + telemetry.mass + landingGear.mass + harnessMass;
+        // the equipment bay's ledger price, summed once (nominal street
+        // prices; the camera and harness ride in a build allowance)
+        attribute bayCost : Real = battery.cost + esc.cost
+            + flightController.cost + gps.cost + receiver.cost
+            + telemetry.cost + landingGear.cost;
+        attribute totalCost : Real;          // redefined per configuration, USD
         // FC + GPS + RC receiver + telemetry: ~6 W at 11.1 V
         attribute avionicsCurrent : Real = 0.5 [SI::A];
 
@@ -192,7 +231,20 @@ package Drone {
         attribute continuousThrustFraction : Real = min(
             sustainedThrustFraction, min(escThrustFraction, packThrustFraction));
         attribute usableThrust : Real =
-            rotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
+            effectiveRotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
+
+        // ----- motor-out tolerance --------------------------------------
+        // The largest torque-balanced rotor set the mixer can still fly
+        // after the WORST single motor failure, in lift-equivalent rotors
+        // (redefined per configuration): a quad must also shut the failed
+        // motor's opposite to keep torque balance (2 remain), a tricopter
+        // keeps no balanced hovering set at all (0), a hexa flies on the
+        // balanced four (4), and a coax pair's survivor keeps its station
+        // (6.4 lift-equivalents).  FailSafeHover below tests the usable
+        // thrust of that set against the weight.
+        attribute failsafeRotorCount : Real;     // redefined per configuration
+        attribute motorOutUsableThrust : Real =
+            failsafeRotorCount * thrustPerRotor * continuousThrustFraction;    // N, continuous
 
         // the flight controller's commanded-attitude cap: comfort and
         // controllability, far below the physics ceiling
@@ -215,18 +267,21 @@ package Drone {
         // weight / cos(tilt)), plus the avionics rail.  The pack's
         // C-rating x capacity and the ESC board rating bound both.
         attribute hoverCurrent : Real = rotorCount * MotorCurrent(
-            thrustN = totalMass * 9.81 / rotorCount,
+            thrustN = totalMass * 9.81 / effectiveRotorCount,
             maxThrustN = thrustPerRotor,
             maxCurrentA = motorMaxCurrent
         ) + avionicsCurrent;                                 // A, at hover
         attribute cruiseCurrent : Real = rotorCount * MotorCurrent(
             thrustN = totalMass * 9.81
-                / cos(cruiseTilt * pi / 180.0) / rotorCount,
+                / cos(cruiseTilt * pi / 180.0) / effectiveRotorCount,
             maxThrustN = thrustPerRotor,
             maxCurrentA = motorMaxCurrent
         ) + avionicsCurrent;                                 // A, at max cruise
         attribute packMaxCurrent : Real =
             battery.capacity / 1000.0 * battery.cRating;     // A, continuous
+        // pack endurance at the hover draw: the family's efficiency axis
+        attribute hoverMinutes : Real = HoverTime(
+            capacity = battery.capacity, current = hoverCurrent * 1000.0);
 
         part chassis : Frame;
         part battery : Battery;
@@ -248,7 +303,7 @@ package Drone {
 
         assert constraint takeoffMassLimit { totalMass <= maxTakeoffMass }
         assert constraint canHover {
-            rotorCount * thrustPerRotor > totalMass * 9.81
+            effectiveRotorCount * thrustPerRotor > totalMass * 9.81
         }
         // the current budget holds at hover and at max cruise: the pack's
         // continuous discharge clears both draws, and the ESC board
@@ -268,13 +323,22 @@ package Drone {
     part def QuadCopter :> MultiRotor {
         doc /* The stock four-rotor configuration: a DJI F450 frame with
                one EMAX MT2213 and one APC 10x4.5MR per corner.  Meets
-               every requirement at stock -- the reference airframe of the
-               tutorials. */
+               every requirement at stock EXCEPT motor-out tolerance --
+               after one failure the mixer must also shut the opposite
+               motor to keep torque balance, and the remaining pair
+               cannot lift the craft -- so the family's redundancy story
+               starts here.  The reference airframe of the tutorials. */
         attribute rotorCount : Real :>> rotorCount = 4.0;
+        // one failure shuts the opposite motor too: two rotors remain
+        attribute failsafeRotorCount : Real :>> failsafeRotorCount = 2.0;
         // motor/prop per-unit masses restated as catalog literals (0.055
         // and 0.015 kg) so the roll-up stays a flat arithmetic chain
         attribute totalMass : Real :>> totalMass =
             chassis.mass + bayMass + 4.0 * 0.055 + 4.0 * 0.015 + payloadMass;
+        // the ledger price, same flat-chain convention (17 USD motors,
+        // 4 USD props)
+        attribute totalCost : Real :>> totalCost =
+            chassis.cost + bayCost + 4.0 * (17.0 + 4.0);
         // per-rotor static thrust from the calibrated motor + propeller
         // fit (all four stations are the same variant, so ->head() reads
         // the per-unit value off the homogeneous [4] populations)
@@ -314,11 +378,17 @@ package Drone {
                sortie busts the 6-minute mission budget the quad meets
                with room to spare. */
         attribute rotorCount : Real :>> rotorCount = 3.0;
+        // no torque-balanced hovering subset survives any single failure:
+        // the tail out leaves an unmanageable pitch moment, a front out
+        // leaves nothing the tilt servo can balance
+        attribute failsafeRotorCount : Real :>> failsafeRotorCount = 0.0;
         // same catalog motors and props as the quad, one fewer of each,
         // plus the tail servo; the lighter TriFrame carries the boom
         attribute totalMass : Real :>> totalMass =
             chassis.mass + bayMass + 3.0 * 0.055 + 3.0 * 0.015
             + yawServo.mass + payloadMass;
+        attribute totalCost : Real :>> totalCost =
+            chassis.cost + bayCost + 3.0 * (17.0 + 4.0) + yawServo.cost;
         attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
             kV = frontMotors.kV->head(),
             voltage = battery.voltage,
@@ -345,6 +415,109 @@ package Drone {
         connection tailLead connect esc to tailMotor;
         // the yaw mechanism: the servo vectors the tail rotor
         connection tiltLinkage connect yawServo to tailMotor;
+    }
+
+    part def HexaCopter :> MultiRotor {
+        doc /* The six-rotor configuration: a DJI Flame Wheel F550 frame
+               with the same EMAX MT2213 + APC 10x4.5MR stack on each of
+               six arms, 60 degrees apart.  The classic redundancy buy:
+               after any single motor failure the mixer shuts the failed
+               motor's opposite and flies on the balanced four, so
+               FailSafeHover holds with margin (motor-out usable thrust
+               ~19.6 N against ~17.3 N of weight).  The price is
+               everything else -- the heaviest and widest airframe of the
+               family, the worst hover endurance, and the biggest ledger
+               price.  The F550's 2.4 kg book takeoff ceiling replaces
+               the F450 default. */
+        attribute rotorCount : Real :>> rotorCount = 6.0;
+        // one failure shuts the opposite motor too: four rotors remain
+        attribute failsafeRotorCount : Real :>> failsafeRotorCount = 4.0;
+        attribute maxTakeoffMass : Real :>> maxTakeoffMass = 2.4 [SI::kg];
+        // six motor/prop stations plus the second 4-in-1 ESC board
+        // (0.012 kg, 40 USD) the extra channels need
+        attribute totalMass : Real :>> totalMass =
+            chassis.mass + bayMass + 6.0 * 0.055 + 6.0 * 0.015
+            + 0.012 + payloadMass;
+        attribute totalCost : Real :>> totalCost =
+            chassis.cost + bayCost + 6.0 * (17.0 + 4.0) + 40.0;
+        attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
+            kV = motors.kV->head(),
+            voltage = battery.voltage,
+            diameter = propellers.diameter->head()
+        );
+        attribute motorMaxCurrent : Real :>> motorMaxCurrent =
+            motors.maxCurrent->head();
+        // the wider F550 plates, two extra arms, and two extra motor
+        // cans grow the bluff frontal area past the quad's 0.024 m^2
+        attribute frontalArea : Real :>> frontalArea = 0.030;   // m^2
+        attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
+            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
+        );                                                   // 19.9 m/s
+
+        part chassis : HexFrame :>> chassis;
+        part motors : Motor[6];
+        part propellers : Propeller[6] :>> propellers;
+
+        // one phase-lead bundle per arm: the [6] population fans out
+        connection phaseLeads connect esc to motors;
+    }
+
+    part def CoaxX8 :> MultiRotor {
+        doc /* The counter-rotating coaxial X8: the F450-size frame with
+               TWO MT2213 stations per arm -- an upper motor on top of
+               each arm and a lower motor hung beneath it on standoffs,
+               each pair spinning opposite ways.  Eight rotors in the
+               quad's footprint buy near-octo lift and one-failure
+               tolerance (the pair's survivor keeps the station), but the
+               lower rotor works in the upper's wake: coaxEfficiency
+               carries the nominal wind-tunnel rule of thumb that it
+               delivers only ~85% of its isolated thrust, and every
+               thrust roll-up above scales by the lift-equivalent
+               effectiveRotorCount instead of the motor count.  The
+               penalty is visible in the numbers -- the family's worst
+               hover efficiency per rotor and a bigger hover draw than
+               the quad it outlifts.  The 2.0 kg takeoff ceiling is the
+               builder's structural allowance for the doubled arm load,
+               not a DJI rating. */
+        attribute rotorCount : Real :>> rotorCount = 8.0;
+        // the coax penalty, as a catalog figure: thrust delivered by a
+        // lower rotor in the upper's wake over its isolated thrust
+        // (nominal wind-tunnel rule of thumb for matched coax pairs)
+        attribute coaxEfficiency : Real = 0.85;
+        // four full-thrust uppers plus four wake-running lowers
+        attribute effectiveRotorCount : Real :>> effectiveRotorCount =
+            4.0 * (1.0 + coaxEfficiency);
+        // worst single failure kills a pair member; the survivor keeps
+        // the station: three full pairs plus one wake-running lower
+        attribute failsafeRotorCount : Real :>> failsafeRotorCount =
+            3.0 * (1.0 + coaxEfficiency) + coaxEfficiency;
+        attribute maxTakeoffMass : Real :>> maxTakeoffMass = 2.0 [SI::kg];
+        // eight motor/prop stations plus the second 4-in-1 ESC board
+        attribute totalMass : Real :>> totalMass =
+            chassis.mass + bayMass + 8.0 * 0.055 + 8.0 * 0.015
+            + 0.012 + payloadMass;
+        attribute totalCost : Real :>> totalCost =
+            chassis.cost + bayCost + 8.0 * (17.0 + 4.0) + 40.0;
+        attribute thrustPerRotor : Real :>> thrustPerRotor = PropThrust(
+            kV = upperMotors.kV->head(),
+            voltage = battery.voltage,
+            diameter = propellers.diameter->head()
+        );
+        attribute motorMaxCurrent : Real :>> motorMaxCurrent =
+            upperMotors.maxCurrent->head();
+        // the quad's footprint plus the hung lower cans and standoffs
+        attribute frontalArea : Real :>> frontalArea = 0.026;   // m^2
+        attribute maxCruiseSpeed : Real :>> maxCruiseSpeed = MaxCruiseSpeed(
+            tiltDeg = cruiseTilt, massKg = totalMass, dragArea = dragArea
+        );                                                   // 21.0 m/s
+
+        part upperMotors : Motor[4];
+        part lowerMotors : Motor[4];
+        part propellers : Propeller[8] :>> propellers;
+
+        // one phase-lead bundle per pair member: upper and lower fan out
+        connection upperLeads connect esc to upperMotors;
+        connection lowerLeads connect esc to lowerMotors;
     }
 
     enum def FlightMode { manual; altitudeHold; autonomous; }
@@ -481,14 +654,32 @@ package Drone {
     requirement def FlightEnvelope {
         doc /* The drone shall hover with a comfortable thrust margin --
                any configuration: the subject is the abstract airframe,
-               and rotorCount scales the per-rotor thrust. */
+               and effectiveRotorCount scales the per-rotor thrust (so a
+               coax pair's wake-running lower rotor counts at its
+               delivered thrust, not its catalog thrust). */
         subject drone : MultiRotor;
         assume constraint { drone.totalMass > 0.0 }
         require constraint hoverMargin {
             ThrustToWeight(
-                thrust = drone.rotorCount * drone.thrustPerRotor,
+                thrust = drone.effectiveRotorCount * drone.thrustPerRotor,
                 mass = drone.totalMass
             ) >= 1.8
+        }
+    }
+
+    requirement def FailSafeHover {
+        doc /* Motor-out tolerance: the craft shall keep hovering after
+               any single motor failure.  The measure is the continuous
+               usable thrust of the largest torque-balanced rotor set
+               that survives the worst-case failure (failsafeRotorCount
+               -- a coax pair loses one member, a flat quad also gives up
+               the failed motor's opposite), tested against the weight.
+               The quad and the tricopter fail it; the hexa and the coax
+               X8 pass -- the classic redundancy trade. */
+        subject drone : MultiRotor;
+        assume constraint { drone.totalMass > 0.0 }
+        require constraint motorOutHover {
+            drone.motorOutUsableThrust > drone.totalMass * 9.81
         }
     }
 
@@ -563,17 +754,30 @@ package Drone {
     }
 
     // ----- architecture wiring: who satisfies what -----------------------
-    // The quad meets every requirement at stock: tutorial 10 measures the
-    // installation numbers on its CAD build and the mission legs at its
-    // 20.0 m/s cruise.  The tricopter holds the flight envelope with
-    // margin (thrust/weight ~1.9), but its 11-deg yaw-authority tilt cap
-    // drops cruise to 12.4 m/s and the demo sortie takes ~6.2 min -- past
-    // the 6-minute budget -- so it earns NO mission satisfy edge.  The
-    // missing edge is the point.
+    // The quad meets every requirement at stock EXCEPT motor-out
+    // tolerance: tutorial 10 measures the installation numbers on its CAD
+    // build and the mission legs at its 20.0 m/s cruise, but a single
+    // failure leaves it two balanced rotors that cannot lift it.  The
+    // tricopter holds the flight envelope with margin (thrust/weight
+    // ~1.9), but its 11-deg yaw-authority tilt cap drops cruise to
+    // 12.4 m/s and the demo sortie takes ~6.2 min -- past the 6-minute
+    // budget -- so it earns NO mission satisfy edge, and no failure
+    // leaves it any balanced rotor set at all.  The hexa and the coax X8
+    // buy the FailSafeHover edge the flat configurations cannot have --
+    // the hexa with the heaviest, widest, thirstiest airframe of the
+    // family, the X8 with the coax wake penalty on every thrust number.
+    // The missing edges are the point: no configuration collects them
+    // all.
     satisfy FlightEnvelope by QuadCopter;
     satisfy FlightEnvelope by TriCopter;
+    satisfy FlightEnvelope by HexaCopter;
+    satisfy FlightEnvelope by CoaxX8;
     satisfy mission by QuadCopter;
+    satisfy mission by HexaCopter;
+    satisfy mission by CoaxX8;
     satisfy installation by QuadCopter;
+    satisfy FailSafeHover by HexaCopter;
+    satisfy FailSafeHover by CoaxX8;
 
     // The flight-state protocol runs on the flight controller; sortie
     // battery planning leans on the endurance calc it calls.  (The

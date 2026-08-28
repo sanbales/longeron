@@ -275,7 +275,7 @@ class TestPilotNavigability:
     pymbe (github.com/sanbales/pymbe): pilot-API consumers detect
     relationships via the presence of ``source``+``target``
     (pymbe ``model.py:521``) and navigate exclusively through those
-    arrays.  The drone-model counts (182 relationships / 175 element
+    arrays.  The drone-model counts (425 relationships / 341 element
     nodes) pin pymbe's LPG projection of this export."""
 
     @staticmethod
@@ -285,8 +285,8 @@ class TestPilotNavigability:
 
     def test_relationship_and_node_counts(self, drone_records):
         relationships = self._relationships(drone_records)
-        assert len(relationships) == 313  # pymbe LPG edges
-        assert len(drone_records) - len(relationships) == 271  # pymbe LPG nodes
+        assert len(relationships) == 425  # pymbe LPG edges
+        assert len(drone_records) - len(relationships) == 341  # pymbe LPG nodes
 
     def test_every_endpoint_resolves(self, drone_records):
         ids = {r["@id"] for r in drone_records}
@@ -311,7 +311,9 @@ class TestPilotNavigability:
             # configuration split the family (inherited features are
             # reached through the Specialization edge, pymbe-style)
             "rotorCount",
+            "failsafeRotorCount",
             "totalMass",
+            "totalCost",
             "thrustPerRotor",
             "motorMaxCurrent",
             "frontalArea",

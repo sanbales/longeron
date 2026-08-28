@@ -44,10 +44,38 @@ from .. import model as M
 from ..interpreter import Interpreter
 from .geometry import tag_parts
 
-__all__ = ["individual_qname", "link_selection", "selection_keys"]
+__all__ = ["individual_qname", "link_selection", "owning_config", "selection_keys"]
 
 #: an M0 instance-index suffix on one dotted id segment (``motors#2``)
 _INSTANCE_INDEX = re.compile(r"#\d+$")
+
+
+def owning_config(model: M.Model, element: M.Element | str) -> M.Definition | None:
+    """The top-level configuration definition that owns ``element``.
+
+    Climbs the ownership chain from ``element`` (an element or a
+    qualified name) to the outermost :class:`~longeron.model.Definition`
+    whose owner is a package -- for ``examples/drone.sysml``,
+    ``Drone::TriCopter::tailMotor`` (or any attribute, connection, or
+    nested part of the tricopter) resolves to the ``TriCopter``
+    definition itself, and a configuration resolves to itself.  Pair
+    with :func:`longeron.analysis.grand.drone_scene` so a diagram
+    selection anywhere inside a configuration renders THAT
+    configuration's geometry (the tri boom, the hexa's six arms, the
+    coax stacks), not a hardcoded build.  The outermost definition of
+    ANY kind is returned (a calc def resolves to itself); callers that
+    render hand the result to ``drone_scene``, which rejects
+    non-assembly shapes loudly.  Returns ``None`` for elements owned
+    by no definition (a package, the model root).
+    """
+
+    node: M.Element | None = model.find(element) if isinstance(element, str) else element
+    found: M.Definition | None = None
+    while node is not None:
+        if isinstance(node, M.Definition):
+            found = node
+        node = node.owner
+    return found
 
 
 def individual_qname(key: str) -> str | None:

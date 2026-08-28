@@ -1,0 +1,469 @@
+"""The multirotor family of examples/drone.sysml, end to end.
+
+One abstract MultiRotor, four configurations -- QuadCopter, TriCopter,
+HexaCopter, CoaxX8 -- and the axes they trade: mass, usable thrust,
+hover current, endurance, cruise speed, motor-out tolerance, and cost.
+The tests pin the family matrix (no configuration wins everything), the
+N-arm parametric geometry each configuration renders to, the
+config-keyed scene seam, the M0 population fan-outs, and the verify
+tiers' family-level catches (the quad's motor-out violation, the hexa's
+exact payload ceiling, the X8's proven-safe envelope).
+"""
+
+import math
+from pathlib import Path
+
+import pytest
+
+import longeron
+from longeron.analysis import geometry, link, mission3d
+from longeron.analysis.grand import drone_scene
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
+
+CONFIGS = ("QuadCopter", "TriCopter", "HexaCopter", "CoaxX8")
+
+#: the hand-computed stock design point (same derivation as
+#: tests/test_mission3d.py -- the quad's numbers must stay bit-identical)
+THRUST_N = 0.097 * 1.225 * (0.75 * 935.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
+BAY_KG = 0.39 + 0.012 + 0.039 + 0.032 + 0.017 + 0.028 + 0.08 + 0.05
+QUAD_MASS = 0.282 + BAY_KG + 4.0 * 0.055 + 4.0 * 0.015 + 0.2
+
+ATLANTA = [
+    (33.7813, -84.3833, 350.0),
+    (33.7885, -84.3785, 390.0),
+    (33.7900, -84.3695, 380.0),
+    (33.7838, -84.3690, 360.0),
+    (33.7770, -84.3825, 350.0),
+]
+
+STOCK = {"prop_diameter_in": 10.0, "motor_mass": 0.055, "battery_mass": 0.39, "esc_mass": 0.012}
+STOCK_CAMERA = {
+    "x": 0.06,
+    "y": 0.0,
+    "z": 0.0,
+    "azimuth": 0.0,
+    "elevation": -15.0,
+    "fieldOfView": 50.0,
+}
+
+
+@pytest.fixture(scope="module")
+def model():
+    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+
+
+@pytest.fixture(scope="module")
+def interp(model):
+    return longeron.Interpreter(model)
+
+
+@pytest.fixture(scope="module")
+def instances(interp):
+    return {name: interp.instantiate(f"Drone::{name}") for name in CONFIGS}
+
+
+class TestFamilyMatrix:
+    """The model's own numbers: the trade the maintainer asked for."""
+
+    def test_quad_stock_numbers_bit_identical(self, instances):
+        # the T2/tutorial pins: adding the family must not move the quad
+        quad = instances["QuadCopter"].slots
+        assert quad["thrustPerRotor"] == THRUST_N
+        assert quad["usableThrust"] == 4.0 * THRUST_N * 0.59
+        assert quad["totalMass"] == QUAD_MASS
+        assert quad["cruiseTilt"] == 25.0
+        assert quad["maxCruiseSpeed"] == pytest.approx(19.972, abs=0.001)
+        assert quad["effectiveRotorCount"] == 4.0  # the new attribute is inert
+
+    def test_tricopter_story_unchanged(self, instances):
+        tri = instances["TriCopter"].slots
+        assert tri["cruiseTilt"] == 11.0  # the yaw-servo authority cap
+        assert tri["maxCruiseSpeed"] == pytest.approx(12.43, abs=0.01)
+        assert tri["effectiveRotorCount"] * tri["thrustPerRotor"] > tri["totalMass"] * 9.81
+
+    def test_hexa_design_point(self, instances):
+        hexa = instances["HexaCopter"].slots
+        assert hexa["totalMass"] == pytest.approx(1.758, abs=0.001)
+        assert hexa["usableThrust"] == pytest.approx(6.0 * THRUST_N * 0.59)
+        assert hexa["hoverCurrent"] == pytest.approx(15.11, abs=0.01)
+        assert hexa["maxCruiseSpeed"] == pytest.approx(19.95, abs=0.01)
+        assert hexa["motorOutUsableThrust"] == pytest.approx(4.0 * THRUST_N * 0.59)
+        assert hexa["totalCost"] == pytest.approx(670.0)
+
+    def test_x8_coax_penalty_is_visible(self, instances):
+        x8 = instances["CoaxX8"].slots
+        assert x8["effectiveRotorCount"] == pytest.approx(7.4)  # 4 + 4 x 0.85
+        assert x8["totalMass"] == pytest.approx(1.702, abs=0.001)
+        assert x8["usableThrust"] == pytest.approx(7.4 * THRUST_N * 0.59)
+        # eight motors draw MORE at hover than the quad's four (13.35 A),
+        # despite the lighter per-motor loading: the wake penalty, in amps
+        assert x8["hoverCurrent"] == pytest.approx(14.05, abs=0.01)
+        assert x8["maxCruiseSpeed"] == pytest.approx(21.08, abs=0.01)
+        assert x8["motorOutUsableThrust"] == pytest.approx(6.4 * THRUST_N * 0.59)
+        assert x8["totalCost"] == pytest.approx(692.0)
+
+    def test_constraints_hold_for_every_config(self, interp, instances):
+        for name, instance in instances.items():
+            for result in interp.check(instance):
+                assert result.passed, (name, result.name)
+
+    def test_failsafe_verdicts_split_the_family(self, interp, instances):
+        verdicts = {
+            name: interp.check_requirement("Drone::FailSafeHover", subject=inst).satisfied
+            for name, inst in instances.items()
+        }
+        assert verdicts == {
+            "QuadCopter": False,  # the balanced pair cannot lift it
+            "TriCopter": False,  # no balanced set survives any failure
+            "HexaCopter": True,  # flies on the balanced four
+            "CoaxX8": True,  # the pair's survivor keeps the station
+        }
+
+    def test_flight_envelope_holds_for_every_config(self, interp, instances):
+        for name, instance in instances.items():
+            result = interp.check_requirement("Drone::FlightEnvelope", subject=instance)
+            assert result.satisfied, name
+
+    def test_mission_verdicts(self, interp):
+        minutes = {
+            name: mission3d.mission_values(
+                interp, ATLANTA, ground_alt=300.0, assembly=f"Drone::{name}"
+            )["missionMinutes"]
+            for name in CONFIGS
+        }
+        assert minutes["QuadCopter"] == pytest.approx(4.24, abs=0.01)
+        assert minutes["HexaCopter"] == pytest.approx(4.24, abs=0.01)
+        assert minutes["CoaxX8"] == pytest.approx(4.07, abs=0.01)
+        assert minutes["TriCopter"] > 6.0  # the tri busts the budget
+
+    def test_no_config_wins_everything(self, instances):
+        """The point of the family: every configuration wins at least
+        one axis and loses at least one."""
+
+        slots = {name: inst.slots for name, inst in instances.items()}
+        endurance = {n: s["hoverMinutes"] for n, s in slots.items()}
+        cost = {n: s["totalCost"] for n, s in slots.items()}
+        cruise = {n: s["maxCruiseSpeed"] for n, s in slots.items()}
+        payload_ceiling = {n: s["maxTakeoffMass"] - s["totalMass"] for n, s in slots.items()}
+        redundant = {n: s["motorOutUsableThrust"] > s["totalMass"] * 9.81 for n, s in slots.items()}
+
+        assert max(endurance, key=endurance.get) == "QuadCopter"
+        assert min(cost, key=cost.get) == "TriCopter"
+        assert max(cruise, key=cruise.get) == "CoaxX8"
+        assert max(payload_ceiling, key=payload_ceiling.get) == "HexaCopter"
+        assert redundant == {
+            "QuadCopter": False,
+            "TriCopter": False,
+            "HexaCopter": True,
+            "CoaxX8": True,
+        }
+        # ...and each winner loses somewhere else
+        assert min(endurance, key=endurance.get) == "HexaCopter"
+        assert max(cost, key=cost.get) == "CoaxX8"
+        assert min(cruise, key=cruise.get) == "TriCopter"
+
+    def test_satisfy_edges(self, model):
+        from longeron import model as M
+
+        edges = {
+            (e.subsets[0], e.by)
+            for e in model.find("Drone").members
+            if isinstance(e, M.SatisfyUsage)
+        }
+        assert ("FailSafeHover", "HexaCopter") in edges
+        assert ("FailSafeHover", "CoaxX8") in edges
+        assert ("FailSafeHover", "QuadCopter") not in edges  # the missing edge
+        assert ("FailSafeHover", "TriCopter") not in edges
+        assert ("mission", "TriCopter") not in edges
+
+
+class TestFamilyGeometry:
+    """N-arm parametric geometry: the maintainer's 3-arm question."""
+
+    def test_arm_angles(self):
+        third = math.pi / 3
+        assert geometry._arm_angles(3) == [third, -third, math.pi]
+        assert geometry._arm_angles(4) == [
+            math.pi / 4,
+            -math.pi / 4,
+            3 * math.pi / 4,
+            -3 * math.pi / 4,
+        ]
+        assert geometry._arm_angles(6) == [
+            math.pi / 6,
+            -math.pi / 6,
+            math.pi / 2,
+            -math.pi / 2,
+            5 * math.pi / 6,
+            -5 * math.pi / 6,
+        ]
+        with pytest.raises(Exception, match="3 arms"):
+            geometry._arm_angles(2)
+
+    def test_tricopter_arms_at_120_degrees_with_a_boom(self):
+        """The answer to 'are they spaced 120 degrees?': yes -- and the
+        rear station rides the longer tail boom."""
+
+        mesh = geometry.drone_geometry(**STOCK, arm_count=3, split_instances=True)
+        discs = mesh["discs"]
+        assert [d["part"] for d in discs] == ["prop1", "prop2", "prop3"]
+        angles = [math.degrees(math.atan2(d["center"][2], d["center"][0])) for d in discs]
+        assert angles[0] == pytest.approx(60.0, abs=0.01)  # centres round to 1e-5 m
+        assert angles[1] == pytest.approx(-60.0, abs=0.01)
+        assert abs(angles[2]) == pytest.approx(180.0, abs=0.01)
+        radii = [math.hypot(d["center"][0], d["center"][2]) for d in discs]
+        assert radii[0] == pytest.approx(radii[1], rel=1e-4)
+        assert radii[2] == pytest.approx(geometry._TRI_BOOM_RATIO * radii[0], rel=1e-3)
+        # the tail boom points straight back: -x, zero z
+        assert discs[2]["center"][0] < 0
+        assert discs[2]["center"][2] == pytest.approx(0.0, abs=1e-9)
+
+    def test_hexa_arms_at_60_degrees_discs_clear(self):
+        mesh = geometry.drone_geometry(**STOCK, arm_count=6, split_instances=True)
+        discs = mesh["discs"]
+        assert len(discs) == 6
+        radius = math.hypot(discs[0]["center"][0], discs[0]["center"][2])
+        spacing = 10.0 * geometry.IN + 0.02
+        # 6 arms: circle radius equals the adjacent spacing exactly
+        assert radius == pytest.approx(spacing, abs=2e-5)  # centres round to 1e-5 m
+        assert geometry.disc_overlap(mesh, engine="mesh") == 0.0
+
+    def test_derived_footprints_order_the_family(self):
+        def spans(**kw):
+            mesh = geometry.drone_geometry(**STOCK, **kw)
+            (x0, _y0, z0), (x1, _y1, z1) = mesh["bounds"]
+            return x1 - x0, z1 - z0
+
+        tri, quad = spans(arm_count=3), spans()
+        hexa, x8 = spans(arm_count=6), spans(coaxial=True)
+        assert quad == x8  # the X8 packs 8 rotors in the quad's footprint
+        assert hexa[0] > quad[0] and hexa[1] > quad[1]  # the hexa is honestly wider
+        assert tri[0] > quad[0]  # the tail boom stretches the tri lengthwise
+
+    def test_coax_stacks_two_discs_per_arm(self):
+        mesh = geometry.drone_geometry(**STOCK, coaxial=True, split_instances=True)
+        discs = mesh["discs"]
+        assert [d["part"] for d in discs] == [f"prop{i}" for i in range(1, 9)]
+        upper = {d["center"][1] for d in discs[:4]}
+        lower = {d["center"][1] for d in discs[4:]}
+        assert len(upper) == len(lower) == 1
+        assert min(upper) > 0 > max(lower)  # a plane above the arms, one below
+        # pair members share their arm's (x, z) station
+        for up, low in zip(discs[:4], discs[4:], strict=True):
+            assert up["center"][0] == low["center"][0]
+            assert up["center"][2] == low["center"][2]
+        # nothing intrudes into any of the eight discs (the lower plane
+        # clears the battery brick thanks to the standoff drop)
+        assert geometry.disc_overlap(mesh, engine="mesh") == 0.0
+
+    def test_coax_split_is_a_pure_repartition(self):
+        merged = geometry.drone_geometry(**STOCK, coaxial=True)
+        split = geometry.drone_geometry(**STOCK, coaxial=True, split_instances=True)
+        merged_by_name = {p["name"]: p for p in merged["parts"]}
+        split_by_name = {p["name"]: p for p in split["parts"]}
+        for kind in ("motor", "prop"):
+            vertices: list[float] = []
+            faces: list[int] = []
+            for i in range(1, 9):
+                part = split_by_name[f"{kind}{i}"]
+                offset = len(vertices) // 3
+                vertices += part["vertices"]
+                faces += [f + offset for f in part["faces"]]
+            assert vertices == merged_by_name[f"{kind}s"]["vertices"]
+            assert faces == merged_by_name[f"{kind}s"]["faces"]
+        assert split["bounds"] == merged["bounds"]
+
+    def test_family_lineup_folds_two_by_two(self):
+        meshes = [
+            geometry.drone_geometry(**STOCK, arm_count=3),
+            geometry.drone_geometry(**STOCK),
+            geometry.drone_geometry(**STOCK, arm_count=6),
+            geometry.drone_geometry(**STOCK, coaxial=True),
+        ]
+        scene = geometry.lineup(meshes, labels=["tri", "quad", "hexa", "x8"])
+        assert [entry["text"] for entry in scene["labels"]] == ["tri", "quad", "hexa", "x8"]
+        prefixes = {p["name"].split(":")[0] for p in scene["parts"]}
+        assert prefixes == {"tri", "quad", "hexa", "x8"}
+
+    def test_cad_twin_matches_the_family(self):
+        pytest.importorskip("cadquery")
+        for kw, rotors in (({"arm_count": 3}, 3), ({"arm_count": 6}, 6), ({"coaxial": True}, 8)):
+            assembly = geometry.to_cadquery(**STOCK, **kw)
+            names = {child.name for child in assembly.children}
+            expected = {"frame", "battery", "esc"}
+            expected |= {f"motor{i}" for i in range(1, rotors + 1)}
+            expected |= {f"prop{i}" for i in range(1, rotors + 1)}
+            assert names == expected, kw
+
+    def test_coax_solids_match_the_mesh_footprint(self):
+        pytest.importorskip("cadquery")
+        mesh = geometry.drone_geometry(**STOCK, coaxial=True, split_instances=True)
+        by_name = {part["name"]: part for part in mesh["parts"]}
+        solids = {
+            child.name: geometry._shape(child.obj)
+            for child in geometry.to_cadquery(**STOCK, coaxial=True).children
+        }
+        for name in ("motor5", "prop5", "motor8", "prop8"):  # the lower pair members
+            (lo, hi) = geometry._part_aabb(by_name[name])
+            box = solids[name].BoundingBox()
+            for axis, (a, b) in enumerate(
+                ((box.xmin, box.xmax), (box.ymin, box.ymax), (box.zmin, box.zmax))
+            ):
+                assert a == pytest.approx(lo[axis], abs=1e-4), (name, axis)
+                assert b == pytest.approx(hi[axis], abs=1e-4), (name, axis)
+
+    def test_belly_camera_sees_the_coax_lower_discs(self):
+        """A real installation finding the quad never shows: the X8's
+        lower forward discs poke into the down-looking camera's view
+        cone (the exact-CAD boolean catches the wafer-thin discs the
+        mesh quadrature under-reads)."""
+
+        pytest.importorskip("cadquery")
+        quad = geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
+        assert geometry.camera_occlusion(quad, engine="cad") == 0.0
+        x8 = geometry.drone_geometry(
+            **STOCK, coaxial=True, split_instances=True, camera=STOCK_CAMERA
+        )
+        report = geometry.occlusion_report(x8, engine="cad")
+        assert report["occludedFraction"] > 0.0
+        assert set(report["obstructions"]) <= {"prop5", "prop6", "motor5", "motor6"}
+
+
+class TestConfigKeyedScene:
+    """The diagram -> 3D seam, keyed by configuration (the NB10 fix)."""
+
+    def test_every_config_bakes_its_own_build(self, model):
+        expected_discs = {"QuadCopter": 4, "TriCopter": 3, "HexaCopter": 6, "CoaxX8": 8}
+        for name, count in expected_discs.items():
+            mesh, part_map = drone_scene(model, f"Drone::{name}")
+            assert len(mesh["discs"]) == count, name
+            assert part_map["frame"] == f"Drone::{name}#0.chassis"
+
+    def test_tricopter_scene_maps_the_boom_motor(self, model):
+        mesh, part_map = drone_scene(model, "Drone::TriCopter")
+        assert part_map["motor1"] == "Drone::TriCopter#0.frontMotors#0"
+        assert part_map["motor2"] == "Drone::TriCopter#0.frontMotors#1"
+        assert part_map["motor3"] == "Drone::TriCopter#0.tailMotor"
+        # the tail motor renders at the boom station: behind the origin
+        tail = next(p for p in mesh["parts"] if p["name"] == "motor3")
+        assert max(tail["vertices"][0::3]) < 0
+
+    def test_coax_scene_pairs_uppers_and_lowers(self, model):
+        _mesh, part_map = drone_scene(model, "Drone::CoaxX8")
+        assert part_map["motor1"] == "Drone::CoaxX8#0.upperMotors#0"
+        assert part_map["motor5"] == "Drone::CoaxX8#0.lowerMotors#0"
+        assert part_map["prop8"] == "Drone::CoaxX8#0.propellers#7"
+
+    def test_owning_config_resolves_selections(self, model):
+        for selected, expected in (
+            ("Drone::TriCopter::tailMotor", "Drone::TriCopter"),
+            ("Drone::TriCopter", "Drone::TriCopter"),
+            ("Drone::CoaxX8::upperMotors", "Drone::CoaxX8"),
+            ("Drone::HexaCopter::phaseLeads", "Drone::HexaCopter"),
+            ("Drone::MultiRotor::battery", "Drone::MultiRotor"),
+        ):
+            config = link.owning_config(model, selected)
+            assert config is not None and config.qualified_name == expected
+        assert link.owning_config(model, "Drone") is None
+
+    def test_selection_to_scene_round_trip(self, model):
+        """The maintainer's NB10 flow: select the tricopter's tail motor
+        anywhere, get the TRICOPTER's geometry."""
+
+        config = link.owning_config(model, model.find("Drone::TriCopter::tailMotor"))
+        mesh, _part_map = drone_scene(model, config.qualified_name)
+        assert len(mesh["discs"]) == 3
+
+
+class TestFamilyM0:
+    """The population fan-outs T5 prints side by side."""
+
+    def test_individual_fan_out_per_config(self, model):
+        from longeron import m0
+
+        counts = {}
+        for name in CONFIGS:
+            population = m0.interpret(model, f"Drone::{name}")
+            counts[name] = len(population.individuals("Drone::Motor"))
+            per_motor = 0.055
+            expected = counts[name] * per_motor
+            total = 0.0
+            for feature in ("motors", "frontMotors", "tailMotor", "upperMotors", "lowerMotors"):
+                if feature in population.root.slots:
+                    total += population.rollup(f"sum({feature}.mass)")
+            assert total == pytest.approx(expected), name
+        assert counts == {"QuadCopter": 4, "TriCopter": 3, "HexaCopter": 6, "CoaxX8": 8}
+
+    def test_coax_pair_ids(self, model):
+        from longeron import m0
+
+        population = m0.interpret(model, "Drone::CoaxX8")
+        uppers = [ind.id for ind in population.root.slots["upperMotors"]]
+        lowers = [ind.id for ind in population.root.slots["lowerMotors"]]
+        assert uppers == [f"Drone::CoaxX8#0.upperMotors#{i}" for i in range(4)]
+        assert lowers == [f"Drone::CoaxX8#0.lowerMotors#{i}" for i in range(4)]
+
+
+class TestFamilyVerify:
+    """hunt and prove exercise the new requirement axis."""
+
+    def test_hunt_finds_the_quad_motor_out_violation(self, model):
+        pytest.importorskip("hypothesis")
+        from longeron.analysis import verify
+
+        report = verify.hunt(
+            model,
+            "Drone::QuadCopter",
+            requirements=("Drone::FailSafeHover",),
+            free=("payloadMass",),
+            seed=0,
+            max_examples=30,
+        )
+        assert report.status == "violated"
+        assert "FailSafeHover::motorOutHover" in report.violations
+        # the shrunk catch: the quad fails motor-out even EMPTY
+        assert report.counterexamples[0].bindings == {"payloadMass": 0.0}
+
+    def test_hunt_bisects_the_hexa_payload_ceiling(self, model):
+        pytest.importorskip("hypothesis")
+        from longeron.analysis import verify
+
+        report = verify.hunt(
+            model,
+            "Drone::HexaCopter",
+            requirements=("Drone::FailSafeHover",),
+            free=("payloadMass",),
+            seed=0,
+            max_examples=60,
+        )
+        edge = next(b for b in report.boundaries if "motorOutHover" in b.violated)
+        assert edge.value == pytest.approx(0.4445, abs=0.001)
+
+    def test_prove_certifies_the_x8_and_condemns_the_quad(self, model):
+        pytest.importorskip("z3")
+        from fractions import Fraction
+
+        from longeron.analysis import verify
+
+        x8 = verify.prove(
+            model, "Drone::CoaxX8", requirements=("Drone::FailSafeHover",), free=("payloadMass",)
+        )
+        proof = next(p for p in x8.proofs if "motorOutHover" in p.requirement)
+        # UNSAT: no payload inside the takeoff-mass envelope can violate
+        # FailSafeHover on the X8 -- and the envelope bound is exact
+        assert proof.status == "proven-safe"
+        assert Fraction(proof.bound) == Fraction(249, 500)  # 0.498 kg payload
+        assert "takeoffMassLimit" in proof.binding_constraint
+
+        quad = verify.prove(
+            model,
+            "Drone::QuadCopter",
+            requirements=("Drone::FailSafeHover",),
+            free=("payloadMass",),
+        )
+        catch = next(p for p in quad.proofs if "motorOutHover" in p.requirement)
+        assert catch.status == "violation"  # a witness the interpreter confirmed
+        assert quad.counterexamples and quad.counterexamples[0].violated == (
+            "FailSafeHover::motorOutHover",
+        )

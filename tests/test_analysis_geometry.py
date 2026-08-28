@@ -235,6 +235,8 @@ class TestSplitInstances:
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         assert mesh["cad"] == {
             **RACER,
+            "arm_count": 4,
+            "coaxial": False,
             "arm_thickness": geometry._ARM_THICKNESS,
             "arm_width": geometry._ARM_WIDTH,
             "motor_spacing": None,

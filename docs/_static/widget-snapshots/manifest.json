@@ -156,6 +156,13 @@
     "output_index": 1,
     "alt": "longeron.analysis.scoreboard._widget_class",
     "image": "10_diagram_3d_link/cell-10.png"
+   },
+   {
+    "nb_cell_index": 23,
+    "code_cell_index": 11,
+    "output_index": 0,
+    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "image": "10_diagram_3d_link/cell-11.png"
    }
   ],
   "11_notation_gallery": [
