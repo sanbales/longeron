@@ -2,10 +2,9 @@
 """pre-commit: auto-strip notebook outputs from STAGED blobs (stdlib only).
 
 Convention: notebooks may carry outputs in the working tree while you
-explore, but commits are always stripped. Refusal-era versions of this
-hook (ported from earlier internal tooling) made you re-run
-``scripts/run_notebooks.py --strip-only`` and re-stage by hand; this
-version (pattern from upstream tooling ``scripts/pre-commit``) instead
+explore, but commits are always stripped. Earlier refusal-style hooks
+made you re-run ``scripts/run_notebooks.py --strip-only`` and re-stage
+by hand; this version instead
 rewrites only the INDEX entry (``git hash-object`` + ``git
 update-index``), so the commit is clean and the working tree -- including
 the outputs you are looking at -- survives untouched.
