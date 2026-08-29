@@ -164,6 +164,41 @@ class TestSpringLayout:
         assert graph3d.spring_layout(0, []) == []
 
 
+class TestDagLayout:
+    # a small hierarchy: 0 and 4 are roots; 0 owns 1 and 2; 3 sits
+    # below both 1 and 2; 5 only participates via an undirected link
+    HIERARCHY = ((0, 1), (0, 2), (1, 3), (2, 3), (4, 1))
+    LINKS = ((3, 5), (5, 0))
+
+    def test_roots_share_the_top_layer(self):
+        points = graph3d.dag_layout(6, self.HIERARCHY, self.LINKS)
+        top = max(point[1] for point in points)
+        roots = {index for index, point in enumerate(points) if point[1] == top}
+        # 0 and 4 have no incoming hierarchy edge; 5 has none at all
+        assert roots == {0, 4, 5}
+
+    def test_layers_are_monotone_along_hierarchy_edges(self):
+        points = graph3d.dag_layout(6, self.HIERARCHY, self.LINKS)
+        for above, below in self.HIERARCHY:
+            assert points[above][1] > points[below][1]
+
+    def test_barycenter_is_deterministic_and_order_free(self):
+        forward = graph3d.dag_layout(6, self.HIERARCHY, self.LINKS)
+        shuffled = graph3d.dag_layout(
+            6, tuple(reversed(self.HIERARCHY)), tuple((b, a) for a, b in self.LINKS)
+        )
+        assert forward == shuffled
+        assert forward == graph3d.dag_layout(6, self.HIERARCHY, self.LINKS)
+
+    def test_layout_fits_the_radius(self):
+        points = graph3d.dag_layout(6, self.HIERARCHY, self.LINKS, radius=10.0)
+        assert len(points) == 6 and all(len(point) == 3 for point in points)
+        assert max(sum(c * c for c in point) for point in points) <= 10.001**2
+
+    def test_empty_graph(self):
+        assert graph3d.dag_layout(0, []) == []
+
+
 @pytest.fixture(scope="module")
 def widget(graph):
     pytest.importorskip("anywidget")
@@ -178,8 +213,25 @@ class TestGraphViewer:
         assert payload["counts"]["nodes"] == len(view["nodes"])
         assert len(payload["positions"]) == len(payload["nodes"])
         assert payload["notice"] == ""
+        assert payload["focus"] is None
         assert widget.counts == payload["counts"]
         assert widget.layout_seconds > 0
+
+    def test_payload_ships_both_embeddings(self, widget):
+        """The morph slider's contract: a force embedding and a layered
+        one, same length, both 3-vectors, visibly different shapes."""
+
+        payload = json.loads(widget.payload_json)
+        assert len(payload["positions_dag"]) == len(payload["positions"])
+        assert all(len(point) == 3 for point in payload["positions_dag"])
+        assert payload["positions_dag"] != payload["positions"]
+
+    def test_dag_embedding_stacks_the_hierarchy(self, widget):
+        """Packages sit above the members they (transitively) own."""
+
+        payload = json.loads(widget.payload_json)
+        y = {node["id"]: payload["positions_dag"][i][1] for i, node in enumerate(payload["nodes"])}
+        assert y["Rotorcraft"] > y["Rotorcraft::BoxQuad"] > y["Rotorcraft::BoxQuad::mass"]
 
     def test_options_offer_every_namespace_and_family(self, widget, view):
         options = json.loads(widget.options_json)
@@ -230,8 +282,9 @@ class TestGraphViewer:
     def test_esm_contracts(self, widget):
         """The front-end contract, encoded: CDN import with the offline
         fallback, instanced spheres with raycast picking, per-family
-        line segments, the filter panel writing filters_json, and the
-        selection emphasis on change:selected."""
+        line segments, the pill panel writing filters_json, the morph
+        lerp over both embeddings, focus chips writing focus_json, the
+        search-to-fly seam, labels, legend, and live theming."""
 
         for token in (
             graph3d.THREE_URL,
@@ -247,5 +300,121 @@ class TestGraphViewer:
             "change:selected",
             "--jp-brand-color2",
             "dblclick",
+            # the refinement surface
+            "positions_dag",
+            "setMorph",
+            "focus_json",
+            "flyTo",
+            "lgw-morphbar",
+            "lgw-pill",
+            "lgw-slider",
+            "lgw-search",
+            "lgw-legend",
+            "lgw-crumb",
+            "CanvasTexture",
+            "MutationObserver",
+            "prefers-color-scheme",
+            "standalone",
         ):
             assert token in widget._esm, token
+
+    def test_css_carries_the_shared_chrome(self, widget):
+        """The control surface styles come from the lgw-* chrome seed:
+        theme tokens, pills, sliders, the veiled panel."""
+
+        from longeron.widgets import _chrome
+
+        assert widget._css.startswith(_chrome.CONTROL_CSS)
+        for token in (
+            "--jp-layout-color1",
+            "backdrop-filter",
+            "lgw-pill",
+            "lgw-slider",
+            "focus-visible",
+            "--p",
+        ):
+            assert token in widget._css, token
+
+
+class TestFocusMode:
+    @pytest.fixture()
+    def widget(self, graph):
+        pytest.importorskip("anywidget")
+        pytest.importorskip("numpy")
+        return graph3d.graph_viewer(graph)
+
+    def test_focus_isolates_the_k_hop_neighborhood(self, widget, view):
+        counts = widget.focus("DeepScout::MultiRotor", k=1)
+        payload = json.loads(widget.payload_json)
+        # independent truth: the hub + its direct neighbors in the view
+        index = {entry["id"]: i for i, entry in enumerate(view["nodes"])}
+        hub = index["DeepScout::MultiRotor"]
+        expected = {hub}
+        for source, target, _family in view["edges"]:
+            if source == hub:
+                expected.add(target)
+            if target == hub:
+                expected.add(source)
+        ids = {entry["id"] for entry in payload["nodes"]}
+        assert ids == {view["nodes"][i]["id"] for i in expected}
+        assert counts["nodes"] == len(expected) < 1134
+        assert payload["focus"] == {"id": "DeepScout::MultiRotor", "k": 1, "of": 1134}
+        assert len(payload["positions"]) == len(payload["positions_dag"]) == counts["nodes"]
+
+    def test_deeper_focus_reaches_further(self, widget):
+        one = widget.focus("DeepScout::MultiRotor", k=1)
+        two = widget.focus("DeepScout::MultiRotor", k=2)
+        assert one["nodes"] < two["nodes"] < 1134
+
+    def test_unfocus_restores_the_full_view(self, widget):
+        widget.focus("DeepScout::MultiRotor", k=1)
+        assert widget.unfocus() == {"nodes": 1134, "edges": 1355}
+        assert json.loads(widget.payload_json)["focus"] is None
+
+    def test_unknown_target_leaves_the_full_view(self, widget):
+        counts = widget.focus("No::Such::Node")
+        assert counts["nodes"] == 1134
+        assert json.loads(widget.payload_json)["focus"] is None
+
+    def test_focus_trait_is_the_browser_seam(self, widget):
+        """The chips write focus_json directly; the observer recomputes
+        exactly as the kernel-side focus() call does."""
+
+        widget.focus_json = json.dumps({"id": "DeepScout::MultiRotor", "k": 1})
+        via_trait = widget.counts
+        widget.unfocus()
+        assert via_trait == widget.focus("DeepScout::MultiRotor", k=1)
+
+    def test_focus_leaves_the_selection_contract_alone(self, widget):
+        seen = []
+        widget.on_select(seen.append)
+        widget.selected = ["DeepScout::MultiRotor"]
+        widget.focus("DeepScout::MultiRotor", k=1)
+        assert widget.selected == ["DeepScout::MultiRotor"]
+        assert seen == [["DeepScout::MultiRotor"]]
+
+
+class TestExportHtml:
+    def test_export_writes_a_self_contained_page(self, graph, tmp_path):
+        pytest.importorskip("anywidget")
+        pytest.importorskip("numpy")
+        widget = graph3d.graph_viewer(graph)
+        target = widget.export_html(tmp_path / "graph.html")
+        assert target == tmp_path / "graph.html"
+        page = target.read_text(encoding="utf-8")
+        # the payload, the front-end, and the shim are inlined ...
+        assert json.dumps(widget.payload_json)[1:-1][:80] in page
+        assert "positions_dag" in page and graph3d.THREE_URL in page
+        assert "data.standalone = true" in page and "save_changes" in page
+        # ... and nothing at view time needs anywidget or a kernel
+        assert "anywidget" not in page
+        assert "prefers-color-scheme: dark" in page
+
+    def test_export_carries_the_focused_view(self, graph, tmp_path):
+        pytest.importorskip("anywidget")
+        pytest.importorskip("numpy")
+        widget = graph3d.graph_viewer(graph)
+        widget.focus("DeepScout::MultiRotor", k=1)
+        page = widget.export_html(tmp_path / "hub.html").read_text(encoding="utf-8")
+        assert json.dumps(widget.payload_json)[1:-1][:80] in page
+        assert widget.counts["nodes"] < 1134

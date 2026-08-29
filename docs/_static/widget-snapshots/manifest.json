@@ -176,6 +176,13 @@
     "output_index": 1,
     "alt": "longeron.widgets.graph3d._viewer_class",
     "image": "08_the_knowledge_graph/cell-07.png"
+   },
+   {
+    "nb_cell_index": 16,
+    "code_cell_index": 8,
+    "output_index": 1,
+    "alt": "longeron.widgets.graph3d._viewer_class",
+    "image": "08_the_knowledge_graph/cell-08.png"
    }
   ],
   "09_grand_tour": [
