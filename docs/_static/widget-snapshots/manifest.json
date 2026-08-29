@@ -162,6 +162,22 @@
     "image": "07_geometry_and_the_mission/cell-11.png"
    }
   ],
+  "08_the_knowledge_graph": [
+   {
+    "nb_cell_index": 14,
+    "code_cell_index": 6,
+    "output_index": 1,
+    "alt": "longeron.widgets.graph3d._viewer_class",
+    "image": "08_the_knowledge_graph/cell-06.png"
+   },
+   {
+    "nb_cell_index": 15,
+    "code_cell_index": 7,
+    "output_index": 1,
+    "alt": "longeron.widgets.graph3d._viewer_class",
+    "image": "08_the_knowledge_graph/cell-07.png"
+   }
+  ],
   "09_grand_tour": [
    {
     "nb_cell_index": 9,

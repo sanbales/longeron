@@ -55,6 +55,13 @@ same ground.
 | [Dashboard](analysis/dashboard.md) | `longeron.analysis.dashboard` | linked mission-compromise dashboard |
 | [Grand tour](analysis/grand.md) | `longeron.analysis.grand` | the all-seams demo dashboard |
 
+## Widgets
+
+| Page | Module | What lives there |
+|---|---|---|
+| [Overview](widgets/index.md) | `longeron.widgets` | the widget layer: toolkit, new-widget home, catalog |
+| [RDF graph in 3D](widgets/graph3d.md) | `longeron.widgets.graph3d` | force-directed RDF projection explorer |
+
 ```{toctree}
 :hidden:
 :maxdepth: 1
@@ -78,5 +85,6 @@ views
 render
 replay
 analysis/index
+widgets/index
 notation_gallery
 ```
