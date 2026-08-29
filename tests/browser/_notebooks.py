@@ -553,6 +553,60 @@ print(json.dumps({
 
 
 #: filename -> builder; the session fixture writes these into the lab root
+def config_view_notebook() -> dict[str, Any]:
+    """Scenario: the config-keyed 3D pane (link.bind_config_view).
+
+    Cell 0 shows the Rotorcraft package's structure diagram beside a
+    mesh viewer, bound with ``bind_config_view`` -- clicking any craft
+    node must render THAT craft.  Cell 1 is the checker: one JSON line
+    naming the shown configuration, its analytic disc count, the scene's
+    identity keys, and the diagram selection.
+    """
+
+    return _notebook(
+        """
+import ipywidgets as W
+
+import longeron
+from longeron import diagrams
+from longeron.analysis import link, viewer3d
+from longeron.analysis.grand import scene_for
+
+model = longeron.load("examples/deepscout")
+mesh, part_map = scene_for(model, "Rotorcraft::QuadCopter")
+structure = diagrams.structure_diagram(model.find("Rotorcraft"), height="620px")
+viewer = viewer3d.mesh_viewer(
+    mesh, label="Rotorcraft::QuadCopter", width_px=520, height_px=620
+)
+binding = link.bind_config_view(structure, viewer, model, showing="Rotorcraft::QuadCopter")
+viewer.layout = W.Layout(width="520px", flex="0 0 auto")
+structure.layout.width = "auto"
+structure.layout.flex = "1 1 auto"
+structure.layout.min_width = "0"
+W.HBox(
+    [structure, viewer],
+    layout=W.Layout(width="100%", align_items="stretch", overflow="hidden"),
+)
+""",
+        """
+import json
+
+shown = json.loads(viewer.mesh_json)
+print(
+    json.dumps(
+        {
+            "current": binding.current,
+            "discs": len(shown.get("discs", [])),
+            "keys": sorted({part.get("key") or part["name"] for part in shown["parts"]}),
+            "label": viewer.label,
+            "selection": list(structure.view.selection.ids),
+        }
+    )
+)
+""",
+    )
+
+
 def dashboard_notebook() -> dict[str, Any]:
     """Scenario: the mission-compromise dashboard on one 1080p screen.
 
@@ -617,4 +671,5 @@ SCENARIO_NOTEBOOKS = {
     "layout_failure_scenario.ipynb": layout_failure_notebook,
     "app_scenario.ipynb": app_notebook,
     "dashboard_scenario.ipynb": dashboard_notebook,
+    "config_view_scenario.ipynb": config_view_notebook,
 }

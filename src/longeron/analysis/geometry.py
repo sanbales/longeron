@@ -80,6 +80,7 @@ from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy
 
 __all__ = [
+    "airframe_geometry",
     "architecture_geometry",
     "architecture_params",
     "camera_occlusion",
@@ -1923,52 +1924,115 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, f
     }
 
 
+def airframe_geometry(
+    *,
+    wing_span: float,
+    wing_area: float,
+    taper: float,
+    fuselage_length: float,
+    motor_count: float,
+    arm_count: int,
+    prop_diameter: float,
+    motor_mass: float,
+    battery_mass: float,
+    esc_mass: float = 0.014,
+    arm_thickness: float | None = None,
+    arm_width: float | None = None,
+) -> dict[str, Any]:
+    """Family-dispatched geometry from airframe-shell attribute values.
+
+    The keyword names mirror the geometry knobs of the DeepScout
+    ``Airframe`` def (``examples/deepscout/aircraft.sysml``) plus the
+    propulsion sizes a mix or a display default supplies.  The
+    dispatch ladder picks the builder: no wing and no fuselage ->
+    :func:`drone_geometry` (the N-arm multirotor -- ``arm_count`` sets
+    the frame family, and a station count of twice the arm count
+    stacks the coaxial pairs); no wing but a real fuselage ->
+    :func:`teardrop_quad_geometry` (the upended bullet); a single
+    motor station -> :func:`interceptor_geometry`; otherwise
+    :func:`winged_vtol_geometry` (the cruciform tail-sitter, rendered
+    in hover attitude).  ``arm_thickness``/``arm_width`` draw the quad
+    families' arms at a load-sized tube diameter when given;
+    ``esc_mass`` is the drone branch's 30.5 mm stack heuristic.  Two
+    callers feed this ladder: :func:`mission_geometry` from a
+    mission-catalog mix, and :func:`longeron.analysis.grand.scene_for`
+    from a fleet airframe definition's own attributes.
+    """
+
+    arm_kw: dict[str, Any] = {}
+    if arm_thickness is not None:
+        arm_kw["arm_thickness"] = arm_thickness
+    if arm_width is not None:
+        arm_kw["arm_width"] = arm_width
+    if wing_span <= 0:  # rotor-borne only
+        if fuselage_length > 0:  # the streamlined teardrop shell
+            return teardrop_quad_geometry(
+                fuselage_length=fuselage_length,
+                prop_diameter=prop_diameter,
+                motor_mass=motor_mass,
+                battery_mass=battery_mass,
+                **arm_kw,
+            )
+        return drone_geometry(
+            prop_diameter_in=prop_diameter / IN,
+            motor_mass=motor_mass,
+            battery_mass=battery_mass,
+            esc_mass=esc_mass,
+            arm_count=arm_count if arm_count > 0 else 4,
+            coaxial=arm_count > 0 and motor_count == 2 * arm_count,
+            **arm_kw,
+        )
+    if motor_count <= 1:
+        return interceptor_geometry(
+            body_length=fuselage_length,
+            wing_span=wing_span,
+            wing_area=wing_area,
+            taper=taper,
+            prop_diameter=prop_diameter,
+            motor_mass=motor_mass,
+            battery_mass=battery_mass,
+        )
+    return winged_vtol_geometry(
+        wing_span=wing_span,
+        wing_area=wing_area,
+        taper=taper,
+        fuselage_length=fuselage_length,
+        prop_diameter=prop_diameter,
+        motor_mass=motor_mass,
+        battery_mass=battery_mass,
+    )
+
+
 def mission_geometry(
     study: TradeStudy, architecture: Architecture, **overrides: Any
 ) -> dict[str, Any]:
     """Family-dispatched geometry for a mission-catalog mix.
 
-    The selected airframe's attributes pick the builder: no wing and no
-    fuselage -> :func:`drone_geometry` (the N-arm multirotor --
-    ``armCount`` sets the frame family, and a station count of twice
-    the arm count stacks the coaxial pairs); no wing but a real
-    fuselage -> :func:`teardrop_quad_geometry` (the upended bullet); a
-    single motor station -> :func:`interceptor_geometry`; otherwise
-    :func:`winged_vtol_geometry` (the cruciform tail-sitter, rendered
-    in hover attitude).  When the mix's metrics carry the
-    load-sized ``armOuterDiameter`` (the assembly's structural sizing),
-    the quad families draw their arms at that diameter -- a sprint-motor
-    aluminum build genuinely looks beefier than a carbon eco build.
+    The selected airframe's attributes feed :func:`airframe_geometry`,
+    whose dispatch ladder picks the family builder.  When the mix's
+    metrics carry the load-sized ``armOuterDiameter`` (the assembly's
+    structural sizing), the quad families draw their arms at that
+    diameter -- a sprint-motor aluminum build genuinely looks beefier
+    than a carbon eco build.
     """
 
     p = {**mission_params(study, architecture), **overrides}
-    motor_count = p.pop("motor_count")
-    arm_count = int(p.pop("arm_count"))
     sized_arm = float(architecture.metrics.get("armOuterDiameter", 0.0) or 0.0)
     arm_kw: dict[str, Any] = (
         {"arm_thickness": sized_arm, "arm_width": sized_arm} if sized_arm > 0 else {}
     )
-    if p["wing_span"] <= 0:  # rotor-borne only
-        if p["fuselage_length"] > 0:  # the streamlined teardrop shell
-            return teardrop_quad_geometry(
-                fuselage_length=p["fuselage_length"],
-                prop_diameter=p["prop_diameter"],
-                motor_mass=p["motor_mass"],
-                battery_mass=p["battery_mass"],
-                **arm_kw,
-            )
-        return drone_geometry(
-            prop_diameter_in=p["prop_diameter"] / IN,
-            motor_mass=p["motor_mass"],
-            battery_mass=p["battery_mass"],
-            esc_mass=0.014,
-            arm_count=arm_count if arm_count > 0 else 4,
-            coaxial=arm_count > 0 and motor_count == 2 * arm_count,
-            **arm_kw,
-        )  # 30.5 mm stack heuristic
-    if motor_count <= 1:
-        return interceptor_geometry(body_length=p.pop("fuselage_length"), **p)
-    return winged_vtol_geometry(**p)
+    return airframe_geometry(
+        wing_span=p["wing_span"],
+        wing_area=p["wing_area"],
+        taper=p["taper"],
+        fuselage_length=p["fuselage_length"],
+        motor_count=p["motor_count"],
+        arm_count=int(p["arm_count"]),
+        prop_diameter=p["prop_diameter"],
+        motor_mass=p["motor_mass"],
+        battery_mass=p["battery_mass"],
+        **arm_kw,
+    )
 
 
 def architecture_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:

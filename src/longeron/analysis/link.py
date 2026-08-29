@@ -7,6 +7,15 @@ traitlet (:mod:`longeron.analysis.viewer3d`) -- so clicking a part in a
 structure diagram pops the corresponding geometry in the three.js
 scene, and clicking a mesh selects the diagram node.
 
+:func:`bind_config_view` promotes the link from *highlight* to *scene*:
+the selection also decides WHICH craft the viewer shows.  Clicking any
+element resolves the configuration that owns it
+(:func:`owning_config`; a variant usage resolves to the definition
+that types it), bakes that craft's scene
+(:func:`longeron.analysis.grand.scene_for` dispatches both DeepScout
+families), and swaps the viewer -- tutorial 7's inline handler as one
+reusable call, and the grand tour's 3D pane.
+
 The bridge between the two worlds is the mesh part ``key`` stamped by
 :func:`longeron.analysis.geometry.tag_parts`: the qualified name of the
 model part a mesh component renders, or -- for per-instance parts --
@@ -42,9 +51,17 @@ from typing import Any
 
 from .. import model as M
 from ..interpreter import Interpreter
+from ._expr import AnalysisError
 from .geometry import tag_parts
 
-__all__ = ["individual_qname", "link_selection", "owning_config", "selection_keys"]
+__all__ = [
+    "ConfigViewBinding",
+    "bind_config_view",
+    "individual_qname",
+    "link_selection",
+    "owning_config",
+    "selection_keys",
+]
 
 #: an M0 instance-index suffix on one dotted id segment (``motors#2``)
 _INSTANCE_INDEX = re.compile(r"#\d+$")
@@ -165,6 +182,42 @@ def selection_keys(
     return matched
 
 
+def _scene_keys(viewer: Any) -> list[str]:
+    """The identity keys of every part in the viewer's current scene(s)."""
+
+    keys: list[str] = []
+    for trait in ("mesh_json", "mesh_b_json"):
+        raw = getattr(viewer, trait, "") or ""
+        if not raw:
+            continue
+        for part in json.loads(raw).get("parts", []):
+            keys.append(part.get("key") or part["name"])
+    return keys
+
+
+def _picked_ids(interp: Interpreter, picked: Iterable[str]) -> list[str]:
+    """The model identities a raycast pick resolves to.
+
+    A picked M0 individual id projects onto the usage it derives
+    (:func:`individual_qname`); keys that resolve to nothing in the
+    model (the background, untagged parts) contribute nothing.
+    """
+
+    ids: list[str] = []
+    for key in picked:
+        for identity in (key, individual_qname(key)):
+            if identity is None:
+                continue
+            try:
+                interp.resolve(identity)
+            except Exception:
+                continue
+            if identity not in ids:
+                ids.append(identity)
+            break
+    return ids
+
+
 def link_selection(
     diagram: Any,
     viewer: Any,
@@ -221,20 +274,10 @@ def link_selection(
     interp = Interpreter(model)
     active = True
 
-    def _scene_keys() -> list[str]:
-        keys: list[str] = []
-        for trait in ("mesh_json", "mesh_b_json"):
-            raw = getattr(viewer, trait, "") or ""
-            if not raw:
-                continue
-            for part in json.loads(raw).get("parts", []):
-                keys.append(part.get("key") or part["name"])
-        return keys
-
     def _on_elements(elements: list[M.Element]) -> None:
         if not active:
             return
-        matched = selection_keys(model, elements, _scene_keys(), interpreter=interp)
+        matched = selection_keys(model, elements, _scene_keys(viewer), interpreter=interp)
         viewer.highlight_json = json.dumps(sorted(matched))
 
     on_select(diagram, model, _on_elements)
@@ -247,19 +290,7 @@ def link_selection(
             on_pick(list(picked))
         if not bidirectional:
             return
-        ids: list[str] = []
-        for key in picked:
-            for identity in (key, individual_qname(key)):
-                if identity is None:
-                    continue
-                try:
-                    interp.resolve(identity)
-                except Exception:
-                    continue
-                if identity not in ids:
-                    ids.append(identity)
-                break
-        diagram.view.selection.ids = ids  # on_select then drives the highlight
+        diagram.view.selection.ids = _picked_ids(interp, picked)  # on_select drives the highlight
 
     picking = (bool(bidirectional) or on_pick is not None) and viewer.has_trait("picked_json")
     if picking:
@@ -275,3 +306,198 @@ def link_selection(
         viewer.highlight_json = "[]"
 
     return unlink
+
+
+class ConfigViewBinding:
+    """The disposable handle :func:`bind_config_view` returns.
+
+    ``current`` is the qualified name of the configuration the viewer
+    shows (the ``showing`` hint until the first swap, else ``None``).
+    ``scenes`` is the bake cache: configuration qualified name ->
+    ``(mesh, part_map)``, with ``None`` caching a definition the scene
+    baker rejected, so failing bakes are not retried on every click.
+    :meth:`unbind` is idempotent, and a binding replaced by a newer
+    :func:`bind_config_view` call on the same viewer is already
+    inactive.
+    """
+
+    def __init__(self, viewer: Any) -> None:
+        self.current: str | None = None
+        self.scenes: dict[str, tuple[dict[str, Any], dict[str, str]] | None] = {}
+        self._viewer = viewer
+        self._active = True
+        self._disposers: list[Callable[[], None]] = []
+
+    def unbind(self) -> None:
+        """Deactivate both directions and clear the highlight.
+
+        The scene stays as last rendered.
+        """
+
+        if not self._active:
+            return
+        self._active = False
+        for dispose in self._disposers:
+            dispose()
+        self._viewer.highlight_json = "[]"
+        if getattr(self._viewer, "_lgn_config_view", None) is self:
+            self._viewer._lgn_config_view = None
+
+
+def bind_config_view(
+    source: Any,
+    viewer: Any,
+    model: M.Model,
+    *,
+    showing: str | None = None,
+    scene: Callable[[M.Model, str], tuple[dict[str, Any], dict[str, str]]] | None = None,
+    decorate: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    bidirectional: bool = True,
+) -> ConfigViewBinding:
+    """Selections drive WHICH craft the 3D viewer shows, not just the
+    highlight.
+
+    ``source`` is anything with the house selection surface: an
+    interactive diagram from :mod:`longeron.diagrams` (selections
+    arrive through :func:`longeron.diagrams.on_select`), or any widget
+    with the explorer protocol's ``on_select(callback)`` /
+    ``selected`` pair (the model explorer's tree, the scoreboard
+    widget) delivering qualified names.  Every selection resolves to
+    its craft: :func:`owning_config` climbs from the clicked element
+    to the outermost definition, and -- the one extension -- a variant
+    usage whose owning definition is not bakeable resolves to the
+    definition that *types* it, so the mission catalog's
+    ``teardropQuad`` variant renders the ``TeardropQuad`` shell.  The
+    resolved configuration bakes through ``scene`` (default:
+    :func:`longeron.analysis.grand.scene_for`, which dispatches both
+    the MultiRotor build family and the fleet airframe shells), the
+    viewer swaps to it, the viewer label takes the qualified name, and
+    :func:`selection_keys` lights the selected parts -- per M0
+    individual where the scene carries individual ids.
+
+    The scene only swaps when the resolved configuration CHANGES:
+    re-selecting inside the shown craft never rewrites ``mesh_json``,
+    and elements that resolve to no bakeable configuration keep the
+    current scene (their highlight semantics are unchanged --
+    affirmative matches pop, no match clears).  ``showing`` names the
+    configuration the viewer's initial mesh renders so re-selecting it
+    is such a no-op too.  ``decorate`` maps ``(qname, mesh) -> mesh``
+    immediately before each swap is written -- the grand dashboard
+    re-appends its translucent view cone to its home craft here -- so
+    a swap is always ONE traitlet write.
+
+    With ``bidirectional`` (the default), a mesh pick selects the
+    matching source node exactly as in :func:`link_selection` (a
+    picked M0 individual id selects the usage it derives; background
+    picks clear), driving ``source.view.selection.ids`` on a diagram
+    and ``source.selected`` on an explorer-protocol source.
+
+    Rebinding is idempotent: a viewer holds ONE binding, and binding
+    again (any source) unbinds the previous one first.  Returns a
+    :class:`ConfigViewBinding`; neither diagram ``on_select`` nor the
+    explorer protocol expose observer disposal, so ``unbind`` leaves
+    those callbacks attached but inert (the :func:`link_selection`
+    caveat).
+    """
+
+    previous = getattr(viewer, "_lgn_config_view", None)
+    if isinstance(previous, ConfigViewBinding):
+        previous.unbind()
+
+    if scene is None:
+        from .grand import scene_for  # lazy: grand pulls the widget stack
+
+        scene = scene_for
+
+    interp = Interpreter(model)
+    binding = ConfigViewBinding(viewer)
+    binding.current = showing
+    viewer._lgn_config_view = binding
+
+    def _bake(qname: str) -> tuple[dict[str, Any], dict[str, str]] | None:
+        if qname not in binding.scenes:
+            try:
+                binding.scenes[qname] = scene(model, qname)
+            except Exception:
+                binding.scenes[qname] = None
+        return binding.scenes[qname]
+
+    def _config_qnames(element: M.Element) -> Iterable[str]:
+        config = owning_config(model, element)
+        if config is not None and config.qualified_name:
+            yield config.qualified_name
+        if isinstance(element, M.Usage):  # a variant usage renders its type
+            for type_name in element.types:
+                try:
+                    resolved = interp.resolver.resolve(type_name.lstrip("~"), context=element)
+                except Exception:
+                    continue
+                qname = getattr(resolved, "qualified_name", None)
+                if isinstance(resolved, M.Definition) and qname:
+                    yield qname
+
+    def _on_elements(elements: list[M.Element]) -> None:
+        if not binding._active:
+            return
+        for element in elements:
+            baked = next(
+                (
+                    (qname, hit)
+                    for qname in _config_qnames(element)
+                    if (hit := _bake(qname)) is not None
+                ),
+                None,
+            )
+            if baked is None:
+                continue  # no bakeable craft: keep the current scene
+            qname, (mesh, _part_map) = baked
+            if qname != binding.current:
+                viewer.mesh_json = json.dumps(decorate(qname, mesh) if decorate else mesh)
+                viewer.label = qname
+                binding.current = qname
+            break
+        matched = selection_keys(model, elements, _scene_keys(viewer), interpreter=interp)
+        viewer.highlight_json = json.dumps(sorted(matched))
+
+    if hasattr(source, "view") and hasattr(source.view, "selection"):  # a diagram
+        from ..diagrams import on_select  # lazy: pulls in the vendored ipyelk
+
+        on_select(source, model, _on_elements)
+
+        def _drive(ids: list[str]) -> None:
+            source.view.selection.ids = ids
+
+    elif callable(getattr(source, "on_select", None)):  # the explorer protocol
+
+        def _from_ids(ids: list[str]) -> None:
+            elements = []
+            for identifier in ids:
+                try:
+                    elements.append(interp.resolve(identifier))
+                except Exception:
+                    continue
+            _on_elements(elements)
+
+        source.on_select(_from_ids)
+
+        def _drive(ids: list[str]) -> None:
+            if hasattr(source, "selected"):
+                source.selected = ids
+
+    else:
+        raise AnalysisError(
+            "bind_config_view: source exposes neither a diagram selection "
+            "(.view.selection) nor the explorer protocol (.on_select)"
+        )
+
+    def _on_pick(change: Any) -> None:
+        if not binding._active:
+            return
+        picked: list[str] = json.loads(change["new"] or "[]")
+        _drive(_picked_ids(interp, picked))  # the selection then drives the highlight
+
+    if bidirectional and viewer.has_trait("picked_json"):
+        viewer.observe(_on_pick, names="picked_json")
+        binding._disposers.append(lambda: viewer.unobserve(_on_pick, names="picked_json"))
+
+    return binding

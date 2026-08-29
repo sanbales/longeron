@@ -6,11 +6,14 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
 
 * a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
   compact toolbar on) -- the linked-selection hub;
-* a **3D CAD** pane (:func:`longeron.analysis.viewer3d.mesh_viewer`) over
-  the per-instance drone mesh, cross-linked with the diagram through
-  :func:`longeron.analysis.link.link_selection` (tutorial 7's M1 <-> M0
-  wiring), plus a translucent **view cone** that follows the camera
-  what-if sliders;
+* a **3D CAD** pane (:func:`longeron.analysis.viewer3d.mesh_viewer`),
+  config-keyed through :func:`longeron.analysis.link.bind_config_view`
+  (tutorial 7's seam, promoted): clicking ANY craft in the diagram --
+  a build configuration, a fleet airframe shell, or the mission
+  catalog's variant usages -- renders THAT craft in the pane, while
+  selections inside the shown craft highlight per M0 individual; a
+  translucent **view cone** follows the camera what-if sliders over
+  the home assembly;
 * a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
   scoring the model's own requirement hierarchy, repainted live as the
@@ -34,6 +37,8 @@ WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
 
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
+* diagram click on another craft -> the 3D pane bakes and shows THAT
+  craft (the camera what-if keeps measuring the home assembly);
 * diagram click on a requirement -> scoreboard selection (and a
   scoreboard cell click -> diagram selection);
 * camera sliders -> occlusion re-measure -> the view cone repaints, the
@@ -67,6 +72,7 @@ __all__ = [
     "FLIGHT_EVENTS",
     "drone_scene",
     "grand_dashboard",
+    "scene_for",
     "view_cone_part",
 ]
 
@@ -200,6 +206,72 @@ def drone_scene(
         **{f"prop{i + 1}": prop.id for i, prop in enumerate(props)},
     }
     return geometry.tag_parts(mesh, part_map), part_map
+
+
+#: nominal display propulsion for :func:`scene_for`'s fleet branch: an
+#: airframe definition carries the shell's geometry knobs but selects no
+#: motors, props, or pack (those are a MIX's choice -- see
+#: :func:`longeron.analysis.geometry.mission_geometry`), so a def-keyed
+#: render sizes its rotors and battery sleeve at the catalog's 10-inch
+#: small-class figures.
+_FLEET_DISPLAY = {"prop_diameter": 10.0 * geometry.IN, "motor_mass": 0.06, "battery_mass": 0.45}
+
+#: the DeepScout ``Airframe`` def's geometry knobs -- the attribute set
+#: whose presence marks a fleet airframe shell
+_AIRFRAME_KNOBS = ("wingSpan", "wingArea", "taper", "fuselageLength", "motorCount", "armCount")
+
+
+def scene_for(
+    model: M.Model,
+    config: M.Definition | str,
+    *,
+    interpreter: Interpreter | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Bake the tagged scene for ANY renderable craft definition.
+
+    One dispatcher over both DeepScout craft families.  A **fleet
+    airframe shell** -- a definition whose own attributes evaluate to
+    the ``Airframe`` geometry knobs (``wingSpan``, ``wingArea``,
+    ``taper``, ``fuselageLength``, ``motorCount``, ``armCount``) --
+    renders through :func:`longeron.analysis.geometry.airframe_geometry`
+    at nominal display propulsion, and every part carries the
+    definition's qualified name as its identity key (selecting the def
+    lights the whole craft; picking any part names the def).  Anything
+    else goes to :func:`drone_scene`: the MultiRotor build family bakes
+    from its own M0 population with per-individual identity keys, and
+    non-assembly shapes fail loudly with :class:`AnalysisError`.
+
+    This is the config-keyed rendering seam behind
+    :func:`longeron.analysis.link.bind_config_view`: resolve a
+    selection to its owning configuration, hand the configuration
+    here, swap the viewer to the result.  Returns ``(mesh, part_map)``.
+    """
+
+    interp = interpreter if interpreter is not None else Interpreter(model)
+    definition = model.find(config) if isinstance(config, str) else config
+    if not isinstance(definition, M.Definition) or not definition.qualified_name:
+        raise AnalysisError(f"scene_for needs a named definition (got {config!r})")
+    qname = definition.qualified_name
+    knobs: dict[str, float] = {}
+    for name in _AIRFRAME_KNOBS:
+        try:
+            knobs[name] = float(interp.evaluate(f"{qname}::{name}"))
+        except Exception:
+            knobs = {}  # unvalued or absent knob: not a fleet shell
+            break
+    if knobs:
+        shell = geometry.airframe_geometry(
+            wing_span=knobs["wingSpan"],
+            wing_area=knobs["wingArea"],
+            taper=knobs["taper"],
+            fuselage_length=knobs["fuselageLength"],
+            motor_count=knobs["motorCount"],
+            arm_count=int(knobs["armCount"]),
+            **_FLEET_DISPLAY,
+        )
+        part_map = {part["name"]: qname for part in shell["parts"]}
+        return geometry.tag_parts(shell, part_map), part_map
+    return drone_scene(model, qname)
 
 
 def view_cone_part(
@@ -368,8 +440,10 @@ def grand_dashboard(
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
     ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum``,
     ``.smt_sat`` / ``.smt_what_if``, ``.mission`` / ``.track``,
-    ``.mesh`` / ``.part_map`` / ``.camera``, ``.header``, and
-    ``.unlink`` (drops the diagram <-> 3D link).
+    ``.mesh`` / ``.part_map`` / ``.camera``, ``.header``,
+    ``.config_view`` (the :class:`~longeron.analysis.link.
+    ConfigViewBinding` behind the config-keyed 3D pane), and
+    ``.unlink`` (drops the diagram <-> 3D binding).
     """
 
     from ..diagrams import structure_diagram  # pulls the vendored ipyelk
@@ -507,19 +581,26 @@ def grand_dashboard(
             board.nodes_json = payload
         header.value = _header_html(assembly, score.score, occluded)
 
-    def _on_camera(_change: Any = None) -> None:
-        camera = {
+    def _camera_now() -> dict[str, float]:
+        return {
             **camera0,
             "elevation": float(elevation.value),
             "azimuth": float(azimuth.value),
         }
+
+    def _cone_scene(base: dict[str, Any]) -> dict[str, Any]:
+        cone = view_cone_part(_camera_now(), length=cone_length)
+        return {**base, "parts": [*base["parts"], cone]}
+
+    def _on_camera(_change: Any = None) -> None:
+        camera = _camera_now()
         report = geometry.occlusion_report(mesh, camera=camera, engine="mesh")
         box.report = report
         readout.value = _occlusion_html(report)
-        scene = {**mesh, "parts": [*mesh["parts"], view_cone_part(camera, length=cone_length)]}
-        viewer.mesh_json = json.dumps(scene)
-        offenders = sorted(part_map.get(name, name) for name in report["obstructions"])
-        viewer.highlight_json = json.dumps(offenders)
+        if binding.current == assembly:  # the pane may be showing another craft
+            viewer.mesh_json = json.dumps(_cone_scene(mesh))
+            offenders = sorted(part_map.get(name, name) for name in report["obstructions"])
+            viewer.highlight_json = json.dumps(offenders)
         _repaint_board(float(report["occludedFraction"]))
 
     def _on_loiter(_change: Any = None) -> None:
@@ -562,7 +643,16 @@ def grand_dashboard(
         finally:
             syncing["active"] = False
 
-    unlink = link.link_selection(diagram, viewer, model)  # mesh already tagged
+    # the config-keyed 3D pane: any craft clicked in the diagram renders
+    # in the viewer (scene_for bakes it); the home assembly keeps its
+    # camera-what-if view cone through the decorate hook
+    binding = link.bind_config_view(
+        diagram,
+        viewer,
+        model,
+        showing=assembly,
+        decorate=lambda qname, scene: _cone_scene(scene) if qname == assembly else scene,
+    )
     from ..diagrams import on_select
 
     on_select(diagram, model, _on_diagram)
@@ -670,7 +760,8 @@ def grand_dashboard(
     box.part_map = dict(part_map)
     box.camera = dict(camera0)
     box.values = base_values
-    box.unlink = unlink
+    box.config_view = binding
+    box.unlink = binding.unbind
 
     _on_camera()
     _on_loiter()

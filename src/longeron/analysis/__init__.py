@@ -45,8 +45,10 @@ third-party dependencies):
   ``mdao``/``smt`` for the solver strips).
 * :mod:`longeron.analysis.link` -- linked selection between the
   interactive diagrams and the 3D viewer: diagram clicks highlight the
-  matching meshes, mesh picks select the diagram node (``viz`` extra
-  plus the vendored ipyelk for the diagram side).
+  matching meshes, mesh picks select the diagram node, and
+  ``bind_config_view`` keys WHICH craft the viewer shows to the
+  selection (``viz`` extra plus the vendored ipyelk for the diagram
+  side).
 * :mod:`longeron.analysis.structure` -- interactive views of the analysis
   problems' *shape*: an N2 matrix over a built OpenMDAO problem and a
   bipartite constraint-participation network over a trade study

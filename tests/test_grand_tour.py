@@ -14,7 +14,13 @@ import pytest
 
 import longeron
 from longeron.analysis import AnalysisError, geometry
-from longeron.analysis.grand import ATLANTA_LOOP, drone_scene, grand_dashboard, view_cone_part
+from longeron.analysis.grand import (
+    ATLANTA_LOOP,
+    drone_scene,
+    grand_dashboard,
+    scene_for,
+    view_cone_part,
+)
 
 pytest.importorskip("ipywidgets")
 pytest.importorskip("openmdao")
@@ -60,6 +66,60 @@ class TestDroneScene:
     def test_wrong_shape_is_loud(self, missions):
         with pytest.raises(AnalysisError, match="drone-assembly slot"):
             drone_scene(missions, "ScoutSizing::IsrPrime")
+
+
+#: every configuration in the DeepScout program that scene_for must
+#: resolve: the MultiRotor build family (rotor-disc counts prove the
+#: right frame rendered) ...
+BUILD_DISCS = {
+    "Rotorcraft::TriCopter": 3,
+    "Rotorcraft::QuadCopter": 4,
+    "Rotorcraft::HexaCopter": 6,
+    "Rotorcraft::OctoCopter": 8,
+    "Rotorcraft::CoaxX8": 8,
+}
+#: ... and the fleet airframe shells (distinct part sets prove the
+#: right family builder fired)
+FLEET_PARTS = {
+    "Rotorcraft::BoxQuad": ["frame", "motors", "props", "battery", "esc"],
+    "Rotorcraft::TeardropQuad": ["frame", "motors", "props", "battery"],
+    "Rotorcraft::OpenTri": ["frame", "motors", "props", "battery", "esc"],
+    "Rotorcraft::HexLifter": ["frame", "motors", "props", "battery", "esc"],
+    "Rotorcraft::CoaxOcto": ["frame", "motors", "props", "battery", "esc"],
+    "Rotorcraft::RingOcto": ["frame", "motors", "props", "battery", "esc"],
+    "WingedVtol::VtolWing": ["frame", "wing", "tail", "motors", "props", "battery"],
+    "WingedVtol::DartInterceptor": ["frame", "wing", "tail", "motors", "props", "battery"],
+}
+
+
+class TestSceneFor:
+    """The one dispatcher over both craft families -- the config-keyed
+    rendering seam behind bind_config_view."""
+
+    @pytest.mark.parametrize(("qname", "discs"), sorted(BUILD_DISCS.items()))
+    def test_build_family_bakes_from_its_population(self, drone, qname, discs):
+        mesh, part_map = scene_for(drone, qname)
+        assert len(mesh["discs"]) == discs
+        assert part_map["frame"] == f"{qname}#0.chassis"  # M0 individual keys
+
+    @pytest.mark.parametrize(("qname", "parts"), sorted(FLEET_PARTS.items()))
+    def test_fleet_shell_bakes_from_its_attributes(self, drone, qname, parts):
+        mesh, part_map = scene_for(drone, qname)
+        assert [part["name"] for part in mesh["parts"]] == parts
+        # whole-craft identity: every part carries the def's qname
+        assert all(part["key"] == qname for part in mesh["parts"])
+        assert part_map == dict.fromkeys(parts, qname)
+
+    def test_definition_object_and_qname_agree(self, drone):
+        by_name, _ = scene_for(drone, "Rotorcraft::TeardropQuad")
+        by_def, _ = scene_for(drone, drone.find("Rotorcraft::TeardropQuad"))
+        assert by_name == by_def
+
+    def test_unbakeable_shapes_stay_loud(self, drone):
+        with pytest.raises(AnalysisError, match="drone-assembly slot"):
+            scene_for(drone, "DeepScout::HoverTime")  # a calc def
+        with pytest.raises(AnalysisError, match="named definition"):
+            scene_for(drone, "Rotorcraft::QuadCopter::motors")  # a usage
 
 
 class TestViewConePart:
@@ -124,6 +184,29 @@ class TestSelectionWiring:
         dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter::propellers"]
         expected = sorted(dash.part_map[f"prop{i}"] for i in (1, 2, 3, 4))
         assert json.loads(dash.viewer.highlight_json) == expected
+        dash.diagram.view.selection.ids = []
+
+    def test_click_another_craft_swaps_the_3d_pane(self, dash):
+        dash.diagram.view.selection.ids = ["Rotorcraft::HexaCopter::motors"]
+        assert dash.config_view.current == "Rotorcraft::HexaCopter"
+        assert len(json.loads(dash.viewer.mesh_json)["discs"]) == 6
+        dash.diagram.view.selection.ids = ["Rotorcraft::TeardropQuad"]  # a fleet shell
+        parts = json.loads(dash.viewer.mesh_json)["parts"]
+        assert all(part["key"] == "Rotorcraft::TeardropQuad" for part in parts)
+        # home again: the quad returns WITH its view cone, in one write
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        assert dash.config_view.current == "Rotorcraft::QuadCopter"
+        assert json.loads(dash.viewer.mesh_json)["parts"][-1]["name"] == "viewCone"
+        dash.diagram.view.selection.ids = []
+
+    def test_camera_what_if_never_clobbers_a_visiting_craft(self, dash):
+        dash.diagram.view.selection.ids = ["WingedVtol::VtolWing"]
+        shown = dash.viewer.mesh_json
+        dash.elevation.value = -30.0  # measures the HOME assembly ...
+        assert dash.report["occludedFraction"] >= 0.0  # ... report still updates
+        assert dash.viewer.mesh_json is shown  # ... the visiting craft stays
+        dash.elevation.value = -15.0
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
         dash.diagram.view.selection.ids = []
 
     def test_requirement_click_selects_the_scoreboard_cell(self, dash):

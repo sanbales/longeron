@@ -306,3 +306,151 @@ class TestPerIndividualLink:
         unlink()
         viewer.picked_json = json.dumps(["Rotorcraft::QuadCopter#0.motors#1"])
         assert picks == []
+
+
+class _StubTree:
+    """The explorer protocol's selection surface, headless (on_select +
+    a plain-assignable ``selected``)."""
+
+    def __init__(self):
+        self.selected: list[str] = []
+        self._callbacks = []
+
+    def on_select(self, callback):
+        self._callbacks.append(callback)
+
+    def fire(self, ids):
+        self.selected = list(ids)
+        for callback in self._callbacks:
+            callback(list(ids))
+
+
+class TestBindConfigView:
+    """The config-keyed rendering seam: a selection decides WHICH craft
+    the viewer shows.  Scenes bake through grand.scene_for (dispatching
+    the MultiRotor build family AND the fleet airframe shells); swaps
+    happen only when the resolved configuration changes."""
+
+    @pytest.fixture()
+    def bound(self, drone_model):
+        from longeron.analysis.grand import scene_for
+
+        mesh, _part_map = scene_for(drone_model, "Rotorcraft::QuadCopter")
+        structure = diagrams.structure_diagram(drone_model)
+        viewer = viewer3d.mesh_viewer(mesh, label="the quad")
+        binding = link.bind_config_view(
+            structure, viewer, drone_model, showing="Rotorcraft::QuadCopter"
+        )
+        return structure, viewer, binding
+
+    def test_selection_inside_the_shown_craft_never_rewrites_the_scene(self, bound):
+        structure, viewer, binding = bound
+        before = viewer.mesh_json
+        structure.view.selection.ids = ["Rotorcraft::QuadCopter::motors"]
+        assert viewer.mesh_json is before  # no swap, no flicker
+        assert binding.current == "Rotorcraft::QuadCopter"
+        assert json.loads(viewer.highlight_json) == sorted(MOTOR_IDS)  # M0 fan-out
+
+    def test_selecting_another_build_config_renders_it(self, bound):
+        structure, viewer, binding = bound
+        structure.view.selection.ids = ["Rotorcraft::TriCopter::tailMotor"]
+        assert binding.current == "Rotorcraft::TriCopter"
+        assert viewer.label == "Rotorcraft::TriCopter"
+        assert len(json.loads(viewer.mesh_json)["discs"]) == 3  # THE TRICOPTER
+        assert json.loads(viewer.highlight_json) == ["Rotorcraft::TriCopter#0.tailMotor"]
+
+    def test_selecting_a_fleet_shell_renders_it(self, bound):
+        structure, viewer, binding = bound
+        structure.view.selection.ids = ["Rotorcraft::TeardropQuad"]
+        assert binding.current == "Rotorcraft::TeardropQuad"
+        parts = json.loads(viewer.mesh_json)["parts"]
+        assert parts and all(part["key"] == "Rotorcraft::TeardropQuad" for part in parts)
+        # whole-craft identity: the def selection lights every part
+        assert json.loads(viewer.highlight_json) == ["Rotorcraft::TeardropQuad"]
+
+    def test_a_variant_usage_renders_the_definition_that_types_it(self, bound):
+        structure, _viewer, binding = bound
+        structure.view.selection.ids = ["ScoutMissions::Catalog::AirframeChoice::hexLifter"]
+        assert binding.current == "Rotorcraft::HexLifter"
+
+    def test_unbakeable_selections_keep_the_scene_and_clear_the_highlight(self, bound):
+        structure, viewer, binding = bound
+        structure.view.selection.ids = ["Rotorcraft::TeardropQuad"]
+        shown = viewer.mesh_json
+        structure.view.selection.ids = ["DeepScout::HoverTime"]  # a calc def
+        assert viewer.mesh_json is shown and binding.current == "Rotorcraft::TeardropQuad"
+        assert viewer.highlight_json == "[]"
+        assert binding.scenes["DeepScout::HoverTime"] is None  # the miss is cached
+
+    def test_mesh_pick_selects_the_source_node(self, bound):
+        structure, viewer, _binding = bound
+        structure.view.selection.ids = ["Rotorcraft::TeardropQuad"]
+        viewer.picked_json = json.dumps(["Rotorcraft::TeardropQuad"])
+        assert list(structure.view.selection.ids) == ["Rotorcraft::TeardropQuad"]
+        viewer.picked_json = json.dumps([])  # background: clears
+        assert list(structure.view.selection.ids) == []
+
+    def test_unbind_is_idempotent_and_silences_both_directions(self, bound):
+        structure, viewer, binding = bound
+        structure.view.selection.ids = ["Rotorcraft::QuadCopter::motors"]
+        binding.unbind()
+        assert viewer.highlight_json == "[]"
+        structure.view.selection.ids = ["Rotorcraft::TriCopter::tailMotor"]
+        assert binding.current == "Rotorcraft::QuadCopter"  # inert: no swap
+        viewer.picked_json = json.dumps(["Rotorcraft::TeardropQuad"])
+        assert list(structure.view.selection.ids) == ["Rotorcraft::TriCopter::tailMotor"]
+        binding.unbind()  # idempotent
+
+    def test_rebinding_replaces_the_previous_binding(self, bound, drone_model):
+        structure, viewer, binding = bound
+        rebound = link.bind_config_view(
+            structure, viewer, drone_model, showing="Rotorcraft::QuadCopter"
+        )
+        structure.view.selection.ids = ["Rotorcraft::QuadCopter::motors"]
+        highlight = viewer.highlight_json
+        assert json.loads(highlight) == sorted(MOTOR_IDS)  # ONE binding drove this
+        binding.unbind()  # the replaced binding is inert: must not clear
+        assert viewer.highlight_json == highlight
+        rebound.unbind()
+        assert viewer.highlight_json == "[]"
+
+    def test_decorate_hook_shapes_the_swap_in_one_write(self, drone_model):
+        from longeron.analysis.grand import scene_for
+
+        mesh, _part_map = scene_for(drone_model, "Rotorcraft::QuadCopter")
+        structure = diagrams.structure_diagram(drone_model)
+        viewer = viewer3d.mesh_viewer(mesh)
+        writes = []
+        viewer.observe(lambda change: writes.append(change["new"]), names="mesh_json")
+        halo = {"name": "halo", "vertices": [], "faces": []}
+        link.bind_config_view(
+            structure,
+            viewer,
+            drone_model,
+            showing="Rotorcraft::QuadCopter",
+            decorate=lambda qname, scene: {**scene, "parts": [*scene["parts"], halo]},
+        )
+        structure.view.selection.ids = ["Rotorcraft::TriCopter"]
+        assert len(writes) == 1  # decorated swap, one traitlet write
+        assert json.loads(writes[0])["parts"][-1]["name"] == "halo"
+
+    def test_explorer_protocol_source(self, drone_model):
+        from longeron.analysis.grand import scene_for
+
+        mesh, _part_map = scene_for(drone_model, "Rotorcraft::QuadCopter")
+        tree = _StubTree()
+        viewer = viewer3d.mesh_viewer(mesh)
+        binding = link.bind_config_view(tree, viewer, drone_model, showing="Rotorcraft::QuadCopter")
+        tree.fire(["Rotorcraft::HexLifter"])  # a tree row click, by qualified name
+        assert binding.current == "Rotorcraft::HexLifter"
+        assert json.loads(viewer.highlight_json) == ["Rotorcraft::HexLifter"]
+        viewer.picked_json = json.dumps(["Rotorcraft::HexLifter"])  # pick flows OUT
+        assert tree.selected == ["Rotorcraft::HexLifter"]
+        binding.unbind()
+
+    def test_source_without_a_selection_surface_is_loud(self, drone_model):
+        from longeron.analysis import AnalysisError
+
+        viewer = viewer3d.mesh_viewer(_quad_mesh())
+        with pytest.raises(AnalysisError, match="selection"):
+            link.bind_config_view(object(), viewer, drone_model)

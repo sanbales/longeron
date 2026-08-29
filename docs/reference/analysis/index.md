@@ -17,6 +17,7 @@ scoreboard
 viz
 geometry
 viewer3d
+link
 mission3d
 structure
 dashboard

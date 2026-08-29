@@ -2,6 +2,25 @@
 
 ## 0.11.0 (unreleased)
 
+- **Config-keyed 3D rendering, as a seam**
+  (`longeron.analysis.link.bind_config_view` +
+  `longeron.analysis.grand.scene_for`): tutorial 7's inline pattern --
+  click anything, render the craft that owns it -- becomes one reusable
+  call over any house selection surface (a diagram, an
+  explorer-protocol tree). `scene_for` dispatches BOTH DeepScout
+  families through one entry point: a MultiRotor build configuration
+  bakes from its own M0 population (per-individual identity keys), a
+  fleet airframe shell (`TeardropQuad`, `HexLifter`, `VtolWing`, ...)
+  bakes from its own attributes via the extracted
+  `geometry.airframe_geometry` ladder, and the mission catalog's
+  variant usages resolve to the definitions that type them. Swaps
+  happen only when the resolved configuration changes (no flicker),
+  unrenderable selections keep the scene, rebinding is idempotent, and
+  mesh picks still select the source node. `grand_dashboard` wires the
+  binding into its 3D pane by default (`dash.config_view`); the camera
+  what-if keeps measuring the home assembly while another craft is
+  showing
+
 - **The tutorial curriculum, rebuilt**: fifteen feature-tour notebooks
   become nine tutorials with one arc -- *data -> execution -> reading ->
   trading -> individuals -> judging -> geometry -> knowledge ->
