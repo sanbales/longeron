@@ -2265,3 +2265,71 @@ class TestBrowserEndpointTangents:
         assert naive == pytest.approx(0.0, abs=math.radians(1.0))
         assert abs(math.degrees(chord)) > 5.0  # rotates with the shaft
         assert render._covered_route_points(points, "source", diamond) == 1
+
+
+# three package depths; L2a/L2b are loose members beside connected part
+# defs, so pack_components wraps them in a synthetic group -- the exact
+# configuration that reproduced the detached tab
+_NESTED_PACKAGES = """
+package L0 {
+    package L1 {
+        package L2a { part def A2; }
+        package L2b { part def B2; }
+        part def W;
+        part def V { part w : W; }
+    }
+    package L1b { part def C1; }
+    part def X;
+    part def Y { part x : X; }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def nested_package_layout():
+    model = longeron.loads(_NESTED_PACKAGES)
+    root = render._root_of(diagrams.structure_diagram(model))
+    return render.layout(render._to_elk_json(root))
+
+
+class TestPackageTabAdjacency:
+    """The package folder tab (spec printed p.24) rides FLUSH with the box
+    top at every nesting depth.  elk.spacing.labelNode applies per
+    hierarchy level; the invisible pack groups ``pack_components`` wraps
+    loose members in once fell back to the elkjs default (5px), floating
+    nested packages' tabs off their boxes."""
+
+    @staticmethod
+    def _package_tabs_at(graph, depth):
+        found = []
+
+        def walk(node, package_depth):
+            css = node.get("properties", {}).get("cssClasses", "")
+            is_package = "sysml-package" in css
+            if is_package and package_depth == depth:
+                tab = next(
+                    label
+                    for label in node.get("labels", [])
+                    if "sysml-tab" in label.get("properties", {}).get("cssClasses", "")
+                )
+                found.append((node.get("id"), tab))
+            for child in node.get("children", []):
+                walk(child, package_depth + (1 if is_package else 0))
+
+        walk(graph, 0)
+        return found
+
+    @pytest.mark.parametrize("depth", [0, 1, 2])
+    def test_tab_flush_with_body(self, nested_package_layout, depth):
+        tabs = self._package_tabs_at(nested_package_layout, depth)
+        assert tabs, f"no package nodes found at depth {depth}"
+        for node_id, tab in tabs:
+            # tab coordinates are node-relative: the body's top-left corner
+            # is (0, 0), so adjacency means bottom edge at y=0, left at x=0
+            bottom = tab["y"] + tab["height"]
+            assert bottom == pytest.approx(0.0, abs=1e-6), (
+                f"{node_id}: tab bottom {bottom} != body top 0"
+            )
+            assert tab["x"] == pytest.approx(0.0, abs=1e-6), (
+                f"{node_id}: tab left {tab['x']} != body left 0"
+            )

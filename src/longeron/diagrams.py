@@ -1593,8 +1593,13 @@ def structure_diagram(
     if max_label_width != _MAX_LABEL_WIDTH:
         options["max_label_width"] = max_label_width
     # package tabs ride flush with the box top (outside icon labels; the
-    # spacing option applies per hierarchy level, so the package nodes
-    # restate it for their nested packages)
+    # spacing option applies per hierarchy level, so EVERY container
+    # restates it -- pack_components wraps loose packages in synthetic
+    # groups, and a package behind such a group otherwise fell back to
+    # the elkjs default 5px: the tab floated off its box)
+    for node in _walk_nodes(root):
+        if node.children:
+            node.layoutOptions.setdefault("elk.spacing.labelNode", "0")
     widget = _finish(
         root,
         toolbar=toolbar,
