@@ -196,23 +196,23 @@ python examples/demo.py
 ### The full loop: read → run → save
 
 ```python
-model = longeron.load("examples/drone.sysml")
+model = longeron.load("examples/deepscout")  # the whole program: one workspace
 interp = longeron.Interpreter(model)
 
 # run
-flown = interp.instantiate("Drone::QuadCopter", payloadMass=0.35)
+flown = interp.instantiate("Rotorcraft::QuadCopter", payloadMass=0.35)
 
 # write computed values back into the model as a bound part usage
-model.find("Drone").add(interp.snapshot(flown, name="asFlown"))
+model.find("Rotorcraft").add(interp.snapshot(flown, name="asFlown"))
 
 # save in any format (inferred from the suffix)
-longeron.save(model, "drone_with_results.sysml")
-longeron.save(model, "drone_with_results.json")
-longeron.save(model, "drone_with_results.kerml")
+longeron.save(model, "deepscout_with_results.sysml")
+longeron.save(model, "deepscout_with_results.json")
+longeron.save(model, "deepscout_with_results.kerml")
 
 # the JSON export is lossless: reload and keep executing
-again = longeron.load("drone_with_results.json")
-longeron.Interpreter(again).instantiate("Drone::QuadCopter")
+again = longeron.load("deepscout_with_results.json")
+longeron.Interpreter(again).instantiate("Rotorcraft::QuadCopter")
 ```
 
 SysML or KerML text can be generated from just the JSON definition:
@@ -248,14 +248,14 @@ are ~1000x faster than cold parses with the ANTLR Python runtime.
 ## Command line
 
 ```bash
-longeron parse examples/drone.sysml                      # syntax check (file or dir)
-longeron export examples/drone.sysml --format sysml      # json | sysml | kerml
+longeron parse examples/deepscout                        # syntax check (file or dir)
+longeron export examples/deepscout --format sysml        # json | sysml | kerml
 longeron export model.json --format sysml                # JSON in, SysML out
 longeron export models/ --format json                    # whole directory, merged
-longeron calc examples/drone.sysml Drone::HoverTime capacity=5200
-longeron check examples/drone.sysml Drone::QuadCopter payloadMass=0.9
-longeron run examples/drone.sysml Drone::PlanBattery distanceKm=20
-longeron simulate examples/drone.sysml Drone::FlightStates --events launch,airborne
+longeron calc examples/deepscout DeepScout::HoverTime capacity=5200
+longeron check examples/deepscout Rotorcraft::QuadCopter payloadMass=0.9
+longeron run examples/deepscout DeepScout::PlanBattery distanceKm=20
+longeron simulate examples/deepscout DeepScout::FlightStates --events launch,airborne
 ```
 
 Every model-consuming command accepts `.sysml`, `.json`, or a directory;
@@ -288,7 +288,7 @@ src/longeron/
 vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
     interpreter.py         evaluation, instantiation, actions, states, snapshot
     cli.py                 the `longeron` console command
-examples/                  drone.sysml + kernel.kerml + demo.py
+examples/                  the DeepScout program (deepscout/) + kernel.kerml + demo.py
 tests/                     pytest suite (see the coverage badge above)
 .github/workflows/ci.yml   pixi-based: check + test matrix (3.10-3.13)
                            + grammar-regen drift check (antlr/JDK from lock)

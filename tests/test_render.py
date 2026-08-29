@@ -16,7 +16,7 @@ from longeron import diagrams, render
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return longeron.load("examples/drone.sysml")
+    return longeron.load("examples/deepscout")
 
 
 def _walk_children(node):
@@ -35,18 +35,18 @@ class TestSvg:
         assert "capacity : Real = 5200.0" in svg
 
     def test_state_svg_has_transitions(self, drone_model):
-        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")))
         assert "launch" in svg and "touchdown" in svg
         assert 'marker-end="url(#arrow-b58900)"' in svg  # gold arrowheads
         assert 'markerUnits="userSpaceOnUse"' in svg  # constant-size heads
         assert "#b58900" in svg  # state/transition styling applied
 
     def test_action_svg(self, drone_model):
-        svg = render.to_svg(diagrams.action_diagram(drone_model.find("Drone::PlanBattery")))
+        svg = render.to_svg(diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery")))
         assert "start" in svg and "done" in svg
 
     def test_accepts_model_elements_directly(self, drone_model):
-        svg = render.to_svg(drone_model.find("Drone::FlightStates"))
+        svg = render.to_svg(drone_model.find("DeepScout::FlightStates"))
         assert "flying" in svg
 
     def test_disconnected_definitions_pack_wide(self):
@@ -437,7 +437,7 @@ class TestSvg:
         assert "circle-plus" not in body  # glyph never referenced
         assert "sysml-edge-owned" not in body
         # members still NEST: the QuadCopter usages sit inside their box
-        assert 'data-qname="Drone::QuadCopter::motors"' in body
+        assert 'data-qname="Rotorcraft::QuadCopter::motors"' in body
 
     def test_portion_membership_ball(self):
         """Portion membership (errata new row): timeslice/snapshot usages
@@ -605,7 +605,7 @@ class TestSvg:
         for stroke in ("#b58900", "#6c56a8", render._FIRED_STROKE):
             marker = defs.split(f'id="{render._arrow_id(stroke)}"')[1].split("</marker>")[0]
             assert f'd="M 0 1 L 9 5 L 0 9" fill="none" stroke="{stroke}"' in marker
-        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")))
         assert 'marker-end="url(#arrow-b58900)"' in svg
 
     def test_typed_submachine_replay_keys_are_instance_qualified(self):
@@ -655,7 +655,7 @@ class TestSvg:
         ) in {(f.source, f.target) for f in timeline.fired}
 
     def test_layout_produces_coordinates(self, drone_model):
-        widget = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        widget = diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
         graph = render.layout(render._to_elk_json(widget.source.value))
         assert graph["width"] > 0 and graph["height"] > 0
         assert all("x" in child for child in graph["children"])
@@ -675,7 +675,7 @@ class TestSvg:
                     return found
             return None
 
-        hover = find(graph, "Drone::HoverTime")
+        hover = find(graph, "DeepScout::HoverTime")
         assert hover is not None
         assert hover["width"] < 200  # was ~290 with ELK-guessed sizing
         assert hover["height"] < 110
@@ -696,7 +696,7 @@ class TestSvg:
                     return found
             return None
 
-        quad = find(graph, "Drone::QuadCopter")
+        quad = find(graph, "Rotorcraft::QuadCopter")
         widest = max(label["width"] for label in quad["labels"])
         assert quad["width"] >= widest  # totalMass expression stays inside
 
@@ -724,14 +724,14 @@ class TestSvg:
             ]
 
         # leaves: attribute rows pin to the 8px margin, titles stay centered
-        hover = find(graph, "Drone::HoverTime")
+        hover = find(graph, "DeepScout::HoverTime")
         assert {label["x"] for label in rows(hover)} == {8.0}
         title = next(lab for lab in hover["labels"] if lab["text"] == "HoverTime")
         assert title["x"] > 8.0
 
         # containers: attribute rows get full-width boxes, so their
         # (ELK-centered) left edges coincide
-        quad = find(graph, "Drone::QuadCopter")
+        quad = find(graph, "Rotorcraft::QuadCopter")
         quad_rows = rows(quad)
         assert len(quad_rows) >= 3
         assert len({label["x"] for label in quad_rows}) == 1
@@ -748,11 +748,11 @@ class TestSvg:
     def test_svg_carries_a_title(self, drone_model):
         """Regression (V4): exported SVGs name their subject."""
 
-        svg = render.to_svg(drone_model.find("Drone::FlightStates"))
-        assert "<title>Drone::FlightStates</title>" in svg
+        svg = render.to_svg(drone_model.find("DeepScout::FlightStates"))
+        assert "<title>DeepScout::FlightStates</title>" in svg
         # pre-built widgets recover the name from the node qualified names
-        svg = render.to_svg(diagrams.state_diagram(drone_model.find("Drone::FlightStates")))
-        assert "<title>Drone::FlightStates</title>" in svg
+        svg = render.to_svg(diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")))
+        assert "<title>DeepScout::FlightStates</title>" in svg
         # whole models are named by their source
         svg = render.to_svg(drone_model)
         assert "<title>" in svg
@@ -1660,13 +1660,13 @@ class TestCompoundLabelFit:
 
         widget = diagrams.structure_diagram(drone_model, direction="down")
         graph = render.layout(render._to_elk_json(widget.source.value))
-        quad = next(n for n in _walk_json(graph) if n["id"] == "Drone::QuadCopter")
+        quad = next(n for n in _walk_json(graph) if n["id"] == "Rotorcraft::QuadCopter")
         rows = max(label["width"] for label in quad["labels"])
         assert quad["width"] >= rows  # the fix: rows drive the width ...
         assert quad["height"] < rows  # ... and never the height
 
     def test_package_nested_compound_rows_stay_inside_under_down(self):
-        """The maintainer's second repro (UavMissions, NB12): a part def
+        """The maintainer's second repro (the mission catalog, NB12): a part def
         with children AND very wide rows nested INSIDE a package.  Under
         the un-fixed top-down transposition its width collapsed to
         children + padding while the H_CENTERed full-width rows poked
@@ -1733,7 +1733,7 @@ class TestPng:
         except Exception as err:
             pytest.skip(f"cairosvg unavailable: {err}")
         target = tmp_path / "states.png"
-        render.to_png(drone_model.find("Drone::FlightStates"), target)
+        render.to_png(drone_model.find("DeepScout::FlightStates"), target)
         data = target.read_bytes()
         assert data[:8] == b"\x89PNG\r\n\x1a\n"
         assert len(data) > 5000

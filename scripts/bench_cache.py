@@ -6,7 +6,7 @@ a fresh Python process (the dominant cold cost -- ANTLR ATN warmup -- is
 paid per process, which is what CLI users experience), against a private
 temporary cache directory:
 
-    python scripts/bench_cache.py                     # examples/uav_missions.sysml
+    python scripts/bench_cache.py                     # examples/deepscout/missions.sysml
     python scripts/bench_cache.py path/to/model.sysml --warm-runs 5
 
 Standard library only.
@@ -47,7 +47,7 @@ def _timed_load(source: Path, cache_dir: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    default = Path(__file__).resolve().parent.parent / "examples" / "uav_missions.sysml"
+    default = Path(__file__).resolve().parent.parent / "examples" / "deepscout" / "missions.sysml"
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("file", nargs="?", default=default, type=Path, help=f"({default})")
     parser.add_argument("--warm-runs", type=int, default=3, help="warm samples; best is kept")

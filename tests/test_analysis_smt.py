@@ -16,12 +16,14 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture()
 def drone():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 class TestConsistency:
     def test_drone_requirements_are_consistent(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
+        system = smt.to_smt(
+            drone, "Rotorcraft::QuadCopter", requirements=("DeepScout::FlightEnvelope",)
+        )
         assert system.gaps == []
         result = system.check()
         assert result.status == "sat"
@@ -29,14 +31,16 @@ class TestConsistency:
         assert result.witness["totalMass"] == pytest.approx(1.41)
 
     def test_calc_invocations_inline(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
+        system = smt.to_smt(
+            drone, "Rotorcraft::QuadCopter", requirements=("DeepScout::FlightEnvelope",)
+        )
         labels = [label for label, _ in system.assertions]
         assert "FlightEnvelope::hoverMargin [require]" in labels
 
 
 class TestConflictCore:
     def test_over_constrained_names_conflict(self, drone):
-        pkg = drone.find("Drone")
+        pkg = drone.find("Rotorcraft")
         req = M.Definition(kind="requirement", name="HeavyPayload")
         req.add(M.Usage(kind="subject", name="drone", types=["QuadCopter"]))
         req.add(
@@ -50,8 +54,8 @@ class TestConflictCore:
         pkg.add(req)
         system = smt.to_smt(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope", "Drone::HeavyPayload"),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope", "Rotorcraft::HeavyPayload"),
             free=("payloadMass",),
         )
         result = system.check()
@@ -66,8 +70,8 @@ class TestDesignSpace:
     def test_max_payload_with_all_constraints(self, drone):
         system = smt.to_smt(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
         )
         bound, result = system.maximize("payloadMass")
@@ -76,7 +80,7 @@ class TestDesignSpace:
 
     def test_strict_bound_is_open(self, drone):
         # only canHover (strict >): the supremum is reported with -epsilon
-        system = smt.to_smt(drone, "Drone::QuadCopter", free=("payloadMass",))
+        system = smt.to_smt(drone, "Rotorcraft::QuadCopter", free=("payloadMass",))
         bound, result = system.maximize("payloadMass", exclude=("QuadCopter::takeoffMassLimit",))
         assert result.status == "sat"
         assert "epsilon" in bound
@@ -84,7 +88,7 @@ class TestDesignSpace:
         assert bound.startswith(str(Fraction(89274526868647, 40875000000000)))
 
     def test_witness_respects_free_variable(self, drone):
-        system = smt.to_smt(drone, "Drone::QuadCopter", free=("payloadMass",))
+        system = smt.to_smt(drone, "Rotorcraft::QuadCopter", free=("payloadMass",))
         labels = [label for label, _ in system.assertions]
         assert "payloadMass.value" not in labels
         assert "maxTakeoffMass.value" in labels

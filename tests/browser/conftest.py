@@ -211,7 +211,7 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     # were all reported from live NB14 sessions, so the tier drives the
     # REAL tutorial, not a paraphrase).  Served from a notebooks/ subdir
     # with examples/ beside it so cell 3's relative
-    # "../examples/drone.sysml" resolves exactly like in the repo; outputs
+    # "../examples/deepscout" resolves exactly like in the repo; outputs
     # stripped for the same autosave-poisoning reasons as the gallery.
     tutorial = json.loads((REPO / "notebooks" / "14_model_app.ipynb").read_text(encoding="utf-8"))
     for cell in tutorial.get("cells", []):
@@ -223,11 +223,9 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         json.dumps(tutorial, indent=1), encoding="utf-8"
     )
     (root / "examples").mkdir()
-    shutil.copyfile(REPO / "examples" / "drone.sysml", root / "examples" / "drone.sysml")
-    # the dashboard scenario bakes the real multi-mission catalog
-    shutil.copyfile(
-        REPO / "examples" / "uav_missions.sysml", root / "examples" / "uav_missions.sysml"
-    )
+    # the app scenario loads the program; the dashboard scenario bakes
+    # the real crossed mission catalog from the same workspace
+    shutil.copytree(REPO / "examples" / "deepscout", root / "examples" / "deepscout")
     for name, build in SCENARIO_NOTEBOOKS.items():
         (root / name).write_text(json.dumps(build(), indent=1), encoding="utf-8")
 

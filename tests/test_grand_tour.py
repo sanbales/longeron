@@ -25,12 +25,12 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def drone():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
 def missions():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -51,15 +51,15 @@ def _leaf(node, name):
 class TestDroneScene:
     def test_mesh_is_tagged_with_m0_individual_ids(self, drone):
         mesh, part_map = drone_scene(drone)
-        assert part_map["frame"] == "Drone::QuadCopter#0.chassis"
-        assert part_map["motor3"] == "Drone::QuadCopter#0.motors#2"
+        assert part_map["frame"] == "Rotorcraft::QuadCopter#0.chassis"
+        assert part_map["motor3"] == "Rotorcraft::QuadCopter#0.motors#2"
         keys = {part.get("key") for part in mesh["parts"]}
         assert set(part_map.values()) <= keys
         assert mesh["camera"]  # the occlusion what-if seam
 
     def test_wrong_shape_is_loud(self, missions):
         with pytest.raises(AnalysisError, match="drone-assembly slot"):
-            drone_scene(missions, "UavMissions::IsrPrime")
+            drone_scene(missions, "ScoutSizing::IsrPrime")
 
 
 class TestViewConePart:
@@ -115,28 +115,28 @@ class TestComposition:
         assert dash.scoreboard.values["answer"] == 42.0
 
     def test_header_names_model_and_score(self, dash):
-        assert "Drone::QuadCopter" in dash.header.value
+        assert "Rotorcraft::QuadCopter" in dash.header.value
         assert "requirements score" in dash.header.value
 
 
 class TestSelectionWiring:
     def test_diagram_click_highlights_the_meshes(self, dash):
-        dash.diagram.view.selection.ids = ["Drone::QuadCopter::propellers"]
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter::propellers"]
         expected = sorted(dash.part_map[f"prop{i}"] for i in (1, 2, 3, 4))
         assert json.loads(dash.viewer.highlight_json) == expected
         dash.diagram.view.selection.ids = []
 
     def test_requirement_click_selects_the_scoreboard_cell(self, dash):
-        dash.diagram.view.selection.ids = ["Drone::installation::propClearance"]
-        assert list(dash.board.selected) == ["Drone::installation::propClearance"]
+        dash.diagram.view.selection.ids = ["DeepScout::installation::propClearance"]
+        assert list(dash.board.selected) == ["DeepScout::installation::propClearance"]
         # a non-requirement selection clears the board again
-        dash.diagram.view.selection.ids = ["Drone::QuadCopter::motors"]
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter::motors"]
         assert list(dash.board.selected) == []
         dash.diagram.view.selection.ids = []
 
     def test_scoreboard_click_selects_the_diagram_node(self, dash):
-        dash.board.selected = ["Drone::installation::clearView"]
-        assert list(dash.diagram.view.selection.ids) == ["Drone::installation::clearView"]
+        dash.board.selected = ["DeepScout::installation::clearView"]
+        assert list(dash.diagram.view.selection.ids) == ["DeepScout::installation::clearView"]
         dash.board.selected = []
         dash.diagram.view.selection.ids = []
 

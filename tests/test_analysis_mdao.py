@@ -14,7 +14,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def drone():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 class TestCalcComponent:
@@ -23,7 +23,7 @@ class TestCalcComponent:
 
         interp = longeron.Interpreter(drone)
         prob = om.Problem(reports=False)
-        prob.model.add_subsystem("hover", mdao.calc_component(interp, "Drone::HoverTime"))
+        prob.model.add_subsystem("hover", mdao.calc_component(interp, "DeepScout::HoverTime"))
         prob.setup()
         prob.set_val("hover.capacity", 5200.0)
         prob.run_model()
@@ -34,17 +34,19 @@ class TestCalcComponent:
     def test_non_calc_rejected(self, drone):
         interp = longeron.Interpreter(drone)
         with pytest.raises(longeron.analysis.AnalysisError):
-            mdao.calc_component(interp, "Drone::QuadCopter")
+            mdao.calc_component(interp, "Rotorcraft::QuadCopter")
 
 
 #: per-rotor static thrust of the stock motor + propeller (PropThrust at
-#: kV=935, V=11.1, d=0.254, Ct calibrated to 0.097 -- see examples/drone.sysml)
+#: kV=935, V=11.1, d=0.254, Ct calibrated to 0.097 -- see examples/deepscout)
 THRUST_PER_ROTOR = 0.097 * 1.225 * (0.75 * 935.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
 
 
 @pytest.fixture(scope="module")
 def build(drone):
-    build = mdao.build_problem(drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",))
+    build = mdao.build_problem(
+        drone, "Rotorcraft::QuadCopter", requirements=("DeepScout::FlightEnvelope",)
+    )
     build.problem.run_model()
     return build
 
@@ -68,7 +70,7 @@ class TestBuildProblem:
         assert "FlightEnvelope::hoverMargin" in build.constraints
 
     def test_what_if_propagates(self, drone):
-        build = mdao.build_problem(drone, "Drone::QuadCopter")
+        build = mdao.build_problem(drone, "Rotorcraft::QuadCopter")
         p = build.problem
         p.set_val("payloadMass", 0.9)
         p.run_model()
@@ -95,19 +97,19 @@ def missions(request):
 
     sys.path.insert(0, str(EXAMPLES))  # 'uav_aero:...' entry points
     request.addfinalizer(lambda: sys.path.remove(str(EXAMPLES)))
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 class TestExternalAnalysisBinding:
     """@ExternalAnalysis: SysML declares the contract, the tool computes."""
 
     def test_annotation_is_read(self, missions):
-        calc = missions.find("UavMissions::Propulsion::CruisePower")
+        calc = missions.find("DeepScout::Propulsion::CruisePower")
         assert mdao.external_binding(calc) == "uav_aero:CruisePowerPolar"
-        assert mdao.external_binding(missions.find("UavMissions::Propulsion::HoverPower")) is None
+        assert mdao.external_binding(missions.find("DeepScout::Propulsion::HoverPower")) is None
 
     def test_default_fidelity_is_the_model_body(self, missions):
-        build = mdao.build_problem(missions, "UavMissions::IsrPrime")
+        build = mdao.build_problem(missions, "ScoutSizing::IsrPrime")
         build.problem.run_model()
         # first-order body: buildup CdA parasite + induced at 15 m/s
         assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(75.913, abs=0.01)
@@ -115,7 +117,7 @@ class TestExternalAnalysisBinding:
 
     def test_external_fidelity_swaps_the_component(self, missions):
         build = mdao.build_problem(
-            missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+            missions, "ScoutSizing::IsrPrime", fidelity={"CruisePower": "external"}
         )
         build.problem.run_model()
         power = build.problem.get_val("loiterPowerW")[0]
@@ -129,8 +131,8 @@ class TestExternalAnalysisBinding:
     def test_qualified_fidelity_key(self, missions):
         build = mdao.build_problem(
             missions,
-            "UavMissions::IsrPrime",
-            fidelity={"UavMissions::Propulsion::CruisePower": "external"},
+            "ScoutSizing::IsrPrime",
+            fidelity={"DeepScout::Propulsion::CruisePower": "external"},
         )
         assert build.externals
 
@@ -140,7 +142,7 @@ class TestExternalAnalysisBinding:
         optima = {}
         for name, fidelity in (("model", None), ("external", {"CruisePower": "external"})):
             build = mdao.build_problem(
-                missions, "UavMissions::IsrPrime", setup=False, fidelity=fidelity
+                missions, "ScoutSizing::IsrPrime", setup=False, fidelity=fidelity
             )
             mdao.add_optimization(
                 build,
@@ -158,12 +160,12 @@ class TestExternalAnalysisBinding:
     def test_unknown_fidelity_key_is_loud(self, missions):
         with pytest.raises(longeron.analysis.AnalysisError, match="never bound"):
             mdao.build_problem(
-                missions, "UavMissions::IsrPrime", fidelity={"CruisePowerr": "external"}
+                missions, "ScoutSizing::IsrPrime", fidelity={"CruisePowerr": "external"}
             )
 
     def test_invalid_fidelity_value_is_loud(self, missions):
         with pytest.raises(longeron.analysis.AnalysisError, match="'model' or 'external'"):
-            mdao.build_problem(missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "hifi"})
+            mdao.build_problem(missions, "ScoutSizing::IsrPrime", fidelity={"CruisePower": "hifi"})
 
     def test_contract_mismatch_is_precise(self, missions, monkeypatch):
         import types
@@ -182,13 +184,13 @@ class TestExternalAnalysisBinding:
         fake = types.ModuleType("fake_aero")
         fake.WrongIo = WrongIo
         monkeypatch.setitem(__import__("sys").modules, "fake_aero", fake)
-        calc = missions.find("UavMissions::Propulsion::CruisePower")
+        calc = missions.find("DeepScout::Propulsion::CruisePower")
         annotation = next(m for m in calc.members if type(m).__name__ == "MetadataUsage")
         value = annotation.members[0].value
         monkeypatch.setattr(value.expr, "value", "fake_aero:WrongIo", raising=False)
         with pytest.raises(longeron.analysis.AnalysisError) as err:
             mdao.build_problem(
-                missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+                missions, "ScoutSizing::IsrPrime", fidelity={"CruisePower": "external"}
             )
         message = str(err.value)
         assert "massKg" in message  # names the declared input it lacks
@@ -292,7 +294,7 @@ class TestExternalAnalysisBinding:
 @pytest.fixture(scope="module")
 def grouped(missions):
     build = mdao.build_problem(
-        missions, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+        missions, "ScoutSizing::IsrPrime", requirements=("ScoutSizing::IsrStation",)
     )
     build.problem.run_model()
     return build
@@ -335,22 +337,27 @@ class TestDisciplineGrouping:
         from openmdao.core.component import Component
 
         build = mdao.build_problem(
-            missions, "UavMissions::IsrPrime", fidelity={"CruisePower": "external"}
+            missions, "ScoutSizing::IsrPrime", fidelity={"CruisePower": "external"}
         )
         paths = {s.pathname for s in build.problem.model.system_iter(recurse=True, typ=Component)}
         assert "Propulsion.loiterPowerW_ext" in paths
         assert "loiterPowerW" in build.disciplines["Propulsion"]
 
     def test_shared_context_calcs_stay_flat(self, drone):
-        # drone.sysml keeps its calcs beside the parts: no grouping
-        build = mdao.build_problem(drone, "Drone::QuadCopter")
+        # the program root keeps the build chain beside the abstract
+        # MultiRotor: calcs beside a generalization are shared context,
+        # not a discipline, so the family's problem stays ungrouped
+        build = mdao.build_problem(drone, "Rotorcraft::QuadCopter")
         assert build.disciplines == {}
 
 
 class TestOptimization:
     def test_maximize_payload(self, drone):
         build = mdao.build_problem(
-            drone, "Drone::QuadCopter", setup=False, requirements=("Drone::FlightEnvelope",)
+            drone,
+            "Rotorcraft::QuadCopter",
+            setup=False,
+            requirements=("DeepScout::FlightEnvelope",),
         )
         mdao.add_optimization(
             build, objective="payloadMass", design_vars={"payloadMass": (0.0, 3.0)}, maximize=True

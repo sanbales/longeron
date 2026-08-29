@@ -22,8 +22,8 @@ ROWS = [
 def study():
     from longeron.analysis import trades
 
-    catalog = longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
-    return trades.TradeStudy(catalog, "DroneCatalog::TradeQuad")
+    catalog = longeron.load(EXAMPLES / "deepscout", cache=False)
+    return trades.TradeStudy(catalog, "ScoutSizing::TradeQuad")
 
 
 class TestParcoordsPayload:
@@ -397,9 +397,9 @@ class TestFigures:
         pytest.importorskip("openmdao")
         from longeron.analysis import mdao
 
-        model = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+        model = longeron.load(EXAMPLES / "deepscout", cache=False)
         build = mdao.build_problem(
-            model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+            model, "ScoutSizing::IsrPrime", requirements=("ScoutSizing::IsrStation",)
         )
         p = build.problem
         values = [9.0 + 0.35 * i for i in range(50)]
@@ -423,9 +423,9 @@ class TestFigures:
 
 
 MISSION_CHARTS = {
-    "isr": ("UavMissions::IsrUav", "stationMinutes"),
-    "logistics": ("UavMissions::LogisticsUav", "payloadRangeKgKm"),
-    "intercept": ("UavMissions::InterceptUav", "maxTargetSpeed"),
+    "isr": ("ScoutMissions::IsrUav", "stationMinutes"),
+    "logistics": ("ScoutMissions::LogisticsUav", "payloadRangeKgKm"),
+    "intercept": ("ScoutMissions::InterceptUav", "maxTargetSpeed"),
 }
 
 
@@ -433,7 +433,7 @@ MISSION_CHARTS = {
 def mission_spaces():
     from longeron.analysis import trades
 
-    model = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    model = longeron.load(EXAMPLES / "deepscout", cache=False)
     out = {}
     for name, (qname, metric) in MISSION_CHARTS.items():
         study = trades.TradeStudy(model, qname)

@@ -7,7 +7,7 @@ re-records the whole thing after UI changes.  The walkthrough is
 DETERMINISTIC by construction: a purpose-built copy of the tutorial-15
 notebook is generated into a throwaway lab root (the repo's notebooks are
 never touched), the models it loads ship with this checkout
-(``examples/drone.sysml`` + ``examples/uav_missions.sysml``), the
+(the ``examples/deepscout`` program directory), the
 scoreboard's Voronoi seed is fixed inside ``grand_dashboard``,
 ``PYTHONHASHSEED=0`` pins kernel hashing, and every camera beat is a
 fixed pause -- so two recordings differ only in sub-second layout-arrival
@@ -126,7 +126,7 @@ MOVE_STEPS = 45
 #: tutorial 15's performance graft, condensed: parsed from SysML text,
 #: grafted into the loaded model, measured through the model's own calcs
 _PERF_CELL = '''\
-drone.find("Drone").add(
+program.find("DeepScout").add(
     longeron.loads("""
 package _Perf {
     requirement performance {
@@ -152,9 +152,9 @@ package _Perf {
 }""").find("_Perf::performance")
 )
 
-interp = longeron.Interpreter(drone)
-quad = interp.instantiate("Drone::QuadCopter")
-scope = drone.find("Drone")
+interp = longeron.Interpreter(program)
+quad = interp.instantiate("Rotorcraft::QuadCopter")
+scope = program.find("DeepScout")
 capacity = quad.slots["battery"].slots["capacity"]
 thrust = 4.0 * quad.slots["thrustPerRotor"]
 mass = quad.slots["totalMass"]
@@ -180,8 +180,7 @@ CELLS: tuple[tuple[str, str], ...] = (
         "import longeron\n"
         "from longeron.analysis.grand import grand_dashboard\n"
         "\n"
-        'drone = longeron.load("drone.sysml")  # structure, geometry, requirements, states\n'
-        'missions = longeron.load("uav_missions.sysml")  # the continuous sizing side',
+        'program = longeron.load("deepscout")  # the whole DeepScout program: one workspace',
     ),
     (
         "markdown",
@@ -191,7 +190,7 @@ CELLS: tuple[tuple[str, str], ...] = (
     ("code", _PERF_CELL),
     (
         "code",
-        "dash = grand_dashboard(drone, missions, values=measured)\ndash",
+        "dash = grand_dashboard(program, values=measured)\ndash",
     ),
 )
 
@@ -202,8 +201,7 @@ def build_lab_root() -> None:
     if LAB_ROOT.exists():
         shutil.rmtree(LAB_ROOT)
     LAB_ROOT.mkdir(parents=True)
-    shutil.copy(REPO / "examples" / "drone.sysml", LAB_ROOT / "drone.sysml")
-    shutil.copy(REPO / "examples" / "uav_missions.sysml", LAB_ROOT / "uav_missions.sysml")
+    shutil.copytree(REPO / "examples" / "deepscout", LAB_ROOT / "deepscout")
     notebook = {
         "cells": [
             {
@@ -263,9 +261,7 @@ def warm_model_cache() -> None:
         [
             sys.executable,
             "-c",
-            "import longeron\n"
-            f"longeron.load({str(LAB_ROOT / 'drone.sysml')!r})\n"
-            f"longeron.load({str(LAB_ROOT / 'uav_missions.sysml')!r})\n",
+            f"import longeron\nlongeron.load({str(LAB_ROOT / 'deepscout')!r})\n",
         ],
         env=_kernel_env(),
         check=True,

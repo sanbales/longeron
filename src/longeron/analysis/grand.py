@@ -129,7 +129,7 @@ _GRAND_CSS = (
 
 
 def drone_scene(
-    model: M.Model, assembly: str = "Drone::QuadCopter"
+    model: M.Model, assembly: str = "Rotorcraft::QuadCopter"
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Bake the tagged per-instance mesh for a drone-family assembly.
 
@@ -144,7 +144,8 @@ def drone_scene(
     tricopter with its tail boom, and ``upperMotors`` + ``lowerMotors``
     stack the coaxial pairs (uppers take ``motor1..4`` / the first
     propeller individuals, lowers follow).  The assembly must have the
-    ``examples/drone.sysml`` shape: ``chassis``, ``battery``, and
+    MultiRotor build-family shape of the DeepScout program
+    (``examples/deepscout``): ``chassis``, ``battery``, and
     ``propellers`` slots, one of the rotor-population shapes above,
     plus an optional ``camera`` whose placement/boresight attributes
     drive the occlusion checks.  Pair with
@@ -161,7 +162,7 @@ def drone_scene(
     if missing:
         raise AnalysisError(
             f"{assembly} is missing the drone-assembly slot(s) {missing} "
-            "(drone_scene expects the examples/drone.sysml shape)"
+            "(drone_scene expects the DeepScout MultiRotor build-family shape)"
         )
     coaxial = False
     if "motors" in slots:
@@ -217,8 +218,9 @@ def view_cone_part(
     metres -- the same construction :func:`longeron.analysis.geometry.
     occlusion_report` measures, here as a *display* part (append it to a
     scene's ``parts``; never to the analysis mesh, where it would count
-    as an obstruction).  ``camera`` uses the ``examples/drone.sysml``
-    camera attribute names.  Untagged, so linked selection ignores it.
+    as an obstruction).  ``camera`` uses the attribute names of the
+    DeepScout program's ``ScoutParts::F450Kit::Camera``
+    part.  Untagged, so linked selection ignores it.
     """
 
     if length <= 0:
@@ -331,10 +333,10 @@ def grand_dashboard(
     model: M.Model,
     sizing: M.Model | None = None,
     *,
-    assembly: str = "Drone::QuadCopter",
-    states: str = "Drone::FlightStates",
-    sizer: str = "UavMissions::IsrPrime",
-    station_requirement: str = "UavMissions::IsrStation",
+    assembly: str = "Rotorcraft::QuadCopter",
+    states: str = "DeepScout::FlightStates",
+    sizer: str = "ScoutSizing::IsrPrime",
+    station_requirement: str = "ScoutSizing::IsrStation",
     station_var: str = "stationMinutes",
     loiter_var: str = "loiterSpeed",
     what_if_station: float = 420.0,

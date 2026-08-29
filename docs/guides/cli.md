@@ -55,8 +55,8 @@ extra -- print a single `error: ...` line to stderr and exit `1`, without
 a Python traceback:
 
 ```console
-$ longeron calc examples/drone.sysml Drone::Nope
-error: Drone has no member 'Nope'
+$ longeron calc examples/deepscout Rotorcraft::Nope
+error: Rotorcraft has no member 'Nope'
 ```
 
 Pass `--traceback` (any subcommand) to re-raise the underlying exception
@@ -75,8 +75,8 @@ show their traceback.
 directory, without building a model:
 
 ```console
-$ longeron parse examples/drone.sysml
-OK: examples/drone.sysml parses as sysml
+$ longeron parse examples/deepscout/aircraft.sysml
+OK: examples/deepscout/aircraft.sysml parses as sysml
 ```
 
 | Option | Effect |
@@ -130,7 +130,7 @@ its severity, and how name resolution works.
 `export` serializes a model and writes it to stdout, or to `--output`:
 
 ```console
-$ longeron export examples/drone.sysml --format sysml     # regenerated text
+$ longeron export examples/deepscout --format sysml       # regenerated text
 $ longeron export model.json --format sysml               # JSON in, SysML out
 $ longeron export models/ --format json -o merged.json    # directory, merged
 ```
@@ -150,8 +150,8 @@ KerML is a one-way projection. See the
 `calc` invokes a `calc def` as a function and prints the result:
 
 ```console
-$ longeron calc examples/drone.sysml Drone::HoverTime capacity=5200
-26.0
+$ longeron calc examples/deepscout DeepScout::HoverTime capacity=5200
+23.28358208955224
 ```
 
 The positional `name` is the qualified name of the calc. Trailing
@@ -163,7 +163,7 @@ The positional `name` is the qualified name of the calc. Trailing
 checks every constraint and requirement against it:
 
 ```console
-$ longeron check examples/drone.sysml Drone::QuadCopter payloadMass=0.9
+$ longeron check examples/deepscout Rotorcraft::QuadCopter payloadMass=0.9
 { ... the instance, as JSON ... }
 [FAIL] assert takeoffMassLimit: totalMass <= maxTakeoffMass
 [PASS] assert canHover: 4.0 * thrustPerRotor > totalMass * 9.81
@@ -182,7 +182,7 @@ If any constraint fails, the command exits `1`.
 and any sent payloads:
 
 ```console
-$ longeron run examples/drone.sysml Drone::PlanBattery distanceKm=20
+$ longeron run examples/deepscout DeepScout::PlanBattery distanceKm=20
   assign requiredWh := 7.4
   ...
 outputs: {"requiredWh": 7.4, ...}
@@ -200,7 +200,7 @@ Trailing `name=value` pairs bind the action's `in` parameters.
 transition trace:
 
 ```console
-$ longeron simulate examples/drone.sysml Drone::FlightStates --events launch,airborne
+$ longeron simulate examples/deepscout DeepScout::FlightStates --events launch,airborne
   idle --launch--> takingOff
   takingOff --airborne--> flying
 final state: flying

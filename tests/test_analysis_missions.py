@@ -1,6 +1,6 @@
-"""The multi-mission UAV catalog: interpreter-exact trades per mission.
+"""The multi-mission trade space of the DeepScout program.
 
-``examples/uav_missions.sysml`` leans on real physics (sqrt/pow,
+``examples/deepscout/missions.sysml`` leans on real physics (sqrt/pow,
 conditionals, calc invocations), which the CP-SAT mapper deliberately does
 not encode -- these tests exercise the honest pattern for that scale:
 ``TradeStudy.all_architectures()``/``evaluate()`` walk the Cartesian
@@ -8,6 +8,7 @@ candidate space and the interpreter scores every mix exactly.  No solver
 extra is required.
 """
 
+import typing
 from pathlib import Path
 
 import pytest
@@ -18,15 +19,15 @@ from longeron.analysis import AnalysisError, trades
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 MISSIONS = {
-    "isr": ("UavMissions::IsrUav", "stationMinutes"),
-    "logistics": ("UavMissions::LogisticsUav", "payloadRangeKgKm"),
-    "intercept": ("UavMissions::InterceptUav", "maxTargetSpeed"),
+    "isr": ("ScoutMissions::IsrUav", "stationMinutes"),
+    "logistics": ("ScoutMissions::LogisticsUav", "payloadRangeKgKm"),
+    "intercept": ("ScoutMissions::InterceptUav", "maxTargetSpeed"),
 }
 
 
 @pytest.fixture(scope="module")
 def model():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -70,14 +71,25 @@ class TestModelShape:
         assert set(studies["intercept"].points["airframe"].variants) == {
             "boxQuad",
             "teardropQuad",
+            "openTri",
+            "hexLifter",
+            "coaxOcto",
+            "ringOcto",
             "vtolWing",
             "dartInterceptor",
         }
         assert set(studies["intercept"].points["battery"].variants) == {
+            "tattu3s",
             "tattu5200",
             "tattu10000",
             "tattu16000",
             "liion6s6p",
+        }
+        assert set(studies["intercept"].points["motors"].variants) == {
+            "mt2213",
+            "mn4006",
+            "x4112s",
+            "at4120",
         }
         assert set(studies["intercept"].points["material"].variants) == {
             "aluminum",
@@ -85,9 +97,12 @@ class TestModelShape:
         }
 
     def test_candidate_space_sizes(self, spaces):
-        assert len(spaces["isr"]) == 4 * 3 * 3 * 4 * 2 * 3
-        assert len(spaces["logistics"]) == 4 * 3 * 3 * 4 * 2 * 3
-        assert len(spaces["intercept"]) == 4 * 3 * 3 * 4 * 2
+        # the architecture x part-class crossing: 8 airframes x 4 motors
+        # x 4 props x 5 packs x 2 materials (the legacy fleet space was
+        # 4 x 3 x 3 x 4 x 2 = 288 shared mixes)
+        assert len(spaces["isr"]) == 8 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["logistics"]) == 8 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["intercept"]) == 8 * 4 * 4 * 5 * 2
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -134,12 +149,30 @@ class TestFronts:
         brute = {tuple(sorted(a.selection.items())) for a in feasible if not dominated(a)}
         assert {tuple(sorted(a.selection.items())) for a in front} == brute
 
+    LEGACY: typing.ClassVar[dict[str, set[str]]] = {
+        "airframe": {"boxQuad", "teardropQuad", "vtolWing", "dartInterceptor"},
+        "motors": {"mn4006", "x4112s", "at4120"},
+        "props": {"apc11x55", "apc13x65", "tm15x5"},
+        "battery": {"tattu5200", "tattu10000", "tattu16000", "liion6s6p"},
+    }
+
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
-        # teardropQuad adds ISR mixes (its bay takes the grade-2 gimbal)
-        # and intercept mixes; its 1.0 kg bay excludes every parcel; the
-        # material axis doubles the space and the li-ion pack adds the
-        # chemistry column without moving the stories
+        # the crossed catalog: the multirotor shells earn honest seats
+        # (the S1000-class hexa loiters, the coax octo dashes) and the
+        # small class populates the cheap corners
+        assert counts == {"isr": 145, "logistics": 125, "intercept": 372}
+
+    def test_crossing_is_purely_additive(self, spaces):
+        # every pre-crossing mix keeps its exact verdict: restricted to
+        # the legacy variants, the feasible counts are the historical
+        # 92 / 76 / 166
+        def legacy(arch):
+            return all(arch.selection[k] in v for k, v in self.LEGACY.items())
+
+        counts = {
+            name: sum(a.verified for a in archs if legacy(a)) for name, archs in spaces.items()
+        }
         assert counts == {"isr": 92, "logistics": 76, "intercept": 166}
 
     def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
@@ -198,13 +231,24 @@ class TestFamilyWinners:
         )
         assert others < darts[2]
 
-    def test_cheap_quad_wins_the_low_cost_corners(self, spaces):
-        for name in ("isr", "logistics", "intercept"):
+    def test_cheap_corners_split_by_mission(self, spaces):
+        # the quad keeps the ISR and logistics cheap corners; the
+        # crossing hands intercept's to the small-class teardrop (an
+        # MT2213 dash bird on the slick shell undercuts every 6S mix)
+        for name in ("isr", "logistics"):
             cheapest = min(
                 (a for a in spaces[name] if a.verified), key=lambda a: a.metrics["missionCost"]
             )
             assert cheapest.selection["airframe"] == "boxQuad", name
             assert cheapest.selection["material"] == "aluminum", name  # Al owns cheap
+        cheapest = min(
+            (a for a in spaces["intercept"] if a.verified),
+            key=lambda a: a.metrics["missionCost"],
+        )
+        assert cheapest.selection["airframe"] == "teardropQuad"
+        assert cheapest.selection["motors"] == "mt2213"
+        assert cheapest.selection["battery"] == "tattu3s"
+        assert cheapest.selection["material"] == "aluminum"
 
     def test_a_robust_mix_sits_on_two_fronts(self, spaces):
         fronts = {

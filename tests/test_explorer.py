@@ -88,12 +88,12 @@ package Other { part def C; metadata def Safety; }
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return longeron.load(str(ROOT / "examples" / "drone.sysml"))
+    return longeron.load(str(ROOT / "examples" / "deepscout"))
 
 
 @pytest.fixture(scope="module")
 def uav_model():
-    return longeron.load(str(ROOT / "examples" / "uav_missions.sysml"))
+    return longeron.load(str(ROOT / "examples" / "deepscout"))
 
 
 @pytest.fixture()
@@ -157,39 +157,40 @@ class TestTreeData:
 
     def test_nesting_follows_ownership(self, drone_model):
         nodes, _ = _tree_data(drone_model)
-        drone = nodes[0]  # flattened: the lone package IS the root
-        assert drone["id"] == "Drone"
+        root = nodes[0]  # the multi-package program keeps the model root
+        packages = {child["id"] for child in root["children"]}
+        assert {"DeepScout", "Rotorcraft", "ScoutParts", "ScoutMissions"} <= packages
         # the shared equipment lives on the abstract base...
-        base = _find(drone["children"], "Drone::MultiRotor")
+        base = _find(nodes, "DeepScout::MultiRotor")
         assert base is not None
-        battery = _find(base["children"], "Drone::MultiRotor::battery")
+        battery = _find(base["children"], "DeepScout::MultiRotor::battery")
         assert battery is not None
         # ...and each configuration owns its rotor population
-        quad = _find(drone["children"], "Drone::QuadCopter")
-        assert _find(quad["children"], "Drone::QuadCopter::motors") is not None
-        # and NOT reachable as a sibling of the package
-        siblings = [c for c in drone["children"] if c["id"] != "Drone::MultiRotor"]
-        assert _find(siblings, "Drone::MultiRotor::battery") is None
+        quad = _find(nodes, "Rotorcraft::QuadCopter")
+        assert _find(quad["children"], "Rotorcraft::QuadCopter::motors") is not None
+        # and NOT reachable outside the abstract base
+        rotorcraft = _find(nodes, "Rotorcraft")
+        assert _find(rotorcraft["children"], "DeepScout::MultiRotor::battery") is None
 
     def test_node_ids_are_qualified_names(self, drone_model):
         _, index = _tree_data(drone_model)
         named = {nid for nid in index if not nid.startswith("~")}
-        assert "Drone::FlightStates::idle" in named
+        assert "DeepScout::FlightStates::idle" in named
         for nid in named:
             assert index[nid].qualified_name == nid
 
     def test_kind_badges_and_families(self, drone_model):
         nodes, _ = _tree_data(drone_model)
         cases = {
-            "Drone": ("pkg", "package"),
-            "Drone::QuadCopter": ("part def", "structure"),
-            "Drone::FlightStates": ("state def", "behavior"),
-            "Drone::PlanBattery": ("action def", "behavior"),
-            "Drone::FlightEnvelope": ("requirement def", "requirement"),
-            "Drone::FlightMode": ("enum def", "data"),
-            "Drone::HoverTime": ("calc def", "behavior"),
-            "Drone::MultiRotor::battery": ("part", "structure"),
-            "Drone::MultiRotor::payloadMass": ("attribute", "data"),
+            "Rotorcraft": ("pkg", "package"),
+            "Rotorcraft::QuadCopter": ("part def", "structure"),
+            "DeepScout::FlightStates": ("state def", "behavior"),
+            "DeepScout::PlanBattery": ("action def", "behavior"),
+            "DeepScout::FlightEnvelope": ("requirement def", "requirement"),
+            "DeepScout::FlightMode": ("enum def", "data"),
+            "DeepScout::HoverTime": ("calc def", "behavior"),
+            "DeepScout::MultiRotor::battery": ("part", "structure"),
+            "DeepScout::MultiRotor::payloadMass": ("attribute", "data"),
         }
         for node_id, (badge, kind) in cases.items():
             node = _find(nodes, node_id)
@@ -198,14 +199,14 @@ class TestTreeData:
 
     def test_has_children_hints_lazy_loading(self, drone_model):
         nodes, _ = _tree_data(drone_model)
-        quad = _find(nodes, "Drone::QuadCopter")
+        quad = _find(nodes, "Rotorcraft::QuadCopter")
         assert quad["has_children"] is True and quad["children"]
-        leaf = _find(nodes, "Drone::MultiRotor::payloadMass")
+        leaf = _find(nodes, "DeepScout::MultiRotor::payloadMass")
         assert leaf["has_children"] is False and "children" not in leaf
 
     def test_typed_usages_carry_a_type_suffix(self, drone_model):
         nodes, _ = _tree_data(drone_model)
-        battery = _find(nodes, "Drone::MultiRotor::battery")
+        battery = _find(nodes, "DeepScout::MultiRotor::battery")
         assert battery["suffix"] == " : Battery"
 
     def test_anonymous_elements_get_unique_synthetic_ids(self):
@@ -220,16 +221,17 @@ class TestTreeData:
         assert node["label"] == "satisfy requirement1"
         assert node["kind"] == "relationship"
 
-    def test_single_package_model_flattens_to_the_package(self, drone_model):
+    def test_single_package_model_flattens_to_the_package(self):
         # the language has no model-level name: the lone top-level
         # package IS the model's humanized name, so it is the tree root
-        nodes, index = _tree_data(drone_model)
+        model = longeron.loads("package Solo { part def S; }", source_name="dir/solo.sysml")
+        nodes, index = _tree_data(model)
         assert len(nodes) == 1
         root = nodes[0]
         assert isinstance(index[root["id"]], M.Package)
-        assert root["label"] == "Drone"
-        assert root["tooltip"].endswith("drone.sysml \u2014 Drone") or (
-            "drone.sysml" in root["tooltip"]
+        assert root["label"] == "Solo"
+        assert root["tooltip"].endswith("solo.sysml \u2014 Solo") or (
+            "solo.sysml" in root["tooltip"]
         )
 
     def test_multi_package_model_keeps_the_file_root(self):
@@ -286,10 +288,11 @@ class TestTreeSearch:
         assert tree.query == "rotor"
         assert tree.filter("") == 0
 
-    def test_set_nodes_replaces_the_tree(self, drone_model, uav_model):
-        tree = ModelTree(_tree_data(drone_model)[0])
+    def test_set_nodes_replaces_the_tree(self, drone_model):
+        small_model = longeron.loads("package Solo { part def S; }")
+        tree = ModelTree(_tree_data(small_model)[0])
         small = tree.total_count
-        tree.set_nodes(_tree_data(uav_model)[0])
+        tree.set_nodes(_tree_data(drone_model)[0])
         assert tree.total_count > small
 
 
@@ -415,7 +418,7 @@ def test_relationships_present_in_tree_REGRESSION_GUARD(rels_model):
 
     Forensic note (2026-08-30): a 'tree relationships vanished' regression
     was reported against the drone example.  The feature (6ca066f) was in
-    fact INTACT -- at the time ``examples/drone.sysml`` simply declared no
+    fact INTACT -- at the time ``examples/deepscout`` simply declared no
     relationships, so its tree honestly showed none.  (The drone model has
     since gained real declarations -- satisfy/connect/flow/allocate/
     dependency -- pinned by ``test_drone_tree_shows_its_relationships``.)
@@ -456,16 +459,15 @@ def test_drone_tree_shows_its_relationships(drone_model):
     from collections import Counter
 
     badges = Counter(node["badge"] for node in rows)
-    assert badges == {
-        "connection": 9,  # powerHarness, controlLink, phaseLeads (quad +
-        #                    hexa), frontLeads, tailLead, tiltLinkage,
-        #                    upperLeads, lowerLeads
-        "satisfy": 10,  # FlightEnvelope x4, mission x3, installation
-        #                 (quad only), FailSafeHover x2 (hexa + X8)
-        "flow": 1,  # dcBus: battery.voltage -> esc.busVoltage
-        "allocation": 1,  # FlightStates -> FlightController
-        "dependency": 1,  # PlanBattery -> HoverTime
-    }
+    assert badges["connection"] == 10  # powerHarness, controlLink,
+    #   phaseLeads (quad + hexa + octo), frontLeads, tailLead,
+    #   tiltLinkage, upperLeads, lowerLeads
+    assert badges["satisfy"] == 13  # FlightEnvelope x5, mission x4,
+    #   installation (quad only), FailSafeHover x3 (hexa + octo + X8)
+    assert badges["flow"] == 1  # dcBus: battery.voltage -> esc.busVoltage
+    assert badges["allocation"] == 1  # FlightStates -> FlightController
+    assert badges["dependency"] == 1  # PlanBattery -> HoverTime
+    assert badges["import"] == 25  # the program's cross-file wiring
     labels = {node["label"] for node in rows}
     assert "satisfy mission" in labels  # by the quad; the tri busts it
 
@@ -612,13 +614,13 @@ class TestApplicableKinds:
 
     def test_per_element_kind(self, drone_model):
         cases = {
-            "Drone": ("structure", "requirements"),
-            "Drone::QuadCopter": ("structure", "requirements"),
-            "Drone::MultiRotor::battery": ("structure", "requirements"),
-            "Drone::FlightStates": ("structure", "state", "requirements"),
-            "Drone::FlightStates::idle": ("structure", "state", "requirements"),
-            "Drone::PlanBattery": ("structure", "action", "requirements"),
-            "Drone::FlightEnvelope": ("structure", "requirements"),
+            "Rotorcraft": ("structure", "requirements"),
+            "Rotorcraft::QuadCopter": ("structure", "requirements"),
+            "DeepScout::MultiRotor::battery": ("structure", "requirements"),
+            "DeepScout::FlightStates": ("structure", "state", "requirements"),
+            "DeepScout::FlightStates::idle": ("structure", "state", "requirements"),
+            "DeepScout::PlanBattery": ("structure", "action", "requirements"),
+            "DeepScout::FlightEnvelope": ("structure", "requirements"),
         }
         for qname, expected in cases.items():
             assert applicable_kinds(drone_model.find(qname)) == expected, qname
@@ -635,8 +637,8 @@ class TestApplicableKinds:
     def test_requirements_scope_is_the_owning_package(self, uav_model):
         # Catalog owns no requirements: the kind is not offered there,
         # even though a SIBLING package (MissionRequirements) has plenty
-        assert applicable_kinds(uav_model.find("UavMissions::Catalog")) == ("structure",)
-        kinds = applicable_kinds(uav_model.find("UavMissions::MissionRequirements"))
+        assert applicable_kinds(uav_model.find("ScoutMissions::Catalog")) == ("structure",)
+        kinds = applicable_kinds(uav_model.find("ScoutMissions::MissionRequirements"))
         assert "requirements" in kinds
 
 
@@ -684,12 +686,12 @@ class TestRequirementsView:
     def test_requirement_defs_draw_with_typing_edges(self, drone_model):
         widget = requirements_view(drone_model)
         ids = _diagram_node_ids(widget)
-        assert "Drone::FlightEnvelope" in ids
+        assert "DeepScout::FlightEnvelope" in ids
         # the satisfying configurations are pulled in through their
         # satisfy edges; UNwired structure stays out of the projection
-        assert "Drone::QuadCopter" in ids
-        assert "Drone::TriCopter" in ids
-        assert "Drone::Battery" not in ids
+        assert "Rotorcraft::QuadCopter" in ids
+        assert "Rotorcraft::TriCopter" in ids
+        assert "ScoutParts::F450Kit::Battery" not in ids
 
     def test_nested_candidates_never_duplicate_node_ids(self, uav_model):
         widget = requirements_view(uav_model)
@@ -710,107 +712,107 @@ class TestRequirementsView:
 
 class TestExplorer:
     def test_initial_state_shows_the_whole_model(self, ex, drone_model):
-        # single-package model: the root row (and thus the initial
-        # selection) is the package itself, a real diagram element
-        assert isinstance(ex.element, M.Package)
-        assert ex.element.name == "Drone"
+        # multi-package program: the root row (and thus the initial
+        # selection) is the model root spanning every package
+        assert isinstance(ex.element, M.Model)
         assert ex.kind == "structure"
         assert type(ex.diagram).__name__ == "Diagram"
         assert ex.tree.selected  # the model root node is selected
         assert tuple(ex.kind_switcher.options) == ("structure", "requirements")
 
     def test_tree_selection_renders_and_highlights(self, ex, drone_model):
-        ex.tree.selected = ["Drone::QuadCopter"]
-        assert ex.element is drone_model.find("Drone::QuadCopter")
-        assert tuple(ex.diagram.view.selection.ids) == ("Drone::QuadCopter",)
+        ex.tree.selected = ["Rotorcraft::QuadCopter"]
+        assert ex.element is drone_model.find("Rotorcraft::QuadCopter")
+        assert tuple(ex.diagram.view.selection.ids) == ("Rotorcraft::QuadCopter",)
 
     def test_kind_switcher_offers_only_applicable_kinds(self, ex):
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         assert tuple(ex.kind_switcher.options) == ("structure", "state", "requirements")
-        ex.select("Drone::PlanBattery")
+        ex.select("DeepScout::PlanBattery")
         assert tuple(ex.kind_switcher.options) == ("structure", "action", "requirements")
 
     def test_kind_switch_preserves_the_selection(self, ex):
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         structure = ex.diagram
         ex.kind = "state"
         assert ex.diagram is not structure
-        assert ex.tree.selected == ["Drone::FlightStates"]
-        assert ex.element.qualified_name == "Drone::FlightStates"
+        assert ex.tree.selected == ["DeepScout::FlightStates"]
+        assert ex.element.qualified_name == "DeepScout::FlightStates"
         ex.kind = "structure"
         assert ex.diagram is structure  # cached: same widget object
 
     def test_inapplicable_kind_is_rejected(self, ex):
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         with pytest.raises(ValueError, match="kind must be one of"):
             ex.kind = "state"
 
     def test_nested_state_scopes_to_its_machine(self, ex):
-        ex.select("Drone::FlightStates::idle")
+        ex.select("DeepScout::FlightStates::idle")
         ex.kind = "state"
         ids = _diagram_node_ids(ex.diagram)
-        assert "Drone::FlightStates::flying" in ids  # the whole machine
-        assert tuple(ex.diagram.view.selection.ids) == ("Drone::FlightStates::idle",)
+        assert "DeepScout::FlightStates::flying" in ids  # the whole machine
+        assert tuple(ex.diagram.view.selection.ids) == ("DeepScout::FlightStates::idle",)
 
     def test_undrawn_selection_highlights_nearest_drawn_ancestor(self, ex):
         # attributes render as compartment rows, not nodes
-        ex.select("Drone::Battery::capacity")
-        assert tuple(ex.diagram.view.selection.ids) == ("Drone::Battery",)
+        ex.select("ScoutParts::F450Kit::Battery::capacity")
+        assert tuple(ex.diagram.view.selection.ids) == ("ScoutParts::F450Kit::Battery",)
 
     def test_diagrams_are_cached_per_scope_and_kind(self, ex):
-        ex.select("Drone::Battery")
+        ex.select("ScoutParts::F450Kit::Battery")
         first = ex.diagram
-        ex.select("Drone::Motor")
+        ex.select("ScoutParts::F450Kit::Motor")
         assert ex.diagram is first  # same package scope, same widget
 
     def test_diagram_click_selects_and_reveals_in_the_tree(self, ex):
-        ex.select("Drone::QuadCopter")
+        # scope inside the program root, where the action def lives
+        ex.select("DeepScout::MultiRotor")
         widget = ex.diagram
-        widget.view.selection.ids = ["Drone::PlanBattery"]  # a browser click
-        assert ex.tree.selected == ["Drone::PlanBattery"]
+        widget.view.selection.ids = ["DeepScout::PlanBattery"]  # a browser click
+        assert ex.tree.selected == ["DeepScout::PlanBattery"]
         assert "action" in ex.kind_switcher.options
         assert ex.diagram is widget  # the clicked diagram is NOT rebuilt
 
     def test_no_selection_echo(self, ex):
         """One hop each way; every trait settles after a single write."""
 
-        ex.select("Drone::QuadCopter")
+        ex.select("DeepScout::MultiRotor")
         widget = ex.diagram
         tree_writes: list = []
         diagram_writes: list = []
         ex.tree.observe(lambda ch: tree_writes.append(ch["new"]), "selected")
         widget.view.selection.observe(lambda ch: diagram_writes.append(ch["new"]), "ids")
 
-        widget.view.selection.ids = ["Drone::PlanBattery"]  # diagram -> tree
-        assert tree_writes == [["Drone::PlanBattery"]]
-        assert diagram_writes == [("Drone::PlanBattery",)]  # only the click itself
+        widget.view.selection.ids = ["DeepScout::PlanBattery"]  # diagram -> tree
+        assert tree_writes == [["DeepScout::PlanBattery"]]
+        assert diagram_writes == [("DeepScout::PlanBattery",)]  # only the click itself
 
-        ex.tree.selected = ["Drone::Frame"]  # tree -> diagram
-        assert tree_writes == [["Drone::PlanBattery"], ["Drone::Frame"]]
-        assert diagram_writes == [("Drone::PlanBattery",), ("Drone::Frame",)]
+        ex.tree.selected = ["DeepScout::FlightStates"]  # tree -> diagram
+        assert tree_writes == [["DeepScout::PlanBattery"], ["DeepScout::FlightStates"]]
+        assert diagram_writes == [("DeepScout::PlanBattery",), ("DeepScout::FlightStates",)]
 
     def test_reselecting_the_same_element_is_a_fixpoint(self, ex):
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         widget = ex.diagram
         tree_writes: list = []
         diagram_writes: list = []
         ex.tree.observe(lambda ch: tree_writes.append(ch["new"]), "selected")
         widget.view.selection.observe(lambda ch: diagram_writes.append(ch["new"]), "ids")
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         assert ex.diagram is widget
         assert tree_writes == [] and diagram_writes == []
 
     def test_diagram_click_on_undrawn_element_reveals_the_ancestor(self, ex):
         # expanded-submachine ids resolve through typing hops: the tree
         # reveals the nearest element it knows
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         ex.kind = "state"
-        ex.diagram.view.selection.ids = ["Drone::FlightStates::flying"]
-        assert ex.tree.selected == ["Drone::FlightStates::flying"]
+        ex.diagram.view.selection.ids = ["DeepScout::FlightStates::flying"]
+        assert ex.tree.selected == ["DeepScout::FlightStates::flying"]
 
     def test_select_by_element(self, ex, drone_model):
-        ex.select(drone_model.find("Drone::HoverTime"))
-        assert ex.tree.selected == ["Drone::HoverTime"]
+        ex.select(drone_model.find("DeepScout::HoverTime"))
+        assert ex.tree.selected == ["DeepScout::HoverTime"]
 
     def test_select_unknown_raises(self, ex):
         from longeron.errors import ResolutionError
@@ -819,20 +821,21 @@ class TestExplorer:
             ex.select("No::Such::Thing")
 
     def test_requirements_kind_renders_the_requirements_view(self, ex):
-        ex.select("Drone::FlightEnvelope")
+        # scope from the branch package, where the satisfy edges live
+        ex.select("Rotorcraft::QuadCopter")
         ex.kind = "requirements"
         ids = _diagram_node_ids(ex.diagram)
-        assert "Drone::FlightEnvelope" in ids
+        assert "DeepScout::FlightEnvelope" in ids
         # wired in by its satisfy edges; unwired structure stays out
-        assert "Drone::QuadCopter" in ids
-        assert "Drone::Battery" not in ids
+        assert "Rotorcraft::QuadCopter" in ids
+        assert "ScoutParts::F450Kit::Battery" not in ids
 
     def test_structure_scope_element_mode(self, drone_model):
         ex = explore(drone_model, structure_scope="element")
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         ids = _diagram_node_ids(ex.diagram)
-        assert "Drone::QuadCopter" in ids
-        assert "Drone::FlightStates" not in ids  # siblings stay out
+        assert "Rotorcraft::QuadCopter" in ids
+        assert "DeepScout::FlightStates" not in ids  # siblings stay out
 
     def test_bad_structure_scope_rejected(self, drone_model):
         with pytest.raises(ValueError, match="structure_scope"):
@@ -843,13 +846,13 @@ class TestExplorer:
         cached diagram, and only the selection trait changes."""
 
         ex = explore(uav_model)
-        ex.select("UavMissions::Catalog")
+        ex.select("ScoutMissions::Catalog")
         widget = ex.diagram
         built = len(ex._diagrams)
         for qname in (
-            "UavMissions::Catalog::AirframeChoice",
-            "UavMissions::Catalog::MotorChoice",
-            "UavMissions::Catalog::AirframeChoice",
+            "ScoutMissions::Catalog::AirframeChoice",
+            "ScoutMissions::Catalog::MotorChoice",
+            "ScoutMissions::Catalog::AirframeChoice",
         ):
             ex.select(qname)
             assert ex.diagram is widget
@@ -1014,26 +1017,26 @@ class TestTreeViewProtocol:
         assert stub.selected == [root_id]
         assert stub.revealed[-1] == root_id
         # explorer -> engine
-        ex.select("Drone::FlightStates")
-        assert stub.selected == ["Drone::FlightStates"]
-        assert stub.revealed[-1] == "Drone::FlightStates"
+        ex.select("DeepScout::FlightStates")
+        assert stub.selected == ["DeepScout::FlightStates"]
+        assert stub.revealed[-1] == "DeepScout::FlightStates"
         assert "state" in ex.kind_switcher.options
         # engine -> explorer (a user click in the engine); no echo write-back
         writes = stub.selected_writes
-        stub.click(["Drone::PlanBattery"])
-        assert ex.element.qualified_name == "Drone::PlanBattery"
+        stub.click(["DeepScout::PlanBattery"])
+        assert ex.element.qualified_name == "DeepScout::PlanBattery"
         assert "action" in ex.kind_switcher.options
         assert stub.selected_writes == writes
 
     def test_diagram_click_reaches_a_stub_engine(self, drone_model):
         stub = StubTree()
         ex = Explorer(drone_model, tree=stub, layout="inline")
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         writes = stub.selected_writes
-        ex.diagram.view.selection.ids = ["Drone::Battery"]  # a browser click
-        assert stub.selected == ["Drone::Battery"]
+        ex.diagram.view.selection.ids = ["ScoutParts::F450Kit::Battery"]  # a browser click
+        assert stub.selected == ["ScoutParts::F450Kit::Battery"]
         assert stub.selected_writes == writes + 1  # exactly one write
-        assert stub.revealed[-1] == "Drone::Battery"
+        assert stub.revealed[-1] == "ScoutParts::F450Kit::Battery"
 
     def test_headless_engine_is_not_displayed(self, drone_model):
         ex = Explorer(drone_model, tree=StubTree(), layout="inline")
@@ -1133,9 +1136,9 @@ class TestLayoutStrategies:
     def test_lab_selection_plumbing_is_layout_independent(self, drone_model, monkeypatch):
         _install_stub_ipylab(monkeypatch)
         ex = explore(drone_model, layout="lab")
-        ex.select("Drone::FlightStates")
-        assert ex.tree.selected == ["Drone::FlightStates"]
-        assert tuple(ex.diagram.view.selection.ids) == ("Drone::FlightStates",)
+        ex.select("DeepScout::FlightStates")
+        assert ex.tree.selected == ["DeepScout::FlightStates"]
+        assert tuple(ex.diagram.view.selection.ids) == ("DeepScout::FlightStates",)
 
     def test_auto_uses_lab_when_frontend_detected(self, drone_model, monkeypatch):
         _install_stub_ipylab(monkeypatch)
@@ -1275,7 +1278,7 @@ class TestPaneFill:
     def test_diagram_widgets_defer_to_the_pane(self, ex):
         # built widgets fill the box exactly; the stock 400px min-height
         # floor (diagrams shown OUTSIDE the explorer keep it) is lifted
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         assert ex.diagram.layout.height == "100%"
         assert ex.diagram.layout.width == "100%"
         assert ex.diagram.layout.min_height == "0"
@@ -1317,7 +1320,7 @@ class TestFitSentinel:
     def test_shown_widget_carries_its_own_sentinel(self, ex):
         from longeron.toolbar import AutoFitTool
 
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         assert tool.sentinel is not None
         assert tool.sentinel in ex.diagram.children  # INSIDE the widget's DOM
@@ -1325,7 +1328,7 @@ class TestFitSentinel:
     def test_fresh_view_report_refits_the_widget(self, ex):
         from longeron.toolbar import AutoFitTool
 
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         before = tool.fit_count
         stamp = tool.sentinel.fit_stamp
@@ -1337,7 +1340,7 @@ class TestFitSentinel:
     def test_resize_report_refits_the_widget(self, ex):
         from longeron.toolbar import AutoFitTool
 
-        ex.select("Drone::QuadCopter")
+        ex.select("Rotorcraft::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         before = tool.fit_count
         tool.sentinel.resized += 1  # a debounced, latch-guarded resize
@@ -1353,7 +1356,7 @@ class TestFitSentinel:
         monkeypatch.setattr(
             toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
         )
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         structure = ex.diagram
         ex.kind = "state"
         state = ex.diagram
@@ -1368,7 +1371,7 @@ class TestFitSentinel:
         # swapping children would DESTROY the outgoing browser view (whose
         # model listeners the vendored frontend never unbinds): built
         # widgets must STAY in the box, exactly one displayed
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         structure = ex.diagram
         ex.kind = "state"
         state = ex.diagram
@@ -1390,7 +1393,7 @@ class TestFitSentinel:
         monkeypatch.setattr(
             toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
         )
-        ex.select("Drone::FlightStates")
+        ex.select("DeepScout::FlightStates")
         ex.kind = "state"  # builds the state widget
         assert ex.diagram not in fitted
 

@@ -380,9 +380,9 @@ class TestSheet:
         # keeps the TYPE but names the unit beside it ('Real [kg]'), and
         # a dedicated unit row gives the symbol + dimension
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         assert app.inspector._value_field.value == "0.39 kg"
         rows = _static_rows(app.inspector)
         assert ("typed by", "Real [kg]") in rows
@@ -412,11 +412,11 @@ class TestSheet:
         # compact 'magnitude symbol' spelling re-attaches the CURRENT
         # measurement reference, and the field re-normalizes compactly
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "0.4 kg"
-        element = model.find("Drone::Battery::mass")
+        element = model.find("ScoutParts::F450Kit::Battery::mass")
         assert app.inspector._value_field.value == "0.4 kg"
         from longeron.ast import expr_to_text
 
@@ -545,25 +545,28 @@ class TestEdits:
         # commit -- error strip, field reverted to the compact display
         # (never the raw expression), model untouched, row not dirtied
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         from longeron.ast import expr_to_text
 
-        before = expr_to_text(model.find("Drone::Battery::mass").value.expr)
+        before = expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
         app.inspector._value_field.value = "0.42 [SI::kgg]"
         assert app.inspector._error.layout.display is None
         assert "unit &#x27;SI::kgg&#x27; does not resolve" in app.inspector._error.value
         assert "did you mean" in app.inspector._error.value
         assert app.inspector._value_field.value == "0.39 kg"  # compact, not raw
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == before
+        assert expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr) == before
         name, _ = _row_widgets(app)
         assert "lgx-app-dirty" not in name._dom_classes
         assert not edit.track(model).dirty
         # a later good commit clears the strip
         app.inspector._value_field.value = "0.42 kg"
         assert app.inspector._error.layout.display == "none"
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.42 [SI::kg]"
+        assert (
+            expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
+            == "0.42 [SI::kg]"
+        )
 
     def test_wrong_dimension_commit_reverts_and_reports(self, monkeypatch, rig_model):
         # payload : MassValue pins the dimension; SI::s is a real unit of
@@ -583,28 +586,34 @@ class TestEdits:
         # the field displayed '0.39 kg'; committing '0.42' means a new
         # magnitude in the same unit, never a silently dropped reference
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "0.42"
         assert app.inspector._value_field.value == "0.42 kg"
         from longeron.ast import expr_to_text
 
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.42 [SI::kg]"
+        assert (
+            expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
+            == "0.42 [SI::kg]"
+        )
 
     def test_same_dimension_unit_change_commits_and_renormalizes(self, monkeypatch):
         # '420.0 [SI::g]' on a kg attribute: a real unit, same dimension --
         # accepted verbatim (the value means what it says), shown compactly
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "420.0 [SI::g]"
         assert app.inspector._error.layout.display == "none"
         assert app.inspector._value_field.value == "420.0 g"
         from longeron.ast import expr_to_text
 
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "420.0 [SI::g]"
+        assert (
+            expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
+            == "420.0 [SI::g]"
+        )
 
     def test_compact_symbol_commit_round_trips(self, monkeypatch):
         # THE maintainer finding: the sheet DISPLAYS '0.39 kg', so typing
@@ -613,15 +622,18 @@ class TestEdits:
         # the canonical bracket expression, the field re-displays the
         # compact form, and the unit / typed-by rows follow ('g -- mass')
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "390 g"
         assert app.inspector._error.layout.display == "none"
         assert app.inspector._value_field.value == "390 g"
         from longeron.ast import expr_to_text
 
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "390 [SI::g]"
+        assert (
+            expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
+            == "390 [SI::g]"
+        )
         rows = _static_rows(app.inspector)
         assert ("unit", "g \u2014 mass") in rows
         assert ("typed by", "Real [g]") in rows
@@ -632,24 +644,27 @@ class TestEdits:
         # rescaled in grams; the sheet then shows the canonical compact
         # form -- the honest spelling of a unit the model has no name for
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "17 mg"
         assert app.inspector._error.layout.display == "none"
         assert app.inspector._value_field.value == "0.017 g"
         from longeron.ast import expr_to_text
 
-        assert expr_to_text(model.find("Drone::Battery::mass").value.expr) == "0.017 [SI::g]"
+        assert (
+            expr_to_text(model.find("ScoutParts::F450Kit::Battery::mass").value.expr)
+            == "0.017 [SI::g]"
+        )
         assert ("unit", "g \u2014 mass") in _static_rows(app.inspector)
 
     def test_compact_wrong_dimension_lands_in_the_error_strip(self, monkeypatch):
         # '17 s' typed compactly on a kg-valued attribute: the dimension
         # gates apply to the compact form unchanged
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         ex = app.explore_model(model)
-        ex.select("Drone::Battery::mass")
+        ex.select("ScoutParts::F450Kit::Battery::mass")
         app.inspector._value_field.value = "17 s"
         assert app.inspector._error.layout.display is None
         assert "pass validate=False to override" in app.inspector._error.value

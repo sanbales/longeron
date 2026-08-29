@@ -9,7 +9,7 @@ Mapping (see ``.handoff/analysis-integration-design.md`` in the main tree):
   ``ExplicitComponent``; *free* attributes (literal values) become
   ``IndepVarComp`` outputs, so they can be design variables.
 * DISCIPLINE GROUPING: when a derived attribute's value invokes a calc
-  def that lives in its own package (e.g. ``UavMissions::Propulsion``),
+  def that lives in its own package (e.g. ``DeepScout::Propulsion``),
   the attribute's component is housed in an OpenMDAO ``Group`` named
   after that package (outputs promoted, so flat names keep working).
   The SysML package structure is the source of the grouping -- organize
@@ -226,7 +226,7 @@ def external_binding(calc: M.Definition | M.Usage) -> str | None:
     form ``'package.module:attr'`` where ``attr`` is an
     ``om.ExplicitComponent`` subclass or a zero-argument factory returning
     one.  Matching is by metadata-definition name (``ExternalAnalysis``),
-    the convention shipped with ``examples/uav_missions.sysml``.
+    the convention shipped with the DeepScout program (``examples/deepscout``).
     """
 
     for member in calc.members:
@@ -340,10 +340,11 @@ def _discipline(interp: Interpreter, defn: M.Namespace, expr: A.Expr) -> str | N
 
     The owning package of the FIRST calc def the value expression
     invokes (depth-first), when that package is a discipline package --
-    i.e. not a namespace that encloses the part definition itself
-    (calcs beside the part are shared context, not a discipline).  The
-    model's package structure is deliberately the single source of this
-    grouping.
+    i.e. not a namespace that encloses the part definition itself OR
+    any of its generalizations (calcs beside the part, or beside the
+    abstract base it specializes, are shared context, not a
+    discipline).  The model's package structure is deliberately the
+    single source of this grouping.
     """
 
     found: M.Definition | M.Usage | None = None
@@ -372,12 +373,39 @@ def _discipline(interp: Interpreter, defn: M.Namespace, expr: A.Expr) -> str | N
         package = package.owner
     if package is None or package.name is None:
         return None
-    node: M.Element | None = defn
-    while node is not None:  # enclosing namespaces are context, not disciplines
-        if node is package:
-            return None
-        node = node.owner
+    seen: set[int] = set()
+    stack: list[M.Element | None] = [defn]
+    while stack:  # enclosing namespaces (of defn or a generalization) are
+        scope = stack.pop()  # context, not disciplines
+        node: M.Element | None = scope
+        while node is not None:
+            if node is package:
+                return None
+            node = node.owner
+        if isinstance(scope, (M.Definition, M.Usage)):
+            for base in _generalizations(interp, scope):
+                if id(base) not in seen:
+                    seen.add(id(base))
+                    stack.append(base)
     return package.name
+
+
+def _generalizations(
+    interp: Interpreter, element: M.Definition | M.Usage
+) -> list[M.Definition | M.Usage]:
+    """The directly declared supertypes of ``element`` that resolve."""
+
+    out: list[M.Definition | M.Usage] = []
+    for name in getattr(element, "supers", ()) or ():
+        try:
+            base = interp.resolver.resolve(
+                name if isinstance(name, tuple) else tuple(name.split("::")), element
+            )
+        except Exception:
+            continue
+        if isinstance(base, (M.Definition, M.Usage)):
+            out.append(base)
+    return out
 
 
 def _contains_bodiless_external(interp: Interpreter, context: M.Namespace, expr: A.Expr) -> bool:
@@ -1270,7 +1298,7 @@ def bind_entity(build: ProblemBuild, feature: str, entity: str | Instance) -> No
     :class:`~longeron.interpreter.Instance` (typically an
     :class:`~longeron.m0.Individual` from :func:`longeron.m0.interpret`
     or :func:`entity_cases`) or a qualified name resolved through the
-    model -- a catalog part def (``"UavMissions::EcoMotor"``) or a
+    model -- a catalog part def (``"ScoutParts::TMotorMn4006"``) or a
     variant usage (``"P::MotorChoice::light"``, which keeps its inline
     ``:>>`` redefinitions).  The individual's definition is checked for
     conformance against the variation point's base type, and the payload

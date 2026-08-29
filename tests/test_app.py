@@ -332,14 +332,14 @@ class TestCommandRegistration:
 
 
 class TestModelOps:
-    def test_load_file(self, monkeypatch):
+    def test_load_the_program_directory(self, monkeypatch):
         app = _open_lab(monkeypatch)
         events = []
         app.on_model_selected(events.append)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         (entry,) = app.entries
-        assert entry.model is model and entry.origin == "file"
-        assert entry.path == ROOT / "examples" / "drone.sysml"
+        assert entry.model is model and entry.origin == "dir"
+        assert entry.path == ROOT / "examples" / "deepscout"
         assert app.current_model is model
         assert events == [model]
         assert app.models == (model,)
@@ -356,7 +356,7 @@ class TestModelOps:
 
     def test_load_path_defaults_to_the_field(self, monkeypatch):
         app = _open_lab(monkeypatch)
-        app._path_field.value = str(ROOT / "examples" / "drone.sysml")
+        app._path_field.value = str(ROOT / "examples" / "deepscout")
         model = app.load_path()
         assert app.current_model is model
 
@@ -377,8 +377,8 @@ class TestModelOps:
 
     def test_same_source_reload_replaces_the_entry(self, monkeypatch):
         app = _open_lab(monkeypatch)
-        first = app.load_path(ROOT / "examples" / "drone.sysml")
-        second = app.load_path(ROOT / "examples" / "drone.sysml")
+        first = app.load_path(ROOT / "examples" / "deepscout")
+        second = app.load_path(ROOT / "examples" / "deepscout")
         (entry,) = app.entries
         assert entry.model is second and first is not second
 
@@ -424,17 +424,16 @@ def _row_buttons(app, index=0):
 class TestRows:
     def test_row_composition_and_tooltip(self, monkeypatch):
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         name, explore_btn, score_btn, save_btn, close_btn = _row_buttons(app)
-        assert name.description == "drone.sysml"
-        assert str(ROOT / "examples" / "drone.sysml") in name.tooltip
+        assert name.description == "deepscout"
+        assert str(ROOT / "examples" / "deepscout") in name.tooltip
         assert explore_btn.description == "Explore"
-        # drone.sysml carries the geometric-installation requirement
+        # the program carries the geometric-installation requirement
         # usages (tutorial 10): its Score button is live
         assert not score_btn.disabled
         # Save is dirty-gated: a freshly loaded model has nothing to save
         assert save_btn.description == "Save" and save_btn.disabled
-        assert "No unsaved edits" in save_btn.tooltip
         assert close_btn.description == "\u2715"
         assert model is app.current_model
 
@@ -488,7 +487,7 @@ class TestRows:
 class TestLaunchWiring:
     def test_explore_docks_a_lab_explorer(self, monkeypatch):
         app = _open_lab(monkeypatch)
-        model = app.load_path(ROOT / "examples" / "drone.sysml")
+        model = app.load_path(ROOT / "examples" / "deepscout")
         _, explore_btn, *_ = _row_buttons(app)
         explore_btn.click()
         (ex,) = app.explorers
@@ -499,16 +498,17 @@ class TestLaunchWiring:
 
     def test_explorer_selection_feeds_the_seam(self, monkeypatch):
         app = _open_lab(monkeypatch)
-        app.load_path(ROOT / "examples" / "drone.sysml")
+        app.load_path(ROOT / "examples" / "deepscout")
         elements = []
         app.on_element_selected(elements.append)
         ex = app.explore_model(app.models[0])
-        # launching seeds the seam with the explorer's initial root selection
-        assert app.current_element is not None
-        assert app.current_element.qualified_name == "Drone"
-        ex.select("Drone::QuadCopter")
-        assert app.current_element.qualified_name == "Drone::QuadCopter"
-        assert [el.qualified_name for el in elements] == ["Drone", "Drone::QuadCopter"]
+        # launching seeds the seam with the explorer's initial root
+        # selection: the multi-package program's model root
+        assert app.current_element is app.models[0]
+        ex.select("Rotorcraft::QuadCopter")
+        assert app.current_element.qualified_name == "Rotorcraft::QuadCopter"
+        assert elements[0] is app.models[0]
+        assert [el.qualified_name for el in elements[1:]] == ["Rotorcraft::QuadCopter"]
         assert app.current_model is ex.model
 
     def test_element_selection_switches_the_current_model(

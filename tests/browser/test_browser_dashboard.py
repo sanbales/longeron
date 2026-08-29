@@ -111,13 +111,13 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.wait_for_selector(".jp-OutputArea .widget-vbox", timeout=120_000)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
 
-    # -- baked state: 288 candidates, one tab set, toggle off ---------------
+    # -- baked state: 1280 crossed candidates, one tab set, toggle off ------
     state = lab.run_cell_json(1)
-    assert state["candidates"] == 288
+    assert state["candidates"] == 1280
     assert state["tabs"] == ["all missions", "ISR", "logistics", "intercept"]
     assert state["toggle"] is False
-    assert state["pool"] == 288
-    assert 0 < state["front"] < 288
+    assert state["pool"] == 1280
+    assert 0 < state["front"] < 1280
 
     # -- (1) the whole dashboard fits a 1080p content area AND fills the
     # available output width (finding 3: no more fixed 1500 px on a wide
@@ -144,7 +144,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle = lab.page.get_by_role("button", name="Pareto only")
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is True)
-    assert state["pool"] == state["front"] < 288
+    assert state["pool"] == state["front"] < 1280
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_pareto_on.png"))
 
     # -- (2b) the reported scenario: 'Pareto only' at N=8 shows picks that
@@ -191,12 +191,12 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
 
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is False)
-    assert state["pool"] == 288
+    assert state["pool"] == 1280
 
     # -- (2d) toggle OFF: gray returns, but ONLY on truly dominated
     # points -- the front keeps its ink in the full cloud, and the
     # legend now names the gray too; the hint is gone
-    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 288)
+    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1280)
     assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == state["front"]
     assert (
         lab.page.locator(

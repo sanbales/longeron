@@ -7,8 +7,8 @@ an svg glyph sized like the builtin tabs, NO visible text label
 (finding 1) -- idempotently (the notebook re-opens and the tab count
 must stay one); the ``longeron:open-app`` palette command reveals the
 live panel (finding 2's honest launcher alternative); the path field +
-Load button load ``examples/drone.sysml`` through the kernel; the Score
-button splits honestly -- live for drone.sysml (its geometric
+Load button load ``examples/deepscout`` through the kernel; the Score
+button splits honestly -- live for the deepscout program (its geometric
 installation requirements are usages) and for the notebook's ScoutMini
 model, disabled with a tooltip for the notebook's defs-only model
 (requirement def, no usages); the ScoutMini scoreboard tab
@@ -42,13 +42,13 @@ pytestmark = pytest.mark.browser
 NOTEBOOK = "app_scenario.ipynb"
 REPO = Path(__file__).resolve().parents[2]
 EVIDENCE = REPO / "build" / "evidence"
-DRONE = REPO / "examples" / "drone.sysml"
+DRONE = REPO / "examples" / "deepscout"
 
 APP_TAB = '.jp-SideBar.jp-mod-left .lm-TabBar-tab[data-lgxkey="longeron-app"]'
 INSPECTOR_TAB = '.jp-SideBar.jp-mod-right .lm-TabBar-tab[data-lgxkey="longeron-inspector"]'
-EXPLORER_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="drone-sysml"]'
+EXPLORER_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="deepscout"]'
 SCOREBOARD_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="scoreboard-scout-mini"]'
-DRONE_ROW = '.lgx-app-row:has-text("drone.sysml")'
+DRONE_ROW = '.lgx-app-row:has-text("deepscout")'
 SCOUT_ROW = '.lgx-app-row:has-text("scout mini")'
 DEFS_ROW = '.lgx-app-row:has-text("bare defs")'
 RELS_ROW = '.lgx-app-row:has-text("rels demo")'
@@ -158,11 +158,11 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
     # maintainer QA chrome: NO wordmark row (the tab icon is the identity)
     assert page.locator(".lgx-app-brand").count() == 0
 
-    # -- load examples/drone.sysml through the path field ------------------
+    # -- load examples/deepscout through the path field ------------------
     page.fill(".lgx-app-path input", str(DRONE))
     page.click("button.lgx-app-load")
     page.wait_for_selector(DRONE_ROW, state="attached", timeout=60_000)
-    # drone.sysml's geometric installation requirements are USAGES: its
+    # the program's geometric installation requirements are USAGES: its
     # Score button is live, like ScoutMini's; the defs-only model (a
     # requirement def, no usages) keeps the honest disabled tooltip
     drone_score = page.locator(f"{DRONE_ROW} button.lgx-app-score")
@@ -229,14 +229,16 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
         "inline demo text",
         "defs only text",
         "rels demo text",
-        "drone.sysml",
+        "deepscout",
     ], checker
-    assert checker["origins"] == ["text", "text", "text", "file"], checker
-    assert checker["current"] == "drone.sysml", checker
+    assert checker["origins"] == ["text", "text", "text", "dir"], checker
+    assert checker["current"] == "deepscout", checker
     assert checker["explorers"] == 1, checker
-    # the explorer's initial selection (the flattened root package) already
-    # flowed through the inspector seam
-    assert checker["element"] == "Drone", checker
+    # the explorer's initial selection (the multi-package program's model
+    # root, which carries no qualified name) already flowed through the
+    # inspector seam
+    assert checker["element"] is None, checker
+    assert checker["element_type"] == "Model", checker
     assert checker["dirty"] is False, checker  # no edits: the row stays clean
 
     # -- finding 2: the palette command reveals the live panel -------------
@@ -276,7 +278,7 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
         label="exactly one app tab and one inspector tab",
     )
 
-    # -- reveal the app panel and load examples/drone.sysml ----------------
+    # -- reveal the app panel and load examples/deepscout ----------------
     _reveal_app_panel(lab)
     # the inspector starts COLLAPSED: docked without reveal, one click away
     assert not page.locator(".lgx-insp-host").is_visible()
@@ -296,6 +298,14 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     page.wait_for_selector(".lgx-explorer .lgx-row", state="attached", timeout=60_000)
 
     # -- click a tree row; the sheet follows the selection ------------------
+    # (the program tree opens on its six packages: expand the MultiRotor
+    # branch first, then click the configuration)
+    page.locator(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("Rotorcraft")) .lgx-twist'
+    ).first.click()
+    page.wait_for_selector(
+        '.lgx-explorer .lgx-row:has-text("QuadCopter")', state="attached", timeout=30_000
+    )
     page.locator('.lgx-explorer .lgx-row:has-text("QuadCopter")').first.click()
     name_input = page.locator(".lgx-insp-host .lgx-insp-name input")
     lab.wait_until(
@@ -312,9 +322,23 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     # -- finding 5: units are FIRST-CLASS -- the value field shows the
     # compact magnitude + symbol, and the dedicated unit row names the
     # symbol + dimension from the derived unit table
-    # (attribute rows render lazily: expand QuadCopter's subtree first --
-    # the twist toggles expansion without touching the selection)
-    page.locator('.lgx-explorer .lgx-row:has-text("QuadCopter") .lgx-twist').first.click()
+    # (attribute rows render lazily: maxTakeoffMass lives on the abstract
+    # MultiRotor in the DeepScout package -- expand down to it first; the
+    # twists toggle expansion without touching the selection)
+    # (case-sensitive exact match on the name span: the workspace root row
+    # is labeled 'deepscout' and Playwright's :has-text() is
+    # case-INsensitive -- a substring selector collapses the whole tree)
+    page.locator(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("DeepScout")) .lgx-twist'
+    ).first.click()
+    page.wait_for_selector(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("MultiRotor"))',
+        state="attached",
+        timeout=30_000,
+    )
+    page.locator(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("MultiRotor")) .lgx-twist'
+    ).first.click()
     page.wait_for_selector(
         '.lgx-explorer .lgx-row:has-text("maxTakeoffMass")', state="attached", timeout=30_000
     )
@@ -338,32 +362,37 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
         timeout=60,
         label="inspector back on QuadCopter",
     )
-    name_input.fill("HexaCopter")
+    name_input.fill("QuadCopterMk2")
     page.locator(".lgx-insp-host").screenshot(path=str(EVIDENCE / "inspector-rename-inflight.png"))
     name_input.press("Enter")
     # the explorer's tree payload rebuilt with the new label...
     lab.wait_until(
-        lambda s: page.locator('.lgx-explorer .lgx-row:has-text("HexaCopter")').count() >= 1,
+        lambda s: page.locator('.lgx-explorer .lgx-row:has-text("QuadCopterMk2")').count() >= 1,
         timeout=120,
         label="explorer tree relabels after the rename",
     )
-    # ...and the models-list row shows the dirty dot (Save enabled)
+    # ...and the models-list row shows the dirty dot. The entry's origin
+    # is 'dir' (a workspace merge), so Save stays DISABLED by design --
+    # there is no single source file to write back to; the tooltip points
+    # at the save_model(path=...) save-as escape hatch.
     lab.wait_until(
         lambda s: page.locator(".lgx-app-name.lgx-app-dirty").count() == 1,
         timeout=60,
         label="models row shows the dirty dot",
     )
-    assert not page.locator(f"{DRONE_ROW} button.lgx-app-save").is_disabled()
+    save_btn = page.locator(f"{DRONE_ROW} button.lgx-app-save")
+    assert save_btn.is_disabled(), "dir-origin Save must stay disabled (no single file)"
+    assert "save-as" in (save_btn.get_attribute("title") or "")
     page.locator(".lgx-app-host").screenshot(path=str(EVIDENCE / "app-models-dirty.png"))
 
     # -- a colliding rename is honestly refused: strip + revert -------------
-    name_input.fill("Battery")  # a sibling of HexaCopter in package Drone
+    name_input.fill("TriCopter")  # a sibling in package Rotorcraft
     name_input.press("Enter")
     page.wait_for_selector(".lgx-insp-host .lgx-insp-error", state="visible", timeout=60_000)
     refusal = page.locator(".lgx-insp-host .lgx-insp-error").text_content() or ""
     assert "already used by another member" in refusal, refusal
     lab.wait_until(
-        lambda s: name_input.input_value() == "HexaCopter",
+        lambda s: name_input.input_value() == "QuadCopterMk2",
         timeout=60,
         label="refused rename reverts the name field",
     )
@@ -373,8 +402,8 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     # and the INSPECTOR itself holds the selected element (finding 4's
     # end-to-end wiring, asserted at the kernel too) ------------------------
     checker = lab.run_cell_json(index=-1)
-    assert checker["element"] == "Drone::HexaCopter", checker
-    assert checker["inspector_element"] == "Drone::HexaCopter", checker
+    assert checker["element"] == "Rotorcraft::QuadCopterMk2", checker
+    assert checker["inspector_element"] == "Rotorcraft::QuadCopterMk2", checker
     assert checker["dirty"] is True, checker
 
     lab.assert_no_errors()

@@ -15,12 +15,12 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def catalog():
-    return longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
 def study(catalog):
-    return trades.TradeStudy(catalog, "DroneCatalog::TradeQuad")
+    return trades.TradeStudy(catalog, "ScoutSizing::TradeQuad")
 
 
 class TestModelIntrospection:
@@ -163,7 +163,7 @@ class TestExplainability:
         assert study.explain() == []
 
     def test_infeasible_names_conflict(self, catalog):
-        picnic = trades.TradeStudy(catalog, "DroneCatalog::PicnicQuad")
+        picnic = trades.TradeStudy(catalog, "ScoutSizing::PicnicQuad")
         assert picnic.enumerate() == []
         core = picnic.explain()
         assert core  # a sufficient subset is reported...
@@ -173,7 +173,7 @@ class TestExplainability:
 class TestErrors:
     def test_no_variation_points(self, catalog):
         with pytest.raises(longeron.analysis.AnalysisError):
-            trades.TradeStudy(catalog, "DroneCatalog::Emax2306")
+            trades.TradeStudy(catalog, "ScoutSizing::Emax2306")
 
     def test_unknown_metric(self, study):
         with pytest.raises(longeron.analysis.AnalysisError):
@@ -540,7 +540,7 @@ class TestCalcInvocationInlining:
 
 
 class TestUavMissionCoverage:
-    """The extended mapper against ``examples/uav_missions.sysml``: the
+    """The extended mapper against ``examples/deepscout``: the
     shared platform assembly (calc invocations, max(), var*var division)
     now encodes and must agree with the interpreter mix for mix; the
     mission layers' sqrt/pow/conditional physics refuse with a one-line
@@ -548,24 +548,25 @@ class TestUavMissionCoverage:
 
     @pytest.fixture(scope="class")
     def uav(self):
-        return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+        return longeron.load(EXAMPLES / "deepscout", cache=False)
 
     @pytest.fixture(scope="class")
     def platform(self, uav):
-        return trades.TradeStudy(uav, "UavMissions::MissionUAV")
+        return trades.TradeStudy(uav, "ScoutMissions::MissionUAV")
 
     def test_cpsat_agrees_with_the_interpreter_on_the_platform(self, platform):
         """The fixed-point tolerance contract: after the interpreter
         re-verification, CP-SAT's feasible set is EXACTLY the
-        interpreter's (no false admits survive, none of the 288 mixes
-        is lost to rounding)."""
+        interpreter's (no false admits survive, none of the 1280 mixes
+        of the crossed catalog is lost to rounding).  The pre-crossing
+        platform was 288 mixes / 166 feasible."""
 
         got = {tuple(sorted(a.selection.items())) for a in platform.enumerate()}
         exact = platform.all_architectures()
         want = {tuple(sorted(a.selection.items())) for a in exact if a.verified}
-        assert len(exact) == 288
+        assert len(exact) == 8 * 4 * 4 * 5 * 2 == 1280
         assert got == want
-        assert len(got) == 166
+        assert len(got) == 434
 
     def test_optimization_agrees_with_the_interpreter(self, platform):
         best = platform.minimize("baseCost")
@@ -588,7 +589,7 @@ class TestUavMissionCoverage:
     def test_mission_refusals_name_the_innermost_operation(
         self, uav, assembly, attribute, operation
     ):
-        study = trades.TradeStudy(uav, f"UavMissions::{assembly}")
+        study = trades.TradeStudy(uav, f"ScoutMissions::{assembly}")
         with pytest.raises(longeron.analysis.AnalysisError) as err:
             study.enumerate()
         message = str(err.value)
@@ -604,11 +605,11 @@ class TestThrustParametric:
 
     @pytest.fixture(scope="class")
     def drone_interp(self):
-        drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
+        drone = longeron.load(EXAMPLES / "deepscout", cache=False)
         return longeron.Interpreter(drone)
 
     def thrust(self, interp, **kwargs):
-        return interp.call("Drone::PropThrust", **kwargs)
+        return interp.call("DeepScout::PropThrust", **kwargs)
 
     def test_stock_design_point_matches_the_bench_table(self, drone_interp):
         # the calibrated fit lands on the MT2213 bench table's 850 g
@@ -636,7 +637,7 @@ class TestThrustParametric:
         # (PropThrust's own Ct is calibrated to 0.097 -- divide it back out)
         interp = longeron.Interpreter(catalog)
         for motor, kv in (("Emax2306", 2400.0), ("TMotorF60", 1750.0), ("SunnySky2212", 920.0)):
-            inst = interp.instantiate(f"DroneCatalog::{motor}")
+            inst = interp.instantiate(f"ScoutSizing::{motor}")
             expected = (
                 self.thrust(drone_interp, kV=kv, voltage=inst.slots["voltage"], diameter=0.0254)
                 / 0.097

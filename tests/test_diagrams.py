@@ -68,7 +68,7 @@ def _assert_adornment_contract(widget):
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return longeron.load("examples/drone.sysml")
+    return longeron.load("examples/deepscout")
 
 
 class TestStructure:
@@ -79,11 +79,13 @@ class TestStructure:
     def test_node_ids_are_qualified_names(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
         ids = {n.id for n in _walk(widget.source.value) if n.id}
-        assert {"Drone", "Drone::QuadCopter", "Drone::Battery"} <= ids
+        assert {"Rotorcraft", "Rotorcraft::QuadCopter", "ScoutParts::F450Kit::Battery"} <= ids
 
     def test_attribute_compartments(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        battery = next(n for n in _walk(widget.source.value) if n.id == "Drone::Battery")
+        battery = next(
+            n for n in _walk(widget.source.value) if n.id == "ScoutParts::F450Kit::Battery"
+        )
         texts = [label.text for label in battery.labels]
         assert any("capacity : Real = 5200.0" in t for t in texts)
 
@@ -95,7 +97,9 @@ class TestStructure:
         from longeron.render import _measure
 
         widget = diagrams.structure_diagram(drone_model)
-        battery = next(n for n in _walk(widget.source.value) if n.id == "Drone::Battery")
+        battery = next(
+            n for n in _walk(widget.source.value) if n.id == "ScoutParts::F450Kit::Battery"
+        )
         rows = [
             label
             for label in battery.labels
@@ -115,28 +119,34 @@ class TestStructure:
 
     def test_multiplicity_shown(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        motors = next(n for n in _walk(widget.source.value) if n.id == "Drone::QuadCopter::motors")
+        motors = next(
+            n for n in _walk(widget.source.value) if n.id == "Rotorcraft::QuadCopter::motors"
+        )
         assert any("motors : Motor [4]" in label.text for label in motors.labels)
 
     def test_parameter_rows(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        hover = next(n for n in _walk(widget.source.value) if n.id == "Drone::HoverTime")
+        hover = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::HoverTime")
         texts = [label.text for label in hover.labels]
         assert "in capacity : Real" in texts
         assert "return : Real" in texts
 
     def test_requirement_and_constraint_rows(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
-        envelope = next(n for n in _walk(widget.source.value) if n.id == "Drone::FlightEnvelope")
+        envelope = next(
+            n for n in _walk(widget.source.value) if n.id == "DeepScout::FlightEnvelope"
+        )
         texts = " | ".join(label.text for label in envelope.labels)
         assert "subject drone : MultiRotor" in texts
         assert "require hoverMargin" in texts
-        # the installation requirement's subject stays the concrete quad
-        install = next(n for n in _walk(widget.source.value) if n.id == "Drone::installation")
+        # the installation requirement's subject is the abstract base:
+        # any configuration can be measured (the quad is the satisfy
+        # anchor, over in the Rotorcraft branch)
+        install = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::installation")
         install_texts = " | ".join(label.text for label in install.labels)
-        assert "subject drone : QuadCopter" in install_texts
+        assert "subject drone : MultiRotor" in install_texts
         # the shared constraints render on the abstract base
-        base = next(n for n in _walk(widget.source.value) if n.id == "Drone::MultiRotor")
+        base = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::MultiRotor")
         base_texts = " | ".join(label.text for label in base.labels)
         assert "assert takeoffMassLimit" in base_texts
 
@@ -700,8 +710,8 @@ class TestStructure:
         key = "elk.layered.spacing.edgeNodeBetweenLayers"
         for build in (
             lambda: diagrams.structure_diagram(drone_model),
-            lambda: diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
-            lambda: diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
+            lambda: diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")),
+            lambda: diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery")),
         ):
             root = build().source.value
             assert root.layoutOptions[key] == clearance
@@ -721,8 +731,8 @@ class TestEdgeRoutingKwarg:
     def test_default_is_orthogonal_on_every_level(self, drone_model):
         for build in (
             lambda: diagrams.structure_diagram(drone_model),
-            lambda: diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
-            lambda: diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
+            lambda: diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")),
+            lambda: diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery")),
         ):
             root = build().source.value
             assert root.layoutOptions["elk.edgeRouting"] == "ORTHOGONAL"
@@ -734,10 +744,10 @@ class TestEdgeRoutingKwarg:
         for build in (
             lambda: diagrams.structure_diagram(drone_model, routing="polyline"),
             lambda: diagrams.state_diagram(
-                drone_model.find("Drone::FlightStates"), routing="POLYLINE"
+                drone_model.find("DeepScout::FlightStates"), routing="POLYLINE"
             ),
             lambda: diagrams.action_diagram(
-                drone_model.find("Drone::PlanBattery"), routing="Polyline"
+                drone_model.find("DeepScout::PlanBattery"), routing="Polyline"
             ),
         ):
             root = build().source.value
@@ -762,8 +772,8 @@ class TestDirectionKwarg:
     def _builds(self, drone_model, **kwargs):
         return (
             diagrams.structure_diagram(drone_model, **kwargs),
-            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), **kwargs),
-            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), **kwargs),
+            diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"), **kwargs),
+            diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"), **kwargs),
         )
 
     def test_default_is_right_on_the_root_only(self, drone_model):
@@ -1449,17 +1459,17 @@ class TestViewUsageBoxes:
 
 class TestStates:
     def test_builds_with_marker_and_transitions(self, drone_model):
-        machine = drone_model.find("Drone::FlightStates")
+        machine = drone_model.find("DeepScout::FlightStates")
         widget = diagrams.state_diagram(machine)
         root = widget.source.value
         state_ids = {n.id for n in _walk(root) if n.id}
-        assert "Drone::FlightStates::idle" in state_ids
+        assert "DeepScout::FlightStates::idle" in state_ids
         markers = [n for n in _walk(root) if "sysml-marker" in n.properties.cssClasses]
         assert len(markers) == 1  # the entry marker
         assert len(root.edges) == 6  # entry + 5 transitions
 
     def test_transition_labels(self, drone_model):
-        machine = drone_model.find("Drone::FlightStates")
+        machine = drone_model.find("DeepScout::FlightStates")
         widget = diagrams.state_diagram(machine)
         texts = [label.text for e in widget.source.value.edges for label in e.labels]
         assert "launch" in texts
@@ -1565,7 +1575,7 @@ class TestActions:
         assert guarded[0].labels[0].text == "[x > 0]"
 
     def test_declaration_order_chain(self, drone_model):
-        widget = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
+        widget = diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"))
         root = widget.source.value
         steps = [n for n in _walk(root) if "sysml-step" in n.properties.cssClasses]
         assert len(steps) == 2  # assign + if
@@ -1821,8 +1831,8 @@ class TestActions:
 
 class TestDispatcherAndSelection:
     def test_dispatch(self, drone_model):
-        state = diagrams.diagram(drone_model.find("Drone::FlightStates"))
-        action = diagrams.diagram(drone_model.find("Drone::PlanBattery"))
+        state = diagrams.diagram(drone_model.find("DeepScout::FlightStates"))
+        action = diagrams.diagram(drone_model.find("DeepScout::PlanBattery"))
         structure = diagrams.diagram(drone_model)
         assert all(type(w).__name__ == "Diagram" for w in (state, action, structure))
 
@@ -1830,8 +1840,8 @@ class TestDispatcherAndSelection:
         widget = diagrams.structure_diagram(drone_model)
         received: list = []
         diagrams.on_select(widget, drone_model, received.extend)
-        widget.view.selection.ids = ["Drone::QuadCopter"]
-        assert [e.qualified_name for e in received] == ["Drone::QuadCopter"]
+        widget.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        assert [e.qualified_name for e in received] == ["Rotorcraft::QuadCopter"]
         assert isinstance(received[0], M.Definition)
 
 
@@ -1949,7 +1959,7 @@ class TestBrowserTransportIds:
         assert _null_transport_ids(_transport_json(widget)) == []
 
     def test_action_lanes_ship_with_ids(self, drone_model):
-        widget = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
+        widget = diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"))
         assert _null_transport_ids(_transport_json(widget)) == []
 
     def test_assign_ids_is_idempotent_and_stable(self):
@@ -2125,9 +2135,9 @@ class TestMaxLabelWidth:
             diagrams.structure_diagram(model, max_label_width=-10)
 
     def test_state_and_action_builders_accept_the_cap(self, drone_model):
-        diagrams.state_diagram(drone_model.find("Drone::FlightStates"), max_label_width=200)
+        diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"), max_label_width=200)
         widget = diagrams.action_diagram(
-            drone_model.find("Drone::PlanBattery"), max_label_width=200
+            drone_model.find("DeepScout::PlanBattery"), max_label_width=200
         )
         assert widget._lgn_view_state["options"]["max_label_width"] == 200
 
@@ -2143,8 +2153,8 @@ class TestUniversalFitMachinery:
         from longeron.explorer import requirements_view
 
         yield diagrams.structure_diagram(drone_model)
-        yield diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
-        yield diagrams.action_diagram(drone_model.find("Drone::PlanBattery"))
+        yield diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
+        yield diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"))
         yield requirements_view(drone_model)
 
     def test_every_builder_mounts_the_sentinel(self, drone_model):
@@ -2185,8 +2195,8 @@ class TestBuilderHeight:
     def test_explicit_height_is_exact_for_every_builder(self, drone_model):
         for widget in (
             diagrams.structure_diagram(drone_model, height="480px"),
-            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), height="480px"),
-            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), height="480px"),
+            diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"), height="480px"),
+            diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"), height="480px"),
         ):
             assert widget.layout.height == "480px"
             # the floor must NOT fight the request (CSS min-height wins

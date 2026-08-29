@@ -48,7 +48,7 @@ package P {
 
 @pytest.fixture(scope="module")
 def drone_model():
-    return longeron.load("examples/drone.sysml")
+    return longeron.load("examples/deepscout")
 
 
 @pytest.fixture()
@@ -134,10 +134,10 @@ class TestComposition:
     def test_all_views_get_the_toolbar(self, drone_model):
         widgets = [
             diagrams.structure_diagram(drone_model),
-            diagrams.state_diagram(drone_model.find("Drone::FlightStates")),
-            diagrams.action_diagram(drone_model.find("Drone::PlanBattery")),
-            diagrams.diagram(drone_model.find("Drone::FlightStates")),
-            diagrams.diagram(drone_model.find("Drone::PlanBattery")),
+            diagrams.state_diagram(drone_model.find("DeepScout::FlightStates")),
+            diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery")),
+            diagrams.diagram(drone_model.find("DeepScout::FlightStates")),
+            diagrams.diagram(drone_model.find("DeepScout::PlanBattery")),
             diagrams.diagram(drone_model),
         ]
         for built in widgets:
@@ -157,8 +157,8 @@ class TestComposition:
         assert any(isinstance(tool, AutoFitTool) for tool in classic.tools)
         assert classic.view.fit_tool.ui.description == "Fit"  # the stock button
         assert not any(key in classic.style for key in TOOLBAR_STYLE)
-        state = diagrams.state_diagram(drone_model.find("Drone::FlightStates"), toolbar=False)
-        action = diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), toolbar=False)
+        state = diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"), toolbar=False)
+        action = diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"), toolbar=False)
         for built in (state, action):
             assert not any(isinstance(tool, DiagramSearch) for tool in built.tools)
 
@@ -411,8 +411,8 @@ class TestDirectionToggle:
     def test_constructor_kwarg_seeds_the_trait(self, drone_model):
         for built in (
             diagrams.structure_diagram(drone_model, direction="down"),
-            diagrams.state_diagram(drone_model.find("Drone::FlightStates"), direction="DOWN"),
-            diagrams.action_diagram(drone_model.find("Drone::PlanBattery"), direction="Down"),
+            diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"), direction="DOWN"),
+            diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"), direction="Down"),
         ):
             assert self._tool(built).direction == "DOWN"
             assert built.source.value.layoutOptions["elk.direction"] == "DOWN"
@@ -452,7 +452,7 @@ class TestCompoundLabelFit:
 
     def test_down_pins_compound_width_through_the_swapped_minimum(self, widget):
         apply_direction(widget.source.value, "down")
-        quad = self._node(widget, "Drone::QuadCopter")
+        quad = self._node(widget, "Rotorcraft::QuadCopter")
         assert quad.layoutOptions["nodeSize.constraints"] == "PORTS MINIMUM_SIZE"
         # (height, width): the widest pre-sized row + the box's side padding
         widest = max(
@@ -466,7 +466,7 @@ class TestCompoundLabelFit:
         root = widget.source.value
         apply_direction(root, "down")
         apply_direction(root, "right")
-        quad = self._node(widget, "Drone::QuadCopter")
+        quad = self._node(widget, "Rotorcraft::QuadCopter")
         assert quad.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
         assert quad.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
 
@@ -480,7 +480,7 @@ class TestCompoundLabelFit:
 
     def test_leaves_are_never_touched(self, widget):
         apply_direction(widget.source.value, "down")
-        battery = self._node(widget, "Drone::Battery")  # rows, but no children
+        battery = self._node(widget, "ScoutParts::F450Kit::Battery")  # rows, but no children
         assert battery.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
         assert battery.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
 
@@ -491,7 +491,7 @@ class TestCompoundLabelFit:
         minimums would land on the wrong axis of the wrong run."""
 
         apply_direction(widget.source.value, "down")
-        states = self._node(widget, "Drone::FlightStates")  # inside the pack grid
+        states = self._node(widget, "DeepScout::FlightStates")  # inside the pack grid
         assert states.layoutOptions["nodeSize.constraints"] == "NODE_LABELS PORTS MINIMUM_SIZE"
         assert states.layoutOptions["elk.nodeSize.minimum"] == "(60, 44)"
 
@@ -661,34 +661,38 @@ class TestSearchMatching:
     def test_title_match_is_case_insensitive(self, widget):
         search = _search(widget)
         search.query = "BATTERY"
-        assert search.hit_ids == {
-            "Drone::Battery",
-            "Drone::PlanBattery",  # title 'PlanBattery' contains 'battery'
-            "Drone::MultiRotor::battery",  # the shared pack, on the base
-        }
-        assert search.match_count == 3
+        # the program-wide catalog answers broadly; the anchors below
+        # prove case-insensitive TITLE matching across element kinds
+        assert {
+            "ScoutParts::F450Kit::Battery",
+            "DeepScout::PlanBattery",  # title 'PlanBattery' contains 'battery'
+            "DeepScout::MultiRotor::battery",  # the shared pack, on the base
+        } <= search.hit_ids
+        assert search.match_count == 17
 
     def test_qualified_name_match(self, widget):
         search = _search(widget)
         search.query = "quadcopter::motors"  # no title contains this
-        assert search.hit_ids == {"Drone::QuadCopter::motors"}
+        assert search.hit_ids == {"Rotorcraft::QuadCopter::motors"}
 
     def test_usage_titles_include_their_type(self, widget):
         search = _search(widget)
         search.query = "motor"
         # the def by title, the usages via 'motors : Motor [4]' etc. --
         # the TriCopter split its population into front pair + tail, the
-        # hexa keeps one six-wide population, the coax X8 pairs up
-        assert search.hit_ids == {
-            "Drone::Motor",
-            "Drone::MotorCurrent",
-            "Drone::QuadCopter::motors",
-            "Drone::TriCopter::frontMotors",
-            "Drone::TriCopter::tailMotor",
-            "Drone::HexaCopter::motors",
-            "Drone::CoaxX8::upperMotors",
-            "Drone::CoaxX8::lowerMotors",
-        }
+        # hexa and the flat octo keep one wide population each, the coax
+        # X8 pairs up (the fleet and sizing catalogs add their own hits)
+        assert {
+            "ScoutParts::F450Kit::Motor",
+            "DeepScout::MotorCurrent",
+            "Rotorcraft::QuadCopter::motors",
+            "Rotorcraft::TriCopter::frontMotors",
+            "Rotorcraft::TriCopter::tailMotor",
+            "Rotorcraft::HexaCopter::motors",
+            "Rotorcraft::OctoCopter::motors",
+            "Rotorcraft::CoaxX8::upperMotors",
+            "Rotorcraft::CoaxX8::lowerMotors",
+        } <= search.hit_ids
 
     def test_count_is_displayed(self, widget):
         search = _search(widget)
@@ -726,7 +730,7 @@ class TestSearchMatching:
         assert SEARCH_HIT_CSS in _classes(node)
 
     def test_markers_are_not_searchable(self, drone_model):
-        built = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        built = diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
         search = _search(built)
         marker_free = {entry.node_id for entry in search._entries}
         markers = [n for n in _iter_nodes(built.source.value) if "sysml-marker" in _classes(n)]
@@ -749,7 +753,7 @@ class TestHighlightApplication:
                 assert expected in _classes(label)
 
     def test_markers_and_packing_groups_untouched(self, drone_model):
-        built = diagrams.state_diagram(drone_model.find("Drone::FlightStates"))
+        built = diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
         search = _search(built)
         search.query = "idle"
         for node in _iter_nodes(built.source.value):
@@ -827,7 +831,7 @@ class TestHighlightApplication:
         widget.view.source.value = replacement  # what the frontend does
 
         view_tree = widget.view.source.value
-        hit = next(n for n in _iter_nodes(view_tree) if n.id == "Drone::Battery")
+        hit = next(n for n in _iter_nodes(view_tree) if n.id == "ScoutParts::F450Kit::Battery")
         assert SEARCH_HIT_CSS in _classes(hit)
         # markers got uuid ids in the round-trip: still untouched
         for node in _iter_nodes(view_tree):
@@ -850,13 +854,11 @@ class TestHighlightApplication:
         search.query = "motor"
         for tree in (widget.source.value, widget.view.source.value):
             ids = {n.id for n in _iter_nodes(tree) if SEARCH_HIT_CSS in _classes(n)}
-            assert ids == {
-                "Drone::Motor",
-                "Drone::MotorCurrent",
-                "Drone::QuadCopter::motors",
-                "Drone::TriCopter::frontMotors",
-                "Drone::TriCopter::tailMotor",
-                "Drone::HexaCopter::motors",
-                "Drone::CoaxX8::upperMotors",
-                "Drone::CoaxX8::lowerMotors",
-            }
+            assert {
+                "ScoutParts::F450Kit::Motor",
+                "DeepScout::MotorCurrent",
+                "Rotorcraft::QuadCopter::motors",
+                "Rotorcraft::OctoCopter::motors",
+                "Rotorcraft::CoaxX8::upperMotors",
+                "Rotorcraft::CoaxX8::lowerMotors",
+            } <= ids

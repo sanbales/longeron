@@ -15,10 +15,10 @@ RACER = {"prop_diameter_in": 5.0, "motor_mass": 0.033, "battery_mass": 0.19, "es
 CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, "esc_mass": 0.009}
 
 QUAD_MAP = {
-    "frame": "Drone::QuadCopter::chassis",
-    "motors": "Drone::QuadCopter::motors",
-    "props": "Drone::QuadCopter::propellers",
-    "battery": "Drone::QuadCopter::battery",
+    "frame": "Rotorcraft::QuadCopter::chassis",
+    "motors": "Rotorcraft::QuadCopter::motors",
+    "props": "Rotorcraft::QuadCopter::propellers",
+    "battery": "Rotorcraft::QuadCopter::battery",
 }
 
 
@@ -26,8 +26,8 @@ QUAD_MAP = {
 def study():
     from longeron.analysis import trades
 
-    catalog = longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
-    return trades.TradeStudy(catalog, "DroneCatalog::TradeQuad")
+    catalog = longeron.load(EXAMPLES / "deepscout", cache=False)
+    return trades.TradeStudy(catalog, "ScoutSizing::TradeQuad")
 
 
 def _volume(vertices, faces):
@@ -247,17 +247,17 @@ class TestSplitInstances:
     def test_instances_tag_to_m0_individual_ids(self):
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         mapping = {
-            **{f"motor{i + 1}": f"Drone::QuadCopter#0.motors#{i}" for i in range(4)},
-            **{f"prop{i + 1}": f"Drone::QuadCopter#0.propellers#{i}" for i in range(4)},
+            **{f"motor{i + 1}": f"Rotorcraft::QuadCopter#0.motors#{i}" for i in range(4)},
+            **{f"prop{i + 1}": f"Rotorcraft::QuadCopter#0.propellers#{i}" for i in range(4)},
         }
         tagged = geometry.tag_parts(mesh, mapping)
         keys = {p["name"]: p.get("key") for p in tagged["parts"]}
-        assert keys["motor3"] == "Drone::QuadCopter#0.motors#2"
-        assert keys["prop3"] == "Drone::QuadCopter#0.propellers#2"
+        assert keys["motor3"] == "Rotorcraft::QuadCopter#0.motors#2"
+        assert keys["prop3"] == "Rotorcraft::QuadCopter#0.propellers#2"
         assert keys["frame"] is None  # unmapped parts stay untagged
 
 
-#: the stock examples/drone.sysml design point (see the model's defaults)
+#: the stock examples/deepscout design point (see the model's defaults)
 STOCK = {"prop_diameter_in": 10.0, "motor_mass": 0.055, "battery_mass": 0.39, "esc_mass": 0.012}
 STOCK_CAMERA = {
     "x": 0.06,
@@ -621,7 +621,7 @@ class TestGeometryChecks:
         assert geometry.geometry_checks(mesh) == geometry.geometry_checks(mesh)
 
     def test_stock_drone_satisfies_both_requirements(self):
-        # the requirement bodies of examples/drone.sysml at the stock point
+        # the requirement bodies of examples/deepscout at the stock point
         checks = geometry.geometry_checks(
             geometry.drone_geometry(**STOCK, split_instances=True, camera=STOCK_CAMERA)
         )
@@ -1045,8 +1045,8 @@ class TestTeardropQuadGeometry:
 def mission_study():
     from longeron.analysis import trades
 
-    catalog = longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
-    return trades.TradeStudy(catalog, "UavMissions::InterceptUav")
+    catalog = longeron.load(EXAMPLES / "deepscout", cache=False)
+    return trades.TradeStudy(catalog, "ScoutMissions::InterceptUav")
 
 
 class TestMissionBridge:
@@ -1235,10 +1235,10 @@ class TestTagParts:
         mesh = geometry.drone_geometry(**RACER)
         tagged = geometry.tag_parts(mesh, QUAD_MAP)
         assert [p.get("key") for p in tagged["parts"]] == [
-            "Drone::QuadCopter::chassis",
-            "Drone::QuadCopter::motors",
-            "Drone::QuadCopter::propellers",
-            "Drone::QuadCopter::battery",
+            "Rotorcraft::QuadCopter::chassis",
+            "Rotorcraft::QuadCopter::motors",
+            "Rotorcraft::QuadCopter::propellers",
+            "Rotorcraft::QuadCopter::battery",
             None,  # esc has no model part: identity stays its name
         ]
         # the input mesh is untouched; vertex arrays are shared, not copied
@@ -1252,7 +1252,7 @@ class TestTagParts:
     def test_typos_fail_loudly_unless_relaxed(self):
         mesh = geometry.drone_geometry(**RACER)
         with pytest.raises(AnalysisError, match="rotor"):
-            geometry.tag_parts(mesh, {"rotor": "Drone::QuadCopter::motors"})
+            geometry.tag_parts(mesh, {"rotor": "Rotorcraft::QuadCopter::motors"})
         # one shared map across families: unknown names are ignored
         relaxed = geometry.tag_parts(mesh, {"wing": "X::wing"}, strict=False)
         assert all("key" not in p for p in relaxed["parts"])
@@ -1261,7 +1261,7 @@ class TestTagParts:
         tagged = geometry.tag_parts(geometry.drone_geometry(**RACER), QUAD_MAP)
         scene = geometry.lineup([tagged, geometry.drone_geometry(**CRUISER)], labels=["a", "b"])
         by_name = {p["name"]: p.get("key") for p in scene["parts"]}
-        assert by_name["a:motors"] == "Drone::QuadCopter::motors"
+        assert by_name["a:motors"] == "Rotorcraft::QuadCopter::motors"
         assert by_name["a:esc"] is None  # untagged part stays untagged
         assert by_name["b:motors"] is None  # the untagged mesh is inert
 

@@ -383,7 +383,7 @@ class TestAttitude:
 
 # -- the drone model's own attitude/mission physics ----------------------------
 
-#: hand-computed stock design point of examples/drone.sysml (EMAX MT2213
+#: hand-computed stock design point of examples/deepscout (EMAX MT2213
 #: on APC 10x4.5MR, PropThrust's calibrated Ct = 0.097)
 THRUST_N = 0.097 * 1.225 * (0.75 * 935.0 * 11.1 / 60.0) ** 2.0 * 0.254**4.0
 USABLE_N = 4.0 * THRUST_N * 0.59  # continuousThrustFraction (65%-throttle cap)
@@ -407,12 +407,12 @@ ATLANTA = [
 
 @pytest.fixture(scope="module")
 def drone_interp():
-    return longeron.Interpreter(longeron.load(EXAMPLES / "drone.sysml", cache=False))
+    return longeron.Interpreter(longeron.load(EXAMPLES / "deepscout", cache=False))
 
 
 class TestModelPhysics:
     def test_max_tilt_is_the_continuous_thrust_arccos(self, drone_interp):
-        quad = drone_interp.instantiate("Drone::QuadCopter")
+        quad = drone_interp.instantiate("Rotorcraft::QuadCopter")
         assert quad.slots["thrustPerRotor"] == pytest.approx(THRUST_N)
         assert quad.slots["usableThrust"] == pytest.approx(USABLE_N)
         assert quad.slots["maxTilt"] == pytest.approx(MAX_TILT_DEG)  # ~45.2 deg
@@ -420,13 +420,13 @@ class TestModelPhysics:
         assert quad.slots["cruiseTilt"] == 25.0
 
     def test_max_cruise_speed_is_the_drag_balance(self, drone_interp):
-        quad = drone_interp.instantiate("Drone::QuadCopter")
+        quad = drone_interp.instantiate("Rotorcraft::QuadCopter")
         assert quad.slots["maxCruiseSpeed"] == pytest.approx(CRUISE_SPEED)  # ~20.0 m/s
 
     def test_tilt_for_speed_inverts_max_cruise_speed(self, drone_interp):
-        quad = drone_interp.instantiate("Drone::QuadCopter")
+        quad = drone_interp.instantiate("Rotorcraft::QuadCopter")
         tilt = drone_interp.call(
-            "Drone::TiltForSpeed",
+            "DeepScout::TiltForSpeed",
             speed=quad.slots["maxCruiseSpeed"],
             massKg=quad.slots["totalMass"],
             dragArea=quad.slots["dragArea"],
@@ -434,22 +434,22 @@ class TestModelPhysics:
         assert tilt == pytest.approx(25.0)
 
     def test_overloaded_airframe_reads_zero_not_domain_error(self, drone_interp):
-        assert drone_interp.call("Drone::MaxTilt", massKg=3.0, thrustN=USABLE_N) == 0.0
+        assert drone_interp.call("DeepScout::MaxTilt", massKg=3.0, thrustN=USABLE_N) == 0.0
 
     def test_mission_time_calc(self, drone_interp):
         minutes = drone_interp.call(
-            "Drone::MissionTime", routeM=3600.0, climbM=50.0, descentM=45.0, cruiseSpeed=12.0
+            "DeepScout::MissionTime", routeM=3600.0, climbM=50.0, descentM=45.0, cruiseSpeed=12.0
         )
         assert minutes == pytest.approx((3600.0 / 12.0 + 50.0 / 2.0 + 45.0 / 1.5) / 60.0)
 
     def test_model_tilt_reads_the_model(self, drone_interp):
-        assert mission3d.model_tilt(drone_interp, "Drone::QuadCopter") == 25.0
+        assert mission3d.model_tilt(drone_interp, "Rotorcraft::QuadCopter") == 25.0
 
     def test_model_tilt_missing_attribute_is_loud(self, drone_interp):
         with pytest.raises(AnalysisError, match="did not evaluate to a number"):
-            mission3d.model_tilt(drone_interp, "Drone::QuadCopter", attribute="nope")
+            mission3d.model_tilt(drone_interp, "Rotorcraft::QuadCopter", attribute="nope")
         with pytest.raises(AnalysisError, match="cannot instantiate"):
-            mission3d.model_tilt(drone_interp, "Drone::Nope")
+            mission3d.model_tilt(drone_interp, "Rotorcraft::Nope")
 
     def test_mission_values_design_point(self, drone_interp):
         values = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
@@ -479,7 +479,7 @@ class TestModelPhysics:
     def test_mission_values_unknown_assembly_is_loud(self, drone_interp):
         with pytest.raises(AnalysisError, match="mission physics"):
             mission3d.mission_values(
-                drone_interp, ATLANTA, ground_alt=300.0, assembly="Drone::Battery"
+                drone_interp, ATLANTA, ground_alt=300.0, assembly="ScoutParts::F450Kit::Battery"
             )
 
     def test_requirement_scoring(self, drone_interp):
@@ -511,7 +511,7 @@ class TestModelPhysics:
 
         quad = mission3d.mission_values(drone_interp, ATLANTA, ground_alt=300.0)
         tri = mission3d.mission_values(
-            drone_interp, ATLANTA, ground_alt=300.0, assembly="Drone::TriCopter"
+            drone_interp, ATLANTA, ground_alt=300.0, assembly="Rotorcraft::TriCopter"
         )
         assert quad["missionMinutes"] == pytest.approx(4.238, abs=0.01)
         assert tri["cruiseTiltDeg"] == pytest.approx(11.0)  # the servo's cap

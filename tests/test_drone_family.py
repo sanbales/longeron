@@ -1,10 +1,10 @@
-"""The multirotor family of examples/drone.sysml, end to end.
+"""The MultiRotor branch of examples/deepscout, end to end.
 
-One abstract MultiRotor, four configurations -- QuadCopter, TriCopter,
-HexaCopter, CoaxX8 -- and the axes they trade: mass, usable thrust,
-hover current, endurance, cruise speed, motor-out tolerance, cost,
-the payload envelope (which limit binds, and what redundancy costs in
-kg), and still-air range.
+One abstract MultiRotor, five configurations -- QuadCopter, TriCopter,
+HexaCopter, OctoCopter, CoaxX8 -- and the axes they trade: mass, usable
+thrust, hover current, endurance, cruise speed, motor-out tolerance,
+cost, the payload envelope (which limit binds, and what redundancy
+costs in kg), and still-air range.
 The tests pin the family matrix (no configuration wins everything), the
 N-arm parametric geometry each configuration renders to, the
 config-keyed scene seam, the M0 population fan-outs, and the verify
@@ -23,7 +23,7 @@ from longeron.analysis.grand import drone_scene
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
-CONFIGS = ("QuadCopter", "TriCopter", "HexaCopter", "CoaxX8")
+CONFIGS = ("QuadCopter", "TriCopter", "HexaCopter", "OctoCopter", "CoaxX8")
 
 #: the hand-computed stock design point (same derivation as
 #: tests/test_mission3d.py -- the quad's numbers must stay bit-identical)
@@ -52,7 +52,7 @@ STOCK_CAMERA = {
 
 @pytest.fixture(scope="module")
 def model():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +62,7 @@ def interp(model):
 
 @pytest.fixture(scope="module")
 def instances(interp):
-    return {name: interp.instantiate(f"Drone::{name}") for name in CONFIGS}
+    return {name: interp.instantiate(f"Rotorcraft::{name}") for name in CONFIGS}
 
 
 class TestFamilyMatrix:
@@ -93,6 +93,22 @@ class TestFamilyMatrix:
         assert hexa["motorOutUsableThrust"] == pytest.approx(4.0 * THRUST_N * 0.59)
         assert hexa["totalCost"] == pytest.approx(670.0)
 
+    def test_octo_design_point(self, instances):
+        # the flat-8 ring: eight isolated discs, the family's richest
+        # motor-out margin, and the price of eight of everything
+        octo = instances["OctoCopter"].slots
+        assert octo["rotorCount"] == 8.0
+        assert octo["effectiveRotorCount"] == 8.0  # no coax wake penalty
+        assert octo["totalMass"] == pytest.approx(2.040, abs=0.001)
+        assert octo["usableThrust"] == pytest.approx(8.0 * THRUST_N * 0.59)
+        assert octo["hoverCurrent"] == pytest.approx(16.32, abs=0.01)
+        assert octo["maxCruiseSpeed"] == pytest.approx(20.18, abs=0.01)
+        # the balanced six survive the worst failure -- richer than the
+        # hexa's balanced four against a lighter craft
+        assert octo["motorOutUsableThrust"] == pytest.approx(6.0 * THRUST_N * 0.59)
+        assert octo["motorOutUsableThrust"] > octo["totalMass"] * 9.81
+        assert octo["totalCost"] == pytest.approx(732.0)  # the family's biggest invoice
+
     def test_x8_coax_penalty_is_visible(self, instances):
         x8 = instances["CoaxX8"].slots
         assert x8["effectiveRotorCount"] == pytest.approx(7.4)  # 4 + 4 x 0.85
@@ -112,30 +128,32 @@ class TestFamilyMatrix:
 
     def test_failsafe_verdicts_split_the_family(self, interp, instances):
         verdicts = {
-            name: interp.check_requirement("Drone::FailSafeHover", subject=inst).satisfied
+            name: interp.check_requirement("DeepScout::FailSafeHover", subject=inst).satisfied
             for name, inst in instances.items()
         }
         assert verdicts == {
             "QuadCopter": False,  # the balanced pair cannot lift it
             "TriCopter": False,  # no balanced set survives any failure
             "HexaCopter": True,  # flies on the balanced four
+            "OctoCopter": True,  # flies on the balanced six, margin to spare
             "CoaxX8": True,  # the pair's survivor keeps the station
         }
 
     def test_flight_envelope_holds_for_every_config(self, interp, instances):
         for name, instance in instances.items():
-            result = interp.check_requirement("Drone::FlightEnvelope", subject=instance)
+            result = interp.check_requirement("DeepScout::FlightEnvelope", subject=instance)
             assert result.satisfied, name
 
     def test_mission_verdicts(self, interp):
         minutes = {
             name: mission3d.mission_values(
-                interp, ATLANTA, ground_alt=300.0, assembly=f"Drone::{name}"
+                interp, ATLANTA, ground_alt=300.0, assembly=f"Rotorcraft::{name}"
             )["missionMinutes"]
             for name in CONFIGS
         }
         assert minutes["QuadCopter"] == pytest.approx(4.24, abs=0.01)
         assert minutes["HexaCopter"] == pytest.approx(4.24, abs=0.01)
+        assert minutes["OctoCopter"] == pytest.approx(4.20, abs=0.01)
         assert minutes["CoaxX8"] == pytest.approx(4.07, abs=0.01)
         assert minutes["TriCopter"] > 6.0  # the tri busts the budget
 
@@ -149,37 +167,60 @@ class TestFamilyMatrix:
         cruise = {n: s["maxCruiseSpeed"] for n, s in slots.items()}
         max_payload = {n: s["maxPayload"] for n, s in slots.items()}
         rng = {n: s["cruiseRange"] for n, s in slots.items()}
+        # the payload a craft can carry THROUGH a motor failure: the
+        # failsafe inversion clipped to the admissible envelope
+        survivable = {n: min(s["failsafePayload"], s["maxPayload"]) for n, s in slots.items()}
         redundant = {n: s["motorOutUsableThrust"] > s["totalMass"] * 9.81 for n, s in slots.items()}
 
-        assert max(endurance, key=endurance.get) == "QuadCopter"
-        assert min(cost, key=cost.get) == "TriCopter"
-        assert max(cruise, key=cruise.get) == "CoaxX8"
-        assert max(max_payload, key=max_payload.get) == "HexaCopter"
-        # range at the 0.2 kg reference payload: the X8's speed edges the
-        # quad's endurance by 0.06 km -- but the X8 already loses on cost
-        assert max(rng, key=rng.get) == "CoaxX8"
+        winners = {
+            "endurance": max(endurance, key=endurance.get),
+            "price": min(cost, key=cost.get),
+            "cruise": max(cruise, key=cruise.get),
+            "payload": max(max_payload, key=max_payload.get),
+            "range": max(rng, key=rng.get),
+            "survivable payload": max(survivable, key=survivable.get),
+        }
+        assert winners == {
+            "endurance": "QuadCopter",
+            "price": "TriCopter",
+            # the X8's speed edges the quad's endurance range by 0.06 km
+            # -- but the X8 already loses on cost
+            "cruise": "CoaxX8",
+            "range": "CoaxX8",
+            "payload": "HexaCopter",
+            # the octo's crown: 0.76 kg through a failure, against the
+            # X8's envelope-clipped 0.498 and the hexa's 0.4445
+            "survivable payload": "OctoCopter",
+        }
         assert redundant == {
             "QuadCopter": False,
             "TriCopter": False,
             "HexaCopter": True,
+            "OctoCopter": True,
             "CoaxX8": True,
         }
+        # every configuration wins at least one axis...
+        assert set(winners.values()) == set(CONFIGS)
         # ...and each winner loses somewhere else
-        assert min(endurance, key=endurance.get) == "HexaCopter"
-        assert max(cost, key=cost.get) == "CoaxX8"
+        assert min(endurance, key=endurance.get) == "OctoCopter"
+        assert max(cost, key=cost.get) == "OctoCopter"
         assert min(cruise, key=cruise.get) == "TriCopter"
         assert min(rng, key=rng.get) == "TriCopter"
         assert min(max_payload, key=max_payload.get) == "QuadCopter"
+        assert min(survivable, key=survivable.get) == "TriCopter"
+        losers = {min(endurance, key=endurance.get), max(cost, key=cost.get)}
+        assert "OctoCopter" in losers  # eight of everything is not free
 
     def test_satisfy_edges(self, model):
         from longeron import model as M
 
         edges = {
             (e.subsets[0], e.by)
-            for e in model.find("Drone").members
+            for e in model.find("Rotorcraft").members
             if isinstance(e, M.SatisfyUsage)
         }
         assert ("FailSafeHover", "HexaCopter") in edges
+        assert ("FailSafeHover", "OctoCopter") in edges
         assert ("FailSafeHover", "CoaxX8") in edges
         assert ("FailSafeHover", "QuadCopter") not in edges  # the missing edge
         assert ("FailSafeHover", "TriCopter") not in edges
@@ -207,6 +248,7 @@ class TestPayloadEnvelope:
             "QuadCopter": "MTOW",
             "TriCopter": "thrust",
             "HexaCopter": "MTOW",
+            "OctoCopter": "MTOW",
             "CoaxX8": "MTOW",
         }
 
@@ -215,6 +257,7 @@ class TestPayloadEnvelope:
             "QuadCopter": 0.290,  # 1.5 kg MTOW - 1.210 kg empty
             "TriCopter": 0.3042,  # 3 x thrust / (1.8 g) - 1.110 kg empty
             "HexaCopter": 0.842,  # 2.4 kg MTOW - 1.558 kg empty
+            "OctoCopter": 0.760,  # 2.6 kg allowance - 1.840 kg empty
             "CoaxX8": 0.498,  # 2.0 kg MTOW - 1.502 kg empty
         }
         for name, value in expected.items():
@@ -233,14 +276,18 @@ class TestPayloadEnvelope:
         # the X8 keeps its WHOLE envelope: its motor-out ceiling sits far
         # past the takeoff limit (prove's UNSAT-safe verdict, as algebra)
         assert fs["CoaxX8"] > instances["CoaxX8"].slots["maxPayload"]
+        # the flat octo keeps its whole envelope too -- and its envelope
+        # is half again the X8's
+        assert fs["OctoCopter"] > instances["OctoCopter"].slots["maxPayload"]
+        assert fs["OctoCopter"] == pytest.approx(1.164, abs=0.001)
 
     def test_failsafe_payload_is_the_verdict_boundary(self, interp, instances):
         # FailSafeHover flips exactly at failsafePayload
         edge = instances["HexaCopter"].slots["failsafePayload"]
-        below = interp.instantiate("Drone::HexaCopter", payloadMass=edge - 1e-6)
-        above = interp.instantiate("Drone::HexaCopter", payloadMass=edge + 1e-6)
-        assert interp.check_requirement("Drone::FailSafeHover", subject=below).satisfied
-        assert not interp.check_requirement("Drone::FailSafeHover", subject=above).satisfied
+        below = interp.instantiate("Rotorcraft::HexaCopter", payloadMass=edge - 1e-6)
+        above = interp.instantiate("Rotorcraft::HexaCopter", payloadMass=edge + 1e-6)
+        assert interp.check_requirement("DeepScout::FailSafeHover", subject=below).satisfied
+        assert not interp.check_requirement("DeepScout::FailSafeHover", subject=above).satisfied
 
     def test_failsafe_payload_agrees_with_hunts_bisected_edge(self, model, instances):
         # the closed-form boundary must agree with verify.hunt's
@@ -250,8 +297,8 @@ class TestPayloadEnvelope:
 
         report = verify.hunt(
             model,
-            "Drone::HexaCopter",
-            requirements=("Drone::FailSafeHover",),
+            "Rotorcraft::HexaCopter",
+            requirements=("DeepScout::FailSafeHover",),
             free=("payloadMass",),
             seed=0,
             max_examples=60,
@@ -274,6 +321,7 @@ class TestPayloadEnvelope:
             "QuadCopter": 19.43,
             "TriCopter": 13.14,
             "HexaCopter": 17.14,
+            "OctoCopter": 16.05,
             "CoaxX8": 19.49,
         }
         for name, km in expected.items():
@@ -292,7 +340,7 @@ class TestPayloadEnvelope:
         for name in CONFIGS:
             ceiling = instances[name].slots["maxPayload"]
             ranges = [
-                interp.instantiate(f"Drone::{name}", payloadMass=p).slots["cruiseRange"]
+                interp.instantiate(f"Rotorcraft::{name}", payloadMass=p).slots["cruiseRange"]
                 for p in (0.0, ceiling / 2.0, ceiling)
             ]
             assert ranges[0] > ranges[1] > ranges[2], name
@@ -300,11 +348,11 @@ class TestPayloadEnvelope:
     def test_quad_and_x8_range_curves_cross(self, interp):
         # empty, the lighter quad out-ranges the X8; at the reference
         # payload the X8's faster cruise has already taken the lead
-        quad_empty = interp.instantiate("Drone::QuadCopter", payloadMass=0.0).slots
-        x8_empty = interp.instantiate("Drone::CoaxX8", payloadMass=0.0).slots
+        quad_empty = interp.instantiate("Rotorcraft::QuadCopter", payloadMass=0.0).slots
+        x8_empty = interp.instantiate("Rotorcraft::CoaxX8", payloadMass=0.0).slots
         assert quad_empty["cruiseRange"] > x8_empty["cruiseRange"]
-        quad_ref = interp.instantiate("Drone::QuadCopter").slots
-        x8_ref = interp.instantiate("Drone::CoaxX8").slots
+        quad_ref = interp.instantiate("Rotorcraft::QuadCopter").slots
+        x8_ref = interp.instantiate("Rotorcraft::CoaxX8").slots
         assert x8_ref["cruiseRange"] > quad_ref["cruiseRange"]
 
 
@@ -314,6 +362,9 @@ class TestFamilyGeometry:
     def test_arm_angles(self):
         third = math.pi / 3
         assert geometry._arm_angles(3) == [third, -third, math.pi]
+        eighth = math.pi / 8
+        assert geometry._arm_angles(8)[:2] == [eighth, -eighth]
+        assert len(set(geometry._arm_angles(8))) == 8
         assert geometry._arm_angles(4) == [
             math.pi / 4,
             -math.pi / 4,
@@ -367,8 +418,10 @@ class TestFamilyGeometry:
 
         tri, quad = spans(arm_count=3), spans()
         hexa, x8 = spans(arm_count=6), spans(coaxial=True)
+        octo = spans(arm_count=8)
         assert quad == x8  # the X8 packs 8 rotors in the quad's footprint
         assert hexa[0] > quad[0] and hexa[1] > quad[1]  # the hexa is honestly wider
+        assert octo[0] > hexa[0] and octo[1] > hexa[1]  # the ring out-spans them all
         assert tri[0] > quad[0]  # the tail boom stretches the tri lengthwise
 
     def test_coax_stacks_two_discs_per_arm(self):
@@ -464,44 +517,50 @@ class TestConfigKeyedScene:
     """The diagram -> 3D seam, keyed by configuration (the NB10 fix)."""
 
     def test_every_config_bakes_its_own_build(self, model):
-        expected_discs = {"QuadCopter": 4, "TriCopter": 3, "HexaCopter": 6, "CoaxX8": 8}
+        expected_discs = {
+            "QuadCopter": 4,
+            "TriCopter": 3,
+            "HexaCopter": 6,
+            "OctoCopter": 8,
+            "CoaxX8": 8,
+        }
         for name, count in expected_discs.items():
-            mesh, part_map = drone_scene(model, f"Drone::{name}")
+            mesh, part_map = drone_scene(model, f"Rotorcraft::{name}")
             assert len(mesh["discs"]) == count, name
-            assert part_map["frame"] == f"Drone::{name}#0.chassis"
+            assert part_map["frame"] == f"Rotorcraft::{name}#0.chassis"
 
     def test_tricopter_scene_maps_the_boom_motor(self, model):
-        mesh, part_map = drone_scene(model, "Drone::TriCopter")
-        assert part_map["motor1"] == "Drone::TriCopter#0.frontMotors#0"
-        assert part_map["motor2"] == "Drone::TriCopter#0.frontMotors#1"
-        assert part_map["motor3"] == "Drone::TriCopter#0.tailMotor"
+        mesh, part_map = drone_scene(model, "Rotorcraft::TriCopter")
+        assert part_map["motor1"] == "Rotorcraft::TriCopter#0.frontMotors#0"
+        assert part_map["motor2"] == "Rotorcraft::TriCopter#0.frontMotors#1"
+        assert part_map["motor3"] == "Rotorcraft::TriCopter#0.tailMotor"
         # the tail motor renders at the boom station: behind the origin
         tail = next(p for p in mesh["parts"] if p["name"] == "motor3")
         assert max(tail["vertices"][0::3]) < 0
 
     def test_coax_scene_pairs_uppers_and_lowers(self, model):
-        _mesh, part_map = drone_scene(model, "Drone::CoaxX8")
-        assert part_map["motor1"] == "Drone::CoaxX8#0.upperMotors#0"
-        assert part_map["motor5"] == "Drone::CoaxX8#0.lowerMotors#0"
-        assert part_map["prop8"] == "Drone::CoaxX8#0.propellers#7"
+        _mesh, part_map = drone_scene(model, "Rotorcraft::CoaxX8")
+        assert part_map["motor1"] == "Rotorcraft::CoaxX8#0.upperMotors#0"
+        assert part_map["motor5"] == "Rotorcraft::CoaxX8#0.lowerMotors#0"
+        assert part_map["prop8"] == "Rotorcraft::CoaxX8#0.propellers#7"
 
     def test_owning_config_resolves_selections(self, model):
         for selected, expected in (
-            ("Drone::TriCopter::tailMotor", "Drone::TriCopter"),
-            ("Drone::TriCopter", "Drone::TriCopter"),
-            ("Drone::CoaxX8::upperMotors", "Drone::CoaxX8"),
-            ("Drone::HexaCopter::phaseLeads", "Drone::HexaCopter"),
-            ("Drone::MultiRotor::battery", "Drone::MultiRotor"),
+            ("Rotorcraft::TriCopter::tailMotor", "Rotorcraft::TriCopter"),
+            ("Rotorcraft::TriCopter", "Rotorcraft::TriCopter"),
+            ("Rotorcraft::CoaxX8::upperMotors", "Rotorcraft::CoaxX8"),
+            ("Rotorcraft::HexaCopter::phaseLeads", "Rotorcraft::HexaCopter"),
+            ("DeepScout::MultiRotor::battery", "DeepScout::MultiRotor"),
         ):
             config = link.owning_config(model, selected)
             assert config is not None and config.qualified_name == expected
-        assert link.owning_config(model, "Drone") is None
+        assert link.owning_config(model, "Rotorcraft") is None
 
     def test_selection_to_scene_round_trip(self, model):
         """The maintainer's NB10 flow: select the tricopter's tail motor
         anywhere, get the TRICOPTER's geometry."""
 
-        config = link.owning_config(model, model.find("Drone::TriCopter::tailMotor"))
+        config = link.owning_config(model, model.find("Rotorcraft::TriCopter::tailMotor"))
         mesh, _part_map = drone_scene(model, config.qualified_name)
         assert len(mesh["discs"]) == 3
 
@@ -514,8 +573,8 @@ class TestFamilyM0:
 
         counts = {}
         for name in CONFIGS:
-            population = m0.interpret(model, f"Drone::{name}")
-            counts[name] = len(population.individuals("Drone::Motor"))
+            population = m0.interpret(model, f"Rotorcraft::{name}")
+            counts[name] = len(population.individuals("ScoutParts::F450Kit::Motor"))
             per_motor = 0.055
             expected = counts[name] * per_motor
             total = 0.0
@@ -523,16 +582,31 @@ class TestFamilyM0:
                 if feature in population.root.slots:
                     total += population.rollup(f"sum({feature}.mass)")
             assert total == pytest.approx(expected), name
-        assert counts == {"QuadCopter": 4, "TriCopter": 3, "HexaCopter": 6, "CoaxX8": 8}
+        assert counts == {
+            "QuadCopter": 4,
+            "TriCopter": 3,
+            "HexaCopter": 6,
+            "OctoCopter": 8,
+            "CoaxX8": 8,
+        }
+
+    def test_octo_and_x8_share_a_count_but_not_a_shape(self, model):
+        from longeron import m0
+
+        octo = m0.interpret(model, "Rotorcraft::OctoCopter")
+        x8 = m0.interpret(model, "Rotorcraft::CoaxX8")
+        # same motor count, different populations: one flat [8], two [4]s
+        assert len(octo.root.slots["motors"]) == 8
+        assert len(x8.root.slots["upperMotors"]) == len(x8.root.slots["lowerMotors"]) == 4
 
     def test_coax_pair_ids(self, model):
         from longeron import m0
 
-        population = m0.interpret(model, "Drone::CoaxX8")
+        population = m0.interpret(model, "Rotorcraft::CoaxX8")
         uppers = [ind.id for ind in population.root.slots["upperMotors"]]
         lowers = [ind.id for ind in population.root.slots["lowerMotors"]]
-        assert uppers == [f"Drone::CoaxX8#0.upperMotors#{i}" for i in range(4)]
-        assert lowers == [f"Drone::CoaxX8#0.lowerMotors#{i}" for i in range(4)]
+        assert uppers == [f"Rotorcraft::CoaxX8#0.upperMotors#{i}" for i in range(4)]
+        assert lowers == [f"Rotorcraft::CoaxX8#0.lowerMotors#{i}" for i in range(4)]
 
 
 class TestFamilyVerify:
@@ -544,8 +618,8 @@ class TestFamilyVerify:
 
         report = verify.hunt(
             model,
-            "Drone::QuadCopter",
-            requirements=("Drone::FailSafeHover",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FailSafeHover",),
             free=("payloadMass",),
             seed=0,
             max_examples=30,
@@ -561,8 +635,8 @@ class TestFamilyVerify:
 
         report = verify.hunt(
             model,
-            "Drone::HexaCopter",
-            requirements=("Drone::FailSafeHover",),
+            "Rotorcraft::HexaCopter",
+            requirements=("DeepScout::FailSafeHover",),
             free=("payloadMass",),
             seed=0,
             max_examples=60,
@@ -577,7 +651,10 @@ class TestFamilyVerify:
         from longeron.analysis import verify
 
         x8 = verify.prove(
-            model, "Drone::CoaxX8", requirements=("Drone::FailSafeHover",), free=("payloadMass",)
+            model,
+            "Rotorcraft::CoaxX8",
+            requirements=("DeepScout::FailSafeHover",),
+            free=("payloadMass",),
         )
         proof = next(p for p in x8.proofs if "motorOutHover" in p.requirement)
         # UNSAT: no payload inside the takeoff-mass envelope can violate
@@ -588,8 +665,8 @@ class TestFamilyVerify:
 
         quad = verify.prove(
             model,
-            "Drone::QuadCopter",
-            requirements=("Drone::FailSafeHover",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FailSafeHover",),
             free=("payloadMass",),
         )
         catch = next(p for p in quad.proofs if "motorOutHover" in p.requirement)

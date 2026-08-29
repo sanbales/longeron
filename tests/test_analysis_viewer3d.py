@@ -80,8 +80,8 @@ class TestMeshViewer:
         widget = viewer3d.mesh_viewer(MESH)
         assert widget.highlight_json == "[]"  # nothing popped by default
         assert widget.picked_json == "[]"  # nothing picked either
-        widget.highlight(["Drone::QuadCopter::rotors", "frame", "frame"])
-        assert json.loads(widget.highlight_json) == ["Drone::QuadCopter::rotors", "frame"]
+        widget.highlight(["Rotorcraft::QuadCopter::rotors", "frame", "frame"])
+        assert json.loads(widget.highlight_json) == ["Rotorcraft::QuadCopter::rotors", "frame"]
         widget.highlight()
         assert widget.highlight_json == "[]"
 

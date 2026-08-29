@@ -1318,7 +1318,7 @@ def test_diagnostics_sorted_errors_first():
 
 
 def test_drone_example_is_clean():
-    model = longeron.load("examples/drone.sysml")
+    model = longeron.load("examples/deepscout")
     assert [d for d in longeron.validate(model) if d.severity == "error"] == []
 
 

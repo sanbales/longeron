@@ -123,12 +123,12 @@ print(json.dumps({
 def label_fit_notebook() -> dict[str, Any]:
     """Scenario: compartment rows must fit their node in EVERY direction.
 
-    The model is the maintainer repro (examples/drone.sysml, structure
+    The model is the maintainer repro (examples/deepscout, structure
     section): ``QuadCopter`` is an EXPANDED compound node -- children AND
     wide attribute-compartment rows (the ``totalMass`` expression) -- the
     exact shape that tripped elkjs's transposed compound-node sizing
     under a top-down flow (see test_browser_label_fit).  ``Hauler`` adds
-    the second maintainer repro (UavMissions' ``LogisticsUav``): an
+    the second maintainer repro (the mission catalog's ``LogisticsUav``): an
     expanded compound whose calculation row is ABSURDLY wide -- under the
     un-fixed top-down flow its H_CENTERed rows poked far left of the
     collapsed box, a glob of text over the package's top-left corner --
@@ -435,7 +435,7 @@ def app_notebook() -> dict[str, Any]:
     in-memory model (ScoutMini: requirement usages, all unmeasured) and
     a DEFS-ONLY one (a requirement def, no usages) so the tests can
     prove the Score button splits honestly -- live for ScoutMini and
-    for drone.sysml (whose geometric installation requirements are
+    for the deepscout program (whose geometric installation requirements are
     usages), disabled with a tooltip for the defs-only model -- and
     that a launched scoreboard tab actually RENDERS its
     hatched cells (the maintainer's empty-tab finding).  The tests then
@@ -544,6 +544,7 @@ print(json.dumps({
     "current": current,
     "explorers": len(application.explorers),
     "element": element.qualified_name if element is not None else None,
+    "element_type": type(element).__name__ if element is not None else None,
     "inspector_element": inspector_element,
     "dirty": dirty,
 }))
@@ -569,7 +570,7 @@ def dashboard_notebook() -> dict[str, Any]:
 import longeron
 from longeron.analysis import dashboard
 
-model = longeron.load("examples/uav_missions.sysml")
+model = longeron.load("examples/deepscout")
 dash = dashboard.mission_dashboard(model)
 dash
 """,

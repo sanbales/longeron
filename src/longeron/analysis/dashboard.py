@@ -144,11 +144,12 @@ __all__ = [
 #: fly a mission at all -- documented in the module docstring
 INFEASIBLE_PENALTY = 0.5
 
-#: the ``examples/uav_missions.sysml`` trio: name -> (assembly, metric)
+#: the DeepScout mission trio (``examples/deepscout/missions.sysml``):
+#: name -> (assembly, metric)
 DEFAULT_MISSIONS: dict[str, tuple[str, str]] = {
-    "ISR": ("UavMissions::IsrUav", "stationMinutes"),
-    "logistics": ("UavMissions::LogisticsUav", "payloadRangeKgKm"),
-    "intercept": ("UavMissions::InterceptUav", "maxTargetSpeed"),
+    "ISR": ("ScoutMissions::IsrUav", "stationMinutes"),
+    "logistics": ("ScoutMissions::LogisticsUav", "payloadRangeKgKm"),
+    "intercept": ("ScoutMissions::InterceptUav", "maxTargetSpeed"),
 }
 
 #: requirement-threshold sliders per mission: ``key`` is the achieved

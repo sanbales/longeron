@@ -71,7 +71,7 @@ because the module's whole design bakes the payload kernel-side: the
 samples are deterministic, testable without a browser, and need no
 front-end code.  The tilt itself should come FROM THE MODEL:
 :func:`model_tilt` evaluates the airframe's own physics (e.g.
-``examples/drone.sysml``'s ``cruiseTilt``: the arccos altitude-hold
+the DeepScout MultiRotor's ``cruiseTilt``: the arccos altitude-hold
 ceiling at continuous thrust, capped by the operational comfort limit)
 and feeds ``mission_track`` / ``from_replay`` ``tilt_deg=``, a plain
 float override.  :func:`mission_values` completes the loop: it measures
@@ -752,7 +752,7 @@ def model_tilt(
     """The airframe's own cruise tilt, degrees, read off the model.
 
     Instantiates ``assembly`` and evaluates ``attribute`` -- for
-    ``examples/drone.sysml`` that is ``cruiseTilt``, the CruiseTilt calc:
+    the DeepScout MultiRotor family that is ``cruiseTilt``, the CruiseTilt calc:
     the altitude-hold ceiling ``arccos(m g / T)`` at continuous thrust,
     capped by the operational comfort limit.  Feed the result to
     :func:`mission_track` / :func:`from_replay` ``tilt_deg=`` so the
@@ -776,8 +776,8 @@ def mission_values(
     waypoints: Sequence[Sequence[float]],
     *,
     ground_alt: float,
-    assembly: str | M.Definition | M.Usage = "Drone::QuadCopter",
-    mission_calc: str | M.Definition | M.Usage = "Drone::MissionTime",
+    assembly: str | M.Definition | M.Usage = "Rotorcraft::QuadCopter",
+    mission_calc: str | M.Definition | M.Usage = "DeepScout::MissionTime",
     payload_mass: float | None = None,
 ) -> dict[str, float]:
     """Scoreboard ``values=`` bindings for the mission-time requirement.

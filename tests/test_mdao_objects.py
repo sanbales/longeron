@@ -184,8 +184,8 @@ class TestEntityBinding:
             mdao.bind_entity(rig, "motor", poisoned)
 
     def test_scalar_models_are_unchanged(self):
-        drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
-        build = mdao.build_problem(drone, "Drone::QuadCopter")
+        drone = longeron.load(EXAMPLES / "deepscout", cache=False)
+        build = mdao.build_problem(drone, "Rotorcraft::QuadCopter")
         build.problem.run_model()
         # no variation points: no interpretation materialized, no entities
         assert build.interpretation is None
@@ -193,15 +193,15 @@ class TestEntityBinding:
         assert build.problem.get_val("totalMass")[0] == pytest.approx(1.41)
 
     def test_interpretation_parity_on_scalar_model(self):
-        drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
+        drone = longeron.load(EXAMPLES / "deepscout", cache=False)
         plain = mdao.build_problem(
-            drone, "Drone::QuadCopter", requirements=("Drone::FlightEnvelope",)
+            drone, "Rotorcraft::QuadCopter", requirements=("DeepScout::FlightEnvelope",)
         )
         seeded = mdao.build_problem(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
-            interpretation=m0.interpret(drone, "Drone::QuadCopter"),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
+            interpretation=m0.interpret(drone, "Rotorcraft::QuadCopter"),
         )
         assert sorted(seeded.independents) == sorted(plain.independents)
         assert sorted(seeded.derived) == sorted(plain.derived)
@@ -345,13 +345,13 @@ class TestRecordCase:
         assert second.root.slots["wire"] == pytest.approx(0.01)
 
     def test_lazy_interpretation_on_a_scalar_build(self):
-        drone = longeron.load(EXAMPLES / "drone.sysml", cache=False)
-        build = mdao.build_problem(drone, "Drone::QuadCopter")
+        drone = longeron.load(EXAMPLES / "deepscout", cache=False)
+        build = mdao.build_problem(drone, "Rotorcraft::QuadCopter")
         build.problem.run_model()
         assert build.interpretation is None  # nothing asked yet
         snapshot = mdao.record_case(build)
         assert build.interpretation is not None  # record_case asked
-        assert snapshot.root.id == "Drone::QuadCopter#0"
+        assert snapshot.root.id == "Rotorcraft::QuadCopter#0"
         assert snapshot.root.slots["totalMass"] == pytest.approx(1.41)
         # per-index independents land on the population's individuals
         assert snapshot.root.slots["motors"][0].slots["kV"] == pytest.approx(935.0)
@@ -693,13 +693,13 @@ class TestDeriveFlows:
 
 
 # ---------------------------------------------------------------------------
-# the uav_missions integration: the two-level loop's discrete outer layer
+# the mission-catalog integration: the two-level loop's discrete outer layer
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
 def missions():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 class TestUavIntegration:
@@ -709,7 +709,7 @@ class TestUavIntegration:
 
         case = m0.interpret(
             missions,
-            "UavMissions::IsrUav",
+            "ScoutMissions::IsrUav",
             selection={
                 "airframe": "vtolWing",
                 "motors": "mn4006",
@@ -719,7 +719,7 @@ class TestUavIntegration:
                 "material": "carbonFiber",
             },
         )
-        build = mdao.build_problem(missions, "UavMissions::IsrUav", interpretation=case)
+        build = mdao.build_problem(missions, "ScoutMissions::IsrUav", interpretation=case)
         prob = build.problem
         prob.run_model()
         assert sorted(build.entities) == [
@@ -732,7 +732,7 @@ class TestUavIntegration:
         ]
         station_std = float(prob.get_val("stationMinutes")[0])
         assert station_std == pytest.approx(208.74, abs=0.05)  # IsrPrime's freeze
-        mdao.bind_entity(build, "motors", "UavMissions::SunnySkyX4112s")
+        mdao.bind_entity(build, "motors", "ScoutParts::SunnySkyX4112s")
         prob.run_model()
         station_eco = float(prob.get_val("stationMinutes")[0])
         assert station_eco != pytest.approx(station_std, abs=1.0)
@@ -740,7 +740,7 @@ class TestUavIntegration:
         assert snapshot.selection["motors"] == "SunnySkyX4112s"
         assert snapshot.root.slots["stationMinutes"] == pytest.approx(station_eco)
         assert [ind.id for ind in snapshot.root.slots["motors"]] == [
-            f"UavMissions::IsrUav#0.motors#{i}" for i in range(4)
+            f"ScoutMissions::IsrUav#0.motors#{i}" for i in range(4)
         ]
         # roll-ups run over the recorded population (4 x SunnySkyX4112s)
         assert snapshot.rollup("sum(motors.mass)") == pytest.approx(4 * 0.183)

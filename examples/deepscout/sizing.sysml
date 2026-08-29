@@ -1,21 +1,39 @@
-// An architecture trade-study model for the longeron.analysis spikes:
-// a quad-copter component catalog captured with variation/variant,
-// assembly-level derived attributes, compatibility rules, and system
-// requirements.  Each variation point selects ONE variant (homogeneous
-// across a multiplicity: all 4 motors are the same type).
+// DeepScout program -- sizing.sysml: the structural-sizing contexts.
 //
-// Thrust is a genuine function of the motor AND propeller choices --
-// per rotor T = kt * motors.thrustTerm * diameterIn^4, the standard
-// propeller relation T = Ct * rho * n^2 * d^4 split into a per-motor
-// factor and a per-propeller factor so CP-SAT's fixed-point arithmetic
-// stays exact (see the attribute doc comments).  Mixes that the old
-// per-motor thrust ratings glossed over now assess honestly: a 920
-// rpm/V cruiser motor swinging a 5-inch racing prop produces about one
-// newton and cannot lift anything.
-package DroneCatalog {
-    doc /* Component catalog + assembly for discrete architecture trades. */
+// Two sizing views of the program, one discrete and one continuous:
+//
+//   * TradeQuad -- a quad-copter component catalog restated in
+//     fixed-point-friendly arithmetic (thrust split into a per-motor
+//     term and a per-propeller kt), so the CP-SAT mapper of
+//     longeron.analysis.trades can enumerate, optimize, and EXPLAIN it
+//     exactly.  PicnicQuad is its deliberately over-constrained sibling
+//     (no catalog mix satisfies it -- the UNSAT-explanation demo).
+//   * IsrPrime -- the ISR trade winner frozen as a concrete continuous
+//     sizing context for the OpenMDAO / Z3 bridges, spelled out
+//     discipline by discipline with the shared calc defs of DeepScout.
+package ScoutSizing {
+    doc /* Discrete and continuous sizing contexts for the DeepScout
+           program.  The TradeQuad catalog is a fixed-point RESTATEMENT
+           of small racing-class parts (real motors, props, and packs;
+           thrustTerm and kt precomputed to catalog precision) because
+           CP-SAT's exact arithmetic needs short decimals; IsrPrime
+           freezes the fleet's ISR winner with the loiter speed left
+           continuous.  Nominal figures throughout. */
 
-    // ----- component families -------------------------------------------
+    private import DeepScout::Aerodynamics::*;
+    private import DeepScout::Propulsion::*;
+    private import DeepScout::Structures::*;
+    private import DeepScout::Performance::*;
+
+    // ----- the discrete catalog (CP-SAT's subject) -------------------------
+    // Thrust is a genuine function of the motor AND propeller choices --
+    // per rotor T = kt * motors.thrustTerm * diameterIn^4, the standard
+    // propeller relation T = Ct * rho * n^2 * d^4 split into a per-motor
+    // factor and a per-propeller factor so CP-SAT's fixed-point
+    // arithmetic stays exact (see the attribute doc comments).  Mixes
+    // that per-motor thrust ratings would gloss over assess honestly: a
+    // 920 rpm/V cruiser motor swinging a 5-inch racing prop produces
+    // about one newton and cannot lift anything.
 
     part def Motor {
         attribute mass : Real;          // kg, per motor
@@ -28,7 +46,7 @@ package DroneCatalog {
         // propeller's kt and diameter in inches.  Precomputed to catalog
         // precision (4 significant digits) because CP-SAT's fixed-point
         // encoding needs short decimals; the formula is PropThrust in
-        // examples/drone.sysml with Ct factored out to the propeller.
+        // DeepScout::Propulsion with Ct factored out to the propeller.
         attribute thrustTerm : Real;    // N per (kt * in^4)
         attribute hoverCurrent : Real;  // mA at hover, per motor
         attribute maxCurrent : Real;    // A burst, per motor
@@ -191,5 +209,99 @@ package DroneCatalog {
     part def PicnicQuad :> TradeQuad {
         assert constraint longEndurance { hoverMinutes >= 25.0 }
         assert constraint cheap { totalCost <= 130.0 }
+    }
+
+    // ----- continuous sizing context (OpenMDAO / Z3) ------------------------------------
+
+    part def IsrPrime {
+        doc /* The ISR trade winner frozen as a concrete sizing context:
+               the component mix is baked in (vtolWing + mn4006
+               Antigravity motors + apc11x55 props + the liion6s6p energy
+               pack + zenmuseH20 gimbal + carbonFiber spar), the loiter
+               speed stays continuous -- and the chain from configuration
+               to time-on-station is spelled out discipline by discipline
+               with the shared calc defs, so the generated OpenMDAO
+               problem tells the classic MDO story: Aerodynamics builds
+               the drag, Structures sizes the spar and its mass,
+               Propulsion turns mass and drag into power and usable
+               energy, Performance turns power into minutes on station. */
+
+        attribute loiterSpeed : Real = 15.0;    // m/s -- the design variable
+
+        // frozen winner configuration (catalog values of the mix above)
+        attribute emptyMassKg : Real = 4.99;    // shell+avionics+pack+motors/props+sensor
+        attribute fuselageLength : Real = 0.95;
+        attribute fuselageDiameter : Real = 0.12;
+        attribute span : Real = 2.6;
+        attribute wingArea : Real = 0.624;
+        attribute secondaryWingArea : Real = 0.387;
+        attribute spanEff : Real = 1.0496;      // 0.82 Oswald x 1.28 tip props
+        attribute propEff : Real = 0.697;       // APC 11x5.5E x Antigravity motor
+        attribute sensorPowerW : Real = 18.0;   // Zenmuse H20
+        attribute batteryWh : Real = 447.0;     // liion6s6p
+        attribute hoverOpsSec : Real = 120.0;   // takeoff + landing budget
+        attribute diskArea : Real =             // 3.3 disks x 11 in prop
+            3.3 * 3.141592653589793 * 0.2794 * 0.2794 / 4.0;
+        attribute designGrossKg : Real = 6.0;
+        attribute sparRadius : Real = 0.012;
+        attribute minWallM : Real = 0.0005;     // manufacturing gauge floor
+        attribute sparDensity : Real = 1600.0;  // carbon fiber tube
+        attribute sparYieldPa : Real = 6.0e8;
+
+        // Aerodynamics: the same wetted-area buildup the catalog uses
+        attribute dragArea : Real = 1.15 * (
+            SkinFrictionDrag(
+                wettedArea = BodyWettedArea(length = fuselageLength,
+                                            diameter = fuselageDiameter),
+                formFactor = BodyFormFactor(length = fuselageLength,
+                                            diameter = fuselageDiameter))
+            + SkinFrictionDrag(          // main pair, NACA 2412
+                wettedArea = WingWettedArea(planformArea = wingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.12))
+            + SkinFrictionDrag(          // secondary pair, NACA 0009
+                wettedArea = WingWettedArea(planformArea = secondaryWingArea),
+                formFactor = WingFormFactor(thicknessRatio = 0.09))
+            + 4.0 * SkinFrictionDrag(    // wingtip motor pods
+                wettedArea = BodyWettedArea(length = 0.12, diameter = 0.045),
+                formFactor = BodyFormFactor(length = 0.12, diameter = 0.045)));
+
+        // Structures: spar sized by the root bending moment, mass rolled up
+        attribute sparWall : Real = max(minWallM,
+            TubeWallForStress(
+                momentNm = SparRootMoment(grossKg = designGrossKg,
+                                          span = span),
+                radius = sparRadius,
+                yieldPa = sparYieldPa));
+        attribute sparMassKg : Real =
+            TubeMass(radius = sparRadius, wall = sparWall,
+                     length = span, density = sparDensity);
+        attribute massKg : Real = emptyMassKg + sparMassKg;
+
+        // Propulsion: hover sets the energy reserve, cruise sets the burn
+        attribute hoverPowerW : Real =
+            HoverPower(massKg = massKg, diskArea = diskArea);
+        attribute usableEnergyJ : Real =
+            UsableEnergy(batteryWh = batteryWh, hoverPowerW = hoverPowerW,
+                         hoverOpsSec = hoverOpsSec);
+        attribute loiterPowerW : Real = CruisePower(
+            massKg = massKg, speed = loiterSpeed, dragArea = dragArea,
+            span = span, wingArea = wingArea, spanEff = spanEff,
+            propEff = propEff);
+
+        // Performance: usable energy over the loiter burn
+        attribute stationMinutes : Real =
+            StationTime(usableEnergyJ = usableEnergyJ,
+                        loiterPowerW = loiterPowerW,
+                        sensorPowerW = sensorPowerW);
+
+        assert constraint aboveStall { loiterSpeed >= 11.0 }
+        assert constraint belowCruise { loiterSpeed <= 24.0 }
+    }
+
+    requirement def IsrStation {
+        doc /* The ISR bird shall hold station for at least 90 minutes. */
+        subject uav : IsrPrime;
+        assume constraint { uav.loiterSpeed > 0.0 }
+        require constraint stationFloor { uav.stationMinutes >= 90.0 }
     }
 }

@@ -32,17 +32,17 @@ needs_z3 = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def drone():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
 def catalog():
-    return longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
 def uav():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 DOMAIN_MODEL = """
@@ -83,21 +83,21 @@ class TestDomains:
     def test_uav_loiter_speed_mined_with_zero_hand_mapping(self, uav):
         interp = longeron.Interpreter(uav)
         domains = verify.attribute_domains(
-            interp, interp.resolve("UavMissions::IsrPrime"), ("loiterSpeed",)
+            interp, interp.resolve("ScoutSizing::IsrPrime"), ("loiterSpeed",)
         )
         assert (domains["loiterSpeed"].lo, domains["loiterSpeed"].hi) == (11.0, 24.0)
 
     def test_unit_annotation_recorded_informationally(self, drone):
         interp = longeron.Interpreter(drone)
         domains = verify.attribute_domains(
-            interp, interp.resolve("Drone::QuadCopter"), ("payloadMass",)
+            interp, interp.resolve("Rotorcraft::QuadCopter"), ("payloadMass",)
         )
         assert domains["payloadMass"].unit == "kg"
 
     def test_unknown_attribute_refused(self, drone):
         interp = longeron.Interpreter(drone)
         with pytest.raises(AnalysisError, match="no attribute"):
-            verify.attribute_domains(interp, interp.resolve("Drone::QuadCopter"), ("nope",))
+            verify.attribute_domains(interp, interp.resolve("Rotorcraft::QuadCopter"), ("nope",))
 
     @needs_z3
     def test_z3_rung_reaches_through_derived_attributes(self, drone):
@@ -106,9 +106,9 @@ class TestDomains:
         interp = longeron.Interpreter(drone)
         domains = verify.attribute_domains(
             interp,
-            interp.resolve("Drone::QuadCopter"),
+            interp.resolve("Rotorcraft::QuadCopter"),
             ("payloadMass",),
-            requirements=("Drone::FlightEnvelope",),
+            requirements=("DeepScout::FlightEnvelope",),
         )
         dom = domains["payloadMass"]
         assert dom.lo == pytest.approx(-1.21)
@@ -125,7 +125,7 @@ class TestVerdict:
     def test_violation_when_assumptions_hold(self, drone):
         interp = longeron.Interpreter(drone)
         v = verify.verdict(
-            interp, "Drone::QuadCopter", ("Drone::FlightEnvelope",), {"payloadMass": 3.0}
+            interp, "Rotorcraft::QuadCopter", ("DeepScout::FlightEnvelope",), {"payloadMass": 3.0}
         )
         assert not v.ok
         assert "takeoffMassLimit [assert]" in v.violated
@@ -159,14 +159,14 @@ class TestVerdict:
         # cannot evaluate, and verdict says so instead of guessing
         interp = longeron.Interpreter(drone)
         v = verify.verdict(
-            interp, "Drone::QuadCopter", ("Drone::FlightEnvelope",), {"payloadMass": -2.0}
+            interp, "Rotorcraft::QuadCopter", ("DeepScout::FlightEnvelope",), {"payloadMass": -2.0}
         )
         assert v.error is not None and "domain error" in v.error
         assert v.violated == [] and v.vacuous == []
 
     def test_default_configuration_is_clean(self, drone):
         interp = longeron.Interpreter(drone)
-        v = verify.verdict(interp, "Drone::QuadCopter", ("Drone::FlightEnvelope",), {})
+        v = verify.verdict(interp, "Rotorcraft::QuadCopter", ("DeepScout::FlightEnvelope",), {})
         assert v.ok and v.vacuous == []
 
 
@@ -315,8 +315,8 @@ class TestHunt:
     def test_drone_catch_shrinks_and_bisects(self, drone):
         report = verify.hunt(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
             seed=0,
         )
@@ -336,13 +336,13 @@ class TestHunt:
     def test_catch_materializes_as_identified_individuals(self, drone):
         report = verify.hunt(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
             seed=0,
         )
         individual = report.counterexamples[0].materialize()
-        assert individual.root.id == "Drone::QuadCopter#0"
+        assert individual.root.id == "Rotorcraft::QuadCopter#0"
         assert (
             individual.root.slots["payloadMass"]
             == report.counterexamples[0].bindings["payloadMass"]
@@ -381,7 +381,7 @@ class TestHunt:
         assert any("vacuous" in gap for gap in report.gaps)
 
     def test_no_free_attributes_is_a_gap(self, drone):
-        report = verify.hunt(drone, "Drone::QuadCopter")
+        report = verify.hunt(drone, "Rotorcraft::QuadCopter")
         assert report.status == "clean"
         assert any("free=" in gap for gap in report.gaps)
 
@@ -401,7 +401,7 @@ class TestHunt:
 class TestSequences:
     def test_minimal_sortie_on_the_shipped_drone(self, drone):
         report = verify.sequences(
-            drone, "Drone::SortieStates", requirements=("Drone::SafeSortie",), seed=0
+            drone, "DeepScout::SortieStates", requirements=("DeepScout::SafeSortie",), seed=0
         )
         assert report.status == "violated"
         assert report.violations == ["SafeSortie::noDeepDischarge"]
@@ -412,16 +412,19 @@ class TestSequences:
 
     def test_sequence_catch_materializes_as_occurrences(self, drone):
         report = verify.sequences(
-            drone, "Drone::SortieStates", requirements=("Drone::SafeSortie",), seed=0
+            drone, "DeepScout::SortieStates", requirements=("DeepScout::SafeSortie",), seed=0
         )
         interpretation = report.counterexamples[0].materialize()
         ids = [occ.id for occ in interpretation.root.slots["occurrences"]]
-        assert any(occurrence.startswith("Drone::SortieStates::airborne") for occurrence in ids)
+        assert any(occurrence.startswith("DeepScout::SortieStates::airborne") for occurrence in ids)
 
     def test_stock_flight_states_stay_clean(self, drone):
         # FlightStates only counts launches monotonically: nothing to catch
         report = verify.sequences(
-            drone, "Drone::FlightStates", requirements=("Drone::SafeSortie",), max_examples=25
+            drone,
+            "DeepScout::FlightStates",
+            requirements=("DeepScout::SafeSortie",),
+            max_examples=25,
         )
         assert report.status == "clean"
         assert report.counterexamples == []
@@ -449,7 +452,7 @@ class TestSequences:
 
 class TestCover:
     def test_pairwise_recall_measured_against_exhaustive(self, catalog):
-        report = verify.cover(catalog, "DroneCatalog::TradeQuad", t=2)
+        report = verify.cover(catalog, "ScoutSizing::TradeQuad", t=2)
         assert report.status == "violated"
         coverage = report.coverage
         assert coverage.t == 2
@@ -464,10 +467,10 @@ class TestCover:
         assert missing == [] and invalid == []
 
     def test_rows_are_interpreter_settled_selection_dicts(self, catalog):
-        report = verify.cover(catalog, "DroneCatalog::TradeQuad", t=2)
+        report = verify.cover(catalog, "ScoutSizing::TradeQuad", t=2)
         from longeron.analysis.trades import TradeStudy
 
-        study = TradeStudy(catalog, "DroneCatalog::TradeQuad")
+        study = TradeStudy(catalog, "ScoutSizing::TradeQuad")
         for ce in report.counterexamples:
             arch = study.evaluate(ce.selection)
             assert tuple(arch.violations) == ce.violated
@@ -475,7 +478,7 @@ class TestCover:
     @needs_z3
     def test_assumed_build_rules_are_enforced_by_z3(self, catalog):
         assume = ("cellMatch", "escCells", "propFit", "escCurrent")
-        report = verify.cover(catalog, "DroneCatalog::TradeQuad", t=2, assume=assume)
+        report = verify.cover(catalog, "ScoutSizing::TradeQuad", t=2, assume=assume)
         # every generated row satisfies the assumed compatibility rules;
         # the system requirements stay under test and are still caught
         for ce in report.counterexamples:
@@ -485,20 +488,23 @@ class TestCover:
 
     def test_unknown_assume_name_is_refused(self, catalog):
         with pytest.raises(AnalysisError, match="assume="):
-            verify.cover(catalog, "DroneCatalog::TradeQuad", assume=("noSuchRule",))
+            verify.cover(catalog, "ScoutSizing::TradeQuad", assume=("noSuchRule",))
 
     def test_nonlinear_catalog_recall_still_measured(self, uav):
-        report = verify.cover(uav, "UavMissions::IsrUav", t=2)
-        assert report.coverage.exhaustive == 864
-        # the pairwise array misses isrLift -- a genuine >=3-way
-        # interaction (survey gimbal + Antigravity motors + big pack) --
-        # and the measured recall reports the miss honestly
-        assert report.coverage.recall == pytest.approx(5.0 / 6.0)
-        assert "isrLift" not in report.violations
+        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2)
+        assert report.coverage.exhaustive == 3840
+        # the crossed catalog makes every violation class pairwise-
+        # visible (a small motor on a heavy shell trips isrLift in one
+        # pair), so the measured recall reports full coverage -- against
+        # the 3840-mix exhaustive census, from a ~40-row array
+        assert report.coverage.recall == 1.0
+        assert "isrLift" in report.violations
+        assert "cellMatch" in report.violations  # the class axis, caught
+        assert len(report.coverage.rows) < 60
         assert report.status == "violated"
 
     def test_cover_catch_materializes_via_from_architecture(self, catalog):
-        report = verify.cover(catalog, "DroneCatalog::TradeQuad", t=2)
+        report = verify.cover(catalog, "ScoutSizing::TradeQuad", t=2)
         ce = report.counterexamples[0]
         interpretation = ce.materialize()
         assert interpretation.selection  # variant pins recorded per point
@@ -515,8 +521,8 @@ class TestProve:
     def test_absence_proofs_and_exact_bounds(self, drone):
         report = verify.prove(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
         )
         by_name = {p.requirement: p for p in report.proofs}
@@ -534,8 +540,8 @@ class TestProve:
     def test_witnesses_are_interpreter_confirmed(self, drone):
         report = verify.prove(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
         )
         ce = report.counterexamples[0]
@@ -585,8 +591,8 @@ class TestProve:
 
         system = smt.to_smt(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
         )
         labels = [label for label, _ in system.assertions]
@@ -597,8 +603,8 @@ class TestProve:
         # the honest refusal lands in gaps, the signal to fall back to hunt
         report = verify.prove(
             uav,
-            "UavMissions::IsrPrime",
-            requirements=("UavMissions::IsrStation",),
+            "ScoutSizing::IsrPrime",
+            requirements=("ScoutSizing::IsrStation",),
             free=("emptyMassKg",),
         )
         assert any("not encodable" in gap for gap in report.gaps)
@@ -620,7 +626,7 @@ class TestVerifyUmbrella:
         if not HAS_HYPOTHESIS:
             pytest.skip("needs the verify extra (pip install 'longeron[verify]')")
         report = verify.verify(
-            drone, "Drone::SortieStates", requirements=("Drone::SafeSortie",), seed=0
+            drone, "DeepScout::SortieStates", requirements=("DeepScout::SafeSortie",), seed=0
         )
         assert report.counterexamples[0].events == (
             "launch",
@@ -630,7 +636,7 @@ class TestVerifyUmbrella:
         )
 
     def test_variation_scope_dispatches_to_cover(self, catalog):
-        report = verify.verify(catalog, "DroneCatalog::TradeQuad", seed=0)
+        report = verify.verify(catalog, "ScoutSizing::TradeQuad", seed=0)
         assert report.coverage is not None
         assert report.status == "violated"
 
@@ -638,8 +644,8 @@ class TestVerifyUmbrella:
     def test_part_scope_merges_hunt_and_prove(self, drone):
         report = verify.verify(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
             seed=0,
         )
@@ -653,18 +659,18 @@ class TestVerifyUmbrella:
 
     def test_non_part_scope_is_refused(self, drone):
         with pytest.raises(AnalysisError, match="not verifiable"):
-            verify.verify(drone, "Drone::FlightMode")
+            verify.verify(drone, "DeepScout::FlightMode")
 
     @pytest.mark.skipif(HAS_HYPOTHESIS, reason="exercises the CI posture: no hypothesis installed")
     def test_missing_extra_degrades_to_a_gap(self, drone):
         from longeron.errors import MissingExtraError
 
         with pytest.raises(MissingExtraError, match="longeron\\[verify\\]"):
-            verify.hunt(drone, "Drone::QuadCopter", free=("payloadMass",))
+            verify.hunt(drone, "Rotorcraft::QuadCopter", free=("payloadMass",))
         report = verify.verify(
             drone,
-            "Drone::QuadCopter",
-            requirements=("Drone::FlightEnvelope",),
+            "Rotorcraft::QuadCopter",
+            requirements=("DeepScout::FlightEnvelope",),
             free=("payloadMass",),
         )
         assert any("hunt skipped" in gap for gap in report.gaps)

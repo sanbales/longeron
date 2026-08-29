@@ -16,7 +16,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def model():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -24,7 +24,7 @@ def build(model):
     mdao = pytest.importorskip("longeron.analysis.mdao")
     pytest.importorskip("openmdao")
     return mdao.build_problem(
-        model, "UavMissions::IsrPrime", requirements=("UavMissions::IsrStation",)
+        model, "ScoutSizing::IsrPrime", requirements=("ScoutSizing::IsrStation",)
     )
 
 
@@ -154,7 +154,7 @@ class TestOpenMdaoN2:
 
 @pytest.fixture(scope="module")
 def study(model):
-    return trades.TradeStudy(model, "UavMissions::InterceptUav")
+    return trades.TradeStudy(model, "ScoutMissions::InterceptUav")
 
 
 class TestConstraintNetworkPayload:
@@ -170,6 +170,7 @@ class TestConstraintNetworkPayload:
         assert {c["name"] for c in payload["constraints"]} == {
             "propFit",
             "packPower",
+            "cellMatch",
             "launchLift",
             "canCatch",
         }
@@ -192,6 +193,7 @@ class TestConstraintNetworkPayload:
             return {names[vi] for vi, ci in payload["edges"] if ci == cons[name]}
 
         assert touched("propFit") == {"props", "motors"}
+        assert touched("cellMatch") == {"battery", "motors"}  # the class axis
         assert touched("canCatch") == {"airframe", "motors", "props", "battery"}
         assert "material" in touched("launchLift")
 

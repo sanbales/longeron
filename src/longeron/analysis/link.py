@@ -20,9 +20,9 @@ Selections resolve to keys with containment-and-typing semantics (see
 * a **definition** additionally matches every usage *directly typed* by
   it (``part motors : Motor`` lights up for ``Motor``) -- one def, all
   its occurrences; specializations of the def do not count;
-* an **M0 individual id** key (``Drone::QuadCopter#0.motors#2``)
+* an **M0 individual id** key (``Rotorcraft::QuadCopter#0.motors#2``)
   belongs to the usage its dotted path derives from
-  (:func:`individual_qname` -- here ``Drone::QuadCopter::motors``), so
+  (:func:`individual_qname` -- here ``Rotorcraft::QuadCopter::motors``), so
   selecting the one M1 usage lights up every rendered individual;
 * a selection that touches nothing in the scene **clears** the
   highlight rather than dimming the whole craft -- only affirmative
@@ -55,8 +55,8 @@ def owning_config(model: M.Model, element: M.Element | str) -> M.Definition | No
 
     Climbs the ownership chain from ``element`` (an element or a
     qualified name) to the outermost :class:`~longeron.model.Definition`
-    whose owner is a package -- for ``examples/drone.sysml``,
-    ``Drone::TriCopter::tailMotor`` (or any attribute, connection, or
+    whose owner is a package -- for the DeepScout program,
+    ``Rotorcraft::TriCopter::tailMotor`` (or any attribute, connection, or
     nested part of the tricopter) resolves to the ``TriCopter``
     definition itself, and a configuration resolves to itself.  Pair
     with :func:`longeron.analysis.grand.drone_scene` so a diagram
@@ -82,11 +82,11 @@ def individual_qname(key: str) -> str | None:
     """The M1 usage qualified name an M0 individual id derives from.
 
     :func:`longeron.m0.interpret` ids are dotted feature paths whose
-    segments optionally carry a ``#index`` -- ``Drone::QuadCopter#0.
+    segments optionally carry a ``#index`` -- ``Rotorcraft::QuadCopter#0.
     motors#2`` is the third motor individual of the root ``QuadCopter``.
     The derivation strips each segment's instance index and joins the
     segments with ``::`` (the first segment is already a qualified
-    name), so that id derives ``Drone::QuadCopter::motors`` -- the one
+    name), so that id derives ``Rotorcraft::QuadCopter::motors`` -- the one
     usage all four motor individuals belong to.  Returns ``None`` for a
     key that carries no instance index (a plain qualified name or a
     bare part name), so pure-qname keys keep their exact semantics.

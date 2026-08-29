@@ -43,8 +43,8 @@ official vocabulary lands, the local names here -- taken verbatim from the
 spec metamodel -- should map 1:1, making migration a namespace substitution
 (and an ``owl:equivalentClass``/``owl:equivalentProperty`` bridge trivial to
 generate).  Element IRIs are minted from qualified names
-(``UavMissions::Propulsion::HoverPower`` ->
-``.../element/UavMissions/Propulsion/HoverPower``, percent-encoded per
+(``DeepScout::Propulsion::HoverPower`` ->
+``.../element/DeepScout/Propulsion/HoverPower``, percent-encoded per
 segment); anonymous elements fall back to blank nodes labeled in document
 order, so a rebuilt graph is isomorphic to the last one.
 

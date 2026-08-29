@@ -15,7 +15,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def model():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -31,59 +31,59 @@ def element(qname: str):
 
 
 def test_element_types_follow_the_api_metaclasses(graph):
-    assert (element("UavMissions"), rdflib.RDF.type, SYSML.Package) in graph
-    assert (element("UavMissions::Airframe"), rdflib.RDF.type, SYSML.PartDefinition) in graph
+    assert (element("ScoutMissions"), rdflib.RDF.type, SYSML.Package) in graph
+    assert (element("DeepScout::Airframe"), rdflib.RDF.type, SYSML.PartDefinition) in graph
     assert (
-        element("UavMissions::Propulsion::HoverPower"),
+        element("DeepScout::Propulsion::HoverPower"),
         rdflib.RDF.type,
         SYSML.CalculationDefinition,
     ) in graph
-    assert (element("UavMissions::IsrStation"), rdflib.RDF.type, SYSML.RequirementDefinition) in (
+    assert (element("ScoutSizing::IsrStation"), rdflib.RDF.type, SYSML.RequirementDefinition) in (
         graph
     )
 
 
 def test_names_and_membership(graph):
-    boxquad = element("UavMissions::BoxQuad")
+    boxquad = element("Rotorcraft::BoxQuad")
     assert (boxquad, SYSML.name, rdflib.Literal("BoxQuad")) in graph
-    assert (boxquad, SYSML.qualifiedName, rdflib.Literal("UavMissions::BoxQuad")) in graph
-    assert (element("UavMissions"), SYSML.ownedMember, boxquad) in graph
+    assert (boxquad, SYSML.qualifiedName, rdflib.Literal("Rotorcraft::BoxQuad")) in graph
+    assert (element("Rotorcraft"), SYSML.ownedMember, boxquad) in graph
 
 
 def test_specialization_edges_resolve(graph):
     assert (
-        element("UavMissions::BoxQuad"),
+        element("Rotorcraft::BoxQuad"),
         SYSML.specializes,
-        element("UavMissions::Airframe"),
+        element("DeepScout::Airframe"),
     ) in graph
 
 
 def test_attribute_values_are_typed_literals(graph):
-    mass = element("UavMissions::BoxQuad::mass")
+    mass = element("Rotorcraft::BoxQuad::mass")
     values = list(graph.objects(mass, SYSML.value))
     assert values == [rdflib.Literal(0.78)]
     assert values[0].datatype == rdflib.XSD.double
-    count = element("UavMissions::BoxQuad::motorCount")
+    count = element("Rotorcraft::BoxQuad::motorCount")
     (literal,) = graph.objects(count, SYSML.value)
     assert literal.toPython() == 4 and literal.datatype == rdflib.XSD.integer
 
 
 def test_expression_values_carry_rendered_text(graph):
-    drag = element("UavMissions::BoxQuad::dragArea")
+    drag = element("Rotorcraft::BoxQuad::dragArea")
     (text,) = graph.objects(drag, SYSML.valueExpression)
     assert "BluffFrameDrag" in str(text)
 
 
 def test_docs_become_rdfs_comments(graph):
-    (comment,) = graph.objects(element("UavMissions::Propulsion::HoverPower"), rdflib.RDFS.comment)
+    (comment,) = graph.objects(element("DeepScout::Propulsion::HoverPower"), rdflib.RDFS.comment)
     assert "Momentum-theory hover power" in str(comment)
 
 
 def test_requirement_text_and_constraints_preserved(graph):
-    requirement = element("UavMissions::IsrStation")
+    requirement = element("ScoutSizing::IsrStation")
     (comment,) = graph.objects(requirement, rdflib.RDFS.comment)
     assert "90 minutes" in str(comment)
-    floor = element("UavMissions::IsrStation::stationFloor")
+    floor = element("ScoutSizing::IsrStation::stationFloor")
     assert (floor, SYSML.constraintKind, rdflib.Literal("require")) in graph
     (expr,) = graph.objects(floor, SYSML.expression)
     assert "uav.stationMinutes >= 90.0" in str(expr)
@@ -93,7 +93,7 @@ def test_anonymous_elements_become_blank_nodes(graph):
     """The unnamed ``assume constraint`` in IsrStation has no IRI-worthy
     name; it must still be present as a blank node member."""
 
-    members = list(graph.objects(element("UavMissions::IsrStation"), SYSML.ownedMember))
+    members = list(graph.objects(element("ScoutSizing::IsrStation"), SYSML.ownedMember))
     anonymous = [m for m in members if isinstance(m, rdflib.BNode)]
     assert anonymous, "expected a blank node for the anonymous assume constraint"
     (assume,) = [
@@ -106,7 +106,7 @@ def test_unresolved_references_are_minted_from_their_text(graph):
     """``Real`` is a standard-library name the model does not define; the
     typing edge must survive as an IRI minted from the reference text."""
 
-    mass = element("UavMissions::Airframe::mass")
+    mass = element("DeepScout::Airframe::mass")
     assert (mass, SYSML.definedBy, rdflib.URIRef(rdf.ELEMENT_BASE + "Real")) in graph
 
 
@@ -124,6 +124,7 @@ def test_sparql_part_defs_specializing_airframe_by_mass(model):
         """,
     )
     assert [(str(r.name), r.mass.toPython()) for r in rows] == [
+        ("OpenTri", 0.62),
         ("BoxQuad", 0.78),
         ("TeardropQuad", 0.98),
     ]
@@ -142,12 +143,13 @@ def test_sparql_requirement_subject_types(graph):
         """,
     )
     pairs = [(str(r.req), str(r.subjectType)) for r in rows]
-    assert ("UavMissions::IsrStation", "UavMissions::IsrPrime") in pairs
+    assert ("ScoutSizing::IsrStation", "ScoutSizing::IsrPrime") in pairs
     assert (
-        "UavMissions::MissionRequirements::IsrTasking",
-        "UavMissions::IsrUav",
+        "ScoutMissions::MissionRequirements::IsrTasking",
+        "ScoutMissions::IsrUav",
     ) in pairs
-    assert len(pairs) == 4
+    assert ("DeepScout::FlightEnvelope", "DeepScout::MultiRotor") in pairs
+    assert len(pairs) == 6
 
 
 def test_sparql_variation_points_and_variants(graph):
@@ -163,7 +165,7 @@ def test_sparql_variation_points_and_variants(graph):
             """,
         )
     )
-    assert len(rows) == 22  # 4+3+3+4+3+3+2 variants over 7 variation points
+    assert len(rows) == 40  # the crossed catalog (8+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
     assert (str(rows[0].point), str(rows[0].variant), str(rows[0].target)) == (
         "AirframeChoice",
         "boxQuad",

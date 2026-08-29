@@ -560,7 +560,7 @@ class TestValuesInjection:
             architecture_values(object())
 
     def test_unvalued_measure_is_unmeasured_until_injected(self):
-        # the measured-elsewhere seam of examples/drone.sysml: the measure
+        # the measured-elsewhere seam of examples/deepscout: the measure
         # reads a DECLARED but unvalued attribute (so the model validates
         # clean), stays honestly unmeasured bare, and values= injects the
         # kernel-side reading (a clearView-style occludedFraction; ramps

@@ -31,12 +31,12 @@ package Fleet {
 
 @pytest.fixture(scope="module")
 def drone():
-    return longeron.load(EXAMPLES / "drone.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
 def catalog():
-    return longeron.load(EXAMPLES / "drone_catalog.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -46,43 +46,43 @@ def fleet():
 
 class TestNominalPopulation:
     def test_multiplicity_expands_with_identities(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         motors = it.root.slots["motors"]
-        assert [r.id for r in motors] == [f"Drone::QuadCopter#0.motors#{i}" for i in range(4)]
+        assert [r.id for r in motors] == [f"Rotorcraft::QuadCopter#0.motors#{i}" for i in range(4)]
         assert len({id(r) for r in motors}) == 4  # distinct objects, not copies
 
     def test_singleton_features_omit_the_index(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
-        assert it.root.id == "Drone::QuadCopter#0"
-        assert it.root.slots["chassis"].id == "Drone::QuadCopter#0.chassis"
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
+        assert it.root.id == "Rotorcraft::QuadCopter#0"
+        assert it.root.slots["chassis"].id == "Rotorcraft::QuadCopter#0.chassis"
 
     def test_attributes_evaluated_per_individual(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         assert all(r.slots["mass"] == 0.055 for r in it.root.slots["motors"])
         assert all(r.slots["mass"] == 0.015 for r in it.root.slots["propellers"])
         assert it.root.slots["totalMass"] == 1.41  # same value instantiate computes
 
     def test_individuals_filter_by_classifier(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         # quad + chassis + battery + esc + flight controller + gps
         # + receiver + telemetry + landing gear + camera
         # + 4 motors + 4 propellers
         assert len(it.individuals()) == 18
-        assert len(it.individuals("Drone::Motor")) == 4
-        assert len(it.individuals("Drone::Propeller")) == 4
+        assert len(it.individuals("ScoutParts::F450Kit::Motor")) == 4
+        assert len(it.individuals("ScoutParts::F450Kit::Propeller")) == 4
 
     def test_bindings_override_root_features(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter", bindings={"payloadMass": 0.5})
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter", bindings={"payloadMass": 0.5})
         assert it.root.slots["payloadMass"] == 0.5
 
     def test_element_alone_finds_its_model(self, drone):
-        defn = drone.find("Drone::QuadCopter")
+        defn = drone.find("Rotorcraft::QuadCopter")
         it = m0.interpret(defn)
-        assert it.source == "Drone::QuadCopter"
+        assert it.source == "Rotorcraft::QuadCopter"
 
     def test_unknown_strategy_rejected(self, drone):
         with pytest.raises(EvaluationError, match="unknown strategy"):
-            m0.interpret(drone, "Drone::QuadCopter", strategy="exhaustive")
+            m0.interpret(drone, "Rotorcraft::QuadCopter", strategy="exhaustive")
 
     def test_nominal_range_multiplicity_takes_lower_bound(self, fleet):
         # the documented deterministic contract: ranges populate their
@@ -106,13 +106,13 @@ class TestNominalPopulation:
 
 class TestSequences:
     def test_part_feature_sequences(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         seqs = it.sequences("motors")
         assert len(seqs) == 4
         assert all(seq[0] is it.root and len(seq) == 2 for seq in seqs)
 
     def test_nested_features_are_longer_sequences(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         seqs = it.sequences("motors.mass")
         assert len(seqs) == 4
         assert all(len(seq) == 3 and seq[2] == 0.055 for seq in seqs)
@@ -121,14 +121,14 @@ class TestSequences:
 
 class TestRollup:
     def test_aggregates_over_actual_individuals(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
-        # drone.sysml hardcodes '4.0 * 0.055 + 4.0 * 0.015' at M1; M0 sums
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
+        # the QuadCopter hardcodes '4.0 * 0.055 + 4.0 * 0.015' at M1; M0 sums
         # the real motor and propeller individuals
         assert it.rollup("sum(motors.mass)") == pytest.approx(0.22, rel=1e-12)
         assert it.rollup("sum(propellers.mass)") == pytest.approx(0.06, rel=1e-12)
 
     def test_feature_name_evaluates_its_declared_expression(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         assert it.rollup("totalMass") == pytest.approx(1.41, rel=1e-12)
 
 
@@ -138,21 +138,21 @@ class TestTriCopterPopulation:
     so the M0 fan-out differs -- three motor individuals, not four."""
 
     def test_population_fans_out_three_rotors(self, drone):
-        it = m0.interpret(drone, "Drone::TriCopter")
+        it = m0.interpret(drone, "Rotorcraft::TriCopter")
         assert [r.id for r in it.root.slots["frontMotors"]] == [
-            f"Drone::TriCopter#0.frontMotors#{i}" for i in range(2)
+            f"Rotorcraft::TriCopter#0.frontMotors#{i}" for i in range(2)
         ]
-        assert it.root.slots["tailMotor"].id == "Drone::TriCopter#0.tailMotor"
-        assert len(it.individuals("Drone::Motor")) == 3
-        assert len(it.individuals("Drone::Propeller")) == 3
+        assert it.root.slots["tailMotor"].id == "Rotorcraft::TriCopter#0.tailMotor"
+        assert len(it.individuals("ScoutParts::F450Kit::Motor")) == 3
+        assert len(it.individuals("ScoutParts::F450Kit::Propeller")) == 3
 
     def test_rotor_mass_rolls_up_over_three_individuals(self, drone):
-        it = m0.interpret(drone, "Drone::TriCopter")
+        it = m0.interpret(drone, "Rotorcraft::TriCopter")
         rotor_mass = it.rollup("sum(frontMotors.mass) + tailMotor.mass")
         assert rotor_mass == pytest.approx(3 * 0.055, rel=1e-12)
 
     def test_tricopter_is_lighter_but_hovers(self, drone):
-        it = m0.interpret(drone, "Drone::TriCopter")
+        it = m0.interpret(drone, "Rotorcraft::TriCopter")
         assert it.root.slots["totalMass"] == pytest.approx(1.31, rel=1e-12)
         assert it.root.slots["totalMass"] < 1.41  # lighter than the quad
         # canHover holds, with LESS margin than the quad's ~2.4
@@ -201,7 +201,7 @@ class TestRandomStrategy:
 
     def test_sample_requires_random_strategy(self, drone):
         with pytest.raises(EvaluationError, match="strategy='random'"):
-            m0.interpret(drone, "Drone::QuadCopter").sample(2)
+            m0.interpret(drone, "Rotorcraft::QuadCopter").sample(2)
 
 
 class TestVariations:
@@ -213,39 +213,39 @@ class TestVariations:
     }
 
     def test_selection_pins_variants(self, catalog):
-        it = m0.interpret(catalog, "DroneCatalog::TradeQuad", selection=self.SELECTION)
+        it = m0.interpret(catalog, "ScoutSizing::TradeQuad", selection=self.SELECTION)
         motors = it.root.slots["motors"]
         assert len(motors) == 4
-        assert all(mtr.type_name == "DroneCatalog::Emax2306" for mtr in motors)
+        assert all(mtr.type_name == "ScoutSizing::Emax2306" for mtr in motors)
         assert it.selection == self.SELECTION
 
     def test_variants_never_materialize_as_slots(self, catalog):
-        it = m0.interpret(catalog, "DroneCatalog::TradeQuad", selection=self.SELECTION)
+        it = m0.interpret(catalog, "ScoutSizing::TradeQuad", selection=self.SELECTION)
         assert "emax2306" not in it.root.slots["motors"][0].slots
 
     def test_nominal_defaults_to_first_variant(self, catalog):
-        it = m0.interpret(catalog, "DroneCatalog::TradeQuad")
+        it = m0.interpret(catalog, "ScoutSizing::TradeQuad")
         assert it.selection["motors"] == "emax2306"
         assert it.selection["battery"] == "lipo4s1500"
 
     def test_unknown_variant_rejected(self, catalog):
         with pytest.raises(EvaluationError, match="unknown variant"):
             m0.interpret(
-                catalog, "DroneCatalog::TradeQuad", selection={**self.SELECTION, "esc": "nope"}
+                catalog, "ScoutSizing::TradeQuad", selection={**self.SELECTION, "esc": "nope"}
             )
 
     def test_homogeneous_convention_reported_as_gaps(self, catalog):
         # TradeQuad's M1 metrics use '4.0 * motors.mass' (per-unit trades
         # convention); over the real 4-individual population that is an
         # honest hole, not a crash
-        it = m0.interpret(catalog, "DroneCatalog::TradeQuad", selection=self.SELECTION)
+        it = m0.interpret(catalog, "ScoutSizing::TradeQuad", selection=self.SELECTION)
         assert it.root.slots["totalMass"] is None
         assert any(gap.startswith("totalMass:") for gap in it.gaps)
 
     def test_random_variant_choice_is_heterogeneous(self, catalog):
         types = set()
         for seed in range(8):
-            it = m0.interpret(catalog, "DroneCatalog::TradeQuad", strategy="random", seed=seed)
+            it = m0.interpret(catalog, "ScoutSizing::TradeQuad", strategy="random", seed=seed)
             types |= {mtr.type_name for mtr in it.root.slots["motors"]}
             assert set(it.selection) >= {f"motors#{i}" for i in range(4)}
         assert len(types) > 1
@@ -274,7 +274,7 @@ class TestTradesRegression:
     }
 
     def test_every_architecture_rolls_up_to_the_trades_metrics(self, catalog):
-        study = TradeStudy(catalog, "DroneCatalog::TradeQuad")
+        study = TradeStudy(catalog, "ScoutSizing::TradeQuad")
         architectures = study.all_architectures()
         assert len(architectures) == 54  # 3 * 3 * 3 * 2
         for arch in architectures:
@@ -285,16 +285,16 @@ class TestTradesRegression:
                 )
 
     def test_architecture_population_shape(self, catalog):
-        study = TradeStudy(catalog, "DroneCatalog::TradeQuad")
+        study = TradeStudy(catalog, "ScoutSizing::TradeQuad")
         arch = study.evaluate(TestVariations.SELECTION)
         it = m0.from_architecture(study, arch)
         assert it.selection == arch.selection
-        motors = it.individuals("DroneCatalog::Emax2306")
+        motors = it.individuals("ScoutSizing::Emax2306")
         assert [mtr.id for mtr in motors] == [
-            f"DroneCatalog::TradeQuad#0.motors#{i}" for i in range(4)
+            f"ScoutSizing::TradeQuad#0.motors#{i}" for i in range(4)
         ]
         # conformance filtering sees variants through their supers
-        assert len(it.individuals("DroneCatalog::Motor")) == 4
+        assert len(it.individuals("ScoutSizing::Motor")) == 4
 
 
 class TestOccurrencesFromTimeline:
@@ -303,23 +303,23 @@ class TestOccurrencesFromTimeline:
     @pytest.fixture()
     def timeline(self, drone):
         interp = longeron.Interpreter(drone)
-        return record_timeline(interp, "Drone::FlightStates", self.EVENTS)
+        return record_timeline(interp, "DeepScout::FlightStates", self.EVENTS)
 
     def test_activations_become_occurrence_individuals(self, timeline):
         it = m0.from_timeline(timeline)
-        flying = it.individuals("Drone::FlightStates::flying")
+        flying = it.individuals("DeepScout::FlightStates::flying")
         assert len(flying) == 1
-        assert flying[0].id == "Drone::FlightStates::flying@0"
+        assert flying[0].id == "DeepScout::FlightStates::flying@0"
         assert flying[0].slots["start"] == 2.0
         assert flying[0].slots["end"] == 12.0
         assert flying[0].slots["duration"] == 10.0
 
     def test_reentry_gets_a_fresh_identity(self, timeline):
         it = m0.from_timeline(timeline)
-        idles = it.individuals("Drone::FlightStates::idle")
+        idles = it.individuals("DeepScout::FlightStates::idle")
         assert [ind.id for ind in idles] == [
-            "Drone::FlightStates::idle@0",
-            "Drone::FlightStates::idle@1",
+            "DeepScout::FlightStates::idle@0",
+            "DeepScout::FlightStates::idle@1",
         ]
 
     def test_rollups_work_over_lifetimes(self, timeline):
@@ -337,11 +337,11 @@ class TestOccurrencesFromTimeline:
 
 class TestToDict:
     def test_round_trippable_projection(self, drone):
-        it = m0.interpret(drone, "Drone::QuadCopter")
+        it = m0.interpret(drone, "Rotorcraft::QuadCopter")
         data = it.to_dict()
-        assert data["source"] == "Drone::QuadCopter"
-        assert data["root"]["@id"] == "Drone::QuadCopter#0"
-        assert data["root"]["motors"][2]["@id"] == "Drone::QuadCopter#0.motors#2"
+        assert data["source"] == "Rotorcraft::QuadCopter"
+        assert data["root"]["@id"] == "Rotorcraft::QuadCopter#0"
+        assert data["root"]["motors"][2]["@id"] == "Rotorcraft::QuadCopter#0.motors#2"
         import json
 
         json.dumps(data)  # JSON-able all the way down

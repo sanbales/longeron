@@ -49,8 +49,9 @@ fall back to a deterministic stdlib volume quadrature over the mesh
 triangles that integrates the SAME measures (see
 :func:`occlusion_report` / :func:`overlap_report` for the accuracy
 contract).  Both are deterministic and keyed by :func:`geometry_checks`
-to feed ``examples/drone.sysml``'s ``installation`` requirements
-through the scoreboard's ``values=`` seam in either posture.
+to feed the DeepScout program's ``installation`` requirements
+(``examples/deepscout/aircraft.sysml``) through the scoreboard's
+``values=`` seam in either posture.
 
 House pattern: MESH geometry is baked in Python once per configuration
 (a millisecond or so -- no CAD kernel in the render loop); the front-end
@@ -504,8 +505,8 @@ def drone_geometry(
     rebuild the exact solids via :func:`to_cadquery`.
 
     ``camera`` mounts the mission camera: a mapping with the placement
-    and boresight attribute names of ``examples/drone.sysml``'s
-    ``Camera`` part (``x``/``y``/``z`` metres from the top-plate centre,
+    and boresight attribute names of the DeepScout program's
+    ``ScoutParts::F450Kit::Camera`` part (``x``/``y``/``z`` metres from the top-plate centre,
     ``azimuth``/``elevation``/``fieldOfView`` degrees), typically the
     slot dict of an instantiated/interpreted camera individual.  It adds
     a violet ``camera`` body part (a small box, yawed to the azimuth)
@@ -621,8 +622,8 @@ def drone_geometry(
 # ---------------------------------------------------------------------------
 
 #: the camera parameter names -- exactly the attribute names of
-#: ``examples/drone.sysml``'s ``Camera`` part, so an instantiated /
-#: M0-interpreted camera's slot dict wires straight through
+#: the DeepScout program's ``ScoutParts::F450Kit::Camera`` part, so an
+#: instantiated / M0-interpreted camera's slot dict wires straight through
 _CAMERA_KEYS = ("x", "y", "z", "azimuth", "elevation", "fieldOfView")
 
 #: boolean-intersection volumes below this (m^3) count as zero: OCC
@@ -1120,7 +1121,7 @@ def camera_occlusion(
     """The airframe volume inside the view cone over the cone volume.
 
     The scalar measure behind the ``clearView`` requirement of
-    ``examples/drone.sysml`` (\"occludedFraction\"): 0.0 is a perfectly
+    the DeepScout program (\"occludedFraction\"): 0.0 is a perfectly
     clear view cone, anything positive means some component pokes into
     it.  See :func:`occlusion_report` for the cone construction, the
     engines, and the per-part offender breakdown.
@@ -1236,7 +1237,7 @@ def disc_overlap(mesh: Mapping[str, Any], *, resolution: int = 24, engine: str =
     """The total propeller-disc overlap volume, in cubic metres.
 
     The scalar measure behind the ``propClearance`` requirement of
-    ``examples/drone.sysml`` (\"discOverlapVolume\"): the sum over every
+    the DeepScout program (\"discOverlapVolume\"): the sum over every
     disc of :func:`overlap_report`'s per-disc overlap.  0.0 means no
     disc touches anything; a disc-against-disc overlap counts once per
     participating disc.
@@ -1257,7 +1258,7 @@ def geometry_checks(
 
     Returns ``{"occludedFraction": ..., "discOverlapVolume": ...}`` --
     exactly the free names the ``installation`` requirements of
-    ``examples/drone.sysml`` measure, so the result feeds
+    the DeepScout program measure, so the result feeds
     ``scoreboard(model, values=geometry_checks(mesh))`` directly (the
     lightest honest wiring: the measures are computed kernel-side from
     the same parametric geometry the 3D viewer paints, then injected as
@@ -1858,7 +1859,7 @@ def tag_parts(
     ``key`` -- by convention the *qualified name* of the model part the
     component renders, or, for per-instance parts (see
     :func:`drone_geometry`'s ``split_instances``), the **M0 individual
-    id** from :func:`longeron.m0.interpret` (``Drone::QuadCopter#0.
+    id** from :func:`longeron.m0.interpret` (``Rotorcraft::QuadCopter#0.
     motors#2``), whose dotted path derives the owning usage for linked
     selection (:func:`longeron.analysis.link.individual_qname`).
     Several mesh parts may share one key, and parts not named keep no
@@ -1890,12 +1891,13 @@ def tag_parts(
 
 
 def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:
-    """Geometry inputs from a ``UavMissions``-style mix.
+    """Geometry inputs from a mission-catalog mix.
 
     Expects variation points ``airframe`` (attributes ``wingSpan``,
-    ``wingArea``, ``taper``, ``fuselageLength``, ``motorCount``),
-    ``motors`` (``mass``), ``props`` (``diameter``), and ``battery``
-    (``mass``) -- the convention of ``examples/uav_missions.sysml``.
+    ``wingArea``, ``taper``, ``fuselageLength``, ``motorCount``,
+    ``armCount``), ``motors`` (``mass``), ``props`` (``diameter``), and
+    ``battery`` (``mass``) -- the convention of the DeepScout mission
+    catalog (``examples/deepscout/missions.sysml``).
     """
 
     def attr(point: str, name: str) -> float:
@@ -1914,6 +1916,7 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, f
         "taper": attr("airframe", "taper"),
         "fuselage_length": attr("airframe", "fuselageLength"),
         "motor_count": attr("airframe", "motorCount"),
+        "arm_count": attr("airframe", "armCount"),
         "motor_mass": attr("motors", "mass"),
         "prop_diameter": attr("props", "diameter"),
         "battery_mass": attr("battery", "mass"),
@@ -1923,14 +1926,16 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, f
 def mission_geometry(
     study: TradeStudy, architecture: Architecture, **overrides: Any
 ) -> dict[str, Any]:
-    """Family-dispatched geometry for a ``UavMissions`` mix.
+    """Family-dispatched geometry for a mission-catalog mix.
 
     The selected airframe's attributes pick the builder: no wing and no
-    fuselage -> :func:`drone_geometry` (the plain quad); no wing but a
-    real fuselage -> :func:`teardrop_quad_geometry` (the upended
-    bullet); a single motor station -> :func:`interceptor_geometry`;
-    otherwise :func:`winged_vtol_geometry` (the cruciform tail-sitter,
-    rendered in hover attitude).  When the mix's metrics carry the
+    fuselage -> :func:`drone_geometry` (the N-arm multirotor --
+    ``armCount`` sets the frame family, and a station count of twice
+    the arm count stacks the coaxial pairs); no wing but a real
+    fuselage -> :func:`teardrop_quad_geometry` (the upended bullet); a
+    single motor station -> :func:`interceptor_geometry`; otherwise
+    :func:`winged_vtol_geometry` (the cruciform tail-sitter, rendered
+    in hover attitude).  When the mix's metrics carry the
     load-sized ``armOuterDiameter`` (the assembly's structural sizing),
     the quad families draw their arms at that diameter -- a sprint-motor
     aluminum build genuinely looks beefier than a carbon eco build.
@@ -1938,6 +1943,7 @@ def mission_geometry(
 
     p = {**mission_params(study, architecture), **overrides}
     motor_count = p.pop("motor_count")
+    arm_count = int(p.pop("arm_count"))
     sized_arm = float(architecture.metrics.get("armOuterDiameter", 0.0) or 0.0)
     arm_kw: dict[str, Any] = (
         {"arm_thickness": sized_arm, "arm_width": sized_arm} if sized_arm > 0 else {}
@@ -1956,6 +1962,8 @@ def mission_geometry(
             motor_mass=p["motor_mass"],
             battery_mass=p["battery_mass"],
             esc_mass=0.014,
+            arm_count=arm_count if arm_count > 0 else 4,
+            coaxial=arm_count > 0 and motor_count == 2 * arm_count,
             **arm_kw,
         )  # 30.5 mm stack heuristic
     if motor_count <= 1:

@@ -6,7 +6,7 @@ paraphrased ``app_scenario.ipynb`` (scenario 8/9) never reproduced them
 NB14 launches its tabs from CELLS mid-run and then displays
 ``application.inspector`` INLINE (cell 12).  So this scenario runs the
 real ``notebooks/14_model_app.ipynb`` (synced into the lab root by
-conftest, with ``examples/drone.sysml`` beside it for cell 3's relative
+conftest, with ``examples/deepscout`` beside it for cell 3's relative
 path) and asserts the three maintainer findings stay fixed:
 
 * **the ScoutMini Score tab renders COLORS**: NB14's scout model now
@@ -36,7 +36,7 @@ NOTEBOOK = "notebooks/14_model_app.ipynb"
 REPO = Path(__file__).resolve().parents[2]
 EVIDENCE = REPO / "build" / "evidence"
 
-EXPLORER_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="drone-sysml"]'
+EXPLORER_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="deepscout"]'
 SCOREBOARD_TAB = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="scoreboard-scout-mini"]'
 INSPECTOR_TAB = '.jp-SideBar.jp-mod-right .lm-TabBar-tab[data-lgxkey="longeron-inspector"]'
 
@@ -105,13 +105,32 @@ def test_nb14_verbatim_score_colors_inspector_reveal_clean_console(lab):
         label="the right-sidebar inspector stays revealed after NB14's run",
     )
     sheet = page.evaluate(_DOCKED_INSPECTOR_JS)
-    # cells 7/12 selected Drone::QuadCopter through the seam
+    # cells 7/12 selected Rotorcraft::QuadCopter through the seam
     assert sheet["name"] == "QuadCopter", sheet
 
     # -- a real tree click in the explorer tab updates the docked sheet
     page.locator(EXPLORER_TAB).first.click()  # background tab: reveal it
     page.wait_for_selector(".lgx-explorer .lgx-row", state="attached", timeout=60_000)
-    page.locator('.lgx-explorer .lgx-row:has-text("Battery")').first.click()
+    # the Battery def lives in the parts catalog: expand down to it
+    # (exact-name spans: import rows like 'import ScoutParts::F450Kit::*'
+    # substring-match the package names and carry no twist)
+    page.locator('.lgx-explorer .lgx-row:has(.lgx-name:text-is("ScoutParts"))').first.locator(
+        ".lgx-twist"
+    ).click()
+    page.wait_for_selector(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("F450Kit"))',
+        state="attached",
+        timeout=30_000,
+    )
+    page.locator(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("F450Kit")) .lgx-twist'
+    ).first.click()
+    page.wait_for_selector(
+        '.lgx-explorer .lgx-row:has(.lgx-name:text-is("Battery"))',
+        state="attached",
+        timeout=30_000,
+    )
+    page.locator('.lgx-explorer .lgx-row:has(.lgx-name:text-is("Battery"))').first.click()
     lab.wait_until(
         lambda s: (
             page.evaluate(_DOCKED_INSPECTOR_JS)

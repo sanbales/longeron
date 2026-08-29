@@ -5,7 +5,7 @@
     import longeron
     from longeron import explorer
 
-    model = longeron.load("examples/drone.sysml")
+    model = longeron.load("examples/deepscout")
     explorer.explore(model)
 
 The LEFT pane is :class:`ModelTree` -- a small self-contained anywidget

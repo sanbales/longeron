@@ -1,6 +1,6 @@
 """A 'higher-fidelity' cruise-power analysis for the UAV missions demo.
 
-``UavMissions::CruisePower`` (examples/uav_missions.sysml) declares this
+``DeepScout::Propulsion::CruisePower`` (examples/deepscout/aircraft.sysml) declares this
 component through its ``@ExternalAnalysis`` annotation: the calc def's
 ``in`` parameters are the I/O contract, its body is the first-order model
 (parasite CdA + span-efficiency induced drag), and this module is the tool

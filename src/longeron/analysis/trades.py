@@ -37,7 +37,8 @@ arithmetic judges feasible but the interpreter refutes is returned with
 What the mapper still refuses -- with an :class:`AnalysisError` naming the
 innermost unencodable operation -- is arithmetic with no exact fixed-point
 form: ``sqrt``, fractional ``pow``, and ``if``/``else`` conditionals (the
-real physics of ``examples/uav_missions.sysml``'s mission layers).  The
+real physics of the DeepScout mission layers,
+``examples/deepscout/missions.sysml``).  The
 honest pattern there is :meth:`TradeStudy.all_architectures` /
 :meth:`TradeStudy.evaluate`: walk the (small) Cartesian candidate space and
 let the interpreter evaluate every mix exactly, ``violations`` naming the

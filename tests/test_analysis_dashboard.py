@@ -17,7 +17,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 @pytest.fixture(scope="module")
 def model():
-    return longeron.load(EXAMPLES / "uav_missions.sysml", cache=False)
+    return longeron.load(EXAMPLES / "deepscout", cache=False)
 
 
 @pytest.fixture(scope="module")
@@ -200,7 +200,7 @@ class TestFrontJustifications:
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
-        assert len(data["candidates"]) == 4 * 3 * 3 * 4 * 2
+        assert len(data["candidates"]) == 8 * 4 * 4 * 5 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_thresholds_anchored_in_the_model(self, data):
@@ -235,7 +235,7 @@ class TestDashboardData:
             data["candidates"],
             {m: {s["key"]: s["default"] for s in ss} for m, ss in data["thresholds"].items()},
         )
-        study = trades.TradeStudy(model, "UavMissions::IsrUav")
+        study = trades.TradeStudy(model, "ScoutMissions::IsrUav")
         for cand, row in zip(data["candidates"][:20], live[:20], strict=False):
             best_feasible = any(
                 study.evaluate({**cand["selection"], "sensor": sensor}).verified
@@ -374,9 +374,10 @@ class TestParetoToggle:
 
 class TestFrontJustificationsLive:
     """THE reported legibility defect: 'Pareto only' at N=8 keeps picks
-    that LOOK dominated in the cost-MOE scatter (148-151 sit below-right
-    of 172/173).  The filter is correct -- dominance spans all four
-    objectives -- so the display must say where each pick wins."""
+    that LOOK dominated in the cost-MOE scatter (the liion loiter birds
+    sit below-right of the tattu haulers).  The filter is correct --
+    dominance spans all four objectives -- so the display must say
+    where each pick wins."""
 
     @staticmethod
     def _pareto_n8(dash):
@@ -392,7 +393,7 @@ class TestFrontJustificationsLive:
     def test_the_looks_dominated_picks_name_station_minutes(self, dash):
         self._pareto_n8(dash)
         cards = {dash.pool[c["line"]]: c for c in json.loads(dash.lineup.cards_json)}
-        for index in (148, 149, 150, 151):
+        for index in (1008, 1017, 1018, 1019):
             assert index in dash.picks
             why = cards[index]["why"]
             assert why.startswith("front: stationMinutes ")
