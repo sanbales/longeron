@@ -1053,9 +1053,18 @@ def _to_elk_json(root: Any) -> dict:
                 entry["x"], entry["y"] = float(label.x), float(label.y)
                 labels.append(entry)
                 continue
-            if is_marker:  # keep the dot small; hang the label below it
-                entry["x"] = ((node.width or 14) - width) / 2
-                entry["y"] = (node.height or 14) + 2 + index * height
+            if is_marker:  # keep the dot small; the caption hangs below it
+                # (horizontal flows) or sits beside it (vertical flows --
+                # below is the outgoing fan).  The label's OWN placement,
+                # constructed by diagrams._glyph_node and re-derived per
+                # direction change by toolbar._orient_glyphs, is the single
+                # source of truth for BOTH pipelines.
+                if "V_CENTER" in (label.layoutOptions or {}).get("nodeLabels.placement", ""):
+                    entry["x"] = (node.width or 14) + 2
+                    entry["y"] = ((node.height or 14) - height) / 2 + index * height
+                else:
+                    entry["x"] = ((node.width or 14) - width) / 2
+                    entry["y"] = (node.height or 14) + 2 + index * height
             elif elk_sized:
                 # containers (and ported boxes): leave x/y to ELK, which
                 # centers the title against the FINAL box (children and

@@ -645,6 +645,9 @@ def _add_end_multiplicity(edge: Edge, mult: M.Multiplicity, placement: str) -> N
 
 _MARKER_LAYOUT = {
     # place the 'start'/'done'/entry text below the dot, not on top of it
+    # (the horizontal-flow default; ``toolbar._orient_glyphs`` moves the
+    # caption BESIDE the glyph under vertical flows, where the outgoing
+    # edges leave south -- right below the glyph)
     "nodeLabels.placement": "OUTSIDE H_CENTER V_BOTTOM",
 }
 

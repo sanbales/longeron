@@ -243,12 +243,21 @@ def apply_direction(root: Any, direction: str) -> str:
 #: vertical), outgoing leave where it EXITS (east/south)
 _ANCHOR_SIDES = {"in": ("WEST", "NORTH"), "out": ("EAST", "SOUTH")}
 
+#: glyph-caption placement per flow axis: the name hangs BELOW the glyph
+#: for horizontal flows (edges leave east; below is clear -- the
+#: ``diagrams._MARKER_LAYOUT`` construction default) and moves BESIDE it
+#: (east, vertically centered) for vertical flows, where the outgoing
+#: edges now leave south -- a below-hanging caption would sit exactly on
+#: the fan-out.  ``render._to_elk_json`` derives the headless caption
+#: x/y from the same per-label value, so both pipelines follow.
+_CAPTION_PLACEMENTS = ("OUTSIDE H_CENTER V_BOTTOM", "OUTSIDE H_RIGHT V_CENTER")
+
 
 def _orient_glyphs(root: Any, transposed: bool) -> None:
     """Re-derive direction-sensitive glyph geometry for the active flow.
 
-    Two glyph families encode the flow axis in their geometry and must
-    transpose with every direction change (both are built for the
+    Three glyph families encode the flow axis in their geometry and must
+    transpose with every direction change (all are built for the
     horizontal default by :mod:`longeron.diagrams`):
 
     * **fork/join bars** (``sysml-ctrl-bar``) are thick filled bars
@@ -269,16 +278,31 @@ def _orient_glyphs(root: Any, transposed: bool) -> None:
       not flow geometry: they carry cssClasses and no in/out key, and
       are deliberately left alone.
 
+    * **glyph captions** (the ``_glyph_node`` name labels: fork/join
+      bars, decision/merge diamonds, start/done markers, terminate,
+      junction dots, actor figures) hang BELOW the glyph in horizontal
+      flows but must move BESIDE it (east, centered) in vertical ones:
+      with the anchors now at north/south, a below-hanging caption sits
+      exactly on the outgoing fan (the maintainer repro: f/j/d/g over
+      the edges after a T->D toggle).  The placement is re-derived per
+      label from :data:`_CAPTION_PLACEMENTS`.
+
     Geometry is re-DERIVED from the constants each call (never swapped
     in place), so any toggle sequence is idempotent and a round trip
     restores the constructed tree exactly.
     """
 
     axis = 1 if transposed else 0
+    caption = _CAPTION_PLACEMENTS[axis]
     for node in _iter_nodes(root):
         if "sysml-ctrl-bar" in (node.properties.cssClasses or ""):
             size = (_BAR_LONG, _BAR_SHORT) if transposed else (_BAR_SHORT, _BAR_LONG)
             node.width, node.height = size
+        if node.layoutOptions.get("nodeLabels.placement") in _CAPTION_PLACEMENTS:
+            node.layoutOptions["nodeLabels.placement"] = caption
+        for label in node.labels or []:
+            if (label.layoutOptions or {}).get("nodeLabels.placement") in _CAPTION_PLACEMENTS:
+                label.layoutOptions["nodeLabels.placement"] = caption
         for port in node.ports:
             sides = _ANCHOR_SIDES.get(port.properties.key or "")
             if sides is None or port.properties.cssClasses:

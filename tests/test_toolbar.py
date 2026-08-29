@@ -468,7 +468,10 @@ class TestDirectionGlyphs:
     diamonds, start/done/terminate glyphs, junction dots) move to the
     flow axis (in = north, out = south under DOWN) so fans keep meeting
     the glyph head-on instead of detouring to the stale west/east
-    sides.  Real drawn ports (SysML port squares) are model notation,
+    sides.  The glyph CAPTIONS (the name labels below the glyphs) move
+    BESIDE the glyph under vertical flows -- below is exactly where the
+    outgoing edges now leave (the follow-up repro: f, j, d, g over the
+    fan-out).  Real drawn ports (SysML port squares) are model notation,
     not flow geometry, and never move."""
 
     def _flow(self, **kwargs):
@@ -540,6 +543,8 @@ class TestDirectionGlyphs:
                 (
                     node.width,
                     node.height,
+                    node.layoutOptions.get("nodeLabels.placement"),
+                    [(label.text, dict(label.layoutOptions or {})) for label in node.labels or []],
                     [(port.properties.key, dict(port.layoutOptions)) for port in node.ports],
                 )
                 for node in _iter_nodes(root)
@@ -552,6 +557,132 @@ class TestDirectionGlyphs:
         assert snapshot(root) != constructed  # the flip really moved things
         apply_direction(root, "right")
         assert snapshot(root) == constructed
+
+    def test_captions_move_beside_the_glyph_under_vertical_flow(self):
+        """The glyph name labels hang BELOW the glyph in horizontal flows
+        (edges leave east; below is clear), but under DOWN the outgoing
+        edges leave SOUTH -- right through a below-hanging caption (the
+        follow-up repro: f, j, d, g on the fan-out).  So the caption
+        placement is re-derived per direction: beside the glyph (east,
+        vertically centered) for vertical flows, and a round trip
+        restores the construction default -- on the label AND on the
+        node-level default it shadows."""
+
+        below, beside = toolbar._CAPTION_PLACEMENTS
+        captioned = ("sysml-ctrl-bar", "sysml-ctrl-diamond", "sysml-marker", "sysml-final")
+        root = self._flow().source.value
+        glyphs = self._by_css(root)
+
+        def placements(node):
+            values = {label.layoutOptions["nodeLabels.placement"] for label in node.labels}
+            values.add(node.layoutOptions["nodeLabels.placement"])
+            return values
+
+        for css in captioned:
+            assert placements(glyphs[css]) == {below}, css
+        apply_direction(root, "down")
+        for css in captioned:
+            assert placements(glyphs[css]) == {beside}, css
+        apply_direction(root, "right")
+        for css in captioned:
+            assert placements(glyphs[css]) == {below}, css
+
+    def test_headless_caption_geometry_follows_the_placement(self):
+        """render._to_elk_json pins the caption x/y FROM the label's own
+        placement (the single source of truth both pipelines share):
+        centered below the glyph horizontally, beside it (east, centered)
+        under vertical flows -- so a headless SVG of a top-down diagram
+        shows the same clearance as the browser."""
+
+        from longeron import render
+
+        def diamond_and_caption(root):
+            def entries(data):
+                yield data
+                for child in data.get("children", []):
+                    yield from entries(child)
+
+            node = next(
+                n
+                for n in entries(render._to_elk_json(root))
+                if "sysml-ctrl-diamond" in n["properties"]["cssClasses"]
+            )
+            return node, node["labels"][0]
+
+        root = self._flow().source.value
+        node, label = diamond_and_caption(root)
+        assert label["x"] == (node["width"] - label["width"]) / 2  # centered ...
+        assert label["y"] == node["height"] + 2  # ... below
+        apply_direction(root, "down")
+        node, label = diamond_and_caption(root)
+        assert label["x"] == node["width"] + 2  # beside (east) ...
+        assert label["y"] == (node["height"] - label["height"]) / 2  # ... centered
+
+    def test_captions_clear_the_fanout_against_real_elkjs(self):
+        """The finding's numeric pin, against the REAL vendored elkjs (the
+        browser worker wraps the same engine): in EITHER direction no
+        glyph caption box may intersect any routed edge segment -- before
+        the fix, top-down put f, j, d, g, and start exactly on the
+        outgoing fan (left-to-right was and stays clear)."""
+
+        from itertools import pairwise
+
+        from longeron import render
+
+        glyph_css = ("sysml-marker", "sysml-ctrl-bar", "sysml-ctrl-diamond", "sysml-final")
+
+        def geometry(graph):
+            origins, boxes, segments = {}, [], []
+
+            def nodes(node, ox, oy):
+                x, y = ox + node.get("x", 0.0), oy + node.get("y", 0.0)
+                origins[str(node.get("id"))] = (x, y)
+                css = node.get("properties", {}).get("cssClasses", "")
+                if any(fragment in css for fragment in glyph_css):
+                    boxes.extend(
+                        (lbl["text"], x + lbl["x"], y + lbl["y"], lbl["width"], lbl["height"])
+                        for lbl in node.get("labels", [])
+                    )
+                for child in node.get("children", []):
+                    nodes(child, x, y)
+
+            def edges(node):
+                ox, oy = origins[str(node.get("id"))]
+                for edge in node.get("edges", []):
+                    ex, ey = origins.get(str(edge.get("container")), (ox, oy))
+                    for section in edge.get("sections", []) or []:
+                        points = [
+                            section["startPoint"],
+                            *section.get("bendPoints", []),
+                            section["endPoint"],
+                        ]
+                        segments.extend(
+                            ((ex + a["x"], ey + a["y"]), (ex + b["x"], ey + b["y"]))
+                            for a, b in pairwise(points)
+                        )
+                for child in node.get("children", []):
+                    edges(child)
+
+            nodes(graph, 0.0, 0.0)
+            edges(graph)
+            return boxes, segments
+
+        for direction in ("down", "right"):
+            root = self._flow().source.value
+            apply_direction(root, direction)
+            graph = render.layout(render._to_elk_json(root))
+            boxes, segments = geometry(graph)
+            assert {box[0] for box in boxes} >= {"f", "j", "d", "g", "start", "done"}
+            hits = [  # a touching contact is not an overlap (0.5px slack)
+                (text, (ax, ay), (bx, by))
+                for text, lx, ly, lw, lh in boxes
+                for (ax, ay), (bx, by) in segments
+                if min(ax, bx) < lx + lw - 0.5
+                and max(ax, bx) > lx + 0.5
+                and min(ay, by) < ly + lh - 0.5
+                and max(ay, by) > ly + 0.5
+            ]
+            assert hits == [], direction
 
     def test_junction_center_anchors_follow_the_flow_axis(self):
         """The n-ary junction dots carry center-pulling anchors on their
