@@ -74,6 +74,20 @@ class TestLoadDir:
         for member in model.members:
             assert member.owner is model
 
+    def test_top_members_record_their_source_file(self, workspace_dir):
+        # the save-back provenance breadcrumb (export.save_workspace):
+        # stamped per top-level member, at per-file granularity only
+        model = longeron.load_dir(workspace_dir)
+        by_name = {member.name: member.source_file for member in model.members}
+        assert by_name == {
+            "App": str(workspace_dir / "app.sysml"),
+            "Units": str(workspace_dir / "lib" / "units.sysml"),
+        }
+        assert model.find("App::Payload").source_file is None  # not stamped
+        # a cache HIT carries the breadcrumbs too (stamped after load_file)
+        again = longeron.load_dir(workspace_dir)
+        assert {m.name: m.source_file for m in again.members} == by_name
+
     def test_generic_load_accepts_dir(self, workspace_dir):
         model = longeron.load(workspace_dir)
         assert model.find("App::Payload") is not None

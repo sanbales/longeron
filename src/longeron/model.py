@@ -201,6 +201,14 @@ class Element:
     #: position-free.  Read by lint diagnostics.
     source_location = None
 
+    #: the ``.sysml`` file this element was loaded from when a directory
+    #: workspace was merged (:func:`longeron.workspace.load_dir` stamps its
+    #: per-file models' top-level members), or ``None``.  A plain instance
+    #: attribute like ``source_location`` -- deliberately not a dataclass
+    #: field, so JSON exports and text round-trips stay file-agnostic.
+    #: Read by :func:`longeron.export.save_workspace` (per-file save-back).
+    source_file = None
+
     @property
     def label(self) -> str:
         return self.name or self.short_name or f"<anonymous {type(self).__name__}>"

@@ -39,9 +39,13 @@ The sidebar has one MODELS section:
   synthetic tab click -- docking pre-activated leaves lumino's dock
   layout without the currentChanged pass that assigns panel geometry,
   an invisibly EMPTY tab, maintainer QA); **Save** writes the model back
-  to its source file (:func:`longeron.export.save`; disabled for
-  directory-merged, in-memory, and API models -- pass an explicit
-  ``path`` to :meth:`ModelApp.save_model` for a save-as); API models get
+  to its source (:func:`longeron.export.save`; a directory-loaded
+  workspace maps every tracked edit to the file its top-level package
+  was loaded from and rewrites ONLY the changed files --
+  :func:`longeron.export.save_workspace` -- refusing honestly when an
+  edit cannot be mapped; disabled for in-memory models -- pass an
+  explicit ``path`` to :meth:`ModelApp.save_model` for a save-as); API
+  models get
   **Push** instead, which prompts for a commit message and posts through
   :meth:`~longeron.client.Client.push_commit`; the closing ``x`` drops
   the row.
@@ -565,8 +569,10 @@ class ModelEntry:
     """One loaded model and where it came from.
 
     ``origin`` is ``"file"`` (Save enabled, back to ``path``), ``"dir"``
-    (a directory merge; save needs an explicit path), ``"text"`` (an
-    in-memory model), or ``"api"`` (Push enabled through ``client``).
+    (a directory merge; Save writes tracked edits back file by file --
+    :func:`longeron.export.save_workspace`), ``"text"`` (an in-memory
+    model; save needs an explicit path), or ``"api"`` (Push enabled
+    through ``client``).
     """
 
     model: M.Model
@@ -1148,16 +1154,25 @@ class ModelApp(W.VBox):
             save_btn.add_class("lgx-app-push")
             save_btn.on_click(lambda _b, e=entry: self._show_push_bar(e))
         else:
-            can_save = entry.origin == "file"
-            if not can_save:
+            if entry.origin == "file":
+                can_save = dirty
+                save_tip = (
+                    f"Write the model back to {entry.source}"
+                    if dirty
+                    else "No unsaved edits (longeron.edit) to save"
+                )
+            elif entry.origin == "dir" and entry.path is not None:
+                if dirty:
+                    can_save, save_tip = self._workspace_save_state(entry)
+                else:
+                    can_save = False
+                    save_tip = "No unsaved edits (longeron.edit) to save"
+            else:
+                can_save = False
                 save_tip = (
                     "No single source file to save back to "
                     "(use app.save_model(model, path=...) for a save-as)"
                 )
-            elif not dirty:
-                save_tip = "No unsaved edits (longeron.edit) to save"
-            else:
-                save_tip = f"Write the model back to {entry.source}"
             save_btn = W.Button(
                 description="Save",
                 disabled=not (can_save and dirty),
@@ -1325,12 +1340,36 @@ class ModelApp(W.VBox):
 
     # -- save / push -------------------------------------------------------------------
 
-    def save_model(self, model: M.Model | ModelEntry, path: str | Path | None = None) -> Path:
-        """Write the model back to its source file (or ``path``: save-as).
+    def _workspace_save_state(self, entry: ModelEntry) -> tuple[bool, str]:
+        """Whether a dirty dir-origin entry can save back, and its tooltip.
 
-        Only single-file models save back implicitly; directory-merged,
-        in-memory, and API models need an explicit ``path`` (one merged
-        file).  API models push instead: :meth:`push_model`.
+        The tooltip names exactly what a click would write
+        (:func:`longeron.export.workspace_plan`); an unmappable edit
+        disables the button and puts the refusal message on the tooltip.
+        """
+
+        try:
+            plan = export.workspace_plan(entry.model, edit.track(entry.model).changes)
+        except SysMLError as err:
+            return False, str(err)
+        if not plan:
+            return True, "No file content changes to write (Save clears the edit marker)"
+        names = ", ".join(path.name for path in plan)
+        return True, f"Writes {len(plan)} changed file(s) under {entry.source}: {names}"
+
+    def save_model(self, model: M.Model | ModelEntry, path: str | Path | None = None) -> Path:
+        """Write the model back to its source (or ``path``: save-as).
+
+        Single-file models write back to their file.  Directory-loaded
+        models write back FILE BY FILE: every tracked edit
+        (:mod:`longeron.edit`) maps to the source file its top-level
+        member was loaded from, and only files whose regenerated content
+        differs from disk are rewritten
+        (:func:`longeron.export.save_workspace`); an edit that cannot be
+        mapped -- or a top-level member with no recorded source file --
+        refuses the save with nothing written.  In-memory and API models
+        need an explicit ``path`` (one merged file).  API models push
+        instead: :meth:`push_model`.
         """
 
         entry = self._entry_for(model)
@@ -1338,6 +1377,8 @@ class ModelApp(W.VBox):
             target = Path(path)
         elif entry.origin == "file" and entry.path is not None:
             target = entry.path
+        elif entry.origin == "dir" and entry.path is not None:
+            return self._save_workspace(entry, entry.path)
         else:
             raise SysMLError(
                 f"{_display_name(entry.model)} has no single source file "
@@ -1350,6 +1391,32 @@ class ModelApp(W.VBox):
         self._refresh_list()
         self._status(f"saved {_display_name(entry.model)} to {target}", kind="ok")
         return target
+
+    def _save_workspace(self, entry: ModelEntry, root: Path) -> Path:
+        """The dir-origin save: tracked edits back to their source files."""
+
+        changes = edit.track(entry.model).changes
+        if not changes:
+            raise SysMLError(
+                f"{_display_name(entry.model)} is a directory workspace with "
+                "no tracked edits (longeron.edit) to map onto source files; "
+                "pass an explicit path to save-as one merged file"
+            )
+        written = export.save_workspace(entry.model, changes)
+        edit.track(entry.model).mark_saved()
+        self._refresh_list()
+        if written:
+            names = ", ".join(path.name for path in written)
+            self._status(
+                f"saved {_display_name(entry.model)}: wrote {names} under {entry.source}",
+                kind="ok",
+            )
+        else:
+            self._status(
+                f"saved {_display_name(entry.model)}: no file content changed",
+                kind="ok",
+            )
+        return root
 
     def push_model(self, model: M.Model | ModelEntry, message: str = "") -> dict[str, Any]:
         """Push an API-loaded model back as a commit (``client.push_commit``)."""

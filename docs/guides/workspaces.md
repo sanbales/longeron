@@ -46,6 +46,43 @@ Three rules keep directory loads deterministic:
 To merge already-loaded models, use
 {func}`~longeron.workspace.merge_models`.
 
+## Saving a workspace back, file by file
+
+A directory load remembers which file every top-level member came from
+(`member.source_file`), and {func}`~longeron.export.save_workspace`
+uses those breadcrumbs to write edits back **to the files they belong
+to** -- the save path behind the model app's Save button for
+directory-loaded entries:
+
+```python
+import longeron
+from longeron import edit, export
+
+model = longeron.load("models/")
+tracker = edit.track(model)
+edit.set_attribute_value(model, "Parts::Motor::mass", "0.075")
+export.save_workspace(model, tracker.changes)  # -> [Path("models/parts.sysml")]
+```
+
+The rules, honestly enforced:
+
+1. Every tracked edit ({mod}`longeron.edit`) maps to the top-level
+   member(s) it touched; a rename maps to **every** file whose
+   references its cascade rewrote.
+2. Only mapped files whose regenerated text differs from disk are
+   rewritten -- untouched files keep their bytes (and comments; a
+   rewritten file is regenerated in {func}`~longeron.export.to_sysml`
+   canonical form, exactly like a single-file save).
+3. Anything unmappable refuses with {class}`~longeron.errors.SysMLError`
+   and **nothing is written**: a top-level member with no recorded
+   source file (added after the load), or a change record without a
+   usable breadcrumb. The escape hatch is an explicit-path save-as
+   ({func}`~longeron.export.save`), which writes one merged file.
+
+{func}`~longeron.export.workspace_plan` returns what a save *would*
+write (`{path: new_text}`) without touching disk -- the model app uses
+it to put the file names on the Save button's tooltip.
+
 ## The model cache
 
 Parsing is the slow step: the ANTLR Python runtime takes seconds per

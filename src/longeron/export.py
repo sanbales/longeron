@@ -11,9 +11,13 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
 
 from . import model as M
 from .ast import Expr, expr_to_dict, expr_to_text
+from .errors import SysMLError
 
 # Reserved words of the SysML grammar (cannot be used as basic names).
 RESERVED_WORDS = frozenset(
@@ -169,6 +173,128 @@ def save(element: M.Element, path, fmt: str | None = None) -> None:
     else:
         raise ValueError(f"unknown format {fmt!r}")
     target.write_text(text, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Workspace (directory) save-back
+# ---------------------------------------------------------------------------
+
+
+def _workspace_groups(model: M.Model) -> dict[str, list[M.Element]]:
+    """Top-level members by recorded source file, in model member order.
+
+    Refuses (:class:`~longeron.errors.SysMLError`) when any top-level
+    member carries no ``source_file`` breadcrumb (it was added after the
+    directory load, so a per-file save could not persist it and a reload
+    would silently drop it).
+    """
+
+    groups: dict[str, list[M.Element]] = {}
+    orphans: list[str] = []
+    for member in model.members:
+        source = getattr(member, "source_file", None)
+        if source:
+            groups.setdefault(source, []).append(member)
+        else:
+            orphans.append(member.label)
+    if orphans:
+        named = ", ".join(orphans)
+        raise SysMLError(
+            f"cannot save the workspace back to its source files: {named} "
+            "carries no source-file record (added after the directory "
+            "load?); save to an explicit path for a merged save-as"
+        )
+    return groups
+
+
+def _changed_top_members(model: M.Model, changes: Iterable[Any]) -> set[M.Element]:
+    """Resolve tracked edits to the top-level members they touched.
+
+    Every :mod:`longeron.edit` operation records the model-member
+    positions of the top-level members it touched (``detail["tops"]`` --
+    for a rename, that includes every top whose references the cascade
+    rewrote).  Positions, not names: edit operations keep member
+    positions stable while later renames move names.  A change with no
+    usable breadcrumb refuses the save
+    (:class:`~longeron.errors.SysMLError` naming the edit) rather than
+    guessing which file to rewrite.
+    """
+
+    members = model.members
+    tops: set[M.Element] = set()
+    unmapped: list[str] = []
+    for op, qname, detail in changes:
+        indices = detail.get("tops") if isinstance(detail, dict) else None
+        if not indices or not all(
+            isinstance(index, int) and 0 <= index < len(members) for index in indices
+        ):
+            unmapped.append(f"{op} {qname or '<the model root>'}")
+            continue
+        tops.update(members[index] for index in indices)
+    if unmapped:
+        named = "; ".join(unmapped)
+        raise SysMLError(
+            f"cannot map the tracked edit(s) [{named}] to a top-level "
+            "member with a recorded source file; save to an explicit path "
+            "for a merged save-as"
+        )
+    return tops
+
+
+def workspace_plan(
+    model: M.Model, changes: Iterable[Any], indent: int | str = 4
+) -> dict[Path, str]:
+    """The files a workspace save would rewrite, and their new text.
+
+    ``model`` is a directory-loaded model whose top-level members carry
+    the per-file breadcrumbs :func:`longeron.workspace.load_dir` stamps;
+    ``changes`` is its tracked edit record
+    (:attr:`longeron.edit.Tracker.changes` -- any iterable of
+    ``(op, qname, detail)`` tuples).  Each edit maps to its top-level
+    member (through the change records' ``detail["tops"]`` breadcrumbs;
+    a rename maps to every top-level member its cascade rewrote
+    references in), and every mapped member's
+    source file is re-rendered whole with :func:`to_sysml`; files whose
+    regenerated text already matches the disk content are dropped, so
+    untouched files are never rewritten.  Returns ``{path: new_text}``
+    in model member order.
+
+    Honest refusals (:class:`~longeron.errors.SysMLError`, before
+    anything is written): a top-level member with no recorded source
+    file, or an edit that no longer names one.
+    """
+
+    groups = _workspace_groups(model)
+    tops = _changed_top_members(model, changes)
+    plan: dict[Path, str] = {}
+    for source, members in groups.items():
+        if not any(member in tops for member in members):
+            continue
+        text = "".join(to_sysml(member, indent) for member in members)
+        path = Path(source)
+        try:
+            current: str | None = path.read_text(encoding="utf-8")
+        except OSError:
+            current = None  # deleted since the load: recreate it
+        if text != current:
+            plan[path] = text
+    return plan
+
+
+def save_workspace(model: M.Model, changes: Iterable[Any], indent: int | str = 4) -> list[Path]:
+    """Write a directory-loaded model's tracked edits back, file by file.
+
+    The write half of :func:`workspace_plan` (same arguments, same
+    refusals -- and a refusal writes NOTHING): each file whose
+    regenerated content differs from disk is rewritten in
+    :func:`to_sysml` canonical form; every other file is left untouched,
+    byte for byte.  Returns the paths written, in model member order.
+    """
+
+    plan = workspace_plan(model, changes, indent)
+    for path, text in plan.items():
+        path.write_text(text, encoding="utf-8")
+    return list(plan)
 
 
 # ---------------------------------------------------------------------------

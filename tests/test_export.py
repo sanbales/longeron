@@ -180,3 +180,116 @@ package P {
     text = longeron.to_sysml(model)
     model2 = longeron.loads(text)
     assert longeron.to_dict(model.members[0]) == longeron.to_dict(model2.members[0])
+
+
+# ---------------------------------------------------------------------------
+# workspace (directory) save-back
+# ---------------------------------------------------------------------------
+
+PARTS_SOURCE = """\
+// hand-written header comment (only rewritten files lose comments)
+package Parts {
+    part def Motor {
+        attribute mass : Real = 0.05;
+    }
+}
+"""
+
+VEHICLE_SOURCE = """\
+package Vehicle {
+    private import Parts::*;
+    part motor : Motor;
+}
+"""
+
+
+@pytest.fixture()
+def program_dir(tmp_path):
+    (tmp_path / "parts.sysml").write_text(PARTS_SOURCE, encoding="utf-8")
+    (tmp_path / "vehicle.sysml").write_text(VEHICLE_SOURCE, encoding="utf-8")
+    return tmp_path
+
+
+class TestWorkspaceSave:
+    def test_round_trips_through_the_source_files(self, program_dir):
+        from longeron import edit, export, workspace
+
+        model = workspace.load_dir(program_dir, cache=False)
+        tracker = edit.track(model)
+        edit.rename(model, "Parts::Motor", "Rotor")  # cascades into vehicle.sysml
+        edit.set_attribute_value(model, "Parts::Rotor::mass", "0.075", validate=False)
+        written = export.save_workspace(model, tracker.changes)
+        assert sorted(path.name for path in written) == ["parts.sysml", "vehicle.sysml"]
+        # the edits landed in THEIR files...
+        assert "0.075" in (program_dir / "parts.sysml").read_text(encoding="utf-8")
+        assert "motor : Rotor" in (program_dir / "vehicle.sysml").read_text(encoding="utf-8")
+        # ...and reloading the directory reproduces the edited model
+        reloaded = workspace.load_dir(program_dir, cache=False)
+        assert longeron.to_dict(reloaded) == longeron.to_dict(model)
+
+    def test_only_changed_files_are_rewritten(self, program_dir):
+        import os
+
+        from longeron import edit, export, workspace
+
+        model = workspace.load_dir(program_dir, cache=False)
+        tracker = edit.track(model)
+        untouched = program_dir / "vehicle.sysml"
+        before = untouched.read_text(encoding="utf-8")
+        os.utime(untouched, (1_000_000_000, 1_000_000_000))  # unambiguous mtime
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.075", validate=False)
+        written = export.save_workspace(model, tracker.changes)
+        assert [path.name for path in written] == ["parts.sysml"]
+        assert untouched.read_text(encoding="utf-8") == before
+        assert untouched.stat().st_mtime == 1_000_000_000
+
+    def test_plan_drops_files_already_matching_disk(self, program_dir):
+        from longeron import edit, export, workspace
+
+        model = workspace.load_dir(program_dir, cache=False)
+        tracker = edit.track(model)
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.075", validate=False)
+        export.save_workspace(model, tracker.changes)  # canonicalizes parts.sysml
+        # an edit REVERTED before saving: dirty, mappable, nothing to write
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.05", validate=False)
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.075", validate=False)
+        tracker.mark_saved()
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.08", validate=False)
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.075", validate=False)
+        assert export.workspace_plan(model, tracker.changes) == {}
+
+    def test_member_without_provenance_refuses(self, program_dir):
+        from longeron import edit, export, workspace
+        from longeron.errors import SysMLError
+
+        model = workspace.load_dir(program_dir, cache=False)
+        tracker = edit.track(model)
+        edit.set_attribute_value(model, "Parts::Motor::mass", "0.075", validate=False)
+        model.add(M.Package(name="Ghost"))  # added after the load: no file
+        with pytest.raises(SysMLError, match="Ghost carries no source-file record"):
+            export.workspace_plan(model, tracker.changes)
+        # a refusal writes NOTHING
+        assert "0.075" not in (program_dir / "parts.sysml").read_text(encoding="utf-8")
+
+    def test_unmappable_change_refuses(self, program_dir):
+        from longeron import export, workspace
+        from longeron.errors import SysMLError
+
+        model = workspace.load_dir(program_dir, cache=False)
+        # a change with no usable 'tops' breadcrumb (e.g. recorded by a
+        # foreign tool) must refuse, never guess which file to rewrite
+        bogus = [("set_value", "Parts::Motor::mass", {"text": "1.0"})]
+        with pytest.raises(SysMLError, match="cannot map the tracked edit"):
+            export.workspace_plan(model, bogus)
+
+    def test_rename_of_a_top_package_maps_to_its_file(self, program_dir):
+        from longeron import edit, export, workspace
+
+        model = workspace.load_dir(program_dir, cache=False)
+        tracker = edit.track(model)
+        edit.rename(model, "Parts", "Catalog")  # rewrites vehicle's import too
+        written = export.save_workspace(model, tracker.changes)
+        assert sorted(path.name for path in written) == ["parts.sysml", "vehicle.sysml"]
+        assert "package Catalog" in (program_dir / "parts.sysml").read_text(encoding="utf-8")
+        reloaded = workspace.load_dir(program_dir, cache=False)
+        assert longeron.to_dict(reloaded) == longeron.to_dict(model)

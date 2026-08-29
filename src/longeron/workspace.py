@@ -159,6 +159,9 @@ def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
 
     Files are loaded in sorted path order for determinism.  ``.kerml``
     files are ignored (KerML is parse/validate-only in this package).
+    Every top-level member of the merged model records the file it came
+    from (``member.source_file``), which is what
+    :func:`longeron.export.save_workspace` writes edits back to.
     """
 
     base = Path(root)
@@ -166,7 +169,17 @@ def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
     files = sorted(base.glob(pattern))
     if not files:
         raise BuildError(f"no .sysml files found under {base}")
-    models = [load_file(p, cache=cache) for p in files]
+    models = []
+    for path in files:
+        model = load_file(path, cache=cache)
+        for member in model.members:
+            # the per-file provenance breadcrumb save-back needs
+            # (:func:`longeron.export.save_workspace`): a plain attribute,
+            # like ``source_location``, so cache entries and JSON exports
+            # are unaffected.  Stamped here -- after ``load_file`` -- so
+            # cache hits carry it too.
+            member.source_file = str(path)  # type: ignore[assignment]
+        models.append(model)
     return _merge_models_move(models, source_name=str(base))
 
 

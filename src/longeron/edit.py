@@ -179,6 +179,32 @@ def _record(model: M.Model, op: str, qname: str | None, detail: dict[str, Any]) 
         tracker._record(Change(op, qname or "", detail))
 
 
+def _top_indices(model: M.Model, *elements: M.Element | None) -> list[int]:
+    """Positions in ``model.members`` of the top-level members owning
+    ``elements`` -- the change-record breadcrumb (``detail["tops"]``)
+    workspace save-back maps edits to source files with
+    (:func:`longeron.export.save_workspace`).  Positions, not names:
+    edit operations keep member positions stable (the module docstring's
+    index-path guarantee) while later renames move names.  An element
+    not under a top-level member (the model root itself) contributes
+    nothing -- a save-back refuses such a change honestly.
+    """
+
+    found: list[int] = []
+    for element in elements:
+        node = element
+        while node is not None and node.owner is not None and node.owner is not model:
+            node = node.owner
+        if node is None or node.owner is not model:
+            continue
+        for index, member in enumerate(model.members):
+            if member is node:
+                if index not in found:
+                    found.append(index)
+                break
+    return sorted(found)
+
+
 # ---------------------------------------------------------------------------
 # shared plumbing
 # ---------------------------------------------------------------------------
@@ -758,6 +784,9 @@ def rename(model: M.Model, element_or_qname: M.Element | str, new_name: str) -> 
             "old_qname": old_qname,
             "new_qname": target.qualified_name,
             "rewritten": len(plan),
+            # the renamed element's top-level member AND every top whose
+            # references the cascade rewrote (renames cross file borders)
+            "tops": _top_indices(model, target, *(site.element for site, _, _ in plan)),
         },
     )
     return target
@@ -846,7 +875,11 @@ def set_attribute_value(
             model,
             "set_value",
             target.qualified_name,
-            {"text": None, "previous": expr_to_text(old.expr) if old else None},
+            {
+                "text": None,
+                "previous": expr_to_text(old.expr) if old else None,
+                "tops": _top_indices(model, target),
+            },
         )
         return target
     from .builder import parse_expression
@@ -870,7 +903,11 @@ def set_attribute_value(
         model,
         "set_value",
         target.qualified_name,
-        {"text": expr_to_text(expr), "previous": expr_to_text(old.expr) if old else None},
+        {
+            "text": expr_to_text(expr),
+            "previous": expr_to_text(old.expr) if old else None,
+            "tops": _top_indices(model, target),
+        },
     )
     return target
 
@@ -1097,7 +1134,12 @@ def set_doc(
         for doc in docs:
             target.members.remove(doc)
         if docs:
-            _record(model, "set_doc", target.qualified_name, {"text": None, "previous": previous})
+            _record(
+                model,
+                "set_doc",
+                target.qualified_name,
+                {"text": None, "previous": previous, "tops": _top_indices(model, target)},
+            )
         return None
     if "*/" in text:
         raise EditError("documentation text cannot contain '*/' (it terminates the comment)")
@@ -1110,5 +1152,10 @@ def set_doc(
     else:
         doc = M.Documentation(body=body)
         target.add(doc)  # APPEND, never insert (index-path id stability)
-    _record(model, "set_doc", target.qualified_name, {"text": text, "previous": previous})
+    _record(
+        model,
+        "set_doc",
+        target.qualified_name,
+        {"text": text, "previous": previous, "tops": _top_indices(model, target)},
+    )
     return doc

@@ -884,7 +884,20 @@ class TestTracker:
         tracker = edit.track(model)
         edit.set_attribute_value(model, "P::Vehicle::mass", "7.0")
         detail = tracker.changes[0].detail
-        assert detail == {"text": "7.0", "previous": "100.0"}
+        assert detail == {"text": "7.0", "previous": "100.0", "tops": [0]}
+
+    def test_changes_record_their_top_level_members(self):
+        # the workspace save-back breadcrumb (export.save_workspace):
+        # every op records the model-member POSITIONS it touched, and a
+        # rename includes every top its reference cascade rewrote
+        model = longeron.loads(
+            "package A { part def X { attribute m : Real = 1.0; } }package B { part b : A::X; }"
+        )
+        tracker = edit.track(model)
+        edit.set_doc(model, "B::b", "The build.")
+        assert tracker.changes[-1].detail["tops"] == [1]
+        edit.rename(model, "A::X", "Y")  # cascades into B's typing
+        assert tracker.changes[-1].detail["tops"] == [0, 1]
 
 
 # ---------------------------------------------------------------------------

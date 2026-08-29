@@ -372,17 +372,25 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
         label="explorer tree relabels after the rename",
     )
     # ...and the models-list row shows the dirty dot. The entry's origin
-    # is 'dir' (a workspace merge), so Save stays DISABLED by design --
-    # there is no single source file to write back to; the tooltip points
-    # at the save_model(path=...) save-as escape hatch.
+    # is 'dir' (a workspace merge): Save now ENABLES, mapping the tracked
+    # rename back to the file its package was loaded from -- the tooltip
+    # names exactly what a click would write (only changed files are
+    # ever rewritten). NOT clicked here: the load points at the real
+    # examples/deepscout sources.
     lab.wait_until(
         lambda s: page.locator(".lgx-app-name.lgx-app-dirty").count() == 1,
         timeout=60,
         label="models row shows the dirty dot",
     )
     save_btn = page.locator(f"{DRONE_ROW} button.lgx-app-save")
-    assert save_btn.is_disabled(), "dir-origin Save must stay disabled (no single file)"
-    assert "save-as" in (save_btn.get_attribute("title") or "")
+    lab.wait_until(
+        lambda s: not save_btn.is_disabled(),
+        timeout=60,
+        label="dir-origin Save enables once the tracked edit maps to its file",
+    )
+    save_title = save_btn.get_attribute("title") or ""
+    assert "multirotor.sysml" in save_title, save_title  # QuadCopter's home file
+    assert "changed file" in save_title, save_title
     page.locator(".lgx-app-host").screenshot(path=str(EVIDENCE / "app-models-dirty.png"))
 
     # -- a colliding rename is honestly refused: strip + revert -------------

@@ -19,6 +19,7 @@ pytest.importorskip("anywidget")
 
 import longeron
 from longeron import app as app_module
+from longeron import edit
 from longeron import explorer as explorer_module
 from longeron.app import ModelEntry
 from longeron.errors import MissingExtraError, SysMLError
@@ -453,14 +454,41 @@ class TestRows:
         assert score_btn.disabled
         assert score_btn.tooltip == "No requirement usages in this model"
 
-    def test_save_disabled_for_text_and_dir_models(self, monkeypatch, req_model, tmp_path):
+    def test_save_disabled_for_text_and_clean_dir_models(self, monkeypatch, req_model, tmp_path):
         (tmp_path / "a.sysml").write_text("package A { part a; }", encoding="utf-8")
         app = _open_lab(monkeypatch)
         app.add_model(req_model)
         app.load_path(tmp_path)
         _, _, _, text_save, _ = _row_buttons(app, 0)
         _, _, _, dir_save, _ = _row_buttons(app, 1)
-        assert text_save.disabled and dir_save.disabled
+        # text-origin: no source file, EVER -- the tooltip points at save-as
+        assert text_save.disabled
+        assert "save-as" in text_save.tooltip
+        # dir-origin: dirty-gated like file-origin (nothing to save yet)
+        assert dir_save.disabled
+        assert dir_save.tooltip == "No unsaved edits (longeron.edit) to save"
+
+    def test_dirty_dir_save_enables_and_names_the_files(self, monkeypatch, tmp_path):
+        (tmp_path / "a.sysml").write_text(
+            "package A { part def X { attribute m : Real = 1.0; } }", encoding="utf-8"
+        )
+        (tmp_path / "b.sysml").write_text("package B { part b : A::X; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        model = app.load_path(tmp_path)
+        edit.set_attribute_value(model, "A::X::m", "2.0", validate=False)
+        _, _, _, save_btn, _ = _row_buttons(app)
+        assert not save_btn.disabled
+        assert save_btn.tooltip == f"Writes 1 changed file(s) under {tmp_path}: a.sysml"
+
+    def test_dirty_dir_save_disables_on_an_unmappable_edit(self, monkeypatch, tmp_path):
+        (tmp_path / "a.sysml").write_text("package A { part a; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        model = app.load_path(tmp_path)
+        model.add(longeron.loads("package Ghost;").members[0])  # no source file
+        edit.set_doc(model, "Ghost", "orphaned")  # dirty, but unmappable
+        _, _, _, save_btn, _ = _row_buttons(app)
+        assert save_btn.disabled
+        assert "Ghost carries no source-file record" in save_btn.tooltip
 
     def test_name_click_selects_the_model(self, monkeypatch, req_model, plain_model):
         app = _open_lab(monkeypatch)
@@ -736,6 +764,42 @@ class TestSavePush:
         app.add_model(req_model)
         with pytest.raises(SysMLError, match="no single source file"):
             app.save_model(req_model)
+
+    def test_workspace_save_writes_only_the_edited_files(self, monkeypatch, tmp_path):
+        (tmp_path / "a.sysml").write_text(
+            "package A { part def X { attribute m : Real = 1.0; } }", encoding="utf-8"
+        )
+        (tmp_path / "b.sysml").write_text("package B { part b : A::X; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        model = app.load_path(tmp_path)
+        untouched = (tmp_path / "b.sysml").read_text(encoding="utf-8")
+        edit.set_attribute_value(model, "A::X::m", "2.0", validate=False)
+        target = app.save_model(model)
+        assert target == tmp_path  # the workspace root, not one file
+        assert "2.0" in (tmp_path / "a.sysml").read_text(encoding="utf-8")
+        assert (tmp_path / "b.sysml").read_text(encoding="utf-8") == untouched
+        # the tracker marked saved: the dot clears and Save disables again
+        assert not edit.track(model).dirty
+        _, _, _, save_btn, _ = _row_buttons(app)
+        assert save_btn.disabled
+        assert "wrote a.sysml" in app._status_html.value
+
+    def test_workspace_save_needs_tracked_edits(self, monkeypatch, tmp_path):
+        (tmp_path / "a.sysml").write_text("package A { part a; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        model = app.load_path(tmp_path)
+        model.members[0].name = "Direct"  # bypasses longeron.edit: unmappable
+        with pytest.raises(SysMLError, match="no tracked edits"):
+            app.save_model(model)
+
+    def test_workspace_save_as_with_explicit_path(self, monkeypatch, tmp_path):
+        (tmp_path / "a.sysml").write_text("package A { part a; }", encoding="utf-8")
+        (tmp_path / "b.sysml").write_text("package B { part b; }", encoding="utf-8")
+        app = _open_lab(monkeypatch)
+        model = app.load_path(tmp_path)
+        target = app.save_model(model, path=tmp_path / "merged.sysml")
+        text = target.read_text(encoding="utf-8")
+        assert "package A" in text and "package B" in text
 
     def test_push_requires_an_api_entry(self, monkeypatch, req_model):
         app = _open_lab(monkeypatch)
