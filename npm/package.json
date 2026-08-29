@@ -1,6 +1,6 @@
 {
   "name": "longeron",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "JupyterLab launcher tile for Longeron: define, execute, and replay SysML v2 models. Python package: `pip install longeron` (the wheel ships this prebuilt extension).",
   "keywords": [
     "jupyter",
