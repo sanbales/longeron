@@ -654,8 +654,11 @@ def _marker_node(text: str | None = None) -> Node:
 
 
 #: convergence anchors for control glyphs (fixed sides, centered): all
-#: incoming edges join at ONE west port, all outgoing leave from ONE east
-#: port, so multi-branch fans meet the tiny glyph at a single point each
+#: incoming edges join at ONE port, all outgoing leave from ONE port, so
+#: multi-branch fans meet the tiny glyph at a single point each.  Sides
+#: follow the flow axis (west/east for horizontal flows, north/south for
+#: vertical); ``toolbar.apply_direction`` re-derives them on every
+#: direction change (``_orient_glyphs``)
 _ANCHOR_LAYOUT = {
     "elk.portConstraints": "FIXED_SIDE",
     "elk.portAlignment.default": "CENTER",
@@ -664,9 +667,10 @@ _ANCHOR_LAYOUT = {
 
 def _add_anchor_ports(node: Node) -> Node:
     """Give a glyph node single in/out convergence points (invisible 0-size
-    ELK ports on its west/east sides).  Fork/join bars deliberately do NOT
-    get these: their edges distribute along the bar's long side, which is
-    the bar's semantic."""
+    ELK ports on its west/east sides -- the horizontal-flow default;
+    ``toolbar._orient_glyphs`` moves them to north/south under vertical
+    flows).  Fork/join bars deliberately do NOT get these: their edges
+    distribute along the bar's long side, which is the bar's semantic."""
 
     node.layoutOptions.update(_ANCHOR_LAYOUT)
     for side, key in (("WEST", "in"), ("EAST", "out")):
@@ -693,7 +697,9 @@ def _anchor(node: Node, key: str) -> Node | Port:
 
 def _add_center_anchor(node: Node) -> Node:
     """Anchor EVERY spoke at the junction dot's CENTER: two invisible
-    fixed-side ports (in = WEST, out = EAST) whose ``elk.port.anchor``
+    fixed-side ports (in = WEST, out = EAST for the horizontal-flow
+    default; ``toolbar._orient_glyphs`` re-derives side and anchor on
+    the flow axis per direction change) whose ``elk.port.anchor``
     pulls the attachment point to the glyph's midpoint, so the fan
     visually radiates from the dot itself -- the spec's n-ary figures
     (printed pp.19, 66) draw all lines meeting AT the dot, and border
@@ -3054,9 +3060,11 @@ def _action_step_node(element: M.Element, title: str) -> Node:
 
     if isinstance(element, M.ControlNode):
         if element.kind in ("fork", "join"):
-            # a thick filled bar, perpendicular to the (horizontal) flow;
-            # fork vs join is topology, the glyph is identical; edges
-            # deliberately distribute along the bar (no anchor ports)
+            # a thick filled bar, PERPENDICULAR to the flow -- built for
+            # the horizontal default; toolbar._orient_glyphs transposes
+            # the dimensions on every direction change; fork vs join is
+            # topology, the glyph is identical; edges deliberately
+            # distribute along the bar (no anchor ports)
             return _glyph_node(element, title, "sysml-ctrl-bar", _BAR_SHORT, _BAR_LONG)
         # decision vs merge: identical empty rhombus, role by topology
         return _add_anchor_ports(

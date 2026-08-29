@@ -62,7 +62,7 @@ except ImportError as _err:  # pragma: no cover - exercised without ipyelk
         command="pip install -e vendor/ipyelk",
     ) from _err
 
-from .render import _SYNTH_ID_PREFIX, _measure
+from .render import _BAR_LONG, _BAR_SHORT, _SYNTH_ID_PREFIX, _measure
 
 __all__ = [
     "DIRECTIONS",
@@ -210,10 +210,13 @@ def apply_direction(root: Any, direction: str) -> str:
     ``SEPARATE_CHILDREN`` packing grids keep their own default flow (they
     stay wide either way, which is what the pack-aspect chains assume).
 
-    The one per-node companion is :func:`_fit_compound_labels`: elkjs
+    The per-node companions are :func:`_fit_compound_labels` (elkjs
     sizes EXPANDED compound nodes on the wrong axis under vertical flows,
-    so the compartment-bearing containers get their width pinned (or
-    their horizontal defaults restored) alongside every direction change.
+    so the compartment-bearing containers get their width pinned or
+    their horizontal defaults restored alongside every direction change)
+    and :func:`_orient_glyphs` (direction-sensitive glyph geometry --
+    fork/join bar dimensions and the fixed-side convergence anchors --
+    is re-derived for the new flow axis).
 
     Already-computed edge routes are dropped for the same reason
     :func:`apply_routing` drops them: a direction change makes them stale,
@@ -227,10 +230,68 @@ def apply_direction(root: Any, direction: str) -> str:
         choices = " or ".join(word.lower() for word in DIRECTIONS)
         raise ValueError(f"direction must be {choices}; not {direction!r}")
     root.layoutOptions["elk.direction"] = name
-    _fit_compound_labels(root, transposed=name in ("DOWN", "UP"))
+    transposed = name in ("DOWN", "UP")
+    _fit_compound_labels(root, transposed=transposed)
+    _orient_glyphs(root, transposed=transposed)
     for edge in _iter_edges(root):
         edge.sections = None
     return name
+
+
+#: convergence-anchor port sides per flow axis: incoming edges join where
+#: the flow ENTERS the glyph (west for horizontal flows, north for
+#: vertical), outgoing leave where it EXITS (east/south)
+_ANCHOR_SIDES = {"in": ("WEST", "NORTH"), "out": ("EAST", "SOUTH")}
+
+
+def _orient_glyphs(root: Any, transposed: bool) -> None:
+    """Re-derive direction-sensitive glyph geometry for the active flow.
+
+    Two glyph families encode the flow axis in their geometry and must
+    transpose with every direction change (both are built for the
+    horizontal default by :mod:`longeron.diagrams`):
+
+    * **fork/join bars** (``sysml-ctrl-bar``) are thick filled bars
+      PERPENDICULAR to the flow (spec action-flow figures, printed
+      pp.92/97/227): tall-and-thin for horizontal flows, wide-and-flat
+      for vertical ones.  Without the transpose a T->D toggle bunches
+      every edge along the bar's 6px SHORT side.
+
+    * **convergence anchors** -- the invisible zero-size fixed-side
+      ports carrying ``properties.key`` ``in``/``out`` (decision/merge
+      diamonds, start/done/terminate glyphs, n-ary junction dots; see
+      ``diagrams._add_anchor_ports`` / ``_add_center_anchor``) -- must
+      follow the flow axis: in at west/east for horizontal flows, at
+      north/south for vertical ones (edges otherwise detour around the
+      glyph to reach the stale side).  A center-pulling
+      ``elk.port.anchor`` (the junction dots) is re-derived on the same
+      axis.  REAL drawn ports (SysML port squares) are model notation,
+      not flow geometry: they carry cssClasses and no in/out key, and
+      are deliberately left alone.
+
+    Geometry is re-DERIVED from the constants each call (never swapped
+    in place), so any toggle sequence is idempotent and a round trip
+    restores the constructed tree exactly.
+    """
+
+    axis = 1 if transposed else 0
+    for node in _iter_nodes(root):
+        if "sysml-ctrl-bar" in (node.properties.cssClasses or ""):
+            size = (_BAR_LONG, _BAR_SHORT) if transposed else (_BAR_SHORT, _BAR_LONG)
+            node.width, node.height = size
+        for port in node.ports:
+            sides = _ANCHOR_SIDES.get(port.properties.key or "")
+            if sides is None or port.properties.cssClasses:
+                continue  # a real drawn port, not a convergence anchor
+            port.layoutOptions["elk.port.side"] = sides[axis]
+            if "elk.port.anchor" in port.layoutOptions:
+                # center anchors (junction dots): pull the attachment to
+                # the glyph midpoint along the NEW flow axis
+                half = (node.width or 0) / 2
+                offset = half if port.properties.key == "in" else -half
+                port.layoutOptions["elk.port.anchor"] = (
+                    f"(0,{offset:g})" if transposed else f"({offset:g},0)"
+                )
 
 
 #: the node-box defaults the compound-label fit restores/derives from --

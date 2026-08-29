@@ -434,6 +434,206 @@ class TestDirectionToggle:
             apply_direction(widget.source.value, "diagonal")
 
 
+_FORKJOIN = """
+package P {
+    action def Flow {
+        action a;
+        action b;
+        fork f;
+        join j;
+        decide d;
+        merge g;
+        first start then f;
+        first f then a;
+        first f then b;
+        first a then j;
+        first b then j;
+        first j then d;
+        first d if x > 0 then g;
+        first d then g;
+        first g then done;
+    }
+}
+"""
+
+
+class TestDirectionGlyphs:
+    """apply_direction's glyph companion (_orient_glyphs): direction-
+    sensitive glyph geometry is re-DERIVED on every direction change.
+    Fork/join bars are PERPENDICULAR to the flow (spec action-flow
+    figures, printed pp.92/97/227) so a vertical flow transposes the
+    bar's dimensions -- the maintainer repro: after an L->R -> T->D
+    toggle the bars stayed tall-and-thin and every edge bunched on the
+    6px short side.  The invisible convergence anchors (decision/merge
+    diamonds, start/done/terminate glyphs, junction dots) move to the
+    flow axis (in = north, out = south under DOWN) so fans keep meeting
+    the glyph head-on instead of detouring to the stale west/east
+    sides.  Real drawn ports (SysML port squares) are model notation,
+    not flow geometry, and never move."""
+
+    def _flow(self, **kwargs):
+        return diagrams.action_diagram(longeron.loads(_FORKJOIN).find("P::Flow"), **kwargs)
+
+    @staticmethod
+    def _by_css(root) -> dict:
+        by_css: dict = {}
+        for node in _iter_nodes(root):
+            for fragment in (node.properties.cssClasses or "").split():
+                by_css.setdefault(fragment, node)
+        return by_css
+
+    @staticmethod
+    def _sides(node) -> list:
+        return [(port.properties.key, port.layoutOptions["elk.port.side"]) for port in node.ports]
+
+    def test_bar_transposes_with_the_flow(self):
+        from longeron.render import _BAR_LONG, _BAR_SHORT
+
+        widget = self._flow()
+        root = widget.source.value
+        bars = [n for n in _iter_nodes(root) if "sysml-ctrl-bar" in n.properties.cssClasses]
+        assert len(bars) == 2  # fork f + join j
+        assert all((bar.width, bar.height) == (_BAR_SHORT, _BAR_LONG) for bar in bars)
+        apply_direction(root, "down")  # vertical flow: a horizontal bar
+        assert all((bar.width, bar.height) == (_BAR_LONG, _BAR_SHORT) for bar in bars)
+        apply_direction(root, "right")  # round trip restores exactly
+        assert all((bar.width, bar.height) == (_BAR_SHORT, _BAR_LONG) for bar in bars)
+
+    def test_anchor_sides_follow_the_flow_axis(self):
+        widget = self._flow()
+        root = widget.source.value
+        glyphs = self._by_css(root)
+        for css in ("sysml-ctrl-diamond", "sysml-marker", "sysml-final"):
+            assert self._sides(glyphs[css]) == [("in", "WEST"), ("out", "EAST")], css
+        apply_direction(root, "down")
+        for css in ("sysml-ctrl-diamond", "sysml-marker", "sysml-final"):
+            assert self._sides(glyphs[css]) == [("in", "NORTH"), ("out", "SOUTH")], css
+            # still single-point convergence: constraints untouched
+            node = glyphs[css]
+            assert node.layoutOptions["elk.portConstraints"] == "FIXED_SIDE"
+            assert node.layoutOptions["elk.portAlignment.default"] == "CENTER"
+        apply_direction(root, "right")
+        for css in ("sysml-ctrl-diamond", "sysml-marker", "sysml-final"):
+            assert self._sides(glyphs[css]) == [("in", "WEST"), ("out", "EAST")], css
+
+    def test_terminate_anchor_flips_too(self):
+        model = longeron.loads("""
+            package T {
+                item def Go;
+                action def Abort {
+                    action warn send new Go() via ch;
+                    terminate;
+                }
+            }
+        """)
+        root = diagrams.action_diagram(model.find("T::Abort")).source.value
+        terminate = self._by_css(root)["sysml-terminate"]
+        apply_direction(root, "down")
+        assert self._sides(terminate) == [("in", "NORTH"), ("out", "SOUTH")]
+
+    def test_round_trip_restores_the_constructed_geometry(self):
+        """L->R -> T->D -> L->R is lossless: geometry is re-derived from
+        the constants each call, never swapped in place."""
+
+        def snapshot(root):
+            return [
+                (
+                    node.width,
+                    node.height,
+                    [(port.properties.key, dict(port.layoutOptions)) for port in node.ports],
+                )
+                for node in _iter_nodes(root)
+            ]
+
+        widget = self._flow()
+        root = widget.source.value
+        constructed = snapshot(root)
+        apply_direction(root, "down")
+        assert snapshot(root) != constructed  # the flip really moved things
+        apply_direction(root, "right")
+        assert snapshot(root) == constructed
+
+    def test_junction_center_anchors_follow_the_flow_axis(self):
+        """The n-ary junction dots carry center-pulling anchors on their
+        convergence ports; the anchor offset moves to the flow axis with
+        the side (same helper, same round trip)."""
+
+        from longeron.render import _JUNCTION_SIZE
+
+        model = longeron.loads("""
+            package P {
+                part a;
+                part b;
+                part s;
+                dependency Multi from a, b to s;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        junction = self._by_css(root)["sysml-junction"]
+        half = _JUNCTION_SIZE / 2
+        anchors = {p.properties.key: p.layoutOptions for p in junction.ports}
+        assert anchors["in"]["elk.port.anchor"] == f"({half:g},0)"
+        assert anchors["out"]["elk.port.anchor"] == f"(-{half:g},0)"
+        apply_direction(root, "down")
+        assert self._sides(junction) == [("in", "NORTH"), ("out", "SOUTH")]
+        assert anchors["in"]["elk.port.anchor"] == f"(0,{half:g})"
+        assert anchors["out"]["elk.port.anchor"] == f"(0,-{half:g})"
+        apply_direction(root, "right")
+        assert self._sides(junction) == [("in", "WEST"), ("out", "EAST")]
+        assert anchors["in"]["elk.port.anchor"] == f"({half:g},0)"
+
+    def test_constructor_direction_down_builds_oriented_glyphs(self):
+        """The ``direction="down"`` kwarg routes through the same helper
+        (_finish -> apply_direction), so a top-down diagram is born with
+        transposed bars and north/south anchors."""
+
+        from longeron.render import _BAR_LONG, _BAR_SHORT
+
+        root = self._flow(direction="down").source.value
+        glyphs = self._by_css(root)
+        bar = glyphs["sysml-ctrl-bar"]
+        assert (bar.width, bar.height) == (_BAR_LONG, _BAR_SHORT)
+        assert self._sides(glyphs["sysml-ctrl-diamond"]) == [("in", "NORTH"), ("out", "SOUTH")]
+
+    def test_toolbar_toggle_routes_through_the_same_helper(self):
+        """The DirectionTool's click path orients the glyphs on the source
+        tree -- the live toggle, not just the constructor."""
+
+        from longeron.render import _BAR_LONG, _BAR_SHORT
+
+        widget = self._flow()
+        widget.get_tool(DirectionTool).ui.click()  # RIGHT -> DOWN
+        bar = self._by_css(widget.source.value)["sysml-ctrl-bar"]
+        assert (bar.width, bar.height) == (_BAR_LONG, _BAR_SHORT)
+
+    def test_real_drawn_ports_never_move(self):
+        """SysML port squares (cssClasses-bearing, no in/out key) are model
+        notation: their pinned sides and side-oriented arrow symbols
+        survive every direction change untouched."""
+
+        model = longeron.loads("""
+            package P {
+                item def Item1;
+                port def Pout { out item y : Item1; }
+                port def Pin { in item x : Item1; }
+                part part1 { port po : Pout; }
+                part part2 { port pi : Pin; }
+                interface if1 connect part1.po to part2.pi;
+            }
+        """)
+        root = diagrams.structure_diagram(model).source.value
+        apply_direction(root, "down")
+        drawn = [
+            port for node in _iter_nodes(root) for port in node.ports if port.properties.cssClasses
+        ]
+        assert drawn  # the model really has port squares
+        for port in drawn:
+            direction = "out" if "sysml-port-out" in port.properties.cssClasses else "in"
+            side = "EAST" if direction == "out" else "WEST"
+            assert port.layoutOptions["elk.port.side"] == side
+            assert port.properties.shape.use == f"port-{direction}-{side.lower()}"
+
+
 class TestCompoundLabelFit:
     """apply_direction's per-node companion (_fit_compound_labels): elkjs
     0.9.3 sizes EXPANDED compound nodes under a vertical flow in its
