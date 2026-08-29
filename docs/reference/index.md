@@ -59,7 +59,7 @@ same ground.
 
 | Page | Module | What lives there |
 |---|---|---|
-| [Overview](widgets/index.md) | `longeron.widgets` | the widget layer: toolkit, new-widget home, catalog |
+| [Overview](widgets/index.md) | `longeron.widgets` | THE catalog: every house widget behind one lazy import; the authors' toolkit; the home for new widgets |
 | [RDF graph in 3D](widgets/graph3d.md) | `longeron.widgets.graph3d` | force-directed RDF projection explorer |
 
 ```{toctree}
