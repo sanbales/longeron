@@ -2,24 +2,99 @@
 
 ## 0.11.0 (unreleased)
 
-- **Config-keyed 3D rendering, as a seam**
-  (`longeron.analysis.link.bind_config_view` +
-  `longeron.analysis.grand.scene_for`): tutorial 7's inline pattern --
-  click anything, render the craft that owns it -- becomes one reusable
-  call over any house selection surface (a diagram, an
-  explorer-protocol tree). `scene_for` dispatches BOTH DeepScout
-  families through one entry point: a MultiRotor build configuration
-  bakes from its own M0 population (per-individual identity keys), a
-  fleet airframe shell (`TeardropQuad`, `HexLifter`, `VtolWing`, ...)
-  bakes from its own attributes via the extracted
-  `geometry.airframe_geometry` ladder, and the mission catalog's
-  variant usages resolve to the definitions that type them. Swaps
-  happen only when the resolved configuration changes (no flicker),
-  unrenderable selections keep the scene, rebinding is idempotent, and
-  mesh picks still select the source node. `grand_dashboard` wires the
-  binding into its 3D pane by default (`dash.config_view`); the camera
-  what-if keeps measuring the home assembly while another craft is
-  showing
+### The DeepScout program
+
+- **One program replaces the three example models**
+  (`examples/deepscout/`): six files, one workspace, open-closed -- a
+  new configuration lands in its family file without touching the
+  shared physics. `parts.sysml` is the component catalog,
+  `aircraft.sysml` the abstract `Aircraft` root with the discipline
+  packages, requirement definitions, behaviors, and units,
+  `multirotor.sysml` the rotorcraft family plus the fleet airframes,
+  `vtolwing.sysml` the `VtolWing` and `DartInterceptor` branch,
+  `missions.sysml` the three missions plus the MAUT scoring hierarchy
+  (`ScoutMissions::scoring` -- the scoreboard scores the same truth
+  the trades trade), and `sizing.sysml` the CP-SAT structural catalog.
+  `longeron.load("examples/deepscout")` loads the whole program; the
+  old `drone.sysml`, `uav_missions.sysml`, and `drone_catalog.sysml`
+  are gone (see the upgrade notes below)
+
+- **Real parts on nominal manufacturer figures**: the catalog carries
+  two component classes -- the F450-class bench kit (DJI Flame Wheel
+  F450, EMAX MT2213-935KV with its bench thrust table, APC 10x4.5MR
+  props, Tattu 5200mAh 3S pack, Hobbywing XRotor 40A ESC, Pixhawk 6C
+  Mini, GPS/RC/telemetry, tall-skid gear) and a heavy 6S lineup
+  (T-Motor/SunnySky motors with power ceilings, APC/T-Motor props
+  behind a genuine `propFit` bind, three Tattu LiPos against a 6S6P
+  NCR18650GA li-ion pack at the honest 1.3-1.6x pack-level advantage,
+  payload optics priced like life). Every figure is declared nominal
+  at the package level. The chemistry axis resolves per mission: ISR
+  goes li-ion (+47 min on station), logistics takes the 16Ah LiPo and
+  the winch, intercept stays all-LiPo
+
+- **The multirotor family -- tri, quad, hexa, coax-X8, flat-eight
+  octo -- and no configuration wins everything**: an abstract
+  `MultiRotor` owns everything the configurations share (equipment
+  bay, wiring, the attitude physics chain, hover and takeoff
+  constraints), and the REDEFINED MULTIPLICITIES ARE THE ARCHITECTURE
+  DIFFERENCE -- `motors[4]` vs `frontMotors[2] + tailMotor` vs six on
+  60-degree arms vs `upperMotors[4] + lowerMotors[4]` with the coax
+  wake penalty visible in the hover amps. `FailSafeHover` -- hover
+  with any single motor out -- is satisfied by the hexa, the X8, and
+  the octo only; the quad's and tri's missing edges are the point. The
+  family matrix holds no all-rounder: the quad takes endurance with
+  zero redundancy, the tri takes price but busts the mission budget,
+  the hexa takes redundancy and the biggest payload envelope but is
+  heaviest and thirstiest, the X8 takes redundancy and the fastest
+  cruise in the quad's own footprint at the highest price. Geometry
+  goes N-arm parametric -- arms at odd multiples of pi/N, stations
+  spaced so adjacent discs just clear for any N, coax discs stacked on
+  drawn standoffs -- so every architecture renders to scale, and the
+  disc-overlap and occlusion checks run per configuration (they find
+  the X8's lower forward discs grazing the belly camera's view cone)
+
+- **Payload and payload-range**: ten derived `MultiRotor` attributes
+  -- `emptyMass`, `mtowPayload`, `thrustLimitPayload` (exact algebraic
+  inversion of the hover margin), `maxPayload` with its BINDING limit
+  named, `failsafePayload` (redundancy priced in kilograms),
+  `reserveFraction`, `cruiseRange`, `payloadRangeKgKm`. The table
+  teaches: only the tri is thrust-bound (every other configuration
+  runs out of book MTOW first); the X8's and octo's failsafePayload
+  EXCEED their maxPayload, so the whole envelope survives a motor
+  failure; the quad fails motor-out even empty. Three independent
+  roads agree, all asserted: the model's closed-form hexa
+  failsafePayload (0.44451 kg) matches `verify.hunt`'s independently
+  bisected edge (0.4445), and the X8's mtowPayload (0.498 kg) is
+  exactly the 249/500 envelope bound Z3 attributes to
+  `takeoffMassLimit`. Tutorial 4 gains the payload-range diagram, one
+  curve per configuration, each ending at its ceiling
+
+- **The crossed catalog: 288 -> 1280 platform mixes** (mission spaces
+  864 -> 3840): motors, props, and packs cross both airframe branches,
+  with honest infeasibility -- `propFit`, `packPower`, and `cellMatch`
+  refuse the mixes that cannot fly instead of pricing them. The
+  S1000-class `HexLifter` loiters 26.5 min on li-ion; the big-motor
+  dart keeps the dash crown; restricted to the legacy variants, the
+  old counts reproduce exactly. Full interpreter enumeration of all
+  three mission spaces runs in 1.9 s, CP-SAT agrees mix-for-mix in
+  1.03 s, and the dashboard bakes all 1280 candidates in 2.65 s
+
+- **Current budgets and attitude, derived not asserted**:
+  `continuousThrustFraction` stops being a magic constant and derives
+  as the min of the throttle-cap, ESC, and pack-C ceilings; a
+  `MotorCurrent` calc reproduces the bench table's current column;
+  `PropThrust` recalibrates against the bench table (Ct 0.11 -> 0.097,
+  the calibration shown in the model); and the hover (13.35 A) and
+  cruise (15.40 A) current budgets roll up as asserts that Z3 proves
+  safe inside the takeoff envelope. Attitude comes from the model too:
+  `MaxTilt = arccos(mg/T)` at the usable continuous thrust,
+  `CruiseTilt` capped by the operational limit, `TiltForSpeed` from
+  the parasite-drag balance, and a `MissionTime` calc over the
+  waypoint legs whose budget lands on the scoreboard as a requirement
+  -- the Cesium quad flies its route at the model-derived tilt instead
+  of pitching vertical
+
+### The curriculum
 
 - **The tutorial curriculum, rebuilt**: fifteen feature-tour notebooks
   become nine tutorials with one arc -- *data -> execution -> reading ->
@@ -36,6 +111,8 @@
   4 (trades), 5 (with 09, individuals), and 6 (with 13, requirements);
   10 -> 7; 08 -> 8; 15 -> 9; 11 -> the notation gallery; the
   `isr_scoring` inline model retired into the fleet model
+
+### Verification and conformance
 
 - **`longeron.analysis.verify`: model-driven requirement-violation
   hunting** ([design doc](design/verify.md); supersedes and
@@ -68,7 +145,7 @@
     the assumption set (UNSAT = no configuration can violate -- sampling
     can never say that), SAT witnesses believed only after interpreter
     re-check, and exact rational bounds attributed to their binding
-    constraint (max drone payload = `23/50` kg, bound by
+    constraint (the X8's max payload = `249/500` kg, bound by
     `takeoffMassLimit`)
   - `verify.verify` dispatches by scope kind; every catch
     `materialize()`s to identified M0 individuals; vacuous passes
@@ -84,6 +161,49 @@
   - extras restructured: `verify = ["hypothesis>=6.100",
     "longeron[smt]"]`, plus composites `analysis`, `ui`, and `all`
     (`cad` deliberately excluded from `all`)
+
+- **Conformance, measured and enforced**
+  ([design](design/conformance.md)): the 309/309 corpus badge is a
+  positive-only claim (every file of the pinned OMG corpus parses and
+  builds), so the negative direction is now its own suite: 75
+  spec-cited rejection cases -- 28 parse rejections, 37 semantic
+  errors, 10 reference problems pinned as diagnosed -- with 2 known
+  permissiveness gaps tracked as strict xfails, visible and
+  un-regressable. The permissiveness burn-down flips 34 of 36 known
+  gaps into enforced diagnostics (usage-vs-type metatype conformance,
+  interface ends must be ports, exhibit-of-non-state,
+  perform-of-non-action, duplicate sibling names, multiplicity bounds,
+  unresolved qualified references and enum literals, the redefinition
+  featuring-type family) with the corpus as the make-or-break gate:
+  309/309 still parse and build with zero new corpus errors. A
+  generative tier (Hypothesis) hunts the toolchain itself: composite
+  strategies generate valid SysML text by construction, adversarial
+  mutations must produce clean diagnostics and never a traceback,
+  round-trip invariants run over generated models, and a spec-cited
+  catalog of invalidating mutations counts every silently accepted
+  mutant as a finding -- 12 new gaps found this way, each verified
+  against the pilot implementation's own validator sources
+
+- **Strict mode** (`validate(strict=True)` / `longeron lint
+  --strict`): the resolution-failure family (`unresolved-reference`,
+  `unresolved-name`, `unresolved-unit`, `dangling-expose`,
+  `dangling-flow`, `dangling-succession`) promotes from warning to
+  error, and a bare `import` (no visibility prefix) warns as
+  `bare-import` -- never an error; the notation appears in
+  OMG-authored text. Deliberately not promoted: `stdlib-implicit-name`
+  (a successful resolution), the dimensional-lint codes, and the style
+  codes. **Behavior change**: the CLI exit code is error-count-only in
+  both modes -- the old `--strict` failed on any warning. What
+  `--strict` means against OMG's own files is measured and published:
+  142 of 309 corpus files carry at least one strict-mode diagnostic,
+  dominated by cross-file references. And one new DEFAULT-mode error:
+  a literal multiplicity range whose lower bound exceeds its upper
+  (`part p : D[3..1];`) rejects as `multiplicity-bound-order` --
+  deliberately stricter than the pilot implementation, the divergence
+  recorded in [the validation guide](guides/validation.md)
+
+### Analysis objects and units
+
 - **Object-valued analysis I/O in the OpenMDAO bridge**
   ([design doc](design/mdao-objects.md), all seven decisions
   adopted): objects -- not just scalars -- cross `build_problem`, on
@@ -125,7 +245,7 @@
   - Picklability is asserted at bind time with an error naming the
     offender (the recipes-not-solids rule enforced); serial discrete
     transfers alias by reference, so payloads stay frozen by
-    convention. Tutorial 07 closes with a discrete motor-entity case
+    convention. Tutorial 5 closes with a discrete motor-entity case
     swap and a `FileArtifact` roundtrip
 
 - **Units, tiers 2 and 3 of the units design**
@@ -164,6 +284,259 @@
     OpenMDAO/scoreboard conversion hooks are documented seams
     ([reference](reference/units.md#conversion-seams-reserved-for-011))
     wired next release
+
+### The widgets layer
+
+- **`longeron.widgets`, the catalog**: one import for every house
+  widget -- 17 canonical entries re-exported under `longeron.widgets`
+  (the explorer and its tree engine, the review workbench and the
+  inspector, the four diagram entries, the replay player, the
+  scoreboard, both dashboards, the mesh and mission viewers, and the
+  RDF graph), each entry the one the tutorials teach. Lazy by
+  construction (PEP 562): the import pulls no widget toolkit until an
+  entry is touched, and extras-gated entries raise `MissingExtraError`
+  with the exact install command on access. The
+  [catalog page](reference/widgets/index.md) and `__all__` cannot
+  drift: a test parses the table and compares the sets. Composables
+  (parallel coordinates, N2, toolbar tools) stay excluded --
+  destinations only
+
+- **`longeron.widgets.graph3d`: the knowledge graph in 3D**: the RDF
+  projection becomes a force-directed explorer on the house three.js
+  platform, no new dependencies. The default view is designed, not
+  dumped: on DeepScout, 8,606 triples become 1,134 element nodes and
+  1,355 relationship edges -- literals fold into hover payloads
+  (`literals=True` opts back in) -- as instanced spheres sized by
+  degree and colored with the explorer chip palette, edges styled by
+  predicate family, namespace and edge-family filters in-scene, and a
+  node cap with an honest notice. The top-center slider morphs the
+  whole graph between the seeded force layout and a layered hierarchy
+  (one ring per layer, package roots at the apex) at animation rate
+  with zero kernel round trips. Focus mode extracts the selection's
+  k-hop neighborhood with a breadcrumb back out; type-ahead search
+  flies the camera to its match; billboard labels density-cap and
+  fade with camera distance; the control panel -- toggle pills, slim
+  sliders, hairline borders -- follows JupyterLab's theme into dark
+  mode; `export_html(path)` writes a standalone page. Graph clicks
+  speak the house selection contract, so the graph joins the
+  linked-view family
+
+- **Config-keyed 3D rendering, as a seam**
+  (`longeron.analysis.link.bind_config_view` +
+  `longeron.analysis.grand.scene_for`): tutorial 7's inline pattern --
+  click anything, render the craft that owns it -- becomes one reusable
+  call over any house selection surface (a diagram, an
+  explorer-protocol tree). `scene_for` dispatches BOTH DeepScout
+  families through one entry point: a MultiRotor build configuration
+  bakes from its own M0 population (per-individual identity keys), a
+  fleet airframe shell (`TeardropQuad`, `HexLifter`, `VtolWing`, ...)
+  bakes from its own attributes via the extracted
+  `geometry.airframe_geometry` ladder, and the mission catalog's
+  variant usages resolve to the definitions that type them. Swaps
+  happen only when the resolved configuration changes (no flicker),
+  unrenderable selections keep the scene, rebinding is idempotent, and
+  mesh picks still select the source node. `grand_dashboard` wires the
+  binding into its 3D pane by default (`dash.config_view`); the camera
+  what-if keeps measuring the home assembly while another craft is
+  showing
+
+- **The Longeron launcher tile**: the JupyterLab launcher gains a
+  Longeron tile (and the `longeron:launch` palette command) that opens
+  the review workbench with zero notebooks -- one click creates a
+  named console session, imports `longeron.app`, and docks the
+  sidebar; a second click reconnects instead of duplicating; a missing
+  extra surfaces as a toast with the pip hint. The built extension
+  ships in the wheel
+
+- **Workspace save: edits write back to their source files**: models
+  loaded from a directory now save. Directory loading records each
+  top-level member's source file at the merge; every `longeron.edit`
+  operation records the members it touched -- a rename records every
+  member its reference cascade rewrote, across files;
+  `export.workspace_plan` groups changes by source file, re-renders
+  each mapped file whole (per-member emission proven byte-identical
+  to whole-model emission), and drops files whose regenerated text
+  already matches disk. `save_workspace` writes exactly the plan;
+  refusals write NOTHING and name their reason, with the save-as
+  escape hatch spelled out. The app's Save button enables for dirty
+  workspace entries, and its tooltip names the files it will write
+
+- **Inspector: units first-class, relationships get real sheets**:
+  the value field shows `1.5 kg` -- magnitude plus resolved symbol --
+  instead of raw bracket-expression text, and commits round-trip
+  through the current unit reference; a read-only Unit row renders
+  `kg -- mass` (quantity-typed unvalued attributes included); the
+  typed-by row renders `Real [kg]` when a unit annotation exists --
+  type and unit are different facts, both visible, neither posing as
+  the other. Selecting a relationship yields a real sheet: dashed
+  kind chip, derived label, clickable endpoint rows generalized to
+  every kind (satisfies, verifies, imports, exposes, aliases, and
+  dependencies join connects, binds, and flows), and the full
+  declaration in a read-only block
+
+- **Writes validate units**: `set_attribute_value` refuses a fake
+  unit with nearest-candidate hints ("unit 'SI::kgg' does not resolve
+  (did you mean 'SI::kg' or 'SI::g'?)"); quantity typing pins the
+  dimension (a mass-typed attribute refuses a duration); when typing
+  pins nothing, the CURRENT value's resolved unit is the pin, with
+  `validate=False` as the documented override -- refusals mutate
+  nothing, and the inspector surfaces them in its error strip. Input
+  symmetry: the commit path accepts the compact form the tool itself
+  displays -- `17 g` (and `17g`) resolves through the same unit table
+  the display reads -- and prefixed units decompose through the
+  standard library's own `SIPrefixes` definitions, so `17 mg` stores
+  exactly as `0.017 [SI::g]` and nothing unresolvable ever enters the
+  export. Ambiguous decompositions refuse with both readings spelled
+  out
+
+- **Scoreboard legibility and selection**: group membership reads at
+  a glance -- an always-on two-tone boundary tier, perimeter group
+  labels that zoom reveals level by level, and a hover extent
+  spotlight that washes out everything outside the hovered group
+  while member cells keep exact utility colors. The selected cell
+  draws a full-perimeter inset stroke (the old centered stroke
+  clipped to one visible edge) plus a subtle fill lift, on both
+  tessellations and on hatched unmeasured cells. Collapse twists stay
+  inside their own group's polygon: placement is
+  containment-constrained, with labels chord-capped so they can never
+  cross the group boundary
+
+### The mission dashboard
+
+- **The dashboard on one screen**: a header strip carries the new
+  Pareto-only toggle and the lineup slider, parallel coordinates sit
+  beside the Pareto scatter, the three mission panels become one tab
+  set (a summary, then a tab per mission), and the 3D lineup docks
+  beside the sliders so nothing scrolls at 1080p. The layout is fluid
+  full width by default (`width_px=None`), fills its host's height
+  (rows grow proportionally; the parallel coordinates, scatter,
+  cards, and 3D canvas all re-render to their new boxes), and the
+  section dividers drag -- pointer-capture gutters with min-size
+  clamps on both sides, ratios saved to synced traits so re-renders
+  and sibling views keep the layout, double-click to reset
+
+- **Pareto honesty**: dominance is a pure, exported `pareto_mask`
+  (cost minimized, three mission metrics maximized, weak dominance --
+  weights provably never change the front), and the display explains
+  itself. Every front member carries a justification:
+  `front_justifications` names the metrics where it tops every pick
+  that beats it in the DISPLAYED cost-vs-MOE plane (a greedy minimal
+  set cover), the lineup cards carry the line, hovering a card traces
+  its line in the parallel coordinates where all four axes are
+  visible, and the scatter tooltip carries the why. The ink tells the
+  4-D truth: front membership chooses the INK, the in-plane staircase
+  chooses the MARKER -- filled dot on the staircase, open ring off
+  it, gray strictly for dominated points -- and the staircase is
+  retitled for what it is, a frontier in this plane only
+
+- **The dashboard's state matrix, leak-free**: a 1,713-transition
+  hunt over toggle x brush x thresholds x priorities x lineup size x
+  tabs found two real leaks, both fixed at the source. An empty front
+  no longer falls back silently to the whole catalog (the empty state
+  says 'relax the requirement floors'), and brushes sync as INTERVALS
+  BY AXIS NAME with the brushed subset re-derived from the table each
+  recompute just baked -- stale row indices are structurally
+  impossible. One `dash.selected` state closes the selection seam
+  both ways: card click <-> scatter <-> parallel coordinates <-> 3D,
+  background clicks clear, selection survives re-bakes while its
+  candidate stays in view, and selection takes its own color channel
+  (violet) beside the brush (blue) and the pick rings (terracotta)
+
+- **CP-SAT learns calc inlining**: calc invocations inline (named and
+  positional arguments, defaults, valued locals, nested,
+  cycle-guarded), `max`/`min` map natively, constants fold, and
+  magnitude-aware rescaling keeps int64 alive through pi*r^2*yieldPa
+  chains -- the structural sizing catalog now encodes fully, and the
+  CP-SAT enumeration equals the interpreter's verified set exactly.
+  Whatever remains unencodable refuses with a one-line verdict naming
+  the innermost operation, never an expression-tree dump. And typed
+  variants with body redefinitions no longer produce empty bundles:
+  trades instantiates the variant USAGE itself, so body overrides
+  merge over inherited defaults into the CP-SAT bundles and into the
+  interpreter-exact re-verification
+
+### Diagrams and platform
+
+- **Direction-aware glyphs**: toggling a diagram from left-right to
+  top-down now transposes fork/join bars to lie perpendicular to the
+  flow, moves the convergence anchors of decision and merge diamonds
+  (and start, done, terminate) to north/south, re-derives n-ary
+  junction ports on the flow axis, and moves the control glyphs' name
+  captions beside the glyph, clear of the fan-out. Geometry
+  re-derives from constants on every direction change, so any toggle
+  sequence is idempotent and the left-right output stays
+  byte-identical
+
+- **Package tabs sit flush at every nesting depth**: nested packages
+  drew their folder tab 5 px above the body -- `elk.spacing.labelNode`
+  does not inherit under `INCLUDE_CHILDREN`, and the synthetic groups
+  that pack loose members fell back to the elkjs default. Every
+  container node now sets the option before layout, pinned by an
+  adjacency test over nesting depths 0/1/2
+
+- **Diagrams under load self-heal** (vendored ipyelk patch 12):
+  jupyter-server's iopub rate limiter silently drops widget comm
+  messages under burst, and one dropped update could leave a diagram
+  frozen at its progress bar forever -- kernel idle, zero errors. The
+  frontend now reports an unservable run as stale and backs off; the
+  kernel answers by re-emitting the full pipe state, throttled so the
+  re-syncs cannot flood the congested relay; zombie progress bars
+  hide on terminal re-sync. Diagrams that wedged under notebook-wide
+  run-all load now recover on their own
+
+- **The prebuilt standard library carries no build-machine path**:
+  `source_name` on stdlib elements is the symbolic `<stdlib>` (the
+  old prebuilt JSON embedded an absolute local path that shipped in
+  the wheel), and the prebuilt regenerates current
+
+### Documentation
+
+- **The docs describe the tool as-is**: design-doc citations of
+  material outside the repository restate the content inline;
+  ratification transcripts collapse to a dated status line plus a
+  plain Decisions section; the notation gallery's spec-figure
+  directory becomes the `SYSML_SPEC_PAGES` environment variable with
+  graceful degradation
+
+- **Design documents for the next arcs**:
+  [geometry as model content](design/geometry.md) -- SysML v2-native
+  CAD primordials over the OMG Geometry domain library's own 43 shape
+  item defs, a zero-dependency `.jcad` exporter for editor interop,
+  kinematics as clearly labeled extensions; adopted, implementation
+  in a later release. [Data provenance](design/provenance.md) --
+  evidence-linked models citing documents by sha256 + page + quote,
+  attach/verify/coverage kept honest by construction, git LFS for
+  owned documents, third-party datasheets never committed; adopted.
+  [The time seam](design/time.md) -- one clock across every
+  time-aware view (replay, mission globe, occurrence individuals);
+  draft, unratified, targeted at the 0.12 arc.
+  [The notebook curriculum](design/notebooks.md) -- the rebuild this
+  release ships; adopted
+
+### Upgrade notes
+
+- **The example models merged into one program**:
+  `examples/drone.sysml`, `examples/uav_missions.sysml`, and
+  `examples/drone_catalog.sysml` are deleted; `examples/deepscout/`
+  replaces them. The one-line fix:
+  `model = longeron.load("examples/deepscout")` -- directory loading
+  merges the workspace. The inline `isr_scoring` model from the old
+  scoreboard tutorial is retired into `missions.sysml`'s scoring
+  package; `examples/analysis_conventions.sysml` is unchanged
+- **The tutorial notebooks renumbered**: the old numbered notebooks
+  are gone; nine tutorials and the notation gallery (now a docs
+  reference page, still executable) replace them. The old-to-new
+  mapping is in the curriculum entry above
+- **`longeron lint` exit codes changed**: the exit code counts errors
+  only, in both modes. The old `--strict` failed on any warning; the
+  new `--strict` promotes the resolution-failure family to errors
+  (and only those promotions fail the run). Pipelines that relied on
+  any-warning-fails semantics should parse the diagnostic output
+- **`[3..1]` multiplicity bounds now reject**: a literal range whose
+  lower bound exceeds its upper is an error
+  (`multiplicity-bound-order`) in default mode -- deliberately
+  stricter than the pilot implementation. Models that carried such
+  ranges validated before and error now; swap the bounds
 
 ## 0.10.0
 
