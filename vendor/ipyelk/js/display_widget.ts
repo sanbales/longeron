@@ -123,16 +123,37 @@ export class ELKViewerView extends DOMWidgetView {
   // submitted (no sprotty model/index exists yet); replayed by
   // diagramLayout after the first submit
   pendingSelected: string[] | null = null;
+  // LOCAL PATCH (sysml2-experiments): delay (ms) before the next
+  // stale-state check; doubles per silent retry up to a 10s cap
+  private staleDelay = 2000;
+
+  // the source model this view's change:value listener is attached to
+  private connectedSource: any = null;
 
   initialize(parameters: any) {
     super.initialize(parameters);
     this.luminoWidget.addClass(ELK_CSS.widget_class);
-    this.on('change:source', this.on_source_changed, this);
+    // LOCAL PATCH (sysml2-experiments): listen on the MODEL -- upstream
+    // subscribed `change:source` on the VIEW (`this.on`), a channel nobody
+    // triggers, so a source wired (or re-synced) AFTER this view
+    // initialized never attached its change:value listener and never
+    // re-rendered: the diagram stayed blank with no error whenever the
+    // kernel's source rewire raced the view (or its update was dropped
+    // and later healed by the stale re-sync protocol).
+    this.model.on('change:source', this.on_source_changed, this);
     this.on_source_changed();
   }
   async on_source_changed() {
-    // TODO disconnect old ones
     let source = this.model.get('source');
+    if (source === this.connectedSource) {
+      return;
+    }
+    // exactly one live value listener: disconnect the previous source
+    // (the upstream 'TODO disconnect old ones')
+    if (this.connectedSource) {
+      this.connectedSource.off('change:value', this.diagramLayout, this);
+    }
+    this.connectedSource = source;
     if (source) {
       source.on('change:value', this.diagramLayout, this);
       this.diagramLayout();
@@ -210,12 +231,43 @@ export class ELKViewerView extends DOMWidgetView {
       console.warn('ELK Failed initial view render', err),
     );
 
+    // LOCAL PATCH (sysml2-experiments): the model's `source` reference
+    // arrives as a state update AFTER the viewer's comm-open (the kernel
+    // rewires it to the pipe outlet during Diagram construction), and
+    // jupyter-server's iopub rate limiter silently DROPS state updates
+    // under bursty load (a run-all creating two dozen diagrams on a slow
+    // CI runner).  A view left watching a missing/empty source used to
+    // stay blank forever with no error; instead keep reporting the stale
+    // state (with backoff) so the kernel re-syncs the wiring -- and the
+    // laid-out value, when it already has one (see
+    // Viewer._handle_browser_msg).
+    this.scheduleStaleCheck();
+
     // timeout is ugly workaround for gh issue #94. Still potential for bounding
     // box being stale but added resize call to the `fit` and `center` actions
     // as additional protection.
     setTimeout(() => {
       this.resize();
     }, 10 * POLL);
+  }
+
+  scheduleStaleCheck() {
+    setTimeout(() => {
+      if (!this.el.isConnected) {
+        return; // the view was removed; a live sibling view owns the pump
+      }
+      const source = this.model.get('source');
+      if (source != null && source.get('value') != null) {
+        return; // renderable: the change:value wiring takes it from here
+      }
+      ELK_DEBUG && console.warn('ELK viewer reporting stale source');
+      this.model.send(
+        { action: 'stale', missing: { source: source == null, value: true } },
+        {},
+      );
+      this.staleDelay = Math.min(this.staleDelay * 2, 10000);
+      this.scheduleStaleCheck();
+    }, this.staleDelay);
   }
 
   updateControlOverlay() {

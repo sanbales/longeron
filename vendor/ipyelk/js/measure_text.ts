@@ -7,6 +7,7 @@ import { random } from 'lodash';
 import { DOMWidgetModel, DOMWidgetView } from '@jupyter-widgets/base';
 import { unpack_models as deserialize } from '@jupyter-widgets/base';
 
+import { layoutErrorMessage } from './layout_widget_util';
 import { ElkLabel, ElkNode } from './sprotty/json/elkgraph-json';
 import { ELK_CSS, ELK_DEBUG, IRunMessage, NAME, VERSION } from './tokens';
 
@@ -88,7 +89,17 @@ export class ELKTextSizerModel extends DOMWidgetModel {
     // check message and decide if should call `measure`
     switch (content.action) {
       case 'run':
-        this.measure();
+        // LOCAL PATCH (sysml2-experiments): a throwing measure used to
+        // reject silently inside the kernel connection's serial message
+        // chain (the chain's catch swallows it) -- the kernel kept
+        // re-sending `run` forever. Report it over the pipe's error
+        // channel so the roundtrip fails visibly instead.
+        try {
+          this.measure();
+        } catch (error) {
+          console.error('ELK text sizer failed:', error);
+          this.send(layoutErrorMessage(error));
+        }
         break;
     }
   }
@@ -101,6 +112,26 @@ export class ELKTextSizerModel extends DOMWidgetModel {
     const rootNode: ElkNode = this.get('inlet')?.get('value');
     let outlet: DOMWidgetModel = this.get('outlet'); // target output
     if (rootNode == null || outlet == null) {
+      // LOCAL PATCH (sysml2-experiments): a `run` request the frontend
+      // cannot serve means the state this model needs never arrived --
+      // jupyter-server's iopub rate limiter silently DROPS comm messages
+      // under bursty load (a run-all creating two dozen diagrams on a
+      // slow CI runner), so the inlet reference or its value can be
+      // missing here while the kernel-side pipe waits forever on an
+      // answer. Returning silently wedged the pipeline at this stage with
+      // no error; instead report the stale state so the kernel re-syncs
+      // (see SyncedPipe._handle_browser_msg) and the next re-sent `run`
+      // finds a servable model.
+      this.send(
+        {
+          action: 'stale',
+          missing: {
+            inlet: this.get('inlet') == null,
+            value: rootNode == null,
+            outlet: outlet == null,
+          },
+        },
+      );
       return null;
     }
     ELK_DEBUG && console.log('Root Node:', rootNode);
@@ -127,13 +158,22 @@ export class ELKTextSizerModel extends DOMWidgetModel {
 
     // Callback to take measurements and remove element from DOM
     window.requestAnimationFrame(() => {
-      this.read_sizes(texts, elements);
-      let output = { ...rootNode };
-      output['out'] = random();
-      outlet.set('value', output);
-      outlet.save_changes();
-      if (!ELK_DEBUG) {
-        document.body.removeChild(el);
+      // LOCAL PATCH (sysml2-experiments): a throw in this deferred
+      // callback is otherwise an unhandled error nobody correlates with
+      // the pipe -- report it over the error channel like the sync path.
+      try {
+        this.read_sizes(texts, elements);
+        let output = { ...rootNode };
+        output['out'] = random();
+        outlet.set('value', output);
+        outlet.save_changes();
+      } catch (error) {
+        console.error('ELK text sizer failed:', error);
+        this.send(layoutErrorMessage(error));
+      } finally {
+        if (!ELK_DEBUG && el.parentNode) {
+          document.body.removeChild(el);
+        }
       }
     });
   }

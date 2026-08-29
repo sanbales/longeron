@@ -64,6 +64,8 @@ async def browser_roundtrip(
     """
     future_value = wait_for_change(pipe.outlet, trait)
     pipe._roundtrip_future = future_value
+    # a fresh roundtrip resets the stale-resync throttle (see SyncedPipe)
+    pipe._stale_resync_interval = 0.0
     deadline = None if timeout is None else monotonic() + timeout
     delay = initial_delay
     try:

@@ -1,5 +1,7 @@
 # Copyright (c) 2024 ipyelk contributors.
 # Distributed under the terms of the Modified BSD License.
+import asyncio
+
 import ipywidgets as W
 import traitlets as T
 
@@ -35,3 +37,26 @@ class PipelineProgressBar(Tool):
         else:
             bar.bar_style = ""
             bar.layout.visibility = "visible"
+
+        if bar.value >= bar.max:
+            # LOCAL PATCH (sysml2-experiments): the terminal transition
+            # (hide, or fill-as-warning) is a fire-and-forget state update
+            # with no retransmit; a lossy iopub channel (e.g. a run-all
+            # burst on a slow CI runner) that drops it leaves a zombie
+            # bar on screen forever.  Re-emit the terminal state twice
+            # with delay so a dropped hide heals itself.
+            self._schedule_terminal_echo()
+
+    def _schedule_terminal_echo(self):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # headless (scripts, pytest): nothing to re-sync
+        for delay in (2.0, 10.0):
+            loop.call_later(delay, self._echo_terminal_state)
+
+    def _echo_terminal_state(self):
+        bar = self.bar
+        if bar.value >= bar.max:  # still terminal; a new run resets value
+            bar.send_state()
+            bar.layout.send_state()

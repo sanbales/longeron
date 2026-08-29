@@ -132,6 +132,22 @@ export class ELKLayoutModel extends DOMWidgetModel {
     const rootNode: ELK.ElkNode = this.get('inlet')?.get('value');
     let outlet: DOMWidgetModel = this.get('outlet'); // target output
     if (rootNode == null || outlet == null) {
+      // LOCAL PATCH (sysml2-experiments): same stale-state report as
+      // ELKTextSizerModel.measure -- jupyter-server's iopub rate limiter
+      // silently drops comm messages under bursty load, so this model's
+      // inlet wiring or its value may never have arrived. Returning
+      // silently wedged the kernel-side pipe at the layout stage forever;
+      // reporting lets the kernel re-sync and re-run.
+      this.send(
+        {
+          action: 'stale',
+          missing: {
+            inlet: this.get('inlet') == null,
+            value: rootNode == null,
+            outlet: outlet == null,
+          },
+        },
+      );
       return null;
     }
     // LOCAL PATCH (sysml2-experiments): collectProperties used to strip

@@ -189,3 +189,66 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    (`ELK_DEBUG` log) -- the newer insert hook owns the attach. The
    longeron browser tier drops its `getById` page-error allowance with
    this patch.
+12. **Silently dropped widget state self-heals: the `stale` re-sync
+   protocol** (2026-08-29; `js/measure_text.ts`, `js/layout_widget.ts`,
+   `js/display_widget.ts`, `src/ipyelk/pipes/base.py`,
+   `src/ipyelk/pipes/util.py`, `src/ipyelk/diagram/viewer.py`,
+   `src/ipyelk/tools/progress.py`; bundles rebuilt as in patch 7, node
+   26.6.0 + jlpm from the longeron pixi env -- the `elklayout` and
+   `elkdisplay` chunks, `remoteEntry` and the labextension
+   `package.json` `_build` pointer changed). Root cause of the longeron
+   gallery CI wedge (test frozen 480s: 20 bars stuck at exactly 37.5%,
+   one at 87.5%, kernel idle, zero errors): jupyter-server's iopub
+   **rate limiter silently drops `comm_msg`** (widget state updates AND
+   custom messages; `status`/`comm_open`/`execute_input` are exempt)
+   whenever a burst outruns `iopub_msg_rate_limit`/`rate_limit_window`
+   -- and the widget protocol has no retransmit, so one dropped update
+   leaves the frontend model permanently diverged. A run-all creating
+   two dozen diagrams is exactly such a burst on a loaded 2-core runner
+   (the limiter is rate-based; a starved server drains its zmq backlog
+   in bursts). Downstream anatomy, proven by dropping 60% of
+   kernel->browser comm_msg for 25s locally (which reproduced the CI
+   signature verbatim: 20 pipelines frozen at `BrowserTextSizer`, 6 at
+   `ElkJS`, zero rendered, zero errors):
+   - a pipe model whose **inlet value never arrived** answered re-sent
+     `run` requests by silently returning `null` forever (the 37.5%
+     bars: 3/8 progress = validation done, text sizer running);
+   - a viewer model whose **`source` rewire never arrived** stayed a
+     blank diagram forever;
+   - a progress bar whose **terminal hide update was dropped** stayed a
+     zombie bar forever.
+   The patch closes the class, not the instances:
+   - **browser -> kernel `action: stale`**: `measure()`/`layout()`
+     answer an unservable `run` (missing inlet/outlet/value) with a
+     stale report instead of returning silently; `ELKViewerView` runs a
+     backoff stale pump (2s..10s) while it has no renderable source;
+   - **kernel re-sync**: `SyncedPipe`/`Viewer._handle_browser_msg`
+     answer a stale report with `send_state()` of the pipe and its
+     endpoints (or the viewer and its source), throttled with a
+     doubling 2s..30s gap (reset per roundtrip) so the re-syncs --
+     three full states, the inlet value can be large -- cannot flood
+     the congested relay that caused the loss in the first place
+     (observed: unthrottled re-syncs collapsed the channel under the
+     60% injector); the patch-3 resend loop then re-fires `run` against
+     a healed frontend;
+   - **`ELKViewerView` listens on the MODEL**: upstream subscribed
+     `change:source` on the VIEW (`this.on`), a channel nobody
+     triggers, so a source wired after view-init never attached its
+     `change:value` listener (blank forever even once state healed);
+     now `this.model.on(...)`, with the previous source's listener
+     disconnected (the upstream `TODO disconnect old ones`);
+   - **terminal progress-bar echoes**: `PipelineProgressBar` re-emits
+     the bar's terminal state (hide / fill-as-warning) at +2s and +10s,
+     so a dropped hide heals instead of leaving a zombie bar;
+   - a throwing `measure()` now reports over the patch-9 error channel
+     (it used to reject silently inside the kernel connection's serial
+     message chain, whose catch swallows everything).
+   Longeron pairs this with conftest-level
+   `--ZMQChannelsWebsocketConnection.limit_rate=False` (the tier wants
+   correctness, not client-protection dropping). Constrained-repro
+   before/after on the notation gallery: pre-patch, a limiter tripping
+   at 5 msg/s and the 60%-drop injector both wedge it frozen for the
+   full 480s budget; post-patch the same gallery settles green in 27s
+   (limiter config neutralized), 33s (20% drops) and 57s (60% drops,
+   2426 messages dropped and self-healed). Tests:
+   `tests/pipes/test_stale_resync.py`.

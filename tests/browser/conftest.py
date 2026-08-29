@@ -320,6 +320,22 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
                 # background probe of ~19 servers in the 5ee3aee CI log,
                 # right under the first test's cold start); no test uses LSP
                 "--LanguageServerManager.autodetect=False",
+                # NEVER rate-limit iopub: jupyter-server's limiter silently
+                # DROPS comm_msg (widget state updates + custom messages;
+                # status/comm_open are exempt) whenever a burst outruns the
+                # window, and the widget protocol has no retransmit -- one
+                # dropped inlet-value update wedges an ipyelk pipe forever
+                # (the ad27a8b gallery CI failure: 20 bars frozen at exactly
+                # the text-sizer stage, kernel idle, zero errors; mechanism
+                # proven by dropping 60% of comm_msg locally, which froze
+                # the same 20-at-37.5%-plus-one-at-87.5% signature).  A
+                # run-all creating two dozen diagram widgets is exactly such
+                # a burst on a slow 2-core runner (the limiter is rate-based,
+                # and a starved server drains its zmq backlog in bursts).
+                # The limiter protects human browsers from runaway stream
+                # output; this tier wants correctness -- unlimited buffering
+                # of a finite storm costs a few MB and zero drops.
+                "--ZMQChannelsWebsocketConnection.limit_rate=False",
             ],
             cwd=root,
             env=env,

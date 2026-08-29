@@ -4,6 +4,7 @@ import asyncio
 import re
 from datetime import datetime, timedelta
 from enum import Enum
+from time import monotonic
 from typing import Callable, Optional, Tuple
 
 import ipywidgets as W
@@ -344,21 +345,64 @@ class SyncedOutletPipe(Pipe):
 class SyncedPipe(SyncedOutletPipe, SyncedInletPipe):
     """Both inlet and value are synced with the browser"""
 
+    #: throttle for stale-state re-syncs (see ``_handle_browser_msg``):
+    #: monotonic time of the last re-sync and the minimum gap before the
+    #: next one.  The gap doubles per re-sync (2s .. 30s) and resets when
+    #: a new roundtrip starts (``browser_roundtrip``), so a lossy channel
+    #: converges without the re-syncs themselves (three full states per
+    #: report, the inlet value can be large) flooding the iopub relay --
+    #: a backlogged relay delivers queued ``run`` requests in bursts, and
+    #: answering every burst with more payload collapses the channel.
+    _stale_resync_at: float = 0.0
+    _stale_resync_interval: float = 0.0
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.on_msg(self._handle_browser_msg)
 
     def _handle_browser_msg(self, widget, content, buffers):
-        """Reject the pending roundtrip future if the browser reports an error.
+        """React to the browser's answers on the pipe's custom-message channel.
 
-        This is the browser -> kernel error channel: a frontend that fails to
-        produce an outlet value answers with an ``action: error`` message so
-        the kernel stops waiting (and stops re-sending) instead of retrying
-        or timing out.
+        Two message kinds arrive here:
+
+        * ``action: error`` -- the frontend failed to produce an outlet
+          value; reject the pending roundtrip future so the kernel stops
+          waiting (and stops re-sending) instead of retrying or timing out.
+        * ``action: stale`` -- the frontend received a ``run`` request it
+          cannot serve because the state it needs (the pipe's inlet/outlet
+          wiring, or the inlet's value) never arrived.  jupyter-server's
+          iopub rate limiter silently DROPS comm messages under bursty
+          load (a run-all creating two dozen diagrams on a slow CI
+          runner), and widget state sync has no retransmit: one dropped
+          update leaves the frontend model permanently diverged, so every
+          re-sent ``run`` used to be ignored and the pipe hung at this
+          stage forever.  Re-emitting the full state (``send_state``) of
+          the pipe and its endpoints heals the divergence; the ongoing
+          resend-with-backoff loop then re-fires ``run`` against a
+          servable frontend.  Contention adds latency, never a wedge.
         """
-        if isinstance(content, dict) and content.get("action") == "error":
+        if not isinstance(content, dict):
+            return
+        action = content.get("action")
+        if action == "error":
             future = getattr(self, "_roundtrip_future", None)
             if future is not None and not future.done():
                 future.set_exception(
                     RuntimeError(content.get("error", "browser pipe failed"))
                 )
+        elif action == "stale":
+            now = monotonic()
+            if now - self._stale_resync_at < self._stale_resync_interval:
+                return  # a re-sync is already in flight; let it land
+            self._stale_resync_at = now
+            self._stale_resync_interval = min(
+                max(2.0, self._stale_resync_interval * 2), 30.0
+            )
+            self.log.warning(
+                "Browser reports stale state for %s (missing: %s); re-syncing",
+                type(self).__name__,
+                content.get("missing"),
+            )
+            for widget_ in (self, self.inlet, self.outlet):
+                if widget_ is not None:
+                    widget_.send_state()
