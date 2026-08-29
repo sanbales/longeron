@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "longeron"
-version = "0.10.0"
+version = "0.11.0"
 description = "Define, execute, and replay SysML v2 models in Python: ANTLR-based parser, validator, interpreter, and diagram renderers"
 readme = "README.md"
 requires-python = ">=3.10"
