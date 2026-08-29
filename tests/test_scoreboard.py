@@ -1250,16 +1250,20 @@ def _render_report(widget, **params):
         esm = f"{tmp}/esm.js"
         nodes = f"{tmp}/nodes.json"
         harness = f"{tmp}/harness.cjs"
-        with open(esm, "w") as fh:
+        with open(esm, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(widget._esm)
-        with open(nodes, "w") as fh:
+        with open(nodes, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(widget.nodes_json)
-        with open(harness, "w") as fh:
+        with open(harness, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_TWIST_HARNESS_JS)
+        # node's report is UTF-8; an unpinned text-mode decode uses the
+        # locale codec (cp1252 on Windows CI) and mojibake-inflates the
+        # '\u2026 \u00b7 \u2014' label suffixes past the chord cap
         out = subprocess.run(
             ["node", harness, esm, nodes, json.dumps(defaults)],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="strict",
             check=True,
         )
     return json.loads(out.stdout)
@@ -1394,3 +1398,67 @@ class TestTwistPlacement:
         )
         _assert_anchored_inside(report)
         assert any(t["qname"].endswith("::endurance") for t in report["twists"])
+
+
+#: re-run the ESM bridge inside a child interpreter whose locale codec is
+#: NOT UTF-8 (Windows CI's default is cp1252) and re-check the contract
+_SEAM_PROBE_PY = """
+import locale
+import sys
+
+enc = locale.getpreferredencoding(False).lower().replace("-", "").replace("_", "")
+if enc.startswith("utf"):
+    sys.exit(86)  # platform refused the non-UTF-8 locale; nothing provable
+sys.path.insert(0, sys.argv[1])
+import longeron
+import test_scoreboard as t
+
+widget = t.scoreboard(longeron.loads(t.ISR_MODEL)).widget(tessellation="voronoi")
+report = t._render_report(widget)
+texts = [label["text"] for label in report["labels"]]
+# the report's '\u2026 \u00b7 \u2014' suffixes cross the pipe as UTF-8; a
+# locale-codec decode mojibakes them ('\u00e2\u20ac\u00a6', +2 chars per
+# glyph = +6.4 px each), which is exactly what broke the chord cap on
+# Windows CI
+assert any("\u2026" in s for s in texts), texts
+assert not any("\u00e2" in s or "\u00c2" in s or "\ufffd" in s for s in texts), texts
+t._assert_anchored_inside(report)
+"""
+
+
+class TestEsmBridgeEncoding:
+    """Windows CI regression: ``subprocess.run(text=True)`` without an
+    explicit ``encoding`` decodes node's UTF-8 report with the locale
+    codec (cp1252 on Windows CI).  Every label suffix '\u2026 \u00b7
+    \u2014' then inflates 5 -> 10 chars (+32 px at the ESM's 6.4
+    px/char), so the chord-cap assertion reported labels spilling past
+    edges they actually respect.  Simulate the seam on any platform by
+    forcing a non-UTF-8 locale on a child interpreter."""
+
+    def test_bridge_survives_non_utf8_locale(self, isr_widget):
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        del isr_widget  # only wanted its anywidget/import guards
+        if shutil.which("node") is None:
+            pytest.skip("node executable not available")
+        env = os.environ.copy()
+        env.pop("PYTHONIOENCODING", None)
+        env.pop("PYTHONUTF8", None)
+        env.update(
+            LC_ALL="en_US.ISO8859-1",  # Windows ignores this and keeps cp1252
+            LANG="en_US.ISO8859-1",
+            PYTHONCOERCECLOCALE="0",
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", _SEAM_PROBE_PY, os.path.dirname(__file__)],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+        if out.returncode == 86:
+            pytest.skip("platform will not provide a non-UTF-8 locale")
+        assert out.returncode == 0, f"stdout: {out.stdout}\nstderr: {out.stderr}"
