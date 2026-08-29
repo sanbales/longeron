@@ -418,7 +418,7 @@ def record_action_timeline(
 # anywidget front-end (vanilla JS, no bundler)
 # ---------------------------------------------------------------------------
 
-# Conventions (see .handoff/scene-viewer-mechanics.md): the SVG is injected
+# Conventions (shared with longeron.analysis.viewer3d): the SVG is injected
 # once and nodes/edges are indexed by data-qname/data-edge; per frame only
 # classes toggle.  Keyframe lookup is a binary search with left-keyframe
 # (step) semantics, matching how Timeline.tracks records changes.  Strokes

@@ -4,15 +4,14 @@
 > (save/restore/sidecar/closure), the API expose projection fix in
 > `longeron.ecore`/`longeron.api`, `«view»` boxes in structure
 > diagrams, the `dangling-expose` diagnostic, and the explorer's save
-> seam. All five open questions were ratified as recommended
-> (2026-08-25) and are recorded below.
+> seam. All five decisions (2026-08-25) are recorded below.
 
 Goal: let a user click "Save view" on an explorer diagram and get the
 diagram back later -- in longeron, in any conformant SysML v2 tool, and
 across the Systems Modeling API. This document records the design for
 longeron 0.10.0 (tranche 2 groundwork). It records design intent; no
 persistence code exists yet. All empirical claims below were verified
-against longeron 0.9.1 at commit `499c75b`.
+against longeron 0.9.1.
 
 ## The standards boundary
 
@@ -387,41 +386,37 @@ interpretations out of the API projection
   filters are preserved and exported but not applied to the closure until
   the expression evaluator grows metadata-aware checking.
 
-## Open questions for the maintainer
+## Decisions
 
-All five were ratified as recommended by the maintainer on 2026-08-25;
-they are recorded here with their rationale. The tranche-2
-implementation treats them as settled contract.
+All five were adopted on 2026-08-25; they are recorded here with
+their rationale. The tranche-2 implementation treats them as settled
+contract.
 
-
-1. **Where does a new view usage land in multi-file workspaces?**
-   Options: append to the file owning the scope package, or collect views
-   in a dedicated `views.sysml`. *Recommendation:* append to the owning
-   file. It keeps the view next to what it shows, matches the spec's
-   examples, and the server's per-file rewrite already localizes the
-   diff. Revisit if users object to tools touching their source files.
-2. **Type saved views by `StandardViewDefinitions`, or leave them untyped
-   with only a `render` reference?** *Recommendation:* type them. The
-   standard library ships with every conformant tool, the typing is the
-   machine-readable statement of diagram kind, and it is what makes the
-   saved view legible outside longeron. The sidecar `kind` remains as the
-   fallback for untyped views authored by hand.
-3. **Fix the API expose projection in this tranche or a later one?**
-   *Recommendation:* this tranche. Without it, longeron's own server
-   erases saved views on the first push, which contradicts the feature's
-   headline. The exporter work is bounded: `MembershipExpose`,
-   `NamespaceExpose`, and `ElementFilterMembership` records plus their
-   inverse.
-4. **Stabilize element UUIDs by seeding from qualified names instead of
-   index paths?** *Recommendation:* not now. Changing the seed changes
-   every derived `@id` across releases (the `ecore.py` comment already
-   guards this), and qualified-name keys make the sidecar independent of
-   the answer. Reconsider only if a cross-tool consumer needs stable ids
-   under reordering.
-5. **Should "Save view" also record the explorer's selection?**
-   *Recommendation:* no. Selection is transient focus, not diagram
-   configuration; persisting it adds sidecar churn on every save for no
-   restore value.
+1. **A new view usage appends to the file owning the scope package**
+   (not a dedicated `views.sysml`). It keeps the view next to what it
+   shows, matches the spec's examples, and the server's per-file
+   rewrite already localizes the diff. Revisit if users object to
+   tools touching their source files.
+2. **Saved views are typed by `StandardViewDefinitions`.** The
+   standard library ships with every conformant tool, the typing is
+   the machine-readable statement of diagram kind, and it is what
+   makes the saved view legible outside longeron. The sidecar `kind`
+   remains as the fallback for untyped views authored by hand.
+3. **The API expose projection is fixed in this tranche.** Without
+   it, longeron's own server erases saved views on the first push,
+   which contradicts the feature's headline. The exporter work is
+   bounded: `MembershipExpose`, `NamespaceExpose`, and
+   `ElementFilterMembership` records plus their inverse.
+4. **Element UUIDs stay seeded from index paths**, not qualified
+   names. Changing the seed changes every derived `@id` across
+   releases (the `ecore.py` comment already guards this), and
+   qualified-name keys make the sidecar independent of the answer.
+   Reconsider only if a cross-tool consumer needs stable ids under
+   reordering.
+5. **"Save view" does not record the explorer's selection.**
+   Selection is transient focus, not diagram configuration;
+   persisting it adds sidecar churn on every save for no restore
+   value.
 
 ## References
 

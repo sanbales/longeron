@@ -1,6 +1,6 @@
 """Project SysML v2 part trees and calcs onto OpenMDAO Problems (spike).
 
-Mapping (see ``.handoff/analysis-integration-design.md`` in the main tree):
+Mapping:
 
 * ``calc def`` -> ``ExplicitComponent`` whose ``compute()`` calls the
   interpreter (:func:`calc_component`).

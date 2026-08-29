@@ -1,21 +1,20 @@
 # Units and quantities (design)
 
-> **Status: ratified.** The maintainer approved this design on
-> 2026-08-25, ruling on three questions raised in review -- dBW + W
-> scale mixing, foreign unit packages, and kg + lbm normalization.
-> Each ruling is folded into its section below and marked
-> **RESOLVED (2026-08-25)**; the open-question recommendations at the
-> end stand with the approved document.
+> **Status: adopted 2026-08-25.** Three decisions from review -- dBW + W
+> scale mixing, foreign unit packages, and kg + lbm normalization --
+> are folded into their sections below and marked
+> **RESOLVED (2026-08-25)**; the remaining adopted decisions are
+> listed at the end.
 
 Goal: give longeron models real units -- temperature scales, decibels,
 the full SI, US customary engineering units -- without slowing the
 interpreter, bloating the dependency tree, or spraying `Any` through the
 typed public API. This document records the design for longeron 0.10+.
 It records design intent; no units code exists yet beyond what the
-parser already carries. All empirical claims below were verified against
-longeron 0.9.1 at commit `5ca6e73`; library claims were verified in a
-scratch venv (`build/units-scratch`) against pint 0.25.3, pint-pandas
-0.8.0, unyt 3.1.0, and OpenMDAO 3.45.0.
+parser already carries. All empirical claims below were verified
+against longeron 0.9.1; library claims were verified in a scratch venv
+against pint 0.25.3, pint-pandas 0.8.0, unyt 3.1.0, and OpenMDAO
+3.45.0.
 
 ## The standards boundary
 
@@ -73,7 +72,7 @@ The design therefore has three tiers:
 
 ## Why not just adopt a units library
 
-Candidates scored against the maintainer's criteria. "Complete" means
+Candidates scored against six criteria. "Complete" means
 offset units (°C/°F), logarithmic units (dB, dBW, dBm), and full SI plus
 common engineering systems.
 
@@ -84,7 +83,7 @@ common engineering systems.
 | numpy | wraps arrays (verified) | native subclass (verified) | native subclass | pass-through | n/a |
 | pandas | **pint-pandas 0.8.0** `pint[m]` ExtensionArray, verified against pandas 3.0.5 | broken -- units survive `Series()` construction, verified *lost after the first operation* | no integration | none | n/a |
 | modern typing | ships `py.typed` (verified) but `Quantity` is not dimension-generic; registry lookups degrade to `Any` | **no `py.typed` at all** (verified) | untyped | untyped private module | exactly as typed as we make it |
-| dependencies | flexcache, flexparser, platformdirs, typing-extensions -- all small, pure Python | numpy + **sympy** (heavy) + packaging | the astropy stack -- ruled out by the maintainer despite quality | zero *extra* -- already inside `[mdao]` | zero |
+| dependencies | flexcache, flexparser, platformdirs, typing-extensions -- all small, pure Python | numpy + **sympy** (heavy) + packaging | the astropy stack -- ruled out despite quality | zero *extra* -- already inside `[mdao]` | zero |
 
 Verdict: no library is fit to sit in the core, and none needs to. pint
 is the only candidate that passes the completeness bar (unyt's dB is
@@ -99,8 +98,8 @@ vectors, ~a hundred lines, not a units library.
 
 ## What longeron supports today (gap analysis)
 
-Every row below was established empirically against the worktree at
-`5ca6e73`, spec-shaped samples parsed with `longeron.loads()`.
+Every row below was established empirically against longeron 0.9.1,
+spec-shaped samples parsed with `longeron.loads()`.
 
 **The vendored library is a curated subset.** 11 of the upstream
 release's 23 Quantities-and-Units files ship (~96 KB of ~1.0 MB):
@@ -216,7 +215,7 @@ quantity-typed attribute declarations, as metadata.
 The lint is dimensional analysis over exponent vectors -- `(m, kg, s,
 A, K, mol, cd)` powers as a tuple of `Fraction`s, closed under multiply/
 divide/power -- each tagged with a *scale* (`linear`/`log`/`offset`;
-ratified below). The unit table is *derived from the vendored SI model
+the scale-tag decision below). The unit table is *derived from the vendored SI model
 itself* (finding 4): base units seed the basis, `ConversionByPrefix`/
 `ConversionByConvention` members inherit their reference unit's vector,
 derived units evaluate their definitional expression (`kg*m/s^2`) in
@@ -267,7 +266,7 @@ Five diagnostics, hanging in `validation.py`'s existing architecture --
   with the requirement's `measure` -- a ramp anchored in minutes
   scoring a measure computed in hours is finding 2 wearing a MAUT hat.
 
-Two of the five were settled by explicit maintainer rulings in review:
+Two of the five were settled in review:
 
 **RESOLVED (2026-08-25) -- dBW + W (and naive °C).** Exponent vectors
 get a scale tag -- `linear`/`log`/`offset` -- seeded from the vendored
@@ -278,9 +277,9 @@ conversion is always allowed. The tag also fixes naive Celsius
 addition: °C is `offset` where K is `linear`, so a Celsius value can
 no longer pose as a linear kelvin in arithmetic -- it must be
 converted explicitly (or normalized at the declaration boundary, next
-ruling) first. This refines the draft's exponent-vectors-only lint,
-which would have flagged dB-family additions only by the accident of
-their dimension-one vectors and passed °C + K entirely.
+decision) first. Exponent vectors alone would flag dB-family
+additions only by the accident of their dimension-one vectors and
+would pass °C + K entirely; the scale tag closes both.
 
 **RESOLVED (2026-08-25) -- kg + lbm.** Split on the `[units]` extra.
 With it installed: canonical-SI normalization at the *declaration
@@ -327,11 +326,7 @@ definitional expressions (`kg*m/s^2`), `ConversionByPrefix`/
 `ConversionByConvention`, measurement-reference scales -- therefore
 works with *no mapping table at all*. Where derivation cannot reach,
 the registry accepts user-registered overrides, and the facade passes
-`ureg.define(...)` through to pint for the boundary-side spelling. The
-draft's recommendation (seed the alias table from the derived unit
-table) already matched; the ruling extends it from the vendored
-packages to any package shaped like them, and adds the
-override/`define` seam.
+`ureg.define(...)` through to pint for the boundary-side spelling.
 
 Conversion points, concretely:
 
@@ -339,7 +334,7 @@ Conversion points, concretely:
   gain `units=om_unit(...)` on `add_input`/`add_output`; `build_problem`'s
   free-attribute `IndepVarComp` outputs likewise. Values crossing the
   bridge are already canonical SI floats (the declaration-boundary
-  normalization ratified in the core tier), so the `units=` string is
+  normalization adopted in the core tier), so the `units=` string is
   the SI unit's OM spelling (`"kg"`, `"m/s"`, `"degK"`) -- OM's N2 diagram
   and `add_design_var(units=...)` start working, and OM never sees a
   dialect it does not own. Where OM has no spelling (`dB` -- verified
@@ -402,7 +397,7 @@ coupled to mypy internals that break across releases, and pyright users
 -- most IDE users -- get nothing. A maintenance liability purchased for
 one type-checker's users.
 
-Recommendation: (a) now, (b) as the 0.11+ path behind its own design
+Adopted: (a) now, (b) as the 0.11+ path behind its own design
 doc, (c) rejected.
 
 ## Performance
@@ -417,7 +412,7 @@ loops, trade-study enumeration. The measured ~430× scalar overhead and
 every path that runs per-evaluation rather than per-build.
 
 Cost of the design itself: the interpreter's `QuantityOp` branch already
-exists (zero delta without the `[units]` extra; with it, the ratified
+exists (zero delta without the `[units]` extra; with it, the
 declaration-boundary normalization is one float multiply where the
 annotation is evaluated, never per roll-up); the lint adds one
 validation pass over expressions (validation is never in an evaluation
@@ -448,56 +443,53 @@ Micro-benchmark plan (to be run at implementation, not before):
 - **No runtime quantity types in the interpreter or M0.** No
   `Quantity` class, no operator overloading, no unit-carrying slots --
   the fence is the feature.
-- **No astropy**, per the maintainer, despite its quality.
+- **No astropy.** Its quality is not in question; its dependency
+  stack is.
 - **No unit-string parser for arbitrary user text.** Units come from
   the model's stdlib references; the facade's alias table maps model
   vocabulary to pint, not free-form strings to anything.
 - **No automatic rewriting of user models.** Longeron never converts a
   declared `250.0 [mm]` into `0.25 [m]` in source; canonicalization
-  happens at evaluation boundaries, display stays declared. (Already
-  matched the kg + lbm ruling: with the `[units]` extra that
-  canonicalization *is* the declaration-boundary normalization;
-  without it, values stay as declared and the lint warns.)
+  happens at evaluation boundaries, display stays declared. (With the
+  `[units]` extra that canonicalization *is* the declaration-boundary
+  normalization; without it, values stay as declared and the lint
+  warns.)
 - **No mypy plugin** (route (c) above).
 
-## Open questions for the maintainer
+## Decisions
 
-The maintainer approved this document on 2026-08-25 and ruled on three
-questions raised in review (dBW + W scale mixing, foreign unit
-packages, kg + lbm); those rulings are folded into their sections
-above and marked RESOLVED. The five questions below were not
-separately contested -- their recommendations stand with the approved
-document, and implementation treats them as the working plan.
+Adopted 2026-08-25. Three review decisions (dBW + W scale mixing,
+foreign unit packages, kg + lbm) are folded into their sections above
+and marked RESOLVED. The five decisions below complete the working
+plan.
 
-1. **Vendor how much more of the quantities library?** Options: nothing;
-   `USCustomaryUnits` only (30 KB); or `USCustomaryUnits` +
-   `ISQMechanics` + `ISQSpaceTime` + `ISQThermodynamics` (~224 KB, and
-   `force`/`speed`/`power`/`temperature` resolve). *Recommendation:* the
-   four-file option. It closes finding 5 for the engineering models this
-   tool targets; the remaining eight ISQ files (~688 KB of atomic
-   physics and characteristic numbers) stay out until someone asks.
-   Measure the `prebuilt.json` load delta before merging.
-2. **Is `unresolved-unit` on by default?** It will warn on existing
-   models that use ad-hoc unit tokens not in the vendored library.
-   *Recommendation:* yes, as a warning -- that nudge is the point, and
-   bare `[kg]`-style references resolve silently once the library
-   ships. Severity matches `unresolved-reference`.
-3. **Does the OM bridge pass `units=` always or opt-in?**
-   *Recommendation:* always, best-effort per variable: mapped units get
-   the kwarg, unmapped (`om_unit() is None`) stay unitless. Partial
-   adoption must never break an existing Problem; a `units=False`
-   escape hatch on `build_problem` guards against OM dialect surprises.
-4. **Is pint the right boundary backend, given OM units is already in
-   `[mdao]`?** *Recommendation:* yes. OM's library fails the
+1. **Vendor the four-file option**: `USCustomaryUnits` +
+   `ISQMechanics` + `ISQSpaceTime` + `ISQThermodynamics` (~224 KB), so
+   `force`/`speed`/`power`/`temperature` resolve. It closes finding 5
+   for the engineering models this tool targets; the remaining eight
+   ISQ files (~688 KB of atomic physics and characteristic numbers)
+   stay out until someone asks. Measure the `prebuilt.json` load delta
+   before merging.
+2. **`unresolved-unit` is on by default, as a warning.** It will warn
+   on existing models that use ad-hoc unit tokens not in the vendored
+   library -- that nudge is the point, and bare `[kg]`-style
+   references resolve silently once the library ships. Severity
+   matches `unresolved-reference`.
+3. **The OM bridge passes `units=` always, best-effort per variable**:
+   mapped units get the kwarg, unmapped (`om_unit() is None`) stay
+   unitless. Partial adoption must never break an existing Problem; a
+   `units=False` escape hatch on `build_problem` guards against OM
+   dialect surprises.
+4. **pint is the boundary backend.** OM's library fails the
    completeness bar (no dB family, no gallon -- verified) and is an
    untyped private module of an optional heavy dependency; pint's
    closure is four small pure-Python packages. OM units remains the
    *target dialect* at the OM boundary only.
-5. **Should the typed-facade codegen (route (b)) be its own design
-   effort?** *Recommendation:* yes, separate doc. It has independent
-   scope (class generation, naming, regeneration workflow, packaging of
-   generated stubs) and independent value; this design only reserves
-   the dimension-type story so the two compose.
+5. **The typed-facade codegen (route (b)) is its own design effort**,
+   in a separate doc. It has independent scope (class generation,
+   naming, regeneration workflow, packaging of generated stubs) and
+   independent value; this design only reserves the dimension-type
+   story so the two compose.
 
 ## References
 

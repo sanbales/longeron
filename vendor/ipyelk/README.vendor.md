@@ -33,8 +33,8 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    diagram was displayed hung forever ("diagram never loads" until a kernel
    interrupt). Retry semantics refined by patch 9: a browser-reported error
    stops the resends and the default deadline is finite.
-4. **F1-F6 ported from `~/workplace/ipyelk` branch `critical-fixes-batch-1`**
-   (same author, targeting upstream master):
+4. **F1-F6 ported from the patch author's ipyelk fork, branch
+   `critical-fixes-batch-1`** (targeting upstream master):
    - F1: `IDReport.message` printed literal `{eid}`/`{el}` instead of ids
    - F2: empty `Pipeline` crashed `check()` (UnboundLocalError) and
      `get_progress_value()` (ZeroDivisionError)
@@ -116,8 +116,8 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    keeps 24px of edge-node clearance). The math is pinned by a Python
    reference implementation (`longeron.render._route_end_angle` /
    `_covered_route_points`) tested against real elkjs section data.
-9. **F10 backported from `~/workplace/ipyelk` branch
-   `critical-fixes-batch-2` (849769f, same author, targeting upstream
+9. **F10 backported from the patch author's ipyelk fork, branch
+   `critical-fixes-batch-2` (849769f, targeting upstream
    master): errored layouts surface instead of loading forever.** Python
    only -- `js/` and the shipped bundles are untouched. Replaces the retry
    semantics of patches 3 and 4/F6 with the upstream final form (which was

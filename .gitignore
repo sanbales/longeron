@@ -26,5 +26,5 @@ npm/.yarn/
 # Private, never-published notebooks (internal explorations)
 notebooks/private/
 
-# Session working notes (subagent scouting reports, handoffs)
+# Local working notes (deliberately uncommitted)
 .handoff/

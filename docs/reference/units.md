@@ -37,7 +37,7 @@ definition through for boundary-side spellings.
 
 ## Conversion seams reserved for 0.11
 
-Per the ratified design, the conversion *hooks* into the analysis
+Per the units design, the conversion *hooks* into the analysis
 bridges are seams this release -- documented here, wired next:
 
 - **Declaration-boundary normalization.** With the extra installed,

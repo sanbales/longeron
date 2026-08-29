@@ -290,7 +290,7 @@ def _sysml_style() -> dict[str, dict[str, str]]:
         style[f" .{css} > path"] = dict(edge_style)
         # arrowheads (the <use class="elkarrow"> child) must be recolored
         # separately: they inherit the theme gray from the edge <g>, not the
-        # per-kind stroke we put on '> path' (see .handoff/edge-style-forensics).
+        # per-kind stroke we put on '> path'.
         # `color` binds currentColor for the self-painted symbol geometry
         # (adorned triangle dots/ticks, flow pins, portion ball) to the
         # edge stroke.
@@ -513,7 +513,7 @@ _ROOT_LAYOUT = {
     # room for centered edge labels between layers (browser-measured text
     # is wider than the headless heuristic)
     "elk.layered.spacing.nodeNodeBetweenLayers": "52",
-    # straighter edges, clearer labels (see .handoff forensics 2026-08-19):
+    # straighter edges, clearer labels:
     # NETWORK_SIMPLEX aligns chains that BRANDES_KOEPF leaves stepped under
     # INCLUDE_CHILDREN; edge/node clearance stops routes hugging borders
     "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",

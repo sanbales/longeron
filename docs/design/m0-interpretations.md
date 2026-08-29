@@ -82,9 +82,9 @@ Non-goals now: mutating M1 (pymbe's covering pattern), exhaustive enumeration st
 (`all_architectures` already covers the discrete case; a general `exhaustive` strategy
 explodes without domain bounds), per-individual physics re-sizing.
 
-## Decisions (ratified 2026-08-22)
+## Decisions (adopted 2026-08-22)
 
-The three open choices were reviewed and the implemented behavior stands:
+The implemented behavior stands:
 
 1. **Nominal ranged multiplicities take the lower bound** — conservative,
    deterministic, consistent with `instantiate()` and pymbe's atom counts;

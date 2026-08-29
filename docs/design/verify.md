@@ -1,11 +1,9 @@
 # Model-driven requirement-violation hunting (design)
 
-> **Status: proposed for 0.11.** This document consolidates decisions
-> the maintainer has already ratified — the design seed and the
-> IPOG/validation rulings in the merge-queue ledger (2026-08-26/27) and
-> the executed exploration spike (`.handoff/spike_verify_FINDINGS.md`,
-> `.handoff/spike_verify_executed.ipynb`) — into one architecture for
-> `longeron.analysis.verify`. It does not relitigate them. The
+> **Status: adopted 2026-08-27, targeted for 0.11.** This document
+> consolidates the adopted decisions and the results of an exploration
+> spike into one architecture for
+> `longeron.analysis.verify`. The
 > experimental helper `src/longeron/analysis/_verify_spike.py` is
 > superseded by this design and retires with the implementation
 > (retirement plan below). Spike measurements predate the
@@ -136,7 +134,7 @@ test is the real one.
 ### Covering arrays: in-house IPOG-F, Z3 as the constraint engine
 
 Discrete variation spaces too big to enumerate get t-way covering
-arrays. The ledger rulings, consolidated:
+arrays. The adopted rules:
 
 - **In-house IPOG, F-style greedy** (horizontal growth with the
   near-free don't-care optimization), supporting t = 2..6.
@@ -288,7 +286,7 @@ Semantics worth pinning in the API contract:
   where the model encodes. A demo that quotes only the shrunk number
   invites a fair "sloppy" objection; the report carries both so no
   surface has to choose.
-- Determinism policy (ratified): `derandomize=True`, `database=None`,
+- Determinism policy: `derandomize=True`, `database=None`,
   explicit `phases=(generate, shrink)`, seeds accepted and echoed on
   every report. No reliance on the Hypothesis example database, ever —
   reports are reproducible from their own fields.
@@ -315,12 +313,11 @@ Three surfaces, all adapters over the one report shape:
   `step`-shaped default scores 0 the moment `check_requirement` fails.
   No scoreboard change is required beyond a small
   `counterexample_values(ce)` helper in `verify`.
-- **The grand tour gains a "find my violations" beat** (0.11 scope,
-  ratified: integrated into the example analysis — notebook 07 or the
-  grand tour). The beat is one cell: `verify.verify` over the drone
+- **Notebook 07 gains a "find my violations" beat** (0.11 scope).
+  The beat is one cell: `verify.verify` over the drone
   scope, the shrunk catch, the exact edge from `prove`, and the
-  materialized individual repainting the scoreboard red. The spike's
-  demo-value assessment stands: same `.sysml` file, untouched, from
+  materialized individual repainting the scoreboard red. The whole
+  beat runs on the same `.sysml` file, untouched, from
   strategy ranges to a red cell in under ten seconds of compute.
 - **Trades: covering arrays as the case source.** `cover` consumes
   `TradeStudy`'s variation points and emits selection dicts — the same
@@ -334,7 +331,7 @@ Three surfaces, all adapters over the one report shape:
 ## Validation plan
 
 The covering-array generator is validated **without** an ACTS
-dependency, by the ledger's three-layer scheme (verbatim intent):
+dependency, by a three-layer scheme:
 
 1. **Self-validating coverage checker, in CI.** For every emitted
    array: (a) every valid t-tuple is covered, where "valid" is
@@ -412,65 +409,50 @@ public export; it retires in the same change that lands `verify`:
 2. `src/longeron/analysis/_verify_spike.py` is deleted. No deprecation
    cycle: it was never exported from `longeron.analysis`, never
    documented, and its docstring promised exactly this fate.
-3. The executed spike notebook and findings stay in `.handoff/` as the
-   historical record; the design-era numbers above cite them. The
-   spike's scratch-venv reproduction recipe dies with the module —
-   reproduction after 0.11 is `pip install "longeron[verify,smt]"`.
+3. After 0.11, `pip install "longeron[verify,smt]"` installs
+   everything needed to reproduce the spike measurements.
 
-## Open questions for the maintainer
+## Decisions
 
-All six were ratified by the maintainer on 2026-08-27 -- five as
-recommended, and Q1 AMENDED: the extra is compositional,
-`verify = ["hypothesis>=6.100", "longeron[smt]"]` (reusing smt's z3
-pin), alongside new composite extras `analysis = ["longeron[mdao,
-trades,smt,viz]"]`, `ui = ["longeron[explorer,replay,viz]"]`, and
-`all = ["longeron[analysis,ui,verify,rdf,client,server,ecore]"]` --
-`[cad]` deliberately excluded from `all` (the ~1 GB OCC kernel stays
-an explicit opt-in). The implementation treats these as settled.
+All six were adopted on 2026-08-27. The implementation treats them as
+settled.
 
-1. **Does `[verify]` include `z3-solver`?** Hypothesis alone covers
-   `hunt`/`sequences`; `cover` and `prove` want Z3. *Recommendation:*
-   yes — `verify = ["hypothesis>=6.100", "z3-solver>=4.12"]`,
-   mirroring how `dev` already mirrors solver extras. One extra lights
-   the whole surface; a hypothesis-only install still works for the
-   sampling tiers via the lazy-import seam.
-2. **Where does the "find my violations" beat land — notebook 07 or
-   the grand tour?** *Recommendation:* notebook 07. It is the analysis
-   tutorial and absorbs a new section cheaply; the grand tour is a
-   choreographed dashboard whose re-cut is expensive, and it can gain
-   a verdict-strip red-cell moment later without re-recording the
+1. **Extras layout: `[verify]` is compositional.**
+   `verify = ["hypothesis>=6.100", "longeron[smt]"]` reuses smt's z3
+   pin, alongside new composite extras `analysis = ["longeron[mdao,
+   trades,smt,viz]"]`, `ui = ["longeron[explorer,replay,viz]"]`, and
+   `all = ["longeron[analysis,ui,verify,rdf,client,server,ecore]"]`;
+   `[cad]` is deliberately excluded from `all` (the ~1 GB OCC kernel
+   stays an explicit opt-in). One extra lights the whole surface, and
+   a hypothesis-only install still works for the sampling tiers via
+   the lazy-import seam.
+2. **The "find my violations" beat lands in notebook 07.** It is the
+   analysis tutorial and absorbs a new section cheaply; the grand tour
+   is a choreographed dashboard whose re-cut is expensive, and it can
+   gain a verdict-strip red-cell moment later without re-recording the
    narrative.
-3. **Does the drone model gain a genuinely sequence-sensitive
-   requirement?** The spike's most impressive catch (the minimal
-   sortie) currently needs a planted vulnerable model — the stock
-   machines only count launches monotonically. *Recommendation:* yes,
-   land one in the example (a go-around path that re-enters `airborne`
-   past the launch guard's battery floor) so the flagship demo runs end
-   to end on shipped examples only. Small, and it pays for itself the
-   first time the demo runs.
-4. **Default `t` for `cover`?** *Recommendation:* `t=2` with the
-   measured-recall report when exhaustive is feasible; users raise `t`
-   explicitly. Pairwise found 6/6 at 16/648 on the spike; higher
-   strength is a knob, not a default.
-5. **Is the anonymous-`assume` encoder fix a blocker?**
-   *Recommendation:* yes for `prove`, no for the rest — land the
-   encoder fix (record a gap at minimum, encode the body ideally) as
-   its own small ticket before `prove` merges, since a silently
-   dropped assumption turns an honest UNSAT into a false "proven".
-6. **Module layout: single `verify.py` or a package?**
-   *Recommendation:* start as one module beside `smt.py`/`trades.py`
-   (the house pattern); split the IPOG generator into a private
-   `_ipog.py` sibling if it crosses ~300 lines, keeping the public
-   namespace flat.
+3. **The drone example gains a genuinely sequence-sensitive
+   requirement** (a go-around path that re-enters `airborne` past the
+   launch guard's battery floor), so the flagship demo runs end to end
+   on shipped examples only. Without it, the minimal-sortie catch
+   needs a planted vulnerable model — the stock machines only count
+   launches monotonically.
+4. **`cover` defaults to `t=2`**, with the measured-recall report when
+   exhaustive enumeration is feasible; users raise `t` explicitly.
+   Pairwise found 6/6 at 16/648 on the spike; higher strength is a
+   knob, not a default.
+5. **The anonymous-`assume` encoder fix blocks `prove` only.** It
+   lands as its own small ticket before `prove` merges (record a gap
+   at minimum, encode the body ideally), since a silently dropped
+   assumption turns an honest UNSAT into a false "proven". The other
+   tiers do not wait for it.
+6. **Module layout: one module.** `verify.py` starts beside
+   `smt.py`/`trades.py` (the house pattern); the IPOG generator splits
+   into a private `_ipog.py` sibling if it crosses ~300 lines, keeping
+   the public namespace flat.
 
 ## References
 
-- Spike: `.handoff/spike_verify_FINDINGS.md` and
-  `.handoff/spike_verify_executed.ipynb` (2026-08-26, executed outputs
-  committed deliberately).
-- Ratified ledger entries: `.handoff/merge-queue-2026-08-25.md` —
-  "FUTURE DESIGN SEED … violation hunting", "allpairspy vs ACTS",
-  "IPOG variant + validation decisions", "0.11 SCOPE" item 3.
 - Longeron surfaces: {mod}`longeron.interpreter`
   (`check_requirement`, `StateMachine`), {mod}`longeron.m0`,
   {mod}`longeron.analysis.smt`, {mod}`longeron.analysis.trades`,

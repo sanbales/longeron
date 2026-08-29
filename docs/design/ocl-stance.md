@@ -52,7 +52,7 @@ independent and must not be conflated.
    place; transcribing them all would flood users with diagnostics
    about impossibilities.
 3. **Curated native checks, spec OCL as reference** — the implemented
-   behavior. Ratified below.
+   behavior. Adopted below.
 
 ## (d) Consequences and future path
 
@@ -68,7 +68,7 @@ independent and must not be conflated.
   conformance" for the corpus badge, "validation" only for the
   documented diagnostic codes.
 
-## Decisions (ratified 2026-08-22)
+## Decisions (adopted 2026-08-22)
 
 1. **Longeron does not evaluate OCL** — the spec's OCL invariants stay
    reference material in the vendored ecore; no OCL engine, no OCL

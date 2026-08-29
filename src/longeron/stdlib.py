@@ -77,6 +77,9 @@ def standard_library_model(*, cache: bool = True) -> M.Model:
         if isinstance(model, M.Model):
             return model
     model = load_dir(_STDLIB_DIR, cache=cache)
+    # Stable symbolic name (house convention for non-disk sources): the
+    # loading machine's absolute _stdlib path must not ship in prebuilt.json.
+    model.source_name = "<stdlib>"
     _store_prebuilt(model)
     return model
 

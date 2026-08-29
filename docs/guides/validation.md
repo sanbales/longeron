@@ -93,7 +93,7 @@ promotes exactly the resolution-failure codes to errors.
 | `exhibit-state-reference` | error | An `exhibit` reference resolves to something other than a state: `part a; exhibit a;`. Spec: `validateExhibitStateUsageReference` ("Must reference a state"). |
 | `perform-action-reference` | error | A `perform` reference resolves to something other than an action: `attribute b : Real; perform b;`. Pilot: `validatePerformActionUsageReference` ("Must reference an action"). |
 | `multiplicity-bound-type` | error | A literal multiplicity bound that is not a natural number: `part p : D[1.5];`, `D["two"]`. KerML: `validateMultiplicityRangeResultTypes` ("Must have a Natural value"). `*` is an infinity literal and always fine. |
-| `multiplicity-bound-order` | error | A literal range whose lower bound exceeds its upper: `part p : D[3..1];` -- an unsatisfiable (empty) range. Only literal integer pairs are decidable and judged; named or expression bounds are never order-checked. Deliberately **stricter than the pilot**, which has no lower-must-not-exceed-upper rule -- a maintainer-ratified divergence (see below and the [conformance design](../design/conformance.md)). |
+| `multiplicity-bound-order` | error | A literal range whose lower bound exceeds its upper: `part p : D[3..1];` -- an unsatisfiable (empty) range. Only literal integer pairs are decidable and judged; named or expression bounds are never order-checked. Deliberately **stricter than the pilot**, which has no lower-must-not-exceed-upper rule -- a deliberate divergence (see below and the [conformance design](../design/conformance.md)). |
 
 ## Kind-level well-formedness
 
@@ -130,9 +130,9 @@ models clean:
   judgments skip targets inside library packages.
 
 One divergence runs the other way -- longeron is deliberately
-**stricter** than the reference, per a maintainer override recorded in
-the [conformance design](../design/conformance.md)'s ratification
-block: `multiplicity-bound-order` rejects `[3..1]` as an error although
+**stricter** than the reference, per a decision recorded in
+the [conformance design](../design/conformance.md)'s Decisions
+section: `multiplicity-bound-order` rejects `[3..1]` as an error although
 the pilot has no lower-vs-upper rule at all (its validator carries only
 bound-*type* rules), so the pilot accepts the unsatisfiable range. The
 divergence is intentional and pinned by the rejection suite, so a

@@ -64,7 +64,7 @@ def rebuild_prebuilt() -> None:
     from longeron import stdlib
 
     stdlib._PREBUILT.unlink(missing_ok=True)
-    stdlib._raw_prebuilt = None
+    stdlib._prebuilt_data = None
     stdlib._fingerprint_cache = None
     model = stdlib.standard_library_model()
     print(f"prebuilt: {len(model.members)} packages, {stdlib._PREBUILT.stat().st_size} bytes")

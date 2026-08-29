@@ -900,7 +900,7 @@ class TestMultiplicityBounds:
         assert found[0].severity == "error"
 
     def test_three_to_one(self):
-        # the ratified Q3 override (docs/design/conformance.md): [3..1] is
+        # conformance decision 3 (docs/design/conformance.md): [3..1] is
         # an error, deliberately stricter than the pilot
         found = diags("package P { part def D; part p : D[3..1]; }", "multiplicity-bound-order")
         assert len(found) == 1

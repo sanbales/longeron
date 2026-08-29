@@ -1,16 +1,17 @@
 # Conformance methodology (design)
 
-> **Status: proposed.** Drafted 2026-08-27 alongside the first
+> **Status: adopted 2026-08-27.** Drafted alongside the first
 > implementation slice (`tests/test_rejection.py`, the rejection
 > suite). Every empirical claim about longeron below was measured at
-> commit `2296290` with the vendored standard library attached; every
+> the phase-1 commit (2026-08-27) with the vendored standard library
+> attached; every
 > claim about opensysml.org was read from the site and its repository
-> documents on 2026-08-27. Open questions at the end carry
-> recommendations; none block the phase-1 slice.
+> documents on 2026-08-27. The Decisions section at the end records
+> the adopted outcomes; none block the phase-1 slice.
 
-The maintainer's question, verbatim: *"are we checking that we raise
-errors when bad models are provided? or are we just letting everything
-pass?"* This document measures the answer (§ "Where longeron stands"),
+The question this document answers: does longeron raise errors when a
+model is invalid, or does it let everything
+pass? This document measures the answer (§ "Where longeron stands"),
 studies how the most methodologically careful open SysML v2
 implementation answers it (§ "The reference point"), and designs what
 longeron should adopt (§ "The design"). The short version:
@@ -180,7 +181,7 @@ methodology:
 
 ## Where longeron stands (measured)
 
-All probes run at commit `2296290`: `parse_sysml_text` →
+All probes ran at the phase-1 commit (2026-08-27): `parse_sysml_text` →
 `build_model` → `validate()` (stdlib attached), verdict = the first
 layer that objects. "ACCEPTED" means no exception and zero diagnostics
 of either severity.
@@ -188,8 +189,7 @@ of either severity.
 ### The parse layer is strict
 
 Everything below is correctly rejected today with a located,
-humanized message — this is the part of the answer to the maintainer's
-question that is already "yes":
+humanized message — this is the part of the answer that is already "yes":
 
 | Probe | Verdict |
 |---|---|
@@ -216,7 +216,7 @@ SysML v2 spec — the citations are the spec's own validation-rule names
 constraints) and, where the spec text is thin, the pilot
 implementation's validator rule (`SysMLValidator.xtend` /
 `KerMLValidator.xtend` constants, whose messages are quoted).
-*Status note:* this table records the measurement at commit `2296290`
+*Status note:* this table records the phase-1 measurement
 that motivated the rejection corpus; the validation-diagnostics landing
 has since implemented checks for all rows except 10 (usage-head feature
 chains, deferred: a usage's member closure exceeds the model layer's
@@ -260,9 +260,10 @@ diagnoses these but as warnings, where the pilot reports errors:
   references are *warnings*; structural problems … are errors"), made
   safer than it sounds by stdlib-aware resolution — but a user who
   filters for errors ships a model full of typos. Held as an open
-  question below rather than a gap — since ratified and implemented:
+  question below rather than a gap — now decided and implemented
+  (decision 1):
   `validate(strict=True)` / `lint --strict` promotes the
-  resolution-failure family to errors (open question 1).
+  resolution-failure family to errors.
 
 And two findings are **deliberate dialect divergences** already
 documented in the grammar-patch table (`docs/guides/grammar.md`),
@@ -288,8 +289,8 @@ implementation checks at all.
 ## The design
 
 Four parts, adopted from the opensysml methodology in order of value
-per unit cost. Part (a) ships with this document; (b)–(d) are
-recommendations with effort estimates.
+per unit cost. Part (a) ships with this document; (b)–(d) follow,
+with effort estimates.
 
 ### (a) The rejection corpus — `tests/test_rejection.py` (phase 1, this change)
 
@@ -310,7 +311,7 @@ A negative suite in the opensysml mold, adapted to pytest:
      today.
   3. `WARNING_DIAGNOSED` — the reference errors, longeron warns; the
      test asserts the diagnostic exists (any severity), and the
-     severity stance is recorded here and in the open questions, not
+     severity stance is recorded here and in the Decisions section, not
      hard-coded into an assertion that would fight a severity change.
   4. `KNOWN_GAPS` — the permissiveness table above, as
      `pytest.mark.xfail(strict=True)` cases asserting rejection. Green
@@ -328,13 +329,13 @@ A negative suite in the opensysml mold, adapted to pytest:
   36, and the validation-diagnostics landing then drained it to 28 / 36
   / 10 / 2 (29 gaps promoted to error-severity rejections, 5 to
   warning-severity detection, 2 deferred with corpus-calibrated reasons
-  stated on the cases); the ratified Q3 override then added the
-  `[3..1]` bound-order case, making the current counts 28 / 37 / 10 /
+  stated on the cases). The current counts are 28 / 36 /
+  10 /
   2. The counts are stated by the suite itself (a
   summary test asserts the bucket sizes match the doc's claim, the
   cheap analog of opensysml's count guards).
 
-### (b) Production-coverage accounting (phase 2, recommended)
+### (b) Production-coverage accounting (phase 2, planned)
 
 Opensysml's input-presence instrument is a workaround for a
 hand-written parser. Longeron's parsers are **generated by ANTLR from
@@ -346,7 +347,7 @@ counts — the measurement opensysml explicitly wished for and could not
 afford ("it needs counters in the parse functions … which is why it
 was deliberately left out").
 
-Recommended shape: a `scripts/grammar_coverage.py` sibling of
+The planned shape: a `scripts/grammar_coverage.py` sibling of
 `check_corpus.py` that sweeps the same pinned corpus (plus the vendored
 stdlib and the rejection suite's sources), walks each tree once, and
 reports per-grammar entered/total rule counts plus the never-entered
@@ -372,7 +373,7 @@ management, bridge upkeep — opensysml wrote and maintains two custom
 Java bridges because the stock CLI validated files in a state-carrying
 sequential session that made verdicts order-dependent).
 
-Recommended posture: **periodic manual sweep, not CI.** The rejection
+The adopted posture: **periodic manual sweep, not CI.** The rejection
 corpus is *designed for it* — every case already cites the rule and
 predicts the reference verdict, so a future
 `scripts/pilot_referee.py` can bucket cases into
@@ -404,90 +405,63 @@ today; revisit if the corpus grows a semantic-differential ambition
   default-mode results (the opensysml rule: "a strict agreement never
   reads as a default one").
 
-## Open questions for the maintainer
+## Decisions
 
-All were ratified by the maintainer on 2026-08-27 -- Q1/Q4/Q5 and the
-design-body differential posture (periodic manual sweep via a future
-`scripts/pilot_referee.py`, never CI) as recommended; Q2 ratified as
-completed by the burn-down (34/36) WITH the standing rule: future
-gaps close grouped by check-family, each landing with its
-rejection-suite promotion, the corpus sweep as the permanent gate.
-**Q3 OVERRIDDEN: `[3..1]` is REJECTED as an error** -- longeron is
-deliberately stricter than the pilot here; the divergence is recorded
-in the dialect table so the future differential adjudicates it as
-intentional. Implementation status: **all implemented** (the change
-following this ratification). Q1+Q4 landed as `validate(strict=True)`
-+ `longeron lint --strict`: the resolution-failure family
-(`RESOLUTION_CODES` in `validation.py` -- `unresolved-reference`,
-`unresolved-name`, `unresolved-unit`, `dangling-expose`,
-`dangling-flow`, `dangling-succession`) promotes to error severity,
-and a bare `import` warns (`bare-import`; strict only, never an
-error, never default). No parse-layer breadcrumb was needed: the
-builder already records a missing visibility prefix as
-`Import.visibility is None` and it survives the JSON round-trip. Q3
-landed as the `multiplicity-bound-order` error (literal integer pairs
-only -- named/expression bounds are undecidable and stay unchecked)
-plus its rejection-corpus case (bucket 2: 36 -> 37). Strict results are
-reported separately from default results, per the design rule: measured
-per-file over the pinned corpus, 142 of 309 files carry a strict-mode
-error (cross-file references dominate) and 0 use a bare import --
-numbers stated in `docs/guides/validation.md`.
+All five were adopted on 2026-08-27, together with the differential
+posture stated in design part (c): periodic manual sweep via a future
+`scripts/pilot_referee.py`, never CI. All are implemented (the change
+following the adoption).
 
-
-1. **Should `unresolved-reference` stay a warning?** The pilot errors
-   on every unresolved reference; longeron warns by design and the
-   stdlib fallback keeps the false-positive rate low.
-   *Recommendation:* keep the warning default (it matches the tool's
-   exploratory-notebook posture), but add a `strict=True` flag on
-   `validate()` that promotes `unresolved-reference` (and only
-   resolution codes) to errors, and have `longeron check` (CLI) grow
-   `--strict`. The rejection suite's bucket 3 becomes bucket 2 under
-   that flag. This is validation.py work — deliberately **not** in
-   phase 1 (that file is owned by concurrent workstreams).
-   *Ratified outcome: implemented as recommended* — see the
-   ratification block above for the exact promoted-code list.
-2. **Who closes the known gaps, and in what order?** The 22 gap rows
-   above (24 suite cases: row 4 contributes two, and row 10's
-   qualified-name variant is its own case) cluster into four checks: kind-typing (rows 5–9, one resolver-aware
-   check), kind-nesting/compositeness (rows 1–3, 16–17), reference-kind
-   checks (rows 10–12, 18–19), and cardinality/variation rules (rows
-   4, 13–15, 20–22). *Recommendation:* kind-typing first — it is the
-   likeliest real-model typo (`part p : SomeAttrDef;` from a rename)
-   and one check closes five rows. Each check lands with its bucket-2
-   promotion in the same commit (the strict xfail forces this).
-3. **Is `[3..1]` invalid?** Deliberately absent from the corpus: the
-   pilot has no lower ≤ upper rule (checked against
-   `KerMLValidator.xtend` at the pin — only bound-type rules exist),
-   so a `[3..1]` range is unsatisfiable but well-formed.
-   *Recommendation:* follow the pilot (accept); a `possibly-empty`
-   *lint* warning would be a longeron extension, labeled as such.
-   *Ratified outcome: OVERRIDDEN — rejected as the
-   `multiplicity-bound-order` error* (literal bounds only), with a
-   rejection-corpus case citing the override; the stricter-than-pilot
-   divergence is recorded in `docs/guides/validation.md`.
-4. **Does bare `import` (patch 1) ever get flagged?** The spec BNF
-   mandates the visibility prefix; the spec's own examples omit it;
-   the pilot and opensysml both reject it. *Recommendation:* keep
-   accepting silently in default mode (the corpus needs it), record it
-   in the dialect table (done, patch 1), and fold it into the same
-   future strict mode as question 1 — as a warning, since unlike the
-   pseudostate dialect it appears in OMG-authored text.
-   *Ratified outcome: implemented as recommended* — the `bare-import`
-   warning, strict mode only. (Measured at implementation time: the
-   pinned release corpus itself contains zero bare imports — every
-   corpus `import` carries a visibility prefix; the bare form remains
-   in spec-PDF examples and common usage.)
-5. **KerML rejection cases?** The KerML grammar is the same ANTLR
-   pipeline but `build_model` rejects KerML outright, so only
-   parse-layer cases are testable. *Recommendation:* defer until the
-   KerML build path exists; the corpus structure already accommodates
-   a `language` field when it does.
+1. **`unresolved-reference` stays a warning by default; strict mode
+   promotes it.** The warning default matches the tool's
+   exploratory-notebook posture, and the stdlib fallback keeps the
+   false-positive rate low. `validate(strict=True)` and
+   `longeron lint --strict` promote the resolution-failure family
+   (`RESOLUTION_CODES` in `validation.py` -- `unresolved-reference`,
+   `unresolved-name`, `unresolved-unit`, `dangling-expose`,
+   `dangling-flow`, `dangling-succession`) to error severity. The
+   rejection suite's bucket 3 becomes bucket 2 under the flag. Strict
+   results are reported separately from default results, per the
+   design rule: measured per-file over the pinned corpus, 142 of 309
+   files carry a strict-mode error (cross-file references dominate)
+   and 0 use a bare import -- numbers stated in
+   `docs/guides/validation.md`.
+2. **The known gaps close grouped by check-family**, kind-typing
+   first -- it is the likeliest real-model typo (`part p :
+   SomeAttrDef;` from a rename) and one check closes five rows. Each
+   check-family lands with its bucket-2 promotion in the same commit
+   (the strict xfail forces this), and the corpus sweep is the
+   permanent gate. The burn-down is complete (34/36 at adoption); the
+   grouping rule governs future gaps.
+3. **`[3..1]` is rejected as an error** -- the
+   `multiplicity-bound-order` diagnostic, literal integer pairs only
+   (named/expression bounds are undecidable and stay unchecked) --
+   pinned by direct validation tests. The pilot has
+   no lower <= upper rule (checked against `KerMLValidator.xtend` at
+   the pin: only bound-type rules exist), so longeron is deliberately
+   stricter than the pilot here; the divergence is recorded in
+   `docs/guides/validation.md` so the future differential adjudicates
+   it as intentional.
+4. **Bare `import` (patch 1) stays accepted in default mode and warns
+   in strict mode** (`bare-import`; strict only, never an error,
+   never default). The spec BNF mandates the visibility prefix, but
+   the spec's own examples omit it and common usage follows them. No
+   parse-layer breadcrumb was needed: the builder already records a
+   missing visibility prefix as `Import.visibility is None`, and it
+   survives the JSON round-trip. Measured at implementation time: the
+   pinned release corpus itself contains zero bare imports -- every
+   corpus `import` carries a visibility prefix.
+5. **KerML rejection cases are deferred** until the KerML build path
+   exists. The KerML grammar is the same ANTLR pipeline, but
+   `build_model` rejects KerML outright, so only parse-layer cases
+   are testable today. The corpus structure already accommodates a
+   `language` field for when it does.
 
 ## Generative tier (implemented)
 
 > Added 2026-08-27, the second implementation slice:
 > `tests/test_generative.py` + `tests/_model_strategies.py`. Everything
-> below was measured at commit `8cc8a2c`.
+> below was measured at the second-slice commit (2026-08-27).
 
 The rejection corpus above is hand-authored, so its denominator is our
 imagination. The generative tier turns the sampling over to
@@ -550,9 +524,9 @@ interface-usage ends (`validateInterfaceUsageEnd_`), and three resolver
 holes (multiplicity bounds, succession ends, and `perform` targets are
 never resolved — not even to the warning the rest of the resolver
 would emit). Deliberately *not* added at the time: `[3..1]` stayed
-adjudicated-accept while open question 3 stood (the maintainer's
-ratification later overrode that adjudication -- it is now the
-`multiplicity-bound-order` error with its own rejection case), and
+adjudicated-accept while the `[3..1]` question stood (decision 3
+later overrode that adjudication -- it is now the
+`multiplicity-bound-order` error), and
 pilot-*warning* rules (e.g.
 `validateBindingConnectorTypeConformance`) do not qualify -- warnings
 do not count as rejection in either direction.

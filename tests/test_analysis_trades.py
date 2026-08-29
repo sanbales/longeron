@@ -325,7 +325,7 @@ class TestVariantBodyRedefinitions:
     ``variant item light : Motor { :>> mass = 0.025; }`` must enumerate
     with 0.025, not the type's 0.040 -- instantiating the variant's *type*
     dropped the body redefinitions and silently zeroed such catalogs
-    (docs/design/mdao-objects.md, Q5).
+    (docs/design/mdao-objects.md, decision 5).
     """
 
     @pytest.fixture(scope="class")

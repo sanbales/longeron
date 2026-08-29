@@ -3,7 +3,7 @@
 ## 0.11.0 (unreleased)
 
 - **`longeron.analysis.verify`: model-driven requirement-violation
-  hunting** ([design doc](design/verify.md), ratified; supersedes and
+  hunting** ([design doc](design/verify.md); supersedes and
   retires the `_verify_spike` prototype): the model fights back, from
   nothing but the `.sysml` text. Four tiers over one oracle -- every
   verdict is the interpreter's, solvers only propose:
@@ -45,12 +45,12 @@
   - notebook 07 gains the "find my violations" beat: hunt, the minimal
     sortie, the covering array with its measured-recall line, and the
     hoverMargin absence proof, executing with or without the extra
-  - extras restructured (ratified): `verify = ["hypothesis>=6.100",
+  - extras restructured: `verify = ["hypothesis>=6.100",
     "longeron[smt]"]`, plus composites `analysis`, `ui`, and `all`
     (`cad` deliberately excluded from `all`)
 - **Object-valued analysis I/O in the OpenMDAO bridge**
-  ([design doc](design/mdao-objects.md), all seven open questions
-  ratified): objects -- not just scalars -- cross `build_problem`, on
+  ([design doc](design/mdao-objects.md), all seven decisions
+  adopted): objects -- not just scalars -- cross `build_problem`, on
   OpenMDAO's stock discrete-variable machinery (no fork)
   - **Entity binding**: variation-typed part/item members become
     discrete inputs carrying the configured **M0 individual** instead
@@ -92,7 +92,7 @@
     convention. Tutorial 07 closes with a discrete motor-entity case
     swap and a `FileArtifact` roundtrip
 
-- **Units, tiers 2 and 3 of the ratified design**
+- **Units, tiers 2 and 3 of the units design**
   ([design doc](design/units.md)): models with `[SI::kg]`-style
   measurement annotations now get a real dimensional lint, and an
   optional typed conversion facade
@@ -115,7 +115,7 @@
   - **`longeron.units`**: the derived unit table is public --
     `unit_table()` / `derive_units()` (user unit packages shaped like
     the stdlib derive with NO mapping table, per the foreign-packages
-    ruling), `register_unit()` for overrides, and a pint-backed typed
+    decision), `register_unit()` for overrides, and a pint-backed typed
     facade behind `pip install "longeron[units]"`: `convert()` (linear,
     offset °C, logarithmic dBm/dBW), `si_value()`, `si_unit()`,
     `format_quantity()` and `om_unit()` (both pint-free), `with_units()`
@@ -183,7 +183,7 @@
   UNSAT core), and the Cesium mission finale. Tutorial 15 builds it in
   five code cells; `scripts/record_demo.py` films it deterministically
   for the README
-- **Units groundwork**: the ratified [units design](design/units.md)
+- **Units groundwork**: the adopted [units design](design/units.md)
   (model-tier stdlib units, an in-house dimensional lint with scale
   tags, pint behind a typed facade at the boundaries only); bracket
   units (`1.5 [SI::kg]`) now appear across the examples, render in
@@ -211,7 +211,7 @@
   (`dirty`, `changes`, `on_change`, `mark_saved`) that every edit
   records into -- the app layer's save-prompt seam
 - **View persistence** (`longeron.views`): diagrams save as SysML v2
-  views and restore from them, per the ratified
+  views and restore from them, per the
   [design](design/view-persistence.md). `save_view` appends a
   `ViewUsage` -- typed by the matching `StandardViewDefinitions` view
   definition, exposing the shown scope (`expose Pkg::**`), with a
@@ -379,8 +379,8 @@
   back (with the picked individual surfaced); tutorial 10 teaches the
   M1/M0 distinction through it; `drone_geometry(split_instances=True)`
 - Diagnostic-location test made Windows-safe (the only red CI leg)
-- Design docs: the OCL stance (ratified) and the notation plan +
-  spec-grounded errata live in the repo's session notes
+- Design docs: the OCL stance recorded
+  ([the OCL stance](design/ocl-stance.md))
 
 ## 0.7.1
 
@@ -503,7 +503,7 @@
   random), per-individual attribute evaluation, Annex-A sequences, roll-ups
   over the actual population, `from_architecture` and `from_timeline` --
   execution traces and static populations share one representation. Design
-  doc with ratified decisions under *Architecture > Design documents*.
+  doc with adopted decisions under *Architecture > Design documents*.
 - **CI platform triangle**: Windows and macOS legs join the ubuntu matrix;
   `win-64` added to the pixi lock; git is a pinned conda dependency of every
   environment; workflows on Node24-native action majors.

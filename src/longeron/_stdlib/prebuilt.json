@@ -28056,7 +28056,20 @@
         "redefines": [
          "separateSpaceToo",
          "thisOccurrence"
-        ]
+        ],
+        "multiplicity": {
+         "@type": "Multiplicity",
+         "lower": {
+          "@expr": "Literal",
+          "value": 0,
+          "text": "0"
+         },
+         "upper": {
+          "@expr": "Literal",
+          "value": "*",
+          "text": "*"
+         }
+        }
        },
        {
         "@type": "Usage",
@@ -28066,7 +28079,20 @@
         "redefines": [
          "separateSpace",
          "thatOccurrence"
-        ]
+        ],
+        "multiplicity": {
+         "@type": "Multiplicity",
+         "lower": {
+          "@expr": "Literal",
+          "value": 0,
+          "text": "0"
+         },
+         "upper": {
+          "@expr": "Literal",
+          "value": "*",
+          "text": "*"
+         }
+        }
        }
       ],
       "kind": "connection",
@@ -38114,6 +38140,6 @@
     "is_standard": true
    }
   ],
-  "source_name": "/Users/sanbales/workplace/longeron/src/longeron/_stdlib"
+  "source_name": "<stdlib>"
  }
 }

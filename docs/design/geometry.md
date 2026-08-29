@@ -1,39 +1,26 @@
 # Geometry as model content (design)
 
-> **Status: RATIFIED (2026-08-28).** The maintainer answered all ten
-> open questions, each as recommended: standard union + extension
-> cut/intersect (Q1); three extension libraries -- LongeronGeometry,
-> LongeronAero, LongeronKinematics (Q2); JupyterCAD as document
-> format only, zero-dependency .jcad export, no dependency (Q3);
-> cadquery stays unchanged (Q4); phase 1 opens the 0.13 arc --
-> nothing in 0.11/0.12, though the 0.12 model authoring leaves
-> attribute names envelope-ready (Q5); the stated fidelity ceiling
-> (Q6); joints specialize the standard transformation vocabulary
-> (Q7); poses layered across M1 attributes, named-pose states, and
-> M0 facts (Q8); articulation envelopes sampled through the existing
-> engines (Q9); kinematics waits for the static slice (Q10). Nothing
-> in this document is implemented yet; it is the contract for the
-> 0.13 geometry arc.
+> **Status: adopted 2026-08-28.** All ten decisions below (the
+> Decisions section) are settled. Nothing in this document is
+> implemented yet; it is the contract for the 0.13 geometry arc.
 
-The maintainer's charge, near-verbatim: *"beef up the CAD modeling
-concept in SysMLv2 -- define rough geometries (prime shapes, boolean
-operations, edge operations, the things we could do with JupyterCAD;
-maybe we should replace CadQuery with JupyterCAD), but also be able to
-extend it to draw wings with proper airfoils, multisection, twist,
-dihedral, as an example of an extension of the basic SysMLv2 CAD
-implementation. We need primordial CAD elements (points, coordinate
-frames, relative coordinate frames, the bare minimum to define the
-basic solids, their orientation and position). We don't want high
-fidelity CAD models necessarily, but reasonable bounding volumes and
-shapes so we can do some constraint evaluation in SysMLv2."*
+Goal: let SysML v2 models carry CAD content directly. A model declares
+rough geometry -- primitive solids, boolean operations, edge
+operations -- from primordial CAD elements: points, coordinate frames,
+relative coordinate frames, the bare minimum to define basic solids
+with their position and orientation. The vocabulary must also extend
+to real engineering surfaces -- wings with proper airfoils,
+multisection, twist, dihedral -- as the worked example of extending
+the base vocabulary. The target is not high-fidelity CAD; it is
+reasonable bounding volumes and shapes, good enough for constraint
+evaluation inside SysML v2.
 
-The second charge, added in review, near-verbatim: *"we should look at
-what SysML v2 has for things like HINGES -- e.g. if we want to model a
-gimballed sensor, or the opening of solar panels; the real test would
-be modeling something like the James Webb Telescope deployment
-mechanism, but a simple expanding solar panel would be fine. The other
-would be multi-joint robot arms -- a simple 3-DOF all the way to an
-underconstrained arm with 11 joints."*
+The design also covers articulation: what SysML v2 offers for hinges
+and joints, so a model can state a gimballed sensor, an unfolding
+solar panel, or a multi-joint robot arm -- from a simple 3-DOF arm to
+an underconstrained arm with 11 joints. A James Webb Telescope-class
+deployment mechanism is the stretch test; an expanding solar panel is
+the working example.
 
 The thesis follows longeron's spine. Today geometry is Python-side: a
 builder synthesizes an airframe from catalog attributes, and the model
@@ -41,15 +28,15 @@ never states a shape. This design inverts the ownership. Parts carry
 their own bounding volumes as model content, grounded in the standard
 Geometry Domain Library, and the kernel compiles that content into the
 meshes and solids the existing checks and viewers already consume.
-Longeron's ratified posture applies throughout: model-derived, never
+Longeron's standing posture applies throughout: model-derived, never
 invented. Every primordial below is grounded in standard vocabulary,
 and every extension is a clearly labeled longeron library.
 
-All empirical claims were verified against the worktree at `cc5d4fd`
-(longeron 0.10.0). Library claims cite the pinned OMG corpus at commit
-`de1070ae`. JupyterCAD claims were verified in a scratch venv against
-jupytercad 3.4.2. Spec-absence claims were verified by full-text search
-over the SysML v2 Part 1 PDF.
+All empirical claims were verified against longeron 0.10.0. Library
+claims cite the pinned OMG corpus at commit `de1070ae`. JupyterCAD
+claims were verified in a scratch venv against jupytercad 3.4.2.
+Spec-absence claims were verified by full-text search over the SysML
+v2 Part 1 PDF.
 
 ## The standards boundary: what the library already ships
 
@@ -57,7 +44,7 @@ SysML v2 already owns the shape-vocabulary problem. The Geometry Domain
 Library (spec §9.7, printed p. 582) ships two packages, and the
 Quantities and Units library ships the entire coordinate-frame
 machinery. Both Geometry files parse and validate with zero
-diagnostics against longeron at `cc5d4fd` (verified).
+diagnostics against longeron 0.10.0 (verified).
 
 ### ShapeItems: 43 shape definitions, parametric where it counts
 
@@ -151,8 +138,8 @@ spherical, and planetary frames (208-291), and
 `Position3dVector`/`Displacement3dVector` (304, 318). The same file
 declares the `width`, `height`, `radius`, `area`, and `volume`
 quantities that `ShapeItems` redefines (`length` is in the vendored
-`ISQBase`). The units design's open question 1 already recommends
-vendoring `ISQSpaceTime`. This design turns that recommendation into a
+`ISQBase`). The units design (decision 1) already vendors
+`ISQSpaceTime`. This design turns that decision into a
 requirement, because `ShapeItems` and `SpatialItems` import it.
 
 ### The kernel gap, and the shim that closes it
@@ -168,13 +155,13 @@ for this: `KernelShim.sysml` provides resolvable stand-ins for kernel
 names (`ScalarValues`, `Base`, `Objects`, `Collections`). The shim
 grows the geometry names as stubs: `Point`, `SpatialFrame`,
 `MatesWith`, and the handful of function names. Where the shim does
-not reach, the ratified posture from the units design applies:
+not reach, the posture from the units design applies:
 resolution is good where the library ships and dangling where it does
 not, and the compiler never depends on the dangling parts.
 
 ### What the standard does not ship: kinematics, verified absent
 
-The second charge asks what SysML v2 has for hinges, gimbals, and
+The articulation goal asks what SysML v2 has for hinges, gimbals, and
 multi-joint arms. The answer, verified empirically: **nothing named**.
 A full-text search of the entire Part 1 specification PDF finds zero
 occurrences of "revolute", "prismatic", "kinematic", "hinge",
@@ -203,7 +190,7 @@ in the standard's own terms, an implementation of that view.
 
 ## What longeron has today (gap analysis)
 
-Everything below was read from the worktree at `cc5d4fd`.
+Everything below was read from the longeron 0.10.0 source.
 
 - **Python-side parametric builders.** `analysis/geometry.py` (2119
   lines) synthesizes four airframe families from catalog attributes:
@@ -241,8 +228,8 @@ Everything below was read from the worktree at `cc5d4fd`.
   individuals with no interpreter change.
 
 The gap, stated once: geometry today flows *from* Python heuristics
-*to* the screen, and the model is only a source of scalars. The
-maintainer's charge inverts the arrow. Geometry becomes model content,
+*to* the screen, and the model is only a source of scalars. This
+design inverts the arrow. Geometry becomes model content,
 and the Python side becomes a compiler.
 
 ## The primordial set
@@ -265,8 +252,8 @@ or marked as a longeron extension.
 | Joints, chains, poses | none (verified absent) | **longeron extension** (the kinematics section) |
 
 The extensions live in longeron-authored library packages, shipped
-with the package but never labeled `standard library`. Working names,
-pending open question 2: `LongeronGeometry` (booleans, edge
+with the package but never labeled `standard library`. The names,
+per decision 2: `LongeronGeometry` (booleans, edge
 operations, sweeps), `LongeronAero` (airfoils and wings), and
 `LongeronKinematics` (joints and chains).
 
@@ -317,7 +304,7 @@ hand-stamped.
 
 ## The worked example: wings as a domain extension
 
-The charge names the test: proper airfoils, multisection, twist,
+The worked test: proper airfoils, multisection, twist,
 dihedral. `LongeronAero` extends the primordials the same way any
 domain library would, which is the point of the example.
 
@@ -409,11 +396,11 @@ package LongeronKinematics {
 ```
 
 A reduced form of this sketch parses and validates with zero
-diagnostics at `cc5d4fd` (verified). The semantic grounding is direct:
+diagnostics against longeron 0.10.0 (verified). The semantic grounding is direct:
 a `RevoluteJoint` *is* the data of a standard `Rotation`
 (`axisDirection`, `angle`) plus limits, and a gimbal is two nested
 revolutes -- the child frame of the outer joint is the parent frame
-of the inner one. The gimballed sensor from the charge is therefore
+of the inner one. The gimballed sensor is therefore
 two `RevoluteJoint`s and one camera envelope, and the existing
 occlusion check runs per pose.
 
@@ -572,7 +559,7 @@ Design decisions inside the pipeline:
 
 ## JupyterCAD, assessed honestly
 
-The maintainer asks whether JupyterCAD should replace cadquery. The
+Should JupyterCAD replace cadquery? The
 question decomposes into three roles -- engine, document format, and
 viewer -- and the honest answer differs per role. Facts first, all
 verified against jupytercad 3.4.2 in a scratch venv:
@@ -608,9 +595,8 @@ The verdict, per role:
    at all -- its kernel lives in the browser. The exact-boolean engine
    stays cadquery/OCC behind the explicit `[cad]` extra (conda-forge,
    ~1 GB, opt-in as today), and the stdlib mesh engine stays the
-   dependency-free fallback. "Replace CadQuery with JupyterCAD" is
-   answered: cadquery is irreplaceable in the one role JupyterCAD
-   cannot play.
+   dependency-free fallback. cadquery is irreplaceable
+   in the one role JupyterCAD cannot play.
 2. **Document format: yes, as an export target.** The primordial set
    maps nearly one-to-one onto JCAD: primitives to `Part::*`, the
    union to `MultiFuse`, `DifferenceSolid` to `Cut`,
@@ -721,7 +707,7 @@ as design commitments:
 
 ## Phasing
 
-The finish-then-tag ruling (ratified 2026-08-28) holds: v0.11.0 waits
+The finish-then-tag decision (2026-08-28) holds: v0.11.0 waits
 for the unification arc, and nothing in this design lands in 0.11.
 The 0.12 headline is the curriculum rebuild. Geometry as model content
 is the arc after it, sized in slices:
@@ -748,79 +734,76 @@ is the arc after it, sized in slices:
   builder deprecation decisions.
 
 Each phase is independently shippable, and phase 1 alone delivers the
-charge's core: primordial CAD elements, position and orientation, and
+core goal: primordial CAD elements, position and orientation, and
 constraint evaluation over model-owned bounding volumes.
 
-## Open questions for the maintainer
+## Decisions
 
-1. **How are booleans represented in the model?** Union could ride the
-   standard's `componentItems` semantics alone, with difference and
-   intersection as longeron item defs -- or all three could be
-   longeron CSG nodes for symmetry. *Recommendation:* standard union
-   via `SpatialItem` `componentItems` wherever composition is "this
-   thing is made of these things", plus `LongeronGeometry`'s
+All ten were adopted on 2026-08-28.
+
+1. **Booleans: standard union plus labeled extensions.** Union rides
+   `SpatialItem` `componentItems` wherever composition is "this
+   thing is made of these things"; `LongeronGeometry` adds
    `DifferenceSolid`/`IntersectionSolid` (and an explicit `UnionSolid`
    for closed CSG trees) as clearly labeled extensions. They map
    one-to-one onto JCAD's `Cut`/`MultiCommon`/`MultiFuse`, and the
    grounded union stays grounded.
-2. **How are the extension packages named and shipped?**
-   *Recommendation:* three longeron-authored library files --
+2. **Extension packages: three longeron-authored library files** --
    `LongeronGeometry`, `LongeronAero`, `LongeronKinematics` -- shipped
    in the package beside the vendored stdlib but in a separate
    directory (the `analysis_conventions.sysml` precedent, promoted to
    an importable library location), never labeled `standard library`,
    each opening with a doc comment naming itself an extension.
-3. **What role does JupyterCAD get?** *Recommendation:* document
-   format only. Ship a zero-dependency `.jcad` exporter (primitives
+3. **JupyterCAD: document format only.** Longeron ships a
+   zero-dependency `.jcad` exporter (primitives
    and booleans parametrically, lofts as BREP payloads when `[cad]` is
-   present), take no dependency on any jupytercad package, keep the
-   in-house viewer as the linked-selection surface, and defer import
+   present), takes no dependency on any jupytercad package, keeps the
+   in-house viewer as the linked-selection surface, and defers import
    indefinitely.
-4. **What happens to cadquery?** *Recommendation:* it stays, unchanged
+4. **cadquery stays**, unchanged
    in role and packaging -- the exact-boolean engine behind the
    explicit `[cad]` extra (conda-forge). JupyterCAD cannot replace it
    (no Python-side kernel, verified), and the stdlib mesh engine
    remains the no-extra fallback. Revisit only if a lighter OCC
    binding with cp313 wheels changes the packaging calculus.
-5. **When does this land, against finish-then-tag?** *Recommendation:*
-   nothing in 0.11 (the tag waits only for the unification arc), and
-   nothing in 0.12 (the curriculum owns it). Phase 1 opens the 0.13
-   arc, with the curriculum's T7 gaining a model-geometry epilogue
-   when phase 1 ships. Ratifying this design now lets the 0.12 model
+5. **Landing: phase 1 opens the 0.13 arc.**
+   Nothing lands in 0.11 (the tag waits only for the unification arc), and
+   nothing in 0.12 (the curriculum owns it). The curriculum's T7 gains
+   a model-geometry epilogue
+   when phase 1 ships. Adopting this design now lets the 0.12 model
    authoring leave attribute names ready for envelopes.
-6. **Where exactly is the fidelity ceiling?** *Recommendation:* adopt
-   the ceiling as stated: primitives + CSG + named-family lofts, no
+6. **The fidelity ceiling stands as stated**:
+   primitives + CSG + named-family lofts, no
    topological naming (edge operations on named primitive features
    only, `[cad]`-engine only), rigid ideal kinematics with sampled
    range checks, uniform-density mass properties. Every check's report
    names its engine and its accuracy contract, as the existing checks
    already do.
-7. **How are joints grounded in the standard?** *Recommendation:* as
+7. **Joints are grounded in the standard as
    parameterized specializations over the vendored transformation
-   vocabulary -- a `RevoluteJoint` is semantically a `Rotation` with
+   vocabulary** -- a `RevoluteJoint` is semantically a `Rotation` with
    limits and a named degree of freedom, a `PrismaticJoint` a
    `Translation`, composed through the `SpatialItem` frame chain the
    standard already defines. No new frame algebra, no competing
    placement mechanism, and the joint defs live in
    `LongeronKinematics` marked as extensions (the spec ships no joint
    vocabulary -- verified, zero occurrences).
-8. **How are poses represented -- attributes, states, or M0 facts?**
-   *Recommendation:* all three, layered. Joint parameters are ordinary
+8. **Poses are layered across all three levels.** Joint parameters are ordinary
    M1 attributes (the possibility space). Named poses (stowed,
    deployed) are attribute-binding sets that states reference, so the
    state machine drives deployment and `record_timeline` animates it.
    A concrete pose is an M0/interpretation-level fact carried in
    individual slots, swept by trades and hunted by verify. The
    interpreter stays floats-only.
-9. **What engine computes articulation envelopes?** *Recommendation:*
-   the existing two engines over sampled poses -- grid/LHS sweeps
+9. **Articulation envelopes come from
+   the existing two engines over sampled poses** -- grid/LHS sweeps
    through the trades machinery for coverage, `hunt` for adversarial
    pose search with shrinking, exact per-pose booleans on `[cad]`.
    No kinematics/collision dependency (FCL-class engines are above
    the ceiling), and every range verdict is reported as sampled, not
    continuous.
-10. **Does kinematics wait for the static slice?** *Recommendation:*
-    yes. Static bounding volumes (phase 1) are the smallest honest
+10. **Kinematics waits for the static slice.**
+    Static bounding volumes (phase 1) are the smallest honest
     slice and prove the compiler, the keying, and the check plumbing.
     Kinematics (phase 3) reuses all of it and adds only the frame
     chain and pose machinery. The solar panel is the deliverable
@@ -844,11 +827,11 @@ constraint evaluation over model-owned bounding volumes.
   {mod}`longeron.analysis.mission3d`, {mod}`longeron.m0`,
   {mod}`longeron.analysis.verify`, `src/longeron/_stdlib/`
   (vendored subset + `KernelShim.sysml`).
-- Sibling designs: [units](units.md) (vendoring question 1, the
+- Sibling designs: [units](units.md) (vendoring decision 1, the
   floats-only invariant, model-derived posture),
   [M0 interpretations](m0-interpretations.md) (individuals and slots),
   [the notebooks rebuild](notebooks.md) (finish-then-tag, T7's
   per-configuration geometry contract).
-- Verified versions: longeron 0.10.0 at `cc5d4fd`, jupytercad 3.4.2
+- Verified versions: longeron 0.10.0, jupytercad 3.4.2
   (scratch venv, 247 MB / 115 packages measured), cadquery 2.8.0
   (Apache-2.0), pydantic 2.13.5.

@@ -1,22 +1,13 @@
 # Design: data provenance — evidence-linked models
 
-> Status: RATIFIED (2026-08-28) -- the maintainer answered all five
-> open questions, each as recommended: in-model SourceEvidence
-> metadata (Q1); quote-primary anchoring with optional bbox (Q2); the
-> license-clean stack -- pypdf/pdfminer.six behind [evidence], OCR
-> optional, PyMuPDF never ships (Q3); evidence-drift always warns,
-> unevidenced-value is opt-in posture, coverage() reports honestly
-> either way (Q4); layers 1-2 land as an 0.12 arc after the
-> curriculum rebuild with the real-parts model as first customer,
-> layer 3 rides the next inspector touch, layer 4 is its own later
-> arc (Q5).
+> Status: adopted 2026-08-28. All five decisions are settled (the
+> Decisions section at the end); layers 1-2 are an 0.12 arc.
 
-The maintainer's charge, near-verbatim: *"if we have PDFs of spec
-sheets, we could store those and link them to the justification for a
-model ... read in PDFs, OCR the text, and associate parts of a
-document with a requirement, value, etc. That would bring serious
-provenance. We should put these documents in version control, but we
-should be smart about it and use LFS."*
+Goal: evidence-linked models. A spec-sheet PDF is stored under
+version control (LFS where appropriate), its text is extracted (OCR
+for scans), and regions of the document are linked to the
+requirement or value they justify -- real provenance for the numbers
+a model states.
 
 The thesis fits longeron's spine exactly: the model is the source of
 truth, and a value without evidence is a claim without a citation.
@@ -136,24 +127,24 @@ longeron's own repo commits no manufacturer PDFs either way; the
 real-parts model cites by URL+hash+quote (pattern 2) — which is also
 the immediate first customer for the whole design.
 
-## Open questions for the maintainer
+## Decisions
 
-1. **In-model metadata vs sidecar index?** *Recommendation:*
-   in-model `SourceEvidence` metadata (portable, standard,
-   RDF-projectable); a gitignored cache is allowed for extraction
-   speed, never authoritative.
-2. **Quote-primary or region-primary anchoring?** *Recommendation:*
-   quote-primary (survives re-rendering and OCR variance), bbox
-   optional for the future viewer. attach() refuses a quote it
-   cannot find in the document.
-3. **The PDF stack.** *Recommendation:* `pypdf` + `pdfminer.six`
+All five were adopted on 2026-08-28.
+
+1. **In-model `SourceEvidence` metadata, not a sidecar index**:
+   portable, standard, RDF-projectable. A gitignored cache is
+   allowed for extraction speed, never authoritative.
+2. **Quote-primary anchoring** (it survives re-rendering and OCR
+   variance), with bbox optional for the future viewer. `attach()`
+   refuses a quote it cannot find in the document.
+3. **The PDF stack is license-clean**: `pypdf` + `pdfminer.six`
    behind `[evidence]`; pdf.js vendored only when layer 4 happens;
-   PyMuPDF never ships (AGPL); OCR optional second tier.
-4. **Coverage enforcement.** *Recommendation:* `evidence-drift`
-   warning always; `unevidenced-value` exists but is opt-in (a
-   posture flag, like --strict), because most models legitimately
-   carry derived and assumed values.
-5. **Timing.** *Recommendation:* design ratifies now; layers 1–2
-   land as an 0.12 arc right after the curriculum (the real-parts
-   model is waiting to be its first customer); layer 3 rides the
-   next inspector touch; layer 4 is its own later arc.
+   PyMuPDF never ships (AGPL); OCR is an optional second tier.
+4. **Coverage enforcement**: `evidence-drift` always warns;
+   `unevidenced-value` exists but is opt-in (a posture flag, like
+   `--strict`), because most models legitimately carry derived and
+   assumed values. `coverage()` reports honestly either way.
+5. **Timing**: layers 1-2 land as an 0.12 arc right after the
+   curriculum rebuild, with the real-parts model as first customer.
+   Layer 3 rides the next inspector touch. Layer 4 is its own later
+   arc.

@@ -1,23 +1,22 @@
 # Object-valued analysis I/O in the OpenMDAO bridge (design)
 
-> **Status: proposed.** The direction is ratified -- OpenMDAO's
-> discrete-variable machinery is the native object pipe, no fork -- and
-> this document elaborates it. All empirical claims were verified
-> against the worktree at `e64f9f9` (longeron 0.10.0) and the installed
-> OpenMDAO 3.45.0; each claim says which. Two open questions
-> (optionality, result lifecycle) are the load-bearing decisions and
-> carry recommendations below.
+> **Status: adopted 2026-08-27.** OpenMDAO's discrete-variable
+> machinery is the native object pipe. Longeron does not fork it.
+> All empirical claims were verified against longeron 0.10.0 and
+> OpenMDAO 3.45.0, and each claim says which. The two load-bearing
+> decisions (optionality, result lifecycle) are stated in the
+> Decisions section below.
 
-Goal: let objects -- not just scalars -- cross the OpenMDAO bridge. The
-maintainer's two motivating cases:
+Goal: let objects -- not just scalars -- cross the OpenMDAO bridge.
+Two motivating cases:
 
-1. **Discrete entities.** "It is easy to define cases by parameter
-   combinations, but if we have discrete combinations of things, it
-   would be nice to pass an entity (e.g., a motor that has specific
-   weight, Kt, Kv...) and have the OpenMDAO module take that."
-2. **Object handoff.** "A component that makes a 3D geometry and
-   another that takes it (RCS analysis, or CFD/FEA) -- write to file
-   and pass the path? serialize?"
+1. **Discrete entities.** Analyses often vary discrete entities, not
+   scalars: a case selects a motor with a specific mass, Kt, and Kv,
+   and the bridge must carry that selection as one object, not as
+   loose parameters.
+2. **Object handoff.** Components hand whole artifacts to one another
+   -- a geometry generator feeds an RCS or CFD/FEA analysis -- so the
+   bridge needs a convention for file-backed payloads.
 
 And the integration question behind both: how does this compose with
 longeron's SysML v2 constructs, so the wiring is *derivable from the
@@ -57,7 +56,7 @@ interpretations. Everything below is that identity, applied:
   `values=` feed into the scoreboard.
 
 The tension this creates -- continuous-sweep users must not pay M0
-ceremony -- is the design's first open question; the short answer is
+ceremony -- is the design's first decision (D1 below); the resolution is
 that the light path materializes one implicit anonymous interpretation
 and never mentions it.
 
@@ -424,61 +423,51 @@ The recorder findings (2, and probes C/F/G/K3) fix the conventions:
 - **No dataflow engine.** `derive_flows` produces OM connections; OM
   owns execution order, convergence, and parallelism.
 
-## Open questions for the maintainer
+## Decisions
 
-All seven were ratified as recommended by the maintainer on
-2026-08-27. The implementation treats them as settled; the two
-sequencing rulings (Q5: the trades variant-bundle fix lands FIRST;
-Q6: the flow diagnostics ship independently, first) define the
-implementation order.
+Adopted 2026-08-27. Two sequencing decisions define the
+implementation order: the trades variant-bundle fix lands first (D5),
+and the flow diagnostics ship independently, also first (D6).
 
-
-1. **Optionality: what does the continuous-sweep user pay?** (central)
-   Demanding an `Interpretation` on every `build_problem` call would
-   tax the users the bridge serves best today. *Recommendation:* the
-   light path materializes **one implicit anonymous interpretation**
+1. **Optionality: the continuous-sweep user pays nothing.** The light
+   path materializes **one implicit anonymous interpretation**
    lazily -- without `interpretation=`, `build_problem` behaves exactly
    as today (verified unchanged for scalar-only models), and the
    implicit point is created only when something asks for it
    (`record_case`, entity binding, M0-keyed payloads). Zero ceremony,
    zero cost until used; the identity stays true because the implicit
    point *is* an interpretation.
-2. **Result lifecycle: snapshot per case, or annotate in place?**
-   (central) `Instance.set()` makes in-place annotation trivially
-   available, but a mutable case history is un-auditable: re-running a
-   case overwrites the evidence. *Recommendation:* **a new immutable
-   interpretation snapshot per case** (`record_case` returns a fresh
-   object; the input interpretation stays pristine) -- matching the
-   trades machinery's interpreter-exact re-evaluation honesty and the
-   maintainer's stated instinct. In-place `set()` remains for
-   interactive notebook use, documented as outside the recorded
-   lifecycle.
-3. **What object is the discrete value -- `Individual` or its
-   `to_dict()` bundle?** *Recommendation:* the `Individual`
-   in-process (identity, `get()`, definition backlink for conformance
-   checks); the dict at process/file/recorder boundaries, converted
+2. **Result lifecycle: a new immutable interpretation snapshot per
+   case.** `record_case` returns a fresh object and the input
+   interpretation stays pristine, matching the trades machinery's
+   interpreter-exact re-evaluation honesty. A mutable case history is
+   un-auditable: re-running a case overwrites the evidence. In-place
+   `set()` remains for interactive notebook use, documented as
+   outside the recorded lifecycle.
+3. **The discrete value is the `Individual`** in-process (identity,
+   `get()`, definition backlink for conformance checks), and its
+   `to_dict()` bundle at process/file/recorder boundaries, converted
    automatically by the `to_json` hook and the MPI bulk-payload rule.
-4. **Where does `FileArtifact` live in the model?** A Python-only
-   convention, or also a vendored `item def FileArtifact` so flows can
-   be *typed* by it in SysML? *Recommendation:* both -- the dataclass
-   in `longeron.analysis`, plus an examples-shipped item def
-   convention matching the `@ExternalAnalysis` precedent (convention
-   packages over stdlib additions until the shape settles).
-5. **Fix the empty variant bundles now?** Variants declaring inline
-   redefinitions (`variant item x : Motor { :>> mass = ... }`) yield
-   empty `VariationPoint` bundles (`trades.py` l. 397 instantiates the
-   variant's type, dropping body redefinitions). *Recommendation:*
-   yes, in trades, ahead of this design -- entity binding inherits the
-   fix for free, and the bug silently zeroes catalogs today.
-6. **Ship the flow diagnostics independently?** `dangling-flow` and
-   `flow-payload-mismatch` need no OM work at all.
-   *Recommendation:* yes, first -- they close finding 4's silent
-   half at validation time and make tier 4's inputs trustworthy.
-7. **Heterogeneous per-index selection** (`motors : MotorChoice[4]`
-   with mixed variants) -- entity binding naturally extends (one
-   discrete input per index, ids `motors#0..3`), but trades enumerates
-   homogeneously today. *Recommendation:* defer to the existing
-   trades phase-2 item; nothing in this design blocks it.
+4. **`FileArtifact` lives in both layers**: the dataclass in
+   `longeron.analysis`, plus an examples-shipped `item def
+   FileArtifact` convention matching the `@ExternalAnalysis`
+   precedent (convention packages over stdlib additions until the
+   shape settles).
+5. **The empty variant bundles are fixed first, in trades.** Variants
+   declaring inline redefinitions (`variant item x : Motor { :>> mass
+   = ... }`) yield empty `VariationPoint` bundles (`trades.py` l. 397
+   instantiates the variant's type, dropping body redefinitions).
+   Entity binding inherits the fix for free; the bug silently zeroes
+   catalogs today.
+6. **The flow diagnostics ship independently, first.**
+   `dangling-flow` and `flow-payload-mismatch` need no OM work at
+   all; they close finding 4's silent half at validation time and
+   make tier 4's inputs trustworthy.
+7. **Heterogeneous per-index selection is deferred** to the existing
+   trades phase-2 item. Entity binding naturally extends
+   (`motors : MotorChoice[4]` becomes one discrete input per index,
+   ids `motors#0..3`), but trades enumerates homogeneously today;
+   nothing in this design blocks it.
 
 ## References
 

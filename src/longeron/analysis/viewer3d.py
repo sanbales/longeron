@@ -60,7 +60,7 @@ __all__ = ["mesh_viewer"]
 
 THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js"
 
-# Conventions per .handoff/scene-viewer-mechanics.md and longeron.replay:
+# Conventions (as in longeron.replay's front-end):
 # DOM built once; geometry buffers rebuilt only when a mesh traitlet
 # changes; the orbit handler is ~30 lines of spherical-coordinate math
 # instead of an OrbitControls import (whose bare "three" specifier needs

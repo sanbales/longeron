@@ -1,24 +1,21 @@
 # Design: the tutorial notebooks, rebuilt as one curriculum
 
-> Status: RATIFIED (2026-08-27) -- the maintainer approved the
-> proposal and all five recommendations ("i like your suggestions"):
-> two models with the program framing, scoreboard rebased onto the
-> fleet model, notation gallery to Reference, two foundations
-> notebooks, authoring starts immediately in parallel worktrees.
+> Status: adopted 2026-08-27, amended 2026-08-28 (one unified
+> program; see "The unified program" below).
 > LANDING of the renumbered set waits for the v0.11.0 tag (0.11 docs
 > keep the old numbering); the rebuild is the 0.12 headline arc.
 > Authoring order: T1+T2 and T4+T5 first (no dependency on in-flight
 > work); T3 after the inspector/relationships landing; T6 after the
-> board clears (it owns the uav_missions scoring edit).
+> in-flight uav_missions scoring edit lands.
 
-The maintainer's charge, verbatim: *"the tutorial notebooks have grown
-organically as we added features. Some things are repetitive, others
-are disjointed. Other are not very interesting, some things are too
-basic, others are doing a lot of complex things. ... I want examples
-that are non-trivial, are interesting, the results are insightful, and
-they explain how you can use SysMLv2 as the underlying source of truth
-for doing valuable analyses and tying different perspectives to the
-data contained in SysMLv2 models."*
+Goal: rebuild the tutorial notebooks as one curriculum. The notebooks
+grew organically, one per feature, so the sequence is repetitive in
+places and disjointed in others; some stops are too basic and others
+do several complex things at once. The rebuilt set must be
+non-trivial and interesting, with insightful results, and it must
+show how SysML v2 works as the underlying source of truth: valuable
+analyses and different perspectives, all tied to the data in the
+model.
 
 ## What exists, measured
 
@@ -58,11 +55,11 @@ The repetition, named:
 
 ## Principles for the rebuild
 
-0. **Prose follows the writing-documentation skill** (maintainer
-   directive). Every markdown cell obeys the skill's contract:
+0. **Prose follows the writing-documentation skill.**
+   Every markdown cell obeys the skill's contract:
    one claim per sentence, descriptive sentences of at most 25 words,
    active voice with a named actor, one term per concept, no
-   intensifiers, topic-sentence-first paragraphs. Authoring agents
+   intensifiers, topic-sentence-first paragraphs. Authors
    read the skill file in full before writing and run its self-check
    before delivering.
 
@@ -71,7 +68,7 @@ The repetition, named:
    reader who wants feature reference goes to `docs/reference`, not
    to a tutorial.
 2. **One source of truth, many perspectives.** The curriculum's spine
-   is the maintainer's thesis: the SysML v2 model is the single
+   is the thesis: the SysML v2 model is the single
    source, and every perspective (diagram, trade study, scoreboard,
    proof, CAD, globe, knowledge graph) is a *view* of that same data.
    Every notebook shows at least one element the reader already met
@@ -89,14 +86,13 @@ The repetition, named:
    `drone.sysml` (the bird you build). Foundations may use small
    excerpts *of the drone*, never a disconnected toy.
 
-## The unified program (ratified 2026-08-28, supersedes Q1's answer)
+## The unified program (adopted 2026-08-28)
 
-The maintainer overrode the earlier two-models-with-framing answer:
-ONE example replaces the bunch. Four decisions, ratified:
+One example replaces the bunch. Four decisions:
 
 1. **One program, few files** -- a single top-level program split
-   across domain files loaded as one workspace, refined by the
-   maintainer to the open-closed layout: a file for the GENERIC
+   across domain files loaded as one workspace, using
+   the open-closed layout: a file for the GENERIC
    concept and one file per specialization branch, so a future
    concept (tilt-rotor) adds a file without touching the others.
    Layout: parts catalog / abstract aircraft concepts / multirotor
@@ -188,7 +184,7 @@ proved ceiling), and Z3 answers requirement *consistency*. The inline
 the violations describe the SAME truth the reader has traded since T4.
 
 **T7. Geometry and the mission** *(10, trimmed)*
-*(Maintainer requirement, added 2026-08-28: selecting a
+*(Requirement, added 2026-08-28: selecting a
 configuration -- or any of its parts -- in the linked views renders
 THAT configuration's geometry in the 3D scene. The family arc's
 config-keyed geometry API is the enabler; T7 owns the UX.)*
@@ -229,7 +225,7 @@ counts it.
 - Every overlap named above gets exactly one home.
 - Three model families become one program: the fleet and the bird.
   The third (isr_scoring) retires.
-- The maintainer's thesis is the spine, stated in T1 and proved by
+- The source-of-truth thesis is the spine, stated in T1 and proved by
   T9: the model is the source of truth; perspectives attach to it,
   not to each other.
 
@@ -245,33 +241,28 @@ counts it.
 - Old numbering disappears from the repo. Published-docs URLs change;
   0.12 release notes carry the mapping table.
 - Authoring is the real cost: T3/T4/T6 are rewrites-with-reuse, not
-  moves. Estimate: one focused agent-arc per track (A, B, capstone
+  moves. Estimate: one focused authoring arc per track (A, B, capstone
   +reference), each landing with tests + captures + docs green.
 - Model authoring: scoring attributes fold into `uav_missions.sysml`
   (T6); drone calc names surface in T2. Both are additive edits to
   shipping example models — the rejection/corpus gates do not apply,
   but `examples/` must stay lint-clean.
 
-## Open questions for the maintainer
+## Decisions
 
-1. **One program or two models?** T4–T9 stand on `uav_missions` (the
-   fleet) + `drone` (the bird), framed as one program: "the fleet you
-   trade, the bird you build." The alternative is authoring a single
-   unified program model, which is cleaner narrative but a large
-   model-authoring project and a rebase of 07's physics.
-   *Recommendation:* keep the two models with the explicit program
-   framing now; revisit unification only if the seams chafe during
-   authoring.
-2. **Does the scoreboard rebase onto the fleet model?** T6 assumes
-   yes (retire `isr_scoring`, fold scoring into `uav_missions`).
-   *Recommendation:* yes — it is the single highest-leverage edit for
-   the source-of-truth story.
-3. **Where does the notation gallery live?** *Recommendation:* docs
-   `Reference` section, notebook retained as snapshot source (R1
-   above).
-4. **Foundations: one notebook or two?** T1+T2 could compress to one
-   ~35-cell notebook. *Recommendation:* two — "the model is data" and
-   "the model executes" are different mental models and each deserves
-   a clean landing.
-5. **Timing.** *Recommendation:* the 0.12 headline arc, immediately
-   after v0.11.0 ships; nothing in 0.11 blocks on it.
+Adopted 2026-08-27; decision 1 amended 2026-08-28.
+
+1. **One unified program.** A single top-level program split across
+   domain files replaces the separate example models (the full
+   layout is in "The unified program" above); the T4-T9 descriptions
+   read on that program.
+2. **The scoreboard rebases onto the fleet model.** `isr_scoring`
+   retires and scoring folds into the missions model -- the single
+   highest-leverage edit for the source-of-truth story.
+3. **The notation gallery moves to the docs `Reference` section**,
+   with the notebook retained as snapshot source (R1 above).
+4. **Foundations are two notebooks.** "The model is data" and "the
+   model executes" are different mental models, and each deserves a
+   clean landing.
+5. **Timing: the 0.12 headline arc**, immediately after v0.11.0
+   ships. Nothing in 0.11 blocks on it.
