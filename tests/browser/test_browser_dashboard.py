@@ -27,6 +27,19 @@ front-end round trip:
 * the missions render as ONE tab set whose tabs actually switch;
 * dragging a priority slider re-ranks the 3D lineup that sits BESIDE it.
 
+The TALL-HOST test proves the resizable-sections contract (the
+maintainer's whitespace report: Create-New-View-for-Output docked the
+dashboard in a tall panel and the fixed row budget left dead space):
+
+* inline in the notebook the one-screen floor still stands;
+* docked via ``Create New View for Output`` the dashboard grows to the
+  host's height -- no dead space below -- and every plot re-renders to
+  its new box (svg heights track their containers, the 3D canvas fills
+  the viewer);
+* dragging the rows gutter re-balances the plot/control rows, the moved
+  ratio round-trips to the kernel trait, and double-click restores the
+  design ratio.
+
 Each stage saves a PNG under ``build/evidence/`` -- the review artifacts
 for the T4 dashboard polish.
 """
@@ -48,6 +61,22 @@ def lab1080(browser: Any, lab_server: Any, request: pytest.FixtureRequest) -> An
     """A 1920x1080 page: the fit contract is stated at 1080p exactly."""
 
     page = browser.new_page(viewport={"width": 1920, "height": 1080})
+    driver = LabPage(page, lab_server)
+    yield driver
+    try:
+        reports = request.node.stash.get(_PHASE_REPORTS, {})
+        if any(report.failed for report in reports.values()):
+            driver.save_artifacts(ARTIFACTS, request.node.name)
+    finally:
+        page.close()
+        _shutdown_sessions(lab_server)
+
+
+@pytest.fixture()
+def labtall(browser: Any, lab_server: Any, request: pytest.FixtureRequest) -> Any:
+    """A 1200x1900 portrait-ish page: the tall-host fill contract."""
+
+    page = browser.new_page(viewport={"width": 1200, "height": 1900})
     driver = LabPage(page, lab_server)
     yield driver
     try:
@@ -284,5 +313,161 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_click3d_after.png"))
     lab.page.mouse.click(stage["x"] + 8, stage["y"] + 8)  # tidy: clear again
     _poll_checker(lab, lambda s: s["selected"] is None)
+
+    lab.assert_no_errors()
+
+
+def _poll_geometry(page: Any, measure: Any, predicate: Any, timeout: float = 30.0) -> Any:
+    """Re-measure DOM geometry until the predicate holds (layout settles)."""
+
+    deadline = time.monotonic() + timeout
+    state = None
+    while time.monotonic() < deadline:
+        state = measure()
+        if state is not None and predicate(state):
+            return state
+        page.wait_for_timeout(500)
+    raise TimeoutError(f"geometry never satisfied the predicate; last: {state}")
+
+
+def test_dashboard_fills_a_tall_host_and_gutters_resize(labtall: Any) -> None:
+    """The whitespace report: a tall docked host must be FILLED, and the
+    sections must be re-balanceable by dragging the gutters."""
+
+    lab = labtall
+    lab.open_notebook("dashboard_scenario.ipynb")
+    lab.run_all()
+    lab.wait_settled(timeout=420)
+    lab.page.wait_for_selector(".jp-OutputArea .widget-vbox", timeout=120_000)
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+
+    # -- inline reference: the notebook flow keeps its natural content
+    # height (the 1080p no-scroll floor is the OTHER test's contract, at
+    # its stated 1920 width; at 1200 the header blurb wraps taller) --
+    # recorded so the docked growth below is provably growth, not reflow
+    inline_root = lab.page.locator(".jp-OutputArea .widget-vbox").first
+    inline_root.evaluate("el => el.scrollIntoView({block: 'start'})")
+    lab.page.wait_for_timeout(1200)
+    inline = inline_root.bounding_box()
+    assert inline is not None
+
+    # -- dock the dashboard output in its own tall panel (the reported
+    # scenario: Lab's Create New View for Output) ---------------------------
+    lab.page.evaluate(
+        "() => { const app = window.jupyterapp || window.jupyterlab;"
+        " const panel = [...app.shell.widgets('main')].find("
+        "   (w) => w.content && w.content.model && w.content.model.cells);"
+        " panel.content.activeCellIndex = 0;"  # the dashboard cell
+        " void app.commands.execute('notebook:create-output-view');"
+        " return true; }"
+    )
+    lab.page.wait_for_selector(".jp-LinkedOutputView .longeron-parcoords svg", timeout=120_000)
+    host = lab.page.locator(".jp-LinkedOutputView").first
+
+    # grow the docked panel: drag the horizontal dock handle upward so the
+    # host is decisively taller than the ~850 px floor
+    handles = lab.page.locator("#jp-main-dock-panel .lm-DockPanel-handle:not(.lm-mod-hidden)")
+    hb = host.bounding_box()
+    assert hb is not None
+    for k in range(handles.count()):
+        grip = handles.nth(k).bounding_box()
+        if grip and grip["width"] > grip["height"] and abs(grip["y"] - hb["y"]) < 40:
+            x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+            lab.page.mouse.move(x, y)
+            lab.page.mouse.down()
+            lab.page.mouse.move(x, y - 520, steps=10)
+            lab.page.mouse.up()
+            break
+    hb = host.bounding_box()
+    assert hb is not None and hb["height"] >= 1100, f"tall host not tall: {hb}"
+
+    # -- (1) HEIGHT ADAPTIVITY: the dashboard fills the host -- root height
+    # ~== host height (small chrome allowance), zero dead space below,
+    # and NO overflow (nothing to scroll)
+    root = host.locator(".widget-vbox").first
+
+    def _fill_state() -> dict[str, float] | None:
+        hbox, rbox = host.bounding_box(), root.bounding_box()
+        if hbox is None or rbox is None:
+            return None
+        return {
+            "host": hbox["height"],
+            "root": rbox["height"],
+            "dead": (hbox["y"] + hbox["height"]) - (rbox["y"] + rbox["height"]),
+            "top": rbox["y"] - hbox["y"],
+        }
+
+    fill = _poll_geometry(
+        lab.page, _fill_state, lambda s: -6 <= s["dead"] <= 30 and s["root"] > 1000
+    )
+    assert fill["root"] >= inline["height"] + 80, f"no growth over the inline flow: {fill}"
+    scroll = host.evaluate("el => el.scrollHeight - el.clientHeight")
+    assert scroll <= 4, f"the filled host still scrolls by {scroll}px"
+
+    # every plot re-rendered to its new box: the svg heights track their
+    # containers (a stale 330 px draw would leave a visible gap), the 3D
+    # canvas fills the viewer minus its caption strip
+    def _plot_state() -> dict[str, float] | None:
+        boxes = {}
+        for name, sel in (
+            ("pc", ".longeron-parcoords"),
+            ("pcsvg", ".longeron-parcoords svg"),
+            ("sc", ".longeron-moefront"),
+            ("scsvg", ".longeron-moefront svg"),
+            ("viewer", ".longeron-viewer3d"),
+            ("canvas", ".longeron-viewer3d canvas"),
+        ):
+            b = host.locator(sel).first.bounding_box()
+            if b is None:
+                return None
+            boxes[name] = b["height"]
+        return boxes
+
+    plots = _poll_geometry(
+        lab.page,
+        _plot_state,
+        lambda s: (
+            abs(s["pc"] - s["pcsvg"]) <= 8
+            and abs(s["sc"] - s["scsvg"]) <= 8
+            and s["pcsvg"] > 380
+            and s["canvas"] >= s["viewer"] - 80  # minus the caption strip (it wraps)
+        ),
+    )
+    assert plots["canvas"] > 450, f"3D canvas did not grow: {plots}"
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_tall_host_filled.png"))
+
+    # -- (2) RESIZABLE SECTIONS: drag the rows gutter down -- the plot row
+    # grows by the drag, the control row shrinks, both plots re-render ----
+    gutter = host.locator(".longeron-gutter.y").first
+    row_h = "el => el.previousElementSibling.getBoundingClientRect().height"
+    before = float(gutter.evaluate(row_h))
+    gb = gutter.bounding_box()
+    assert gb is not None
+    cx, cy = gb["x"] + gb["width"] / 2, gb["y"] + gb["height"] / 2
+    lab.page.mouse.move(cx, cy)
+    lab.page.mouse.down()
+    lab.page.mouse.move(cx, cy + 160, steps=8)
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_gutter_mid_drag.png"))
+    lab.page.mouse.up()
+    after = float(gutter.evaluate(row_h))
+    assert after - before >= 120, f"plot row did not follow the drag: {before} -> {after}"
+
+    # the moved ratio round-trips to the kernel trait (persisted layout)
+    state = _poll_checker(lab, lambda s: s["ratios"]["rows"] > s["ratio_defaults"]["rows"] + 0.03)
+    # the plots re-rendered to the dragged boxes
+    plots = _poll_geometry(
+        lab.page,
+        _plot_state,
+        lambda s: abs(s["pc"] - s["pcsvg"]) <= 8 and s["pcsvg"] >= after - 12,
+    )
+    lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_gutter_after_drag.png"))
+
+    # -- (3) double-click resets to the design ratio ------------------------
+    gutter.dblclick()
+    state = _poll_checker(
+        lab, lambda s: abs(s["ratios"]["rows"] - s["ratio_defaults"]["rows"]) < 0.005
+    )
+    assert state["ratios"]["rows"] == state["ratio_defaults"]["rows"]
+    _poll_geometry(lab.page, lambda: float(gutter.evaluate(row_h)), lambda h: abs(h - before) <= 25)
 
     lab.assert_no_errors()

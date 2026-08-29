@@ -278,17 +278,23 @@ def _reset(dash, request):
     dash.select(None)
     dash.viewer.picked_json = "[]"
     dash.tabs.selected_index = 0
+    for gutter in dash.splitters.values():
+        gutter.ratio = gutter.ratio0
 
 
 class TestDashboardLayout:
     """The one-screen composition: header strip, plots side by side,
-    the mission Tab next to the 3D viewer."""
+    the mission Tab next to the 3D viewer, a gutter between the rows."""
 
-    def test_three_rows(self, dash):
-        header, plot_row, control_row = dash.children
+    def test_three_sections_and_their_gutters(self, dash):
+        header, plot_row, rows_gutter, control_row = dash.children
         assert list(header.children)[-3:] == [dash.pareto_toggle, dash.pareto_hint, dash.top_n]
-        assert list(plot_row.children) == [dash.parcoords, dash.scatter]
-        assert list(control_row.children) == [dash.tabs, dash.lineup, dash.viewer]
+        assert rows_gutter is dash.splitters["rows"]
+        assert list(plot_row.children) == [dash.parcoords, dash.splitters["plots"], dash.scatter]
+        tabs, tabs_gutter, right = control_row.children
+        assert tabs is dash.tabs
+        assert tabs_gutter is dash.splitters["tabs"]
+        assert list(right.children) == [dash.lineup, dash.viewer]
 
     def test_missions_are_one_tab(self, dash, data):
         names = [m["name"] for m in data["missions"]]
@@ -312,6 +318,8 @@ class TestDashboardLayout:
             assert children[-1] is dash.cards[mission]
 
     def test_plots_share_one_row_height(self, dash):
+        # the pre-layout fallbacks: the measured row height wins in a
+        # browser, but the floor traits still state the design budget
         assert dash.parcoords.height_px == dash.scatter.height_px == 330
         assert dash.viewer.height_px == 430
 
@@ -760,7 +768,8 @@ class TestFluidLayout:
 
     def test_default_is_fluid_full_width(self, dash):
         assert dash.layout.width == "100%"
-        for row in dash.children:
+        header, plot_row, _rows_gutter, control_row = dash.children
+        for row in (header, plot_row, control_row):
             assert row.layout.width == "100%"
         # the plots split the plot row in their design ratio; the 3D
         # viewer absorbs the control row's slack
@@ -781,14 +790,78 @@ class TestFluidLayout:
         assert dash.pareto_toggle.layout.flex == "0 0 auto"
 
     def test_widgets_draw_at_the_measured_host_width(self, dash):
-        # the front-ends re-draw on host resize instead of scaling the svg
-        # (viewBox scaling would grow the HEIGHT and break the budget)
+        # the front-ends re-draw on host resize instead of scaling the
+        # svg (viewBox scaling would distort text and strokes); BOTH
+        # dimensions are measured so a gutter drag or a filled tall host
+        # re-renders every plot to its new box
         assert "ResizeObserver" in dash.parcoords._esm
         assert "ResizeObserver" in dash.scatter._esm
-        assert 'el.clientWidth || model.get("width_px")' in dash.parcoords._esm
-        assert 'el.clientWidth || model.get("width_px")' in dash.scatter._esm
-        # the 3D canvas keeps its fixed height while its width flexes
-        assert 'height = model.get("height_px");' in dash.viewer._esm
+        for esm in (dash.parcoords._esm, dash.scatter._esm):
+            assert 'el.clientWidth || model.get("width_px")' in esm
+            assert 'el.clientHeight || model.get("height_px")' in esm
+        # the 3D canvas tracks the control row's height (renderer size +
+        # camera aspect re-fit), with height_px the pre-layout fallback
+        assert "el.clientHeight - captions.offsetHeight" in dash.viewer._esm
+        assert "lastHeight" in dash.viewer._esm
+
+
+class TestResizableSections:
+    """The section gutters: draggable dividers whose ratios are traits
+    (round-trip, clamped, resettable) and whose rows gutter grows the
+    dashboard to a height-constrained host."""
+
+    def test_design_ratios_and_modes(self, dash):
+        rows = dash.splitters["rows"]
+        assert rows.axis == "y" and rows.fill and rows.shrink == 0 and not rows.pin
+        assert rows.ratio == rows.ratio0 == pytest.approx(330 / 794)
+        assert rows.total == pytest.approx(794.0)
+        plots = dash.splitters["plots"]
+        assert plots.axis == "x" and not plots.fill and not plots.pin
+        assert plots.ratio0 == pytest.approx(1060 / 1460)
+        tabs = dash.splitters["tabs"]
+        assert tabs.axis == "x" and tabs.pin  # tab set pinned, 3D side flexes
+        assert tabs.ratio0 == pytest.approx(640 / 1440)
+        for gutter in dash.splitters.values():
+            assert 0 < gutter.lo < gutter.ratio0 < gutter.hi < 1
+
+    def test_ratio_round_trips(self, dash):
+        rows = dash.splitters["rows"]
+        rows.ratio = 0.5
+        assert rows.ratio == 0.5  # a mid-range ratio survives verbatim
+
+    def test_min_sizes_clamp_the_ratio(self, dash):
+        for gutter in dash.splitters.values():
+            gutter.ratio = 0.0
+            assert gutter.ratio == pytest.approx(gutter.lo)
+            gutter.ratio = 1.0
+            assert gutter.ratio == pytest.approx(gutter.hi)
+
+    def test_reset_restores_the_design_ratio(self, dash):
+        rows = dash.splitters["rows"]
+        rows.ratio = 0.55
+        rows.ratio = rows.ratio0  # what the front-end dblclick does
+        assert rows.ratio == pytest.approx(330 / 794)
+
+    def test_rows_flex_from_fixed_pixel_floors(self, dash):
+        header, plot_row, _gutter, control_row = dash.children
+        assert header.layout.flex == "0 0 auto"  # the header never grows
+        assert plot_row.layout.flex == "330 0 330px"
+        assert control_row.layout.flex == "464 0 464px"
+        for row in (plot_row, control_row):
+            assert row.layout.align_items == "stretch"
+        assert plot_row.layout.min_height == "220px"
+        assert control_row.layout.min_height == "300px"
+
+    def test_gutter_frontend_seams(self, dash):
+        esm = dash.splitters["rows"]._esm
+        assert "pointerdown" in esm and "setPointerCapture" in esm  # touch-safe
+        assert "dblclick" in esm  # double-click resets to the design ratio
+        assert "change:ratio" in esm  # kernel writes re-apply live
+        assert ".jp-LinkedOutputView" in esm  # the Create-New-View host
+        assert "ResizeObserver" in esm  # host resizes re-fill the root
+        css = dash.splitters["rows"]._css
+        assert "touch-action: none" in css
+        assert "col-resize" in css and "row-resize" in css  # cursor affordances
 
 
 class TestParetoStateMatrix:

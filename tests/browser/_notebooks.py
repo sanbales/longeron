@@ -614,9 +614,9 @@ def dashboard_notebook() -> dict[str, Any]:
     catalog (copied into the lab root by the session fixture).  Cell 1 is
     the checker: one JSON line of kernel-side dashboard state (candidate
     count, pool/front sizes, toggle state, tab titles, the top pick's
-    airframe, and the linked-selection state -- selected candidate,
-    traced parcoords line, live brush intervals, 3D highlight keys) that
-    tests re-read after driving the browser.
+    airframe, the linked-selection state -- selected candidate, traced
+    parcoords line, live brush intervals, 3D highlight keys -- and the
+    section-gutter ratios) that tests re-read after driving the browser.
     """
 
     return _notebook(
@@ -654,6 +654,8 @@ print(
             "traced": dash.parcoords.traced,
             "brushes": json.loads(dash.parcoords.brushes or "{}"),
             "highlight": json.loads(dash.viewer.highlight_json or "[]"),
+            "ratios": {name: round(g.ratio, 4) for name, g in dash.splitters.items()},
+            "ratio_defaults": {name: round(g.ratio0, 4) for name, g in dash.splitters.items()},
         }
     )
 )

@@ -5,10 +5,19 @@ One :func:`mission_dashboard` call composes the existing house widgets
 :func:`longeron.analysis.viewer3d.mesh_viewer`) with plain ipywidgets into
 the single artifact that ties requirements -> architectures ->
 performance -> cost.  The layout is built to fit one 1080p screen
-(1920x950 content area) without vertical scrolling: row HEIGHTS are
-fixed while the rows and plots stretch to the container width in their
-design proportions (pass ``width_px`` to pin a fixed total width
-instead):
+(1920x950 content area) without vertical scrolling: the design row
+heights are FLOORS while the rows and plots stretch to the container
+width in their design proportions (pass ``width_px`` to pin a fixed
+total width instead).  In a height-constrained host -- JupyterLab's
+"Create New View for Output" docks the dashboard in a panel with its
+own height budget -- the dashboard grows to FILL that height and the
+two widget rows share the surplus in their design ratio (the header
+strip stays fixed), every plot re-rendering to its new box.  Draggable
+GUTTERS between the major sections re-balance them by pointer (plot
+row vs control row, parcoords vs scatter, tab set vs the 3D side);
+double-click a gutter to restore the design ratio.  The ratios live on
+widget traits (:func:`_gutter_class`), so a re-render keeps the user's
+layout:
 
 * a HEADER STRIP -- the title, a PARETO-ONLY toggle button (see below),
   and the top-N slider sizing the 3D lineup;
@@ -506,7 +515,7 @@ function render({ model, el }) {
     el.innerHTML = "";
     const P = JSON.parse(model.get("payload_json"));
     const W = el.clientWidth || model.get("width_px");
-    const H = model.get("height_px");
+    const H = el.clientHeight || model.get("height_px");
     const M = { top: 16, right: 14, bottom: 34, left: 52 };
     const NS = "http://www.w3.org/2000/svg";
     const make = (tag, attrs, parent) => {
@@ -608,10 +617,12 @@ function render({ model, el }) {
 
   model.on("change:payload_json", draw);
   model.on("change:selected", draw);
-  let lastW = el.clientWidth;
+  let lastW = el.clientWidth, lastH = el.clientHeight;
   new ResizeObserver(() => {
-    const w = el.clientWidth;
-    if (w && Math.abs(w - lastW) > 1) { lastW = w; draw(); }
+    const w = el.clientWidth, h = el.clientHeight;
+    if ((w && Math.abs(w - lastW) > 1) || (h && Math.abs(h - lastH) > 1)) {
+      lastW = w; lastH = h; draw();
+    }
   }).observe(el);
   draw();
 }
@@ -815,6 +826,12 @@ def _highlight_parcoords_class() -> type[anywidget.AnyWidget]:
             'const W = model.get("width_px");',
             'const W = el.clientWidth || model.get("width_px");',
         ),
+        # fluid height too: the plot row flexes vertically when the
+        # dashboard fills a tall host or the rows gutter is dragged
+        (
+            'const H = model.get("height_px");',
+            'const H = el.clientHeight || model.get("height_px");',
+        ),
         # sync the brush INTERVALS by axis name alongside the passing
         # rows: the kernel recomputes the brushed subset against the
         # CURRENT pool, so no transition can consult stale row indices
@@ -825,14 +842,16 @@ def _highlight_parcoords_class() -> type[anywidget.AnyWidget]:
             "      brushes.forEach((b, k) => { if (b) named[axes[k].name] = b; });\n"
             '      model.set("brushes", JSON.stringify(named));',
         ),
-        # re-draw when the flexed host resizes
+        # re-draw when the flexed host resizes (either dimension)
         (
             'model.on("change:table_json", draw);',
             'model.on("change:table_json", draw);\n'
-            "  let lastW = el.clientWidth;\n"
+            "  let lastW = el.clientWidth, lastH = el.clientHeight;\n"
             "  new ResizeObserver(() => {\n"
-            "    const w = el.clientWidth;\n"
-            "    if (w && Math.abs(w - lastW) > 1) { lastW = w; draw(); }\n"
+            "    const w = el.clientWidth, h = el.clientHeight;\n"
+            "    if ((w && Math.abs(w - lastW) > 1) || (h && Math.abs(h - lastH) > 1)) {\n"
+            "      lastW = w; lastH = h; draw();\n"
+            "    }\n"
             "  }).observe(el);",
         ),
         ("export default { render };", _PC_HIGHLIGHT_JS.strip()),
@@ -867,9 +886,12 @@ _DASH_VIEWER_CLS: type[anywidget.AnyWidget] | None = None
 def _dash_viewer_class() -> type[anywidget.AnyWidget]:
     """The house 3D viewer, dashboard-tuned.
 
-    Three ESM patches: the canvas keeps a FIXED height (``height_px``)
-    while filling the flexed host width, so a fluid dashboard never
-    grows past the one-screen budget; the linked-selection emissive
+    The ESM patches: the canvas fills the flexed host BOX -- height
+    tracks the control row (minus the caption strip) instead of a
+    width-derived aspect, with ``height_px`` the pre-layout fallback,
+    so the floor layout never grows past the one-screen budget while a
+    tall host or a gutter drag re-sizes the renderer and the camera
+    aspect in place; the linked-selection emissive
     accent is pinned to the dashboard's selection violet (:data:`_SEL`)
     so the 3D pop matches the card/scatter/parcoords selection exactly
     (the base widget's JupyterLab brand blue reads too close to the
@@ -886,7 +908,21 @@ def _dash_viewer_class() -> type[anywidget.AnyWidget]:
     from . import viewer3d
 
     surgeries = (
-        ("height = Math.round(w / aspect);", 'height = model.get("height_px");'),
+        (
+            "height = Math.round(w / aspect);",
+            "height = el.clientHeight\n"
+            "      ? Math.max(180, el.clientHeight - captions.offsetHeight)\n"
+            '      : model.get("height_px");',
+        ),
+        ("let lastWidth = 0;", "let lastWidth = 0, lastHeight = 0;"),
+        (
+            "if (w && Math.abs(w - lastWidth) > 1) { lastWidth = w; layout(true); }",
+            "const h = el.clientHeight;\n"
+            "    if ((w && Math.abs(w - lastWidth) > 1)\n"
+            "        || (h && Math.abs(h - lastHeight) > 1)) {\n"
+            "      lastWidth = w; lastHeight = h; layout(true);\n"
+            "    }",
+        ),
         (
             "const accent = (getComputedStyle(el)\n"
             '      .getPropertyValue("--jp-brand-color2") || "").trim() || "#2196f3";',
@@ -918,6 +954,213 @@ def _dash_viewer_class() -> type[anywidget.AnyWidget]:
 
     _DASH_VIEWER_CLS = DashboardViewerWidget
     return DashboardViewerWidget
+
+
+# ---------------------------------------------------------------------------
+# the section gutters (house splitter: no dependency, ~90 lines of ESM)
+# ---------------------------------------------------------------------------
+
+_GUTTER_ESM = r"""
+function render({ model, el }) {
+  el.classList.add("longeron-gutter");
+  el.classList.add(model.get("axis") === "y" ? "y" : "x");
+  el.title = "drag to resize \u00b7 double-click to reset";
+  const grip = document.createElement("div");
+  grip.className = "longeron-gutter-grip";
+  el.appendChild(grip);
+  const horizontal = () => model.get("axis") === "x";
+
+  // the two sections this gutter re-balances are its flex siblings
+  const sides = () => {
+    const prev = el.previousElementSibling;
+    const next = el.nextElementSibling;
+    return prev && next ? [prev, next] : null;
+  };
+
+  // px flex bases anchored to the DESIGN total keep the floor layout
+  // honest (zero bases would collapse an auto-height notebook cell);
+  // the grow factors distribute a taller/wider host's surplus in the
+  // same ratio, so the divider sits at fraction `r` at any host size
+  function apply(r) {
+    const pair = sides();
+    if (!pair) return;
+    const [prev, next] = pair;
+    const total = model.get("total");
+    const shrink = model.get("shrink");
+    const a = (r * total).toFixed(1);
+    if (model.get("pin")) {  // leading section pinned; trailing takes slack
+      prev.style.flex = `0 ${shrink} ${a}px`;
+      next.style.flex = "1000 1 0px";
+    } else {
+      const b = ((1 - r) * total).toFixed(1);
+      prev.style.flex = `${Math.round(r * 1000)} ${shrink} ${a}px`;
+      next.style.flex = `${Math.round((1 - r) * 1000)} ${shrink} ${b}px`;
+    }
+  }
+  const clamp = (r) => Math.min(model.get("hi"), Math.max(model.get("lo"), r));
+
+  let live = model.get("ratio");  // applied during a drag, saved on release
+  el.addEventListener("pointerdown", (event) => {
+    const pair = sides();
+    if (!pair) return;
+    event.preventDefault();
+    const [prev, next] = pair;
+    const x = horizontal();
+    const side = x ? "width" : "height";
+    const a0 = prev.getBoundingClientRect()[side];
+    // pin mode maps px straight onto the design total (basis = r*total);
+    // proportional mode maps onto the measured pair span
+    const span = model.get("pin")
+      ? model.get("total")
+      : a0 + next.getBoundingClientRect()[side];
+    const start = x ? event.clientX : event.clientY;
+    const move = (ev) => {
+      const d = (x ? ev.clientX : ev.clientY) - start;
+      live = clamp((a0 + d) / span);
+      apply(live);
+    };
+    const up = () => {
+      el.classList.remove("drag");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      model.set("ratio", live);  // persist on release, not per move
+      model.save_changes();
+    };
+    el.classList.add("drag");
+    el.setPointerCapture(event.pointerId);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  });
+  el.addEventListener("dblclick", () => {  // reset to the design ratio
+    live = model.get("ratio0");
+    apply(live);
+    model.set("ratio", live);
+    model.save_changes();
+  });
+  model.on("change:ratio", () => { live = model.get("ratio"); apply(live); });
+
+  // HOST FILL (the rows gutter only): when the dashboard is docked in a
+  // height-constrained host -- JupyterLab's Create-New-View-for-Output
+  // panel -- grow the root to the host's height so the rows share the
+  // surplus instead of leaving dead space below; inline in a notebook
+  // there is no such host and the design floor stands.  Observing the
+  // HOST (never the root) cannot loop: setting the root's height does
+  // not change the host's box.
+  let observer = null;
+  function setupFill() {
+    if (!model.get("fill") || observer) return;
+    const root = el.parentElement;  // the dashboard VBox
+    const host = root && root.closest(".jp-LinkedOutputView");
+    if (!host) return;
+    const refit = () => {
+      root.style.height = "";  // re-measure the natural floor
+      const natural = root.getBoundingClientRect().height;
+      const top = root.getBoundingClientRect().top
+        - host.getBoundingClientRect().top + host.scrollTop;
+      const pad = parseFloat(getComputedStyle(host).paddingBottom) || 0;
+      const avail = Math.floor(host.clientHeight - top - pad);
+      if (avail > natural + 1) root.style.height = avail + "px";
+    };
+    observer = new ResizeObserver(refit);
+    observer.observe(host);
+    refit();
+  }
+
+  // the ratio must land AFTER ipywidgets applies its own Layout styles
+  // to the sibling views (whose render order is not ours to pick), and
+  // the fill needs the el ATTACHED so it can find its root and host
+  let tries = 0;
+  const boot = () => {
+    if ((!sides() || !el.isConnected) && tries++ < 240) {
+      requestAnimationFrame(boot);
+      return;
+    }
+    setupFill();
+    apply(model.get("ratio"));
+    setTimeout(() => apply(model.get("ratio")), 300);
+    setTimeout(() => apply(model.get("ratio")), 1200);
+  };
+  boot();
+  return () => { if (observer) observer.disconnect(); };
+}
+export default { render };
+"""
+
+_GUTTER_CSS = """
+.longeron-gutter { flex: 0 0 auto; align-self: stretch; display: flex;
+  align-items: center; justify-content: center; touch-action: none;
+  user-select: none; background: transparent; }
+.longeron-gutter.x { width: 9px; cursor: col-resize; }
+.longeron-gutter.y { height: 9px; cursor: row-resize; }
+.longeron-gutter-grip { border-radius: 2px; background: #d7d9dd;
+  pointer-events: none; }
+.longeron-gutter.x .longeron-gutter-grip { width: 3px; height: 46px; }
+.longeron-gutter.y .longeron-gutter-grip { height: 3px; width: 46px; }
+.longeron-gutter:hover .longeron-gutter-grip,
+.longeron-gutter.drag .longeron-gutter-grip { background: #20303c; }
+"""
+
+_GUTTER_CLS: type[anywidget.AnyWidget] | None = None
+
+
+def _gutter_class() -> type[anywidget.AnyWidget]:
+    """The draggable divider between two dashboard sections (anywidget).
+
+    A gutter re-balances its two FLEX SIBLINGS: pointer-dragging it (the
+    pointer-events family, so touch works too) rewrites both siblings'
+    ``flex`` so the leading one holds fraction ``ratio`` of the pair,
+    clamped to ``[lo, hi]`` (the px min-sizes expressed as fractions of
+    the design ``total``); double-click restores the design ``ratio0``.
+    The fraction is a synced TRAIT, written on pointer release, so the
+    user's layout survives re-renders and is scriptable/testable from
+    the kernel (the Python validator applies the same clamp).  The rows
+    gutter additionally carries ``fill``: it grows the dashboard root to
+    a height-constrained host's height (see the ESM comment).
+    """
+
+    global _GUTTER_CLS
+    if _GUTTER_CLS is not None:
+        return _GUTTER_CLS
+    try:
+        import anywidget as _anywidget
+        import traitlets
+    except ImportError as err:
+        raise MissingExtraError("the dashboard section gutters", "anywidget", "viz") from err
+
+    class SectionGutterWidget(_anywidget.AnyWidget):
+        """Pointer-draggable flex divider; ``ratio`` persists the layout."""
+
+        _esm = _GUTTER_ESM
+        _css = _GUTTER_CSS
+        #: "x" = vertical bar between side-by-side sections; "y" =
+        #: horizontal bar between stacked rows
+        axis = traitlets.Unicode("x").tag(sync=True)
+        #: the leading section's share of the pair (the persisted layout)
+        ratio = traitlets.Float(0.5).tag(sync=True)
+        #: the design share; double-click (or assigning it) resets to it
+        ratio0 = traitlets.Float(0.5).tag(sync=True)
+        #: min-size clamp, as fractions of ``total`` (both sides enforce it)
+        lo = traitlets.Float(0.05).tag(sync=True)
+        hi = traitlets.Float(0.95).tag(sync=True)
+        #: the pair's design size along the axis (px): flex bases stay
+        #: anchored in px so an auto-height notebook cell never collapses
+        total = traitlets.Float(100.0).tag(sync=True)
+        #: the siblings' flex-shrink (0 pins the floor, 1 lets them squeeze)
+        shrink = traitlets.Int(1).tag(sync=True)
+        #: pinned mode: the leading section keeps its px size and the
+        #: trailing one absorbs all slack (the tab set vs the 3D side)
+        pin = traitlets.Bool(False).tag(sync=True)
+        #: rows gutter only: fill a height-constrained host (see the ESM)
+        fill = traitlets.Bool(False).tag(sync=True)
+
+        @traitlets.validate("ratio")
+        def _clamp_ratio(self, proposal: Any) -> float:
+            return float(min(self.hi, max(self.lo, proposal["value"])))
+
+    _GUTTER_CLS = SectionGutterWidget
+    return SectionGutterWidget
 
 
 # ---------------------------------------------------------------------------
@@ -1028,10 +1271,15 @@ def mission_dashboard(
     via :func:`mission_dashboard_data`, a half-minute of interpreter
     time) or an already-prepared data dict from that function.  By
     default the layout is FLUID: rows and plots stretch to the container
-    width in their design proportions while the row heights stay fixed,
-    so the dashboard fills any screen without ever needing vertical
-    scroll at 1080p.  Pass ``width_px`` to pin a fixed total width
-    instead (see the module docstring for the layout).
+    width in their design proportions while the row heights hold the
+    one-screen FLOOR, so the dashboard fills any screen without ever
+    needing vertical scroll at 1080p.  The floor is not a cap: docked in
+    a height-constrained host (JupyterLab's "Create New View for
+    Output") the dashboard grows to fill the host's height and the two
+    widget rows share the surplus.  Draggable gutters between the major
+    sections re-balance them (double-click resets); their ratios are
+    persisted widget traits.  Pass ``width_px`` to pin a fixed total
+    width instead (see the module docstring for the layout).
 
     The returned layout exposes its pieces for scripting and tests:
     ``.sliders`` (mission -> priority IntSlider), ``.requirements``
@@ -1044,7 +1292,12 @@ def mission_dashboard(
     ``.scatter``, ``.viewer``, ``.cards``, ``.summary``, ``.lineup``
     (the pick cards; ``hover`` carries the transient parcoords line
     index, mirrored to ``.parcoords.highlight``; ``selected`` the sticky
-    selected card line), ``.data``, ``.live`` (the current
+    selected card line), ``.splitters`` (the section gutters by name:
+    ``rows`` between the plot and control rows -- it also fills a
+    height-constrained host -- ``plots`` between parcoords and scatter,
+    ``tabs`` between the tab set and the 3D side; each holds its
+    ``ratio`` trait, clamped to ``[lo, hi]``, with ``ratio0`` the
+    double-click reset), ``.data``, ``.live`` (the current
     :func:`apply_thresholds` table), ``.front`` (per-candidate
     non-dominated flags), ``.pool`` (the candidate indices currently in
     view -- EMPTY when the toggle is on and nothing is eligible),
@@ -1067,9 +1320,10 @@ def mission_dashboard(
     has_cost = bool(candidates) and candidates[0]["cost"] is not None
 
     # one-screen budget: header (~40) + plot row (~360) + control row
-    # (~470) stays under ~900 px of content height.  Row HEIGHTS are
-    # FIXED; the pixel widths below are the design proportions (and the
-    # exact widths when ``width_px`` pins the layout)
+    # (~470) stays under ~900 px of content height.  The row heights are
+    # FLOORS (a taller host grows them through the rows gutter's fill);
+    # the pixel widths below are the design proportions (and the exact
+    # widths when ``width_px`` pins the layout)
     fluid = width_px is None
     base_w = 1500 if width_px is None else int(width_px)
     scatter_w, plot_h = 400, 330
@@ -1215,12 +1469,15 @@ def mission_dashboard(
         width_px=pc_w,
         height_px=plot_h,
     )
-    # fixed-HEIGHT row members; fluid mode lets the two plots split the
-    # plot row in their design ratio (grow factors = design widths, zero
-    # basis) and the 3D viewer absorb the control row's slack, while the
-    # tab set and the cards column keep their design widths.  Fixed mode
-    # pins everything (HBox children default to flex-shrink 1, and a
-    # shrunk parcoords/tab bar is exactly the cramped layout this replaces)
+    # row members at their design proportions; fluid mode lets the two
+    # plots split the plot row in their design ratio and the 3D viewer
+    # absorb the control row's slack, while the tab set and the cards
+    # column keep their design widths.  Fixed mode pins the widths (HBox
+    # children default to flex-shrink 1, and a shrunk parcoords/tab bar
+    # is exactly the cramped layout this replaces).  Heights come from
+    # the ROWS (align-items stretch + px flex bases), so a gutter drag
+    # or a filled tall host re-sizes every member, which re-renders to
+    # its measured box
     if fluid:
         pc.layout = widgets.Layout(flex=f"{pc_w} 1 0px", min_width="480px", overflow="hidden")
         scatter.layout = widgets.Layout(
@@ -1230,8 +1487,50 @@ def mission_dashboard(
     else:
         for widget, w in ((pc, pc_w), (scatter, scatter_w), (viewer, viewer_w)):
             widget.layout = widgets.Layout(width=f"{w}px", flex="0 0 auto")
-    lineup.layout = widgets.Layout(
-        width=f"{lineup_w}px", height=f"{viewer_h + 34}px", flex="0 0 auto"
+    lineup.layout = widgets.Layout(width=f"{lineup_w}px", flex="0 0 auto")
+
+    # the section gutters: draggable dividers between the widget rows and
+    # inside each row.  Ratios are traits (persisted layout, kernel-side
+    # clamped); px min-sizes ride the members' min_width/min_height CSS
+    # and the same bounds as [lo, hi] fractions of the design totals
+    ctrl_h = viewer_h + 34
+    gutter_cls = _gutter_class()
+    rows_total = float(plot_h + ctrl_h)
+    plots_total = float(pc_w + scatter_w)
+    tabs_total = float(tab_w + lineup_w + viewer_w)
+    xshrink = 1 if fluid else 0
+
+    def _gutter(**kw: Any) -> Any:
+        return gutter_cls(layout=widgets.Layout(flex="0 0 auto", align_self="stretch"), **kw)
+
+    split_rows = _gutter(
+        axis="y",
+        fill=True,  # grows the dashboard to a height-constrained host
+        shrink=0,  # never squeeze below the one-screen floor
+        total=rows_total,
+        ratio=plot_h / rows_total,
+        ratio0=plot_h / rows_total,
+        lo=220 / rows_total,
+        hi=1 - 300 / rows_total,
+    )
+    split_plots = _gutter(
+        axis="x",
+        shrink=xshrink,
+        total=plots_total,
+        ratio=pc_w / plots_total,
+        ratio0=pc_w / plots_total,
+        lo=480 / plots_total,
+        hi=1 - 260 / plots_total,
+    )
+    split_tabs = _gutter(
+        axis="x",
+        pin=True,  # the tab set keeps its px width; the 3D side flexes
+        shrink=xshrink,
+        total=tabs_total,
+        ratio=tab_w / tabs_total,
+        ratio0=tab_w / tabs_total,
+        lo=380 / tabs_total,
+        hi=1 - (lineup_w + 420) / tabs_total,
     )
 
     box = widgets.VBox()
@@ -1507,7 +1806,9 @@ def mission_dashboard(
             pareto_hint,
             top_n,
         ],
-        layout=widgets.Layout(align_items="center", width="100%" if fluid else f"{base_w}px"),
+        layout=widgets.Layout(
+            align_items="center", flex="0 0 auto", width="100%" if fluid else f"{base_w}px"
+        ),
     )
     summary_tab = widgets.VBox(
         [
@@ -1529,18 +1830,45 @@ def mission_dashboard(
     ]
     tabs = widgets.Tab(
         children=[summary_tab, *mission_tabs],
-        layout=widgets.Layout(width=f"{tab_w}px", height=f"{viewer_h + 34}px", flex="0 0 auto"),
+        # no fixed height: the tab set stretches to the control row (its
+        # design height is the row's flex basis); a user-shrunk row clips
+        # instead of bleeding over the neighbors; min-width matches the
+        # tabs gutter's lower bound so a narrow host squeezes only so far
+        layout=widgets.Layout(
+            width=f"{tab_w}px", min_width="380px", flex="0 0 auto", overflow="hidden"
+        ),
     )
     tabs.set_title(0, "all missions")
     for position, name in enumerate(mission_names, start=1):
         tabs.set_title(position, name)
-    row = widgets.Layout(flex_flow="row nowrap", width="100%" if fluid else f"{base_w}px")
+
+    def _row(basis: int, min_h: int) -> Any:
+        # px flex-basis keeps the one-screen floor in an auto-height cell;
+        # the grow factor shares a taller host's surplus in design ratio
+        # (the rows gutter rewrites both when dragged); stretch hands each
+        # member the row height its front-end measures and re-renders to
+        return widgets.Layout(
+            flex=f"{basis} 0 {basis}px",
+            min_height=f"{min_h}px",
+            flex_flow="row nowrap",
+            align_items="stretch",
+            width="100%" if fluid else f"{base_w}px",
+        )
+
+    right = widgets.HBox(
+        [lineup, viewer],
+        layout=widgets.Layout(
+            flex="1 1 0px", flex_flow="row nowrap", align_items="stretch", min_width="620px"
+        ),
+    )
     box.children = [
         header,
-        widgets.HBox([pc, scatter], layout=row),
-        widgets.HBox([tabs, lineup, viewer], layout=row),
+        widgets.HBox([pc, split_plots, scatter], layout=_row(plot_h, 220)),
+        split_rows,
+        widgets.HBox([tabs, split_tabs, right], layout=_row(ctrl_h, 300)),
     ]
     box.layout = widgets.Layout(width="100%" if fluid else f"{base_w + 8}px")
+    box.splitters = {"rows": split_rows, "plots": split_plots, "tabs": split_tabs}
     box.sliders = weight_sliders
     box.requirements = req_sliders
     box.top_n = top_n
