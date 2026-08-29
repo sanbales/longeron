@@ -18,7 +18,7 @@ wind-tunnel fit would disagree with the drag-polar sketch about:
   punishes the slow, high-CL corner the first-order model rewards.
 
 Both corrections push the best-endurance loiter speed *up* and shave the
-predicted station time -- the fidelity-swap story in notebook 07.
+predicted station time -- the fidelity-swap story in tutorial 4.
 
 Requires the ``mdao`` extra (openmdao).
 """

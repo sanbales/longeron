@@ -273,7 +273,7 @@ print(json.dumps({
 def hbox_fit_notebook() -> dict[str, Any]:
     """Scenario: a plain inline diagram inside a narrow HBox self-fits.
 
-    The NB10 shape (diagram beside a 3D viewer, squeezed to a fraction
+    The tutorial-7 shape (diagram beside a 3D viewer, squeezed to a fraction
     of the cell): NO explorer, NO consumer wiring -- just
     ``display(HBox([widget, filler]))``.  The widget's own fit sentinel
     (mounted by the builder, ``diagrams._finish``) must report the fresh

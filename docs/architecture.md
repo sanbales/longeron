@@ -52,8 +52,10 @@ adds no third-party dependencies:
   the `cad` extra.
 
 The guide [Choosing an analysis](guides/analysis.md) matches questions
-to bridges, and tutorial
-{doc}`7 <tutorials/07_analysis_and_trades>` drives the whole stack end
+to bridges, and tutorials
+{doc}`4 <tutorials/04_trades_sizing_the_fleet>` and
+{doc}`6 <tutorials/06_requirements_score_hunt_prove>` drive the whole
+stack end
 to end.
 
 ## Vendored ipyelk

@@ -32,16 +32,17 @@ visualization, and interchange features live behind extras
 
 - [Getting started](getting-started.md) — install, extras, and a
   parse → validate → simulate quickstart.
-- [Tutorials](tutorials/index.md) — nine executable notebooks. The
-  documentation build runs them, so every output on those pages is
-  current.
+- [Tutorials](tutorials/index.md) — nine executable notebooks, one
+  curriculum. The documentation build runs them, so every output on
+  those pages is current.
 - [Guides](guides/index.md) — one task per page: the
   [command line](guides/cli.md), [workspaces & caching](guides/workspaces.md),
   [validation](guides/validation.md),
   [grammar conformance](guides/grammar.md),
   [choosing an analysis](guides/analysis.md), and
   [development](guides/contributing.md).
-- [API reference](reference/index.md) — autodoc pages for every module.
+- [API reference](reference/index.md) — autodoc pages for every module,
+  plus the notation gallery.
 - [Architecture](architecture.md) — how a model flows through the
   package, and what is vendored.
 - [Release notes](release-notes.md) — what shipped in each release.

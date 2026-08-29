@@ -2,13 +2,13 @@
 
 One :func:`grand_dashboard` call composes the house widgets over a drone
 model (plus the multi-mission sizing model) into a single reactive
-dashboard -- the capability finale of the tutorial series (notebook 15):
+dashboard -- the capability finale of the tutorial series (tutorial 9):
 
 * a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
   compact toolbar on) -- the linked-selection hub;
 * a **3D CAD** pane (:func:`longeron.analysis.viewer3d.mesh_viewer`) over
   the per-instance drone mesh, cross-linked with the diagram through
-  :func:`longeron.analysis.link.link_selection` (tutorial 10's M1 <-> M0
+  :func:`longeron.analysis.link.link_selection` (tutorial 7's M1 <-> M0
   wiring), plus a translucent **view cone** that follows the camera
   what-if sliders;
 * a **requirements scoreboard** pane
@@ -137,7 +137,7 @@ def drone_scene(
     the parametric mesh from the population's own attribute values
     (:func:`longeron.analysis.geometry.drone_geometry`,
     ``split_instances=True``), and stamps every rendered part with its
-    **M0 individual id** (tutorial 10's identity keys).  The rotor
+    **M0 individual id** (tutorial 7's identity keys).  The rotor
     population picks the frame family -- the CONFIG-KEYED rendering
     seam: a ``motors`` population fans out one arm per member (the quad
     and the hexa), ``frontMotors`` + ``tailMotor`` build the three-arm
@@ -573,7 +573,8 @@ def grand_dashboard(
     optimize.on_click(_on_optimize)
 
     # -- layout ---------------------------------------------------------------
-    # Sizing discipline (the NB10 lesson, re-learned in evidence capture):
+    # Sizing discipline (the diagram-beside-3D lesson, re-learned in
+    # evidence capture):
     # anywidget roots are flex items with min-width:auto, so a wrapper Box
     # does NOT constrain them -- the canvas grows toward the notebook width
     # and the visible pane clips its empty corner.  Pin width/flex on each

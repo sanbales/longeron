@@ -514,7 +514,7 @@ class TestFamilyGeometry:
 
 
 class TestConfigKeyedScene:
-    """The diagram -> 3D seam, keyed by configuration (the NB10 fix)."""
+    """The diagram -> 3D seam, keyed by configuration (the tutorial-7 fix)."""
 
     def test_every_config_bakes_its_own_build(self, model):
         expected_discs = {
@@ -557,7 +557,7 @@ class TestConfigKeyedScene:
         assert link.owning_config(model, "Rotorcraft") is None
 
     def test_selection_to_scene_round_trip(self, model):
-        """The maintainer's NB10 flow: select the tricopter's tail motor
+        """The maintainer's tutorial-7 flow: select the tricopter's tail motor
         anywhere, get the TRICOPTER's geometry."""
 
         config = link.owning_config(model, model.find("Rotorcraft::TriCopter::tailMotor"))

@@ -1535,9 +1535,9 @@ class Explorer(W.HBox):
         # the diagram area GROWS to fill the pane (flex-grow 1, basis 0);
         # min-height 0 lets the pane -- not the diagram widget's own
         # min-height floor -- own the height (min-height:auto would make
-        # the floor the effective height: NB12's 'view window too short'),
-        # and overflow hidden clips instead of spilling when the pane is
-        # squeezed below what the diagram wants
+        # the floor the effective height: the 'view window too short'
+        # report), and overflow hidden clips instead of spilling when the
+        # pane is squeezed below what the diagram wants
         self._diagram_box = W.Box(
             layout=W.Layout(width="100%", flex="1 1 0%", min_height="0", overflow="hidden")
         )

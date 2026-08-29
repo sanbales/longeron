@@ -166,25 +166,29 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 ```
 
 A complete walk-through lives in `examples/demo.py`, and the executable
-tutorials live in [`notebooks/`](notebooks/):
+tutorials live in [`notebooks/`](notebooks/). The nine tutorials form
+one curriculum over one subject -- the DeepScout UAV program in
+`examples/deepscout` -- with one thesis: the SysML v2 model is the
+single source of truth, and every perspective is a view of that same
+data. The arc: *data -> execution -> reading -> trading -> individuals
+-> judging -> geometry -> knowledge -> everything at once*.
 
 | Notebook | Covers |
 |---|---|
-| `01_define_and_explore` | parsing, the object model, programmatic authoring, workspaces |
-| `02_export_and_interchange` | SysML/JSON round-trips, save/load, KerML, spec metamodel, API JSON |
-| `03_calculations_and_constraints` | expressions, calcs, instantiation, constraints, requirements, the full loop |
-| `04_actions_and_states` | action graphs, hierarchical/parallel state machines, time |
-| `05_stdlib_and_validation` | the vendored standard library, `longeron lint` |
-| `06_interactive_diagrams` | ipyelk structure/state/action diagrams, click-selection |
-| `07_analysis_and_trades` | multi-mission UAV trade studies (interpreter-exact), OpenMDAO sizing + external-analysis binding, Z3 requirement consistency, 3D design views, the requirements scoreboard turning the feasible answer into the preferred one |
-| `08_semantic_web_and_rag` | RDF projection + SPARQL queries, deterministic retrieval chunks, semantic neighborhoods, keyword search, the agent tool-use loop |
-| `09_m0_interpretations` | M0 populations of identified individuals: stable ids, Annex A sequences, roll-ups over actual instances, seeded random sampling, occurrence individuals from executions, the trade-study bridge |
-| `10_diagram_3d_link` | diagram <-> 3D linked selection as an M1/M0 lens: per-instance geometry keyed by M0 individual ids, one-usage-to-four-meshes fan-out, picks that project back to M1 without losing the individual |
-| `11_notation_gallery` | every implemented SysML v2 glyph beside its OMG spec figure -- the specialization-family shaft adornments, membership diamonds and circles, flows, ports, behavior glyphs, swim lanes, stick-figure actors -- each section self-verifying, doubling as the notation regression harness |
-| `12_model_explorer` | the model explorer: a searchable, keyboard-navigable tree over the owning structure beside a diagram pane with per-selection kinds (structure/state/action/requirements), two-way selection linkage, and JupyterLab docking via the `[explorer]` extra |
-| `13_requirements_scoreboard` | MAUT over the requirement hierarchy: weights/utility shapes/measures declared in the model, pluggable aggregation (additive, weakest-link, geometric), and the treemap/Voronoi scoreboard widget -- area is importance, color is utility, double-click collapses a subtree to its aggregate |
-| `14_model_app` | the JupyterLab sidebar workbench: load files/folders or API projects, launch explorer and scoreboard tabs, the selection seam for item inspectors, model save and API push |
-| `15_grand_tour` | the grand tour: ONE dashboard composing the structure diagram, linked 3D CAD with a live camera-occlusion what-if, the requirements scoreboard recoloring live, an OpenMDAO sizing strip, Z3 consistency verdicts, and the Cesium mission replay -- a single `grand_dashboard` call |
+| `01_the_model_is_data` | what a parsed model IS: the dataclass tree, programmatic authoring, lossless JSON round-trips, save/load, the KerML projection, `validate()` and `longeron lint` |
+| `02_the_model_executes` | the datasheet's claimed max speed, computed: expression evaluation, the drone's own calcs, instantiation, constraint what-ifs, requirement verdicts, the mission action graph, the flight state machine |
+| `03_views_for_review` | reading the model without reading text: the explorer tree with relationship rows, four diagram views from one dispatcher, the app sidebar and item inspector, the canonical selection seam, edits with honest refusals, saved views as review artifacts |
+| `04_trades_sizing_the_fleet` | three missions, one airframe family: the catalog, the mission studies and their physics lessons, brushing the mission space, shapes to scale in 3D, the compromise dashboard, OpenMDAO sizing with the N2 map, results saved back into the model |
+| `05_individuals_populations` | M0 interpretations: features read as sequences, roll-ups over the individuals that exist, nominal vs random populations, Monte-Carlo over the catalog, traces as interpretations, entities across the OpenMDAO bridge |
+| `06_requirements_score_hunt_prove` | how good is the fleet, and where does it break: the MAUT scoreboard with model-declared weights and utility shapes, what-if injection, the trade-study bridge, `verify` hunting violations (hunt, sequences, cover, prove), Z3 requirement consistency |
+| `07_geometry_and_the_mission` | who measured the geometry claims: the 3D scene as a rendering of the M0 population, per-configuration geometry in the linked views, view-cone occlusion and disc clearance, the violating variant painted where it hurts, the mission on the globe |
+| `08_the_knowledge_graph` | three questions grep cannot answer: SPARQL over the model's RDF projection, the retrieval substrate, how an agent consumes the model, answers verified against tutorial 4's dashboard |
+| `09_grand_tour` | the grand tour: ONE dashboard composing the structure diagram, linked 3D CAD with a live camera-occlusion what-if, the requirements scoreboard recoloring live, an OpenMDAO sizing strip, Z3 consistency verdicts, and the Cesium mission replay -- a single `grand_dashboard` call |
+
+`notebooks/notation_gallery.ipynb` sits beside them as reference
+material, not a tutorial: every implemented SysML v2 glyph beside its
+OMG spec figure, each section self-verifying, doubling as the notation
+regression harness.
 
 The notebooks are executed by the test suite (`tests/test_notebooks.py`) and
 can be refreshed with `pixi run notebooks`.
@@ -353,7 +357,7 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
 ## Interactive diagrams
 
 `longeron.diagrams` renders models as interactive ELK diagrams in JupyterLab
-(see `notebooks/06_interactive_diagrams.ipynb`):
+(see `notebooks/03_views_for_review.ipynb`):
 
 ```python
 from longeron import diagrams

@@ -1,4 +1,4 @@
-# API reference
+# Reference
 
 The import name is `longeron`.
 The most common entry points are re-exported
@@ -33,6 +33,12 @@ objects are defined.
 | [View persistence](views.md) | `longeron.views` | saving diagrams as SysML v2 views, sidecar presentation, restore |
 | [Rendering](render.md) | `longeron.render` | headless SVG/PNG export (elkjs via node) |
 | [Replay](replay.md) | `longeron.replay` | animated simulation/action replays |
+
+The {doc}`notation gallery <notation_gallery>` belongs here too: an
+executable notebook that shows every implemented SysML v2 glyph beside
+its spec figure, with self-verifying asserts. The
+[notation coverage guide](../guides/notation-coverage.md) tabulates the
+same ground.
 
 ## Analysis
 
@@ -72,4 +78,5 @@ views
 render
 replay
 analysis/index
+notation_gallery
 ```

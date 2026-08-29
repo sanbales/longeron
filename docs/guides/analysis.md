@@ -4,10 +4,12 @@
 solvers. Each bridge answers a different question, and each imports its
 solver lazily behind its own extra, so the core package stays
 dependency-light. This guide tells you which bridge to reach for, and
-how the pieces compose. Tutorial
-{doc}`7 <../tutorials/07_analysis_and_trades>` drives all of them end to
+how the pieces compose. Tutorials
+{doc}`4 <../tutorials/04_trades_sizing_the_fleet>` and
+{doc}`6 <../tutorials/06_requirements_score_hunt_prove>` drive all of
+them end to
 end on one model, and tutorial
-{doc}`8 <../tutorials/08_semantic_web_and_rag>` covers the query
+{doc}`8 <../tutorials/08_the_knowledge_graph>` covers the query
 surfaces.
 
 ## Match the question to the tool
@@ -123,7 +125,7 @@ geometric strategies built in, custom aggregators pluggable), and
 renders as an interactive treemap or Voronoi tessellation where area is
 importance and color is utility. `values=` injection scores any
 trade-study architecture without touching the model (tutorial
-{doc}`13 <../tutorials/13_requirements_scoreboard>`).
+{doc}`6 <../tutorials/06_requirements_score_hunt_prove>`).
 
 ## RDF and RAG: query and retrieve
 

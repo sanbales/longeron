@@ -1064,8 +1064,9 @@ class TestSelectionTreatment:
 # triangle of one of the groups in a weird place')
 # ---------------------------------------------------------------------------
 
-#: NB07's ISR value hierarchy, weights only -- the geometry that exposed
-#: the bug: fieldability's voronoi polygon shares its topmost corner with
+#: the retired analysis notebook's ISR value hierarchy, weights only --
+#: the geometry that exposed the bug: fieldability's voronoi polygon
+#: shares its topmost corner with
 #: affordability's, so both twist anchors land ~9px apart and the old
 #: unconstrained right-nudge marched fieldability's twist across
 #: affordability's twist-plus-label footprint into affordability's region
@@ -1310,8 +1311,9 @@ def isr_widget():
     return scoreboard(longeron.loads(ISR_MODEL)).widget(tessellation="voronoi")
 
 
-#: three group levels (NB13's notebook model shape): zooming into
-#: performance still shows a nested group (endurance) with a twist
+#: three group levels (the retired scoreboard notebook's model shape):
+#: zooming into performance still shows a nested group (endurance) with
+#: a twist
 DEEP_NEST_MODEL = """
 package DeepNest {
     requirement mission {
@@ -1341,7 +1343,7 @@ def deep_widget():
 
 
 class TestTwistPlacement:
-    """Maintainer report (NB07 voronoi view): fieldability's collapser
+    """Maintainer report (the ISR voronoi view): fieldability's collapser
     triangle rendered over affordability's region.  Its polygon shares
     the topmost corner with affordability's, and the old de-overlap
     (nudge right, unbounded) walked the twist across affordability's
@@ -1358,7 +1360,7 @@ class TestTwistPlacement:
         assert "while (placedTwists.some" not in isr_widget._esm
 
     def test_voronoi_twists_inside_their_groups(self, isr_widget):
-        # the maintainer's exact view: NB07's hierarchy, voronoi, seed 42
+        # the maintainer's exact view: the ISR hierarchy, voronoi, seed 42
         report = _render_report(isr_widget)
         _assert_anchored_inside(report)
         # and specifically the reported twist: fieldability's sits in

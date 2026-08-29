@@ -5,7 +5,7 @@ draws, and which parts it does not. The reference is the OMG *Systems
 Modeling Language v2.0* specification: its per-clause notation tables and
 the clause 8.2.3 graphical-notation BNF. Every implemented glyph was
 verified against rendered spec figures, and the
-{doc}`notation gallery <../tutorials/11_notation_gallery>` shows each one
+{doc}`notation gallery <../reference/notation_gallery>` shows each one
 beside its spec figure with a self-verifying assertion. The browser test
 tier re-checks the gallery on every CI run.
 

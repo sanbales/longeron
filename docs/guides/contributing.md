@@ -51,7 +51,7 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `stdlib` | rebuild the prebuilt standard-library JSON (`scripts/vendor_stdlib.py --prebuilt-only`). |
 | `demo` | run `examples/demo.py`. |
 | `docs` | `sphinx-build -W -b html docs build/docs` (needs the `docs` extra; execution needs the `dev` extras plus node). |
-| `capture-widgets` (pixi) | re-capture the tutorial widget snapshots (`docs/_static/widget-snapshots/`) from a headless JupyterLab; run after changing a widget-bearing cell in tutorials 1–11. See below. |
+| `capture-widgets` (pixi) | re-capture the notebook widget snapshots (`docs/_static/widget-snapshots/`) from a headless JupyterLab; run after changing a widget-bearing notebook cell. See below. |
 | `hooks` | point `core.hooksPath` at `scripts/git-hooks`. |
 | `notebooks` (pixi) / `scripts/run_notebooks.py` | execute every tutorial notebook, then strip outputs. |
 | `sync-labextension` (pixi) | copy the repo's labextension builds -- the vendored jupyter-elk **and** the longeron launcher tile (`npm/_d`, which editable installs never place) -- into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
@@ -88,7 +88,8 @@ failure-artifact locations are documented in `tests/browser/README.md`.
 
 ## Notebook conventions
 
-The eight tutorials in `notebooks/` follow three rules:
+The notebooks in `notebooks/` (nine tutorials plus the notation
+gallery) follow three rules:
 
 1. **Committed notebooks are output-free.** The pre-commit hook strips
    outputs, execution counts, and volatile metadata from every staged
@@ -159,6 +160,6 @@ on the tutorial pages as committed PNG snapshots from
 Chromium-free; the snapshots are refreshed manually with
 `pixi run capture-widgets` (browser environment: needs
 `pixi run -e browser playwright install chromium` once per machine,
-like `test-browser`). If you change a widget-bearing cell in tutorials
-1–11, re-run it and commit the refreshed PNGs + manifest -- a stale
+like `test-browser`). If you change a widget-bearing notebook cell,
+re-run it and commit the refreshed PNGs + manifest -- a stale
 manifest fails the `-W` build with a pointer to that command.

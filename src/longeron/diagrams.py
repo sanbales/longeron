@@ -1414,8 +1414,8 @@ def _finish(
     else:
         # an explicit height is a contract: honor it exactly, even below
         # the default floor (CSS min-height would win over height), so
-        # inline layouts can match a neighbor -- NB10 sits a diagram
-        # beside a 480px 3D viewer
+        # inline layouts can match a neighbor -- tutorial 7 sits a diagram
+        # beside a 650px 3D viewer
         if not isinstance(height, str):
             raise ValueError(f"height must be a CSS length string or None, not {height!r}")
         result.layout.height = height
@@ -1548,7 +1548,7 @@ def structure_diagram(
 
     ``height`` pins the widget's rendered height to a CSS length (e.g.
     ``"480px"``) so inline compositions can match a neighbor exactly --
-    tutorial 10 sits a diagram beside a 480px 3D viewer in an HBox.  The
+    tutorial 7 sits a diagram beside a 650px 3D viewer in an HBox.  The
     default ``None`` keeps the bare-cell behavior: content-driven height
     with a 400px minimum floor.  An explicit height always wins, even
     below that floor.

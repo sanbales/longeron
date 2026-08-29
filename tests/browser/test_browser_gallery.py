@@ -11,7 +11,7 @@ import pytest
 
 pytestmark = pytest.mark.browser
 
-GALLERY = "11_notation_gallery.ipynb"
+GALLERY = "notation_gallery.ipynb"
 #: the notebook renders 23 diagram widgets today; thresholds keep slack
 #: (see tests/browser/README.md -- never assert exact counts)
 MIN_DIAGRAMS = 20

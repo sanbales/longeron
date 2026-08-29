@@ -4,7 +4,7 @@
     python scripts/record_demo.py
 
 re-records the whole thing after UI changes.  The walkthrough is
-DETERMINISTIC by construction: a purpose-built copy of the tutorial-15
+DETERMINISTIC by construction: a purpose-built copy of the tutorial-9
 notebook is generated into a throwaway lab root (the repo's notebooks are
 never touched), the models it loads ship with this checkout
 (the ``examples/deepscout`` program directory), the
@@ -16,7 +16,7 @@ CZML ``viewFrom`` tracking and therefore stable; only tile sharpness
 varies with the network).
 
 The story is ONE LINEAR pass over ONE surface (~55 s), every beat
-motivated, no back-and-forth: open ``15_grand_tour.ipynb`` -> Run All
+motivated, no back-and-forth: open ``09_grand_tour.ipynb`` -> Run All
 Cells -> scroll once to the dashboard and let the composition land ->
 click ``motors`` in the structure diagram (all four motors flash in 3D)
 -> drag the azimuth slider until the view cone sweeps into the airframe
@@ -82,7 +82,7 @@ MODEL_CACHE = DEMO_DIR / "model-cache"
 VENDOR_LABEXTENSIONS = REPO / "vendor/ipyelk/src/_d/share/jupyter/labextensions"
 FFMPEG = os.environ.get("LONGERON_FFMPEG", "/opt/homebrew/bin/ffmpeg")
 
-NOTEBOOK = "15_grand_tour.ipynb"
+NOTEBOOK = "09_grand_tour.ipynb"
 #: the dashboard is ~1010 px tall; 1200 px of viewport leaves it filling
 #: the frame under the Lab chrome after the one scroll to its top
 VIEWPORT = {"width": 1600, "height": 1200}
@@ -123,7 +123,7 @@ MOVE_STEPS = 45
 
 # -- the demo notebook ---------------------------------------------------------
 
-#: tutorial 15's performance graft, condensed: parsed from SysML text,
+#: tutorial 9's performance graft, condensed: parsed from SysML text,
 #: grafted into the loaded model, measured through the model's own calcs
 _PERF_CELL = '''\
 program.find("DeepScout").add(
@@ -171,7 +171,7 @@ measured = {
 CELLS: tuple[tuple[str, str], ...] = (
     (
         "markdown",
-        "# 15 · The grand tour: one dashboard, every seam\n\n"
+        "# 9 · The grand tour: one dashboard, every seam\n\n"
         "Diagram · CAD · occlusion · scoreboard · OpenMDAO · Z3 · Cesium —\n"
         "one reactive surface, every reaction kernel-side.",
     ),

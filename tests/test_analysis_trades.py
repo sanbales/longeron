@@ -116,7 +116,8 @@ class TestOptimization:
         front is a *single* point -- the $122 cruiser.  The 0.9 kg racer
         is Pareto-optimal only once mass counts as a third objective; a
         3-objective front projected onto these two axes would wrongly
-        include it (that projection was notebook 07's original bug).
+        include it (that projection was the retired analysis notebook's
+        original bug).
         """
 
         archs = study.enumerate()

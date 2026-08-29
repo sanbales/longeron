@@ -196,30 +196,32 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     _sync_labextension()
     root = tmp_path_factory.mktemp("lab-root")
     # Hermetic copy: strip every code cell's outputs/execution_count.  The
-    # working-tree NB11 accumulates autosaved outputs (capture runs, live Lab
-    # sessions); stale widget-view outputs open as "widget model not found"
+    # working-tree gallery accumulates autosaved outputs (capture runs, live
+    # Lab sessions); stale widget-view outputs open as "widget model not found"
     # console-error storms on a fresh kernel and poison the gallery test.
     gallery = json.loads(
-        (REPO / "notebooks" / "11_notation_gallery.ipynb").read_text(encoding="utf-8")
+        (REPO / "notebooks" / "notation_gallery.ipynb").read_text(encoding="utf-8")
     )
     for cell in gallery.get("cells", []):
         if cell.get("cell_type") == "code":
             cell["outputs"] = []
             cell["execution_count"] = None
-    (root / "11_notation_gallery.ipynb").write_text(json.dumps(gallery, indent=1), encoding="utf-8")
-    # NB14 VERBATIM (maintainer QA: the app/inspector/scoreboard findings
-    # were all reported from live NB14 sessions, so the tier drives the
-    # REAL tutorial, not a paraphrase).  Served from a notebooks/ subdir
-    # with examples/ beside it so cell 3's relative
+    (root / "notation_gallery.ipynb").write_text(json.dumps(gallery, indent=1), encoding="utf-8")
+    # NB03 VERBATIM (maintainer QA: the app/inspector findings were all
+    # reported from live tutorial sessions, so the tier drives the REAL
+    # tutorial, not a paraphrase).  Served from a notebooks/ subdir
+    # with examples/ beside it so the notebook's relative
     # "../examples/deepscout" resolves exactly like in the repo; outputs
     # stripped for the same autosave-poisoning reasons as the gallery.
-    tutorial = json.loads((REPO / "notebooks" / "14_model_app.ipynb").read_text(encoding="utf-8"))
+    tutorial = json.loads(
+        (REPO / "notebooks" / "03_views_for_review.ipynb").read_text(encoding="utf-8")
+    )
     for cell in tutorial.get("cells", []):
         if cell.get("cell_type") == "code":
             cell["outputs"] = []
             cell["execution_count"] = None
     (root / "notebooks").mkdir()
-    (root / "notebooks" / "14_model_app.ipynb").write_text(
+    (root / "notebooks" / "03_views_for_review.ipynb").write_text(
         json.dumps(tutorial, indent=1), encoding="utf-8"
     )
     (root / "examples").mkdir()

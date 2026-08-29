@@ -992,7 +992,7 @@ function lgnSbPlaceTwist(at, poly, taken, needs) {
   // and every candidate stays on the polygon's interior chord.  The old
   // unconstrained `x += 14` nudge could shove a twist across a
   // neighbour's twist-plus-label footprint into ANOTHER group's region
-  // (maintainer report: NB07's fieldability twist -- whose polygon
+  // (maintainer report: the ISR board's fieldability twist -- whose polygon
   // shares its topmost corner with affordability's -- landed deep
   // inside affordability).  needs is a descending list of chord rooms
   // to hunt for right of the twist (a legible perimeter label, a

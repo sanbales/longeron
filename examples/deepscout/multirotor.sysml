@@ -287,7 +287,7 @@ package Rotorcraft {
 
     // ----- architecture wiring: who satisfies what -----------------------
     // The quad meets every requirement at stock EXCEPT motor-out
-    // tolerance: tutorial 10 measures the installation numbers on its CAD
+    // tolerance: tutorial 7 measures the installation numbers on its CAD
     // build and the mission legs at its 20.0 m/s cruise, but a single
     // failure leaves it two balanced rotors that cannot lift it.  The
     // tricopter holds the flight envelope with margin (thrust/weight

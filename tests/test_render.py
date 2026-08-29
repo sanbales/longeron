@@ -1666,7 +1666,8 @@ class TestCompoundLabelFit:
         assert quad["height"] < rows  # ... and never the height
 
     def test_package_nested_compound_rows_stay_inside_under_down(self):
-        """The maintainer's second repro (the mission catalog, NB12): a part def
+        """The maintainer's second repro (the mission catalog, the retired
+        model-explorer notebook): a part def
         with children AND very wide rows nested INSIDE a package.  Under
         the un-fixed top-down transposition its width collapsed to
         children + padding while the H_CENTERed full-width rows poked

@@ -1998,7 +1998,7 @@ class TestBrowserTransportIds:
 
         from ipyelk import Diagram
 
-        path = Path(__file__).resolve().parent.parent / "notebooks" / "11_notation_gallery.ipynb"
+        path = Path(__file__).resolve().parent.parent / "notebooks" / "notation_gallery.ipynb"
         cells = json.loads(path.read_text("utf-8"))["cells"]
         namespace: dict = {}
         for index, cell in enumerate(cells):
@@ -2185,7 +2185,7 @@ class TestBuilderHeight:
     """The builders' height story: bare cells keep the 400px minimum
     floor; an explicit ``height=`` is honored exactly (plumbed to
     ``result.layout`` in ``_finish``), even below the floor -- so inline
-    compositions can match a neighbor (NB10's 480px 3D viewer)."""
+    compositions can match a neighbor (tutorial 7's 650px 3D viewer)."""
 
     def test_default_keeps_the_bare_cell_floor(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)

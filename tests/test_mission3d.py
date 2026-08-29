@@ -395,7 +395,7 @@ CDA_M2 = 0.024 * 1.1  # frontalArea x bluff-body Cd
 MAX_TILT_DEG = math.degrees(math.acos(MASS_KG * 9.81 / USABLE_N))
 CRUISE_SPEED = math.sqrt(MASS_KG * 9.81 * math.tan(math.radians(25.0)) / (0.5 * 1.225 * CDA_M2))
 
-#: tutorial 10's mission: a loop over Piedmont Park, ~300 m MSL ground
+#: tutorial 7's mission: a loop over Piedmont Park, ~300 m MSL ground
 ATLANTA = [
     (33.7813, -84.3833, 350.0),
     (33.7885, -84.3785, 390.0),

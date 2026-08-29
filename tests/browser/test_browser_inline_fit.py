@@ -1,6 +1,7 @@
 """Scenario 6: universal fit -- a PLAIN inline diagram self-fits.
 
-The maintainer repro (NB10 cell 5): a diagram displayed beside a 3D
+The maintainer repro (tutorial 7's diagram-beside-3D cell): a diagram
+displayed beside a 3D
 viewer in an HBox, squeezed to 55% of the cell, rendered CROPPED -- the
 kernel's first-layout auto-fit was dropped while the sprotty view was
 still constructing, and nothing ever re-fit it.  The fix lifted the

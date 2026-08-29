@@ -355,8 +355,9 @@ function render({ model, el }) {
     // only the DOCKED view (the one that can see its own panel) may click:
     // a SECOND view of the same widget -- e.g. the inspector displayed
     // inline in a cell output -- has no panel here and its clicks would
-    // TOGGLE the sidebar shut (maintainer QA: NB14 cell 12 collapsed the
-    // freshly revealed inspector this way)
+    // TOGGLE the sidebar shut (maintainer QA: the retired model-app
+    // tutorial's inline inspector display collapsed the freshly revealed
+    // inspector this way)
     if (!panel) return;
     const own = tabs().find(
       (tab) => tab.dataset.lgxkey === key && tab.dataset.lgxstamp === model.get("stamp"),
@@ -1254,7 +1255,7 @@ class ModelApp(W.VBox):
         app's own launches (:meth:`explore_model`) and DIRECT
         :func:`longeron.explorer.explore` calls made while this app is
         the kernel's most recent one (the explorer notifies this module
-        on construction; maintainer QA -- NB14-style notebooks mix both
+        on construction; maintainer QA -- tutorial notebooks mix both
         paths).  Adopted explorers join :attr:`explorers`, so model
         edits refresh them too (:meth:`refresh_explorers`).  Adoption
         itself is PASSIVE: it never changes ``current_model`` or

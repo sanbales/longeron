@@ -676,7 +676,7 @@ package DeepScout {
                a deterministic volume-quadrature estimate of the same
                measures otherwise), injected into the scoreboard as
                values= bindings for the unvalued attributes below --
-               see tutorial 10.  The subject is the abstract MultiRotor
+               see tutorial 7.  The subject is the abstract MultiRotor
                so any configuration can be measured; the reference CAD
                build the tutorials measure is the QuadCopter's (the
                satisfy edge in multirotor.sysml). */
@@ -719,7 +719,7 @@ package DeepScout {
                achievable speeds (MissionTime over maxCruiseSpeed at
                cruiseTilt), injected into the scoreboard as a values=
                binding for the unvalued attribute below -- see
-               tutorial 10.  The subject is the abstract airframe: pass
+               tutorial 7.  The subject is the abstract airframe: pass
                any configuration as the assembly to score it. */
         subject drone : MultiRotor;
         attribute missionMinutes : Real;   // measured: MissionTime over the route legs

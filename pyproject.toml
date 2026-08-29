@@ -37,9 +37,9 @@ dev = [
     "ipylab>=1",  # mirrors [explorer] (the lab docked layout)
     "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
-    "hypothesis>=6.100",  # mirrors [verify] so NB07's violation hunt executes
-    # (mirrors [mdao]/[trades]/[smt] so notebook 07 executes in CI)
-    "rdflib>=7.0",  # mirrors [rdf] so notebook 08 executes in CI
+    "hypothesis>=6.100",  # mirrors [verify] so tutorial 6's violation hunt executes
+    # (mirrors [mdao]/[trades]/[smt] so tutorials 4 and 6 execute in CI)
+    "rdflib>=7.0",  # mirrors [rdf] so tutorial 8 executes in CI
     "fastapi>=0.110", "uvicorn>=0.29",  # mirrors [server] (API server tests)
     "httpx>=0.27",  # mirrors [client] (API client tests)
     # maintainer ruling 2026-08-27: dev mirrors EVERY extra, cad included --
@@ -353,7 +353,7 @@ depends-on = ["sync-labextension"]
 
 [tool.pixi.feature.browser.tasks.capture-widgets]
 # regenerate the tutorial widget snapshots (docs/_static/widget-snapshots/):
-# boots a headless JupyterLab on notebooks/, runs tutorials 01..11, and
+# boots a headless JupyterLab on notebooks/, runs every notebook, and
 # screenshots every rendered widget output (see the script's docstring).
 # The PNGs + manifest are COMMITTED artifacts -- deliberately NOT in the
 # `docs` task dependency chain, so docs builds stay deterministic and

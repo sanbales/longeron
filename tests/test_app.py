@@ -431,7 +431,7 @@ class TestRows:
         assert str(ROOT / "examples" / "deepscout") in name.tooltip
         assert explore_btn.description == "Explore"
         # the program carries the geometric-installation requirement
-        # usages (tutorial 10): its Score button is live
+        # usages (tutorial 7): its Score button is live
         assert not score_btn.disabled
         # Save is dirty-gated: a freshly loaded model has nothing to save
         assert save_btn.description == "Save" and save_btn.disabled
@@ -606,7 +606,7 @@ class TestLaunchWiring:
 class TestExplorerAdoption:
     """DIRECT ``explore()`` calls feed the app's seam (maintainer QA).
 
-    NB14-style notebooks mix ``explore(...)`` cells with the app: every
+    Notebooks that mix ``explore(...)`` cells with the app: every
     explorer constructed while an app is open is adopted into the
     kernel's most recent app (the explorer's construction hook ->
     :meth:`ModelApp._adopt_explorer`), so the inspector follows BOTH
@@ -675,8 +675,9 @@ class TestExplorerAdoption:
         assert ex.element is not None
 
     def test_sweeper_esm_reveal_never_toggles(self):
-        # the reveal's two anti-toggle guards (maintainer QA: NB14 cell 12
-        # displayed the inspector inline; that second view's clicks
+        # the reveal's two anti-toggle guards (maintainer QA: the retired
+        # model-app tutorial displayed the inspector inline; that second
+        # view's clicks
         # COLLAPSED the freshly revealed right sidebar): only the DOCKED
         # view -- the one that can see its own panel -- may click, and a
         # CURRENT sidebar tab is never clicked (lumino's collapse gesture)

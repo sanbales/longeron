@@ -2,6 +2,22 @@
 
 ## 0.11.0 (unreleased)
 
+- **The tutorial curriculum, rebuilt**: fifteen feature-tour notebooks
+  become nine tutorials with one arc -- *data -> execution -> reading ->
+  trading -> individuals -> judging -> geometry -> knowledge ->
+  everything at once* -- over one subject, the DeepScout UAV program
+  (`examples/deepscout`). Each tutorial opens with an engineering
+  question and closes with the model answering it; concepts are taught
+  once and cross-referenced everywhere else (tutorial 3 owns the
+  selection seam, tutorial 5 owns M0). The notation gallery leaves the
+  tutorial track for the docs reference section
+  (`notebooks/notation_gallery.ipynb`, still executable and still the
+  notation regression harness). Old numbering, for readers with
+  bookmarks: 01+02+05 -> 1; 03+04 -> 2; 06+12+14 -> 3; 07 split into
+  4 (trades), 5 (with 09, individuals), and 6 (with 13, requirements);
+  10 -> 7; 08 -> 8; 15 -> 9; 11 -> the notation gallery; the
+  `isr_scoring` inline model retired into the fleet model
+
 - **`longeron.analysis.verify`: model-driven requirement-violation
   hunting** ([design doc](design/verify.md); supersedes and
   retires the `_verify_spike` prototype): the model fights back, from
@@ -42,7 +58,8 @@
   - the SMT encoder now walks *anonymous* requirement constraints too
     (an unnamed `assume` was silently dropped -- a latent false-`proven`
     bug, fixed for `prove` to land)
-  - notebook 07 gains the "find my violations" beat: hunt, the minimal
+  - tutorial 6 ("Requirements: score, hunt, prove") carries the "find
+    my violations" beat: hunt, the minimal
     sortie, the covering array with its measured-recall line, and the
     hoverMargin absence proof, executing with or without the extra
   - extras restructured: `verify = ["hypothesis>=6.100",
