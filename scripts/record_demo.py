@@ -15,10 +15,19 @@ jitter plus Cesium imagery-tile streaming (the finale's camera framing is
 CZML ``viewFrom`` tracking and therefore stable; only tile sharpness
 varies with the network).
 
-The story is ONE LINEAR pass over ONE surface (~55 s), every beat
+The story is ONE LINEAR pass over ONE surface (~70 s), every beat
 motivated, no back-and-forth: open ``09_grand_tour.ipynb`` -> Run All
 Cells -> scroll once to the dashboard and let the composition land ->
-click ``motors`` in the structure diagram (all four motors flash in 3D)
+the diagram dives into the ``QuadCopter`` node (the DeepScout program
+is ~18k px of diagram, so the camera frames what it is about to touch:
+an animated kernel-side ``fit``, the same move the toolbar's fit button
+makes) -> click the ``motors : Motor [4]`` row (all four motors flash
+in 3D) -> the frame pulls back one step to the multirotor family -> click
+into the ``HexaCopter`` (its ``motors : Motor [6]`` row) and the 3D
+pane BECOMES that craft, six rotors baked from its own M0 population
+(0.11's config-keyed viewer: ``bind_config_view`` is on by default;
+any selection resolves to its owning craft), then click ``QuadCopter``
+and the home craft returns, view cone and all
 -> drag the azimuth slider until the view cone sweeps into the airframe
 (occludedFraction goes red, ``clearView`` flips red on the Voronoi, the
 obstructing parts light up) and drag back to clear (the score recovers
@@ -34,7 +43,7 @@ Outputs land in ``build/demo/`` (gitignored):
 * ``demo.mp4``    -- h264, crf 20, faststart (the shareable video)
 * ``demo.gif``    -- palette-optimized, <= 10 MB (the GitHub release-asset
   budget; see the publish workflow below)
-* ``frames/*.png``-- four representative stills for quick review
+* ``frames/*.png``-- five representative stills for quick review
 
 PUBLISH WORKFLOW -- media is NEVER committed to this repo.  The
 maintainer attaches ``demo.gif`` (and ``demo.mp4``) to the GitHub
@@ -103,7 +112,7 @@ CDN_WARM_URLS = (
 GIF_BUDGET_BYTES = 10 * 1024 * 1024
 #: quality ladder walked until the GIF fits the budget (the Cesium
 #: finale over satellite imagery is entropy-heavy, and the slider sweeps
-#: repaint half the surface -- ~55 s of dashboard lands near the bottom)
+#: repaint half the surface -- ~70 s of dashboard lands near the bottom)
 GIF_LADDER = (
     {"fps": 14, "width": 1280, "colors": 192},
     {"fps": 10, "width": 1024, "colors": 128},
@@ -190,7 +199,14 @@ CELLS: tuple[tuple[str, str], ...] = (
     ("code", _PERF_CELL),
     (
         "code",
-        "dash = grand_dashboard(program, values=measured)\ndash",
+        "from longeron.analysis import mission3d\n"
+        "from longeron.analysis.grand import ATLANTA_LOOP\n"
+        "\n"
+        "# mission time is analysis: the route legs measured kernel-side,\n"
+        "# priced by the model's own physics -- then one call composes it all\n"
+        "measured |= mission3d.mission_values(interp, ATLANTA_LOOP, ground_alt=300.0)\n"
+        "dash = grand_dashboard(program, values=measured)\n"
+        "dash",
     ),
 )
 
@@ -510,12 +526,36 @@ class Camera:
 
     # -- waits ------------------------------------------------------------
 
-    def wait_diagram(self, marker: str, *, timeout: float = 150.0) -> str:
-        """Wait for the dashboard diagram: fitted and showing ``marker``.
+    def wait_scale(self, minimum: float, maximum: float = 1e9, *, timeout: float = 30.0) -> None:
+        """Wait for the diagram's zoom to land INSIDE ``[minimum, maximum]``
+        and settle (the animated ``fit`` runs client-side; the camera must
+        not click mid-flight, and a zoom-out starts from a scale that may
+        already satisfy a bare minimum -- hence the band)."""
+
+        deadline = time.monotonic() + timeout
+        stable: str | None = None
+        streak = 0
+        while time.monotonic() < deadline:
+            state = dict(self.page.evaluate(_VISIBLE_DIAGRAM_JS))
+            if minimum <= state.get("scale", 0) <= maximum:
+                streak = streak + 1 if state.get("transform") == stable else 0
+                stable = state.get("transform")
+                if streak >= 2:
+                    return
+            else:
+                streak, stable = 0, None
+            time.sleep(0.25)
+        raise TimeoutError(f"diagram zoom never settled inside [{minimum}, {maximum}]")
+
+    def wait_diagram(self, marker: str | None, *, timeout: float = 150.0) -> str:
+        """Wait for the dashboard diagram: fitted (and showing ``marker``).
 
         Framing is part of the contract: the content must sit INSIDE the
         pane (the autofit lands a beat after the relayout -- the camera
-        must not fire early).
+        must not fire early).  ``marker`` must be ``None`` for overview
+        framings: sprotty CULLS label text below ~5% zoom, and the full
+        DeepScout program autofits near 4%, so at overview the diagram
+        renders boxes only -- the act-2 dive re-checks its own labels.
         """
 
         deadline = time.monotonic() + timeout
@@ -528,10 +568,11 @@ class Camera:
             good = (
                 state.get("rendered")
                 and state.get("fitted")
-                and marker in text
+                and (marker is None or marker in text)
                 # scale(0.01) is the hidden-viewport autofit sentinel: tiny
-                # content has no overflow, so require a human-visible zoom
-                and state.get("scale", 0) > 0.05
+                # content has no overflow, so require a real autofit zoom
+                # (the full DeepScout program lands near 0.04)
+                and state.get("scale", 0) > 0.02
                 and state.get("overflowX", 1e9) <= 1.5
                 and state.get("overflowY", 1e9) <= 1.5
             )
@@ -573,23 +614,39 @@ def open_demo_notebook(page: Any, server: LabServer, timeout: float = 120.0) -> 
     wait_kernel_idle(page, timeout)
 
 
-def kernel_exec(page: Any, code: str, timeout_ms: int = 30_000) -> None:
+def kernel_exec(page: Any, code: str, timeout_ms: int = 30_000) -> str:
     """Silently execute ``code`` on the notebook's kernel (no cell, no
     camera footprint) -- the invisible-cleanup seam for gestures whose
-    mouse form would misread on camera."""
+    mouse form would misread on camera.  Returns the reply status
+    (``ok`` / ``error``), so an ``assert`` makes a kernel-truth probe."""
 
-    page.evaluate(
-        """async ([code, timeout]) => {
+    return str(
+        page.evaluate(
+            """async ([code, timeout]) => {
             const app = window.jupyterapp || window.jupyterlab;
             const kernel = app.shell.currentWidget.sessionContext.session.kernel;
             const future = kernel.requestExecute(
                 { code, silent: true, store_history: false });
-            await Promise.race([future.done, new Promise((_, reject) =>
+            const reply = await Promise.race([future.done, new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('kernel_exec timeout')), timeout))]);
-            return true;
+            return reply.content.status;
         }""",
-        [code, timeout_ms],
+            [code, timeout_ms],
+        )
     )
+
+
+def kernel_assert(page: Any, expression: str, timeout: float = 20.0) -> None:
+    """Poll ``expression`` on the kernel until it holds (kernel truth for
+    state a comm write lands asynchronously, e.g. a diagram click's
+    selection reaching ``bind_config_view``)."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if kernel_exec(page, f"assert {expression}") == "ok":
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"kernel never satisfied: {expression}")
 
 
 # -- the scenario ----------------------------------------------------------------
@@ -634,16 +691,26 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
     # park the cursor in the left gutter while the composition lands
     page.mouse.move(VIEWPORT["width"] * 0.05, VIEWPORT["height"] * 0.58, steps=25)
     page.wait_for_selector(".longeron-mission3d .cesium-viewer", timeout=240_000)
-    cam.wait_diagram("QuadCopter")
+    cam.wait_diagram(None)  # overview: boxes only, labels culled at ~4% zoom
     wait_kernel_idle(page)
     mark("act 1: dashboard landed")
     cam.beat(BEAT_LONG)
     cam.shot("01-dashboard-landed")
 
     # -- act 2: the diagram is the selection hub -- click a part ----------
-    mark("act 2: diagram click -> 3D flash")
+    # the full DeepScout program autofits near scale 0.04 (a smudge), so
+    # the camera FRAMES what it touches first: an animated kernel-side
+    # fit to the QuadCopter node (the toolbar fit button's own move)
+    mark("act 2: frame the quad, click motors -> 3D flash")
     diagram_pane = page.locator('.jp-OutputArea div.sprotty[id^="sprotty"]')
-    motors = diagram_pane.locator("svg text", has_text="motors")
+    cam.glide(diagram_pane.first)
+    kernel_exec(
+        page,
+        'dash.diagram.view.fit(model_ids=["Rotorcraft::QuadCopter"], animate=True, padding=24)',
+    )
+    cam.wait_scale(0.9, 2.0)  # the dive lands: the node fills the pane, readable
+    cam.beat(BEAT_SHORT)
+    motors = diagram_pane.locator('text.elklabel:text-is("motors : Motor [4]")')
     cam.click(motors.first, settle_ms=BEAT_SHORT)
     cam.beat(BEAT)  # all four motors pop in 3D, the rest of the craft dims
     cam.shot("02-diagram-3d-link")
@@ -652,22 +719,51 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
     # misfire on camera; the next beat repaints the highlight anyway)
     kernel_exec(page, "dash.diagram.view.selection.ids = []")
 
-    # -- act 3: the money shot -- swing the view cone into the airframe ---
-    mark("act 3: azimuth sweep (occlusion)")
+    # -- act 3: the config click -- the 3D pane BECOMES the clicked craft -
+    # 0.11's headliner: bind_config_view is on by default, so a click
+    # anywhere inside ANOTHER craft resolves to that craft and swaps the
+    # viewer to it.  The frame pulls back one step to the multirotor
+    # family first (the hexa sits one node above the quad; the teardrop
+    # shell lives ~4k px away across the fleet branch -- a second cut's
+    # beat, not this one).  The click target is the hexa's motors row:
+    # mid-pane, well clear of the hover-revealed toolbar strip that sits
+    # over the node titles at the pane's top edge.
+    mark("act 3: config click (HexaCopter)")
+    kernel_exec(
+        page,
+        "dash.diagram.view.fit(model_ids="
+        '["Rotorcraft::QuadCopter", "Rotorcraft::HexaCopter"], animate=True, padding=24)',
+    )
+    cam.wait_scale(0.35, 0.8)  # both craft in frame (pulled back from ~1.15)
+    cam.beat(BEAT_SHORT)
+    cam.click(diagram_pane.locator('text.elklabel:text-is("motors : Motor [6]")').first)
+    kernel_assert(page, 'dash.config_view.current == "Rotorcraft::HexaCopter"')
+    cam.beat(BEAT_LONG)  # six rotors: the hexa bakes from its own M0 population
+    cam.shot("03-config-swap-hexa")
+    cam.beat(BEAT_SHORT)
+    # ...and home again: the quad returns WITH its view cone, one write
+    cam.click(diagram_pane.locator('text.elklabel:text-is("QuadCopter")').first)
+    kernel_assert(page, 'dash.config_view.current == "Rotorcraft::QuadCopter"')
+    mark("act 3: home again")
+    cam.beat(BEAT)
+    kernel_exec(page, "dash.diagram.view.selection.ids = []")
+
+    # -- act 4: the money shot -- swing the view cone into the airframe ---
+    mark("act 4: azimuth sweep (occlusion)")
     azimuth = page.locator('.widget-hslider:has(.widget-label:text-is("azimuth"))')
     cam.drag_slider(azimuth, 180.0, minimum=-180.0, maximum=180.0)
     # browser truth: the readout card lists the obstructing parts red
     page.wait_for_selector('text="view cone clear of the airframe"', state="hidden", timeout=20_000)
     cam.beat(BEAT_LONG)  # occludedFraction red, clearView red, parts lit
-    cam.shot("03-occlusion-red")
+    cam.shot("04-occlusion-red")
     cam.beat(BEAT_SHORT)
     cam.drag_slider(azimuth, 0.0, minimum=-180.0, maximum=180.0)
     page.wait_for_selector('text="view cone clear of the airframe"', timeout=20_000)
-    mark("act 3: recovered")
+    mark("act 4: recovered")
     cam.beat(BEAT)  # ...and the score recovers: live, both directions
 
-    # -- act 4: the OpenMDAO sizing strip -- maximize station time -------
-    mark("act 4: loiter drag (OpenMDAO)")
+    # -- act 5: the OpenMDAO sizing strip -- maximize station time -------
+    mark("act 5: loiter drag (OpenMDAO)")
     # NOT the driver button: the strip card's fixed height clips it out of
     # view in the browser (QA note for the dashboard).  The slider is the
     # same seam -- every step re-runs the generated Problem kernel-side,
@@ -677,15 +773,15 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
     loiter.locator('.widget-readout:text-is("11.0")').wait_for(timeout=30_000)
     cam.beat(BEAT_LONG)  # stationMinutes climbed to the stall-floor optimum
 
-    # -- act 5: the Z3 verdicts (static cards -- a cursor pass) ------------
-    mark("act 5: Z3 verdict pass")
+    # -- act 6: the Z3 verdicts (static cards -- a cursor pass) ------------
+    mark("act 6: Z3 verdict pass")
     cam.glide(page.locator('span:text-is("SAT")').first)
     cam.beat(BEAT_SHORT)
     cam.glide(page.locator("div", has_text="aboveStall").last, steps=30)
     cam.beat(BEAT)
 
-    # -- act 6: the scoreboard zooms -- double-click, Esc back -------------
-    mark("act 6: scoreboard zoom")
+    # -- act 7: the scoreboard zooms -- double-click, Esc back -------------
+    mark("act 7: scoreboard zoom")
     endurance = page.locator('.lgn-sb-cell[data-qname$="::endurance"]')
     cam.dblclick(endurance, settle_ms=BEAT_SHORT)
     # the dblclick word-selects whatever text sits under the pointer --
@@ -698,12 +794,12 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
     kernel_exec(page, "dash.board.selected = []")  # drop the click-selection ring
     cam.beat(BEAT)
 
-    # -- act 7: the Cesium finale -- fly the mission ----------------------
-    mark("act 7: Cesium play")
+    # -- act 8: the Cesium finale -- fly the mission ----------------------
+    mark("act 8: Cesium play")
     play = page.locator(".cesium-animation-rectButton", has_text="Play Forward")
     cam.click(play.first, settle_ms=400)
     cam.beat(3500)  # the drone banks over Piedmont Park...
-    cam.shot("04-mission-finale")
+    cam.shot("05-mission-finale")
     cam.beat(3500)  # ...and we cut mid-flight
     mark("cut")
     return scene_start, cam
