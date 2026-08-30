@@ -1,7 +1,30 @@
 # Model-defined analysis surfaces (design)
 
-> **Status: DRAFT.** Nothing below is implemented. The open questions
-> at the end each carry one recommendation.
+> **Status: adopted 2026-08-30.** Nothing below is implemented; this
+> is the contract for the arc. Decisions: a dashboard is a standard
+> VIEW USAGE -- exposes select, renderings present, subviews compose
+> (Q1); renderings bind to the widgets catalog through a Python
+> registry keyed by rendering qualified name (Q2); slider ranges are
+> MINED from the model's own constraints, with assume constraints in
+> the case objective as the authoring idiom and flagged fallbacks for
+> unmined sides (Q3); subject typing is the applicability test --
+> the specialization walk decides which cases fit a craft, and
+> non-fitting panels render as honest absence (Q4); panel-to-engine
+> bindings ride the standard's @ToolExecution at the case level,
+> while the house @ExternalAnalysis stays at the calc level for
+> component fidelity (Q5); panel coupling is EXPLICIT ONLY -- the
+> corpus's ':>> attr = case.result' binding is the one spelling, the
+> name convention is REMOVED entirely, and the derived wiring map
+> lists unbound case results as a visible diagnostic so a forgotten
+> binding is loud (Q6, adopted stricter than the recommendation);
+> phase 1 (the engine + the two-subject proof) lands late in 0.12
+> behind provenance and the time seam's phase 1, and phase 2 (the
+> grand tour as a DeepScout declaration) rides 0.13 beside geometry
+> phase 1 (Q7); declarations are hand-authored first -- the DeepScout
+> dashboard declaration is the deliverable and the documentation --
+> and a save_surface builder waits for phase 3 (Q8; the current
+> save_view's thin configurability is noted, and the surfaces engine
+> is what will make saved views worth configuring).
 
 Goal: declare dashboards as SysML v2 data and derive the UI from the
 model. The grand-tour dashboard today works only for the QuadCopter:

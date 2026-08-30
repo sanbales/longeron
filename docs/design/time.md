@@ -1,7 +1,25 @@
 # The time seam: one clock across the views (design)
 
-> **Status: DRAFT.** Nothing below is implemented. The open questions
-> at the end each carry one recommendation.
+> **Status: adopted 2026-08-30.** Nothing below is implemented; this
+> is the contract for the arc. Decisions: a dedicated dependency-free
+> `Clock` object owns the state, with the scrubber one subscriber
+> among equals (Q1); the Cesium bridge runs shared-rate local
+> integration with bounded-drift reconciliation (~4 Hz) and exact
+> convergence on pause (Q2); step-only traces refuse the globe by
+> default -- `seconds_per_step` opts in, accepts a SCALAR or a
+> PER-STEP sequence/mapping (steps take unequal durations), durations
+> the model itself states (time triggers, occurrence durations) are
+> used first-class and never counted as synthetic, and the scrubber
+> labels only the synthetic segments (Q3); the trace-to-mission
+> binding rides the existing seams now -- `model_waypoints` plus an
+> epoch attribute typed `Time::Iso8601DateTime` -- with `MissionPhase`
+> metadata arriving in phase 3 to retire the name heuristics (Q4);
+> `Clock`, `link_time`, and the scrubber live in `longeron.widgets`,
+> the Cesium bridge stays in `mission3d` (Q5); phase 1 lands after
+> provenance layers 1-2 within 0.12, phase 2 immediately behind it,
+> phase 3 rides the 0.13 geometry arc (Q6); the playhead does not
+> join the selection seam in this design -- recorded as the natural
+> follow-on once both seams are stable (Q7).
 
 Goal: make time a shared, linkable state across every time-aware view.
 The diagram replay player, the Cesium mission replay, and any future
