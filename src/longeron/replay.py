@@ -583,8 +583,11 @@ function render({ model, el }) {
 
   // --- playback: requestAnimationFrame loop; `time` is the synced
   // bidirectional traitlet (JS writes ~4 Hz while playing; Python
-  // writes seek the playhead)
-  let t = axisStart;
+  // writes seek the playhead).  The playhead may have been seeked
+  // before this view rendered (the time seam's link fan-out), so the
+  // initial t comes from the model, not from axisStart.
+  let t = Math.min(Math.max(model.get("time") || axisStart, axisStart), axisEnd);
+  scrub.value = String(t);
   let playing = false;
   let raf = 0;
   let last = 0;
@@ -635,8 +638,11 @@ function render({ model, el }) {
   model.on("change:time", () => {  // Python-side seek
     const value = model.get("time");
     if (Math.abs(value - t) < 1e-9) return;  // echo of our own set
-    if (playing) stop();
+    // adopt the seek BEFORE stopping: stop() force-syncs t, and syncing
+    // the pre-seek playhead would revert the kernel's write (the time
+    // seam's scrub-while-playing fight)
     t = Math.min(Math.max(value, axisStart), axisEnd);
+    if (playing) stop();
     scrub.value = String(t);
     draw(t);
   });
@@ -750,6 +756,7 @@ def replay_widget(
     inputs: dict[str, Any] | None = None,
     width_px: int = 760,
     kind: str | None = None,
+    timeline: Timeline | None = None,
 ) -> anywidget.AnyWidget:
     """Simulate ``element`` and replay it over its diagram.
 
@@ -759,6 +766,16 @@ def replay_widget(
     default (``None``) auto-detects: elements whose ``kind`` is
     ``"action"`` replay as actions, everything else as a state machine.
 
+    ``timeline`` skips the recording and replays a PREBUILT
+    :class:`Timeline` instead, so one recording can feed this widget,
+    the mission globe, and the time seam's scrubber (see
+    :mod:`longeron.widgets.time`); it excludes ``events``/``inputs``.
+    The widget's bidirectional ``time`` trait is its seam surface: a
+    kernel-side write seeks the playhead (stopping any front-end
+    playback first), and the front-end reports the playhead at ~4 Hz
+    while playing -- :func:`longeron.widgets.link_time` subscribes it
+    to a shared clock.
+
     Needs the ``replay`` extra (anywidget) plus the diagram toolchain
     (vendored ipyelk and a ``node`` executable, as for ``render.to_svg``).
     """
@@ -767,6 +784,8 @@ def replay_widget(
     target = interpreter.resolver.resolve(element) if isinstance(element, str) else element
     if not isinstance(target, (M.Definition, M.Usage)):
         raise ExecutionError(f"{element!r} is not a state machine or action")
+    if timeline is not None and (events is not None or inputs is not None):
+        raise ExecutionError("pass a prebuilt timeline OR events/inputs to record, not both")
     if kind is None:
         kind = "action" if target.kind == "action" else "state"
     if kind not in ("state", "action"):
@@ -776,9 +795,11 @@ def replay_widget(
     # the diagram widget here is disposable (baked straight to SVG), so
     # skip the interactive toolbar upgrade
     if kind == "action":
-        timeline = record_action_timeline(interpreter, target, events, inputs=inputs)
+        if timeline is None:
+            timeline = record_action_timeline(interpreter, target, events, inputs=inputs)
         svg = render.to_svg(diagrams.action_diagram(target, toolbar=False))
     else:
-        timeline = record_timeline(interpreter, target, events, inputs=inputs)
+        if timeline is None:
+            timeline = record_timeline(interpreter, target, events, inputs=inputs)
         svg = render.to_svg(diagrams.state_diagram(target, toolbar=False))
     return cls(svg=svg, timeline_json=timeline.to_json(), width_px=width_px)

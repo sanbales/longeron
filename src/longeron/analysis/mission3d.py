@@ -13,7 +13,11 @@ same :class:`MissionTrack`:
 * :func:`from_replay` -- the state-machine timeline: the interpreter
   executes the machine through :func:`longeron.replay.record_timeline`
   (the same recorder the diagram replay widget uses) and each leaf
-  state's activation interval becomes one motion segment.  The mapping
+  state's activation interval becomes one motion segment.
+  :func:`track_from_timeline` is the same synthesis over an EXISTING
+  :class:`~longeron.replay.Timeline`, so one recording can feed the
+  diagram replay, the globe, and the time seam's scrubber without
+  re-simulating (see :mod:`longeron.widgets.time`).  The mapping
   is deliberately simple and name-driven -- the point is model-driven
   animation (the globe shows the ACTUAL executed behavior: state
   durations, interleavings, reentries), not flight-sim fidelity.  A
@@ -38,7 +42,17 @@ same :class:`MissionTrack`:
       hover in place.
 
   Pure event cascades (no clock advance) record in *step mode*; each
-  step then counts as ``seconds_per_step`` seconds of flight.
+  step then counts as ``seconds_per_step`` seconds of flight --  a
+  scalar, or a per-step sequence/mapping when steps take unequal
+  durations (:func:`longeron.widgets.time.step_seconds` states the
+  exact ladder).
+
+The trace-to-mission binding can ride the model itself:
+:func:`model_waypoints` reads the route off a mission part's children,
+and :func:`model_epoch` reads the mission epoch off an attribute typed
+``Time::Iso8601DateTime`` (vendored; resolves), so the model states
+WHERE and WHEN the sortie flies.  Both fall back honestly: no epoch
+attribute means the deterministic default epoch.
 
 :func:`mission_viewer` renders the track as a CZML document on a Cesium
 ``Viewer``: a grey planned-route polyline, small waypoint pins, and a
@@ -87,7 +101,14 @@ geocoder) stays off.  Clicking the drone (or any mission entity) reports
 its CZML id on the ``picked_json`` trait -- the same pick seam as
 :mod:`longeron.analysis.viewer3d` -- and the bidirectional ``time`` trait
 (seconds past the track epoch) lets kernel code scrub or follow the
-playhead.  The stage keeps a fixed explicit height (``height_px``,
+playhead.  The ``playing`` / ``rate`` / ``drift_s`` traits are the time
+seam's Cesium bridge (:func:`longeron.widgets.link_time`): ``playing``
+mirrors the Cesium dial (``clock.shouldAnimate``) both ways, ``rate``
+mirrors the ``multiplier``, and while the dial animates a kernel seek
+inside ``drift_s`` (scaled by the multiplier) is treated as peer
+integration and ignored -- the bounded-drift reconciliation that keeps
+the clock and the dial from fighting; a paused viewer converges
+exactly (echo tolerance ``1e-3``).  The stage keeps a fixed explicit height (``height_px``,
 default 480) at 98% width, so it never overflows a notebook cell or the
 sidebar.
 
@@ -149,8 +170,10 @@ __all__ = [
     "mission_track",
     "mission_values",
     "mission_viewer",
+    "model_epoch",
     "model_tilt",
     "model_waypoints",
+    "track_from_timeline",
 ]
 
 #: the imagery bases mission_viewer accepts (all tokenless)
@@ -743,6 +766,52 @@ def model_waypoints(
     return waypoints
 
 
+def model_epoch(
+    interpreter: Interpreter,
+    mission: str | M.Definition | M.Usage,
+    *,
+    attribute: str = "epoch",
+) -> datetime | None:
+    """The mission's stated epoch, read off the model.
+
+    Evaluates ``attribute`` on ``mission`` -- an attribute typed
+    ``Time::Iso8601DateTime`` (the vendored standard time package's UTC
+    instant, carried as an ISO 8601 string) -- and returns it as an
+    aware UTC :class:`~datetime.datetime`, ready for the track
+    builders' ``epoch=``.  Returns ``None`` when the mission states no
+    such attribute, so callers fall back to the deterministic default
+    epoch honestly; a stated value that is not ISO 8601 is a loud
+    :class:`AnalysisError`.
+    """
+
+    from .. import model as M  # runtime narrow; the top-level M import is typing-only
+
+    target = interpreter.resolver.resolve(mission) if isinstance(mission, str) else mission
+    if not isinstance(target, (M.Definition, M.Usage)):
+        raise AnalysisError(f"{mission!r} is not a mission part")
+    names = {child.name for child in getattr(target, "members", [])}
+    if attribute not in names:
+        return None
+    label = mission if isinstance(mission, str) else (target.qualified_name or target.label)
+    try:
+        value = interpreter.evaluate(attribute, context=target)
+    except SysMLError as err:
+        raise AnalysisError(f"{label}::{attribute} did not evaluate: {err}") from err
+    if not isinstance(value, str):
+        raise AnalysisError(
+            f"{label}::{attribute} must be an ISO 8601 string "
+            f"(Time::Iso8601DateTime); got {value!r}"
+        )
+    try:
+        # datetime.fromisoformat only learned the Z suffix in 3.11
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as err:
+        raise AnalysisError(f"{label}::{attribute} is not ISO 8601: {value!r}") from err
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def model_tilt(
     interpreter: Interpreter,
     assembly: str | M.Definition | M.Usage,
@@ -848,18 +917,35 @@ def _classify(qname: str, overrides: Mapping[str, str] | None) -> str:
     return "hold"
 
 
-def _leaf_segments(timeline: Timeline, seconds_per_step: float) -> list[tuple[float, float, str]]:
+def _leaf_segments(
+    timeline: Timeline,
+    seconds_per_step: float | Sequence[float] | Mapping[int, float],
+) -> list[tuple[float, float, str]]:
     """The ordered, non-overlapping leaf-state activation segments.
 
     Composite states (anything recorded as a parent) are dropped; in
     parallel regions the earliest-activated leaf wins and later
     overlapping intervals are clipped to keep one motion driver at a
-    time.  Step-mode timelines scale the step axis by
-    ``seconds_per_step``.
+    time.  Step-mode timelines map the step axis onto seconds through
+    ``seconds_per_step`` -- a scalar, or a per-step sequence/mapping
+    (:func:`longeron.widgets.time.step_seconds`).
     """
 
-    scale = seconds_per_step if timeline.step_mode else 1.0
-    axis_end = float(max(timeline.n_steps - 1, 0)) if timeline.step_mode else timeline.t_end
+    if timeline.step_mode:
+        from ..widgets.time import step_seconds  # the one shared step-axis ladder
+
+        seconds, _stated = step_seconds(timeline.n_steps, seconds_per_step)
+
+        def key_s(key: float) -> float:
+            return seconds[min(round(key), len(seconds) - 1)]
+
+        axis_end = seconds[-1]
+    else:
+
+        def key_s(key: float) -> float:
+            return key
+
+        axis_end = timeline.t_end
     composites = set(timeline.parents.values())
     intervals: list[tuple[float, float, str]] = []
     for qname, keyframes in timeline.tracks.items():
@@ -868,12 +954,12 @@ def _leaf_segments(timeline: Timeline, seconds_per_step: float) -> list[tuple[fl
         on: float | None = None
         for key, active in keyframes:
             if active and on is None:
-                on = key
+                on = key_s(key)
             elif not active and on is not None:
-                intervals.append((on * scale, key * scale, qname))
+                intervals.append((on, key_s(key), qname))
                 on = None
         if on is not None:
-            intervals.append((on * scale, axis_end * scale, qname))
+            intervals.append((on, axis_end, qname))
     intervals.sort()
     segments: list[tuple[float, float, str]] = []
     cursor = 0.0
@@ -886,42 +972,40 @@ def _leaf_segments(timeline: Timeline, seconds_per_step: float) -> list[tuple[fl
     return segments
 
 
-def from_replay(
-    interpreter: Interpreter,
-    state_machine: str | M.Definition | M.Usage,
-    events: list[Any] | None = None,
+def track_from_timeline(
+    timeline: Timeline,
     *,
     waypoints: Sequence[Sequence[float]],
-    inputs: dict[str, Any] | None = None,
     phases: Mapping[str, str] | None = None,
     ground_alt: float = 0.0,
     tilt_deg: float = 0.0,
-    seconds_per_step: float = 10.0,
+    seconds_per_step: float | Sequence[float] | Mapping[int, float] = 10.0,
     epoch: datetime | None = None,
-    name: str | None = None,
+    name: str = "mission",
 ) -> MissionTrack:
-    """A track driven by the state machine's ACTUAL execution.
+    """A track synthesized from an EXISTING recording.
 
-    Simulates ``state_machine`` with ``events`` (the
-    ``Interpreter.simulate`` protocol: event names or ``(name,
-    payload)`` tuples, plain numbers advance the clock) via
-    :func:`longeron.replay.record_timeline`, then maps every leaf
-    state's activation interval onto a motion segment along
-    ``waypoints`` -- see the module docstring for the phase table and
-    ``phases=`` for per-state-name overrides.  ``waypoints`` are
-    ``(lat, lon, alt)`` tuples (no times -- timing comes from the
-    machine); the mission starts at the first waypoint at
-    ``ground_alt``.  ``tilt_deg`` is the forward cruise tilt the
-    airframe holds while it advances along the route (degrees
-    nose-down; derive it from the model with :func:`model_tilt`, or
-    pass any plain float).  Pure event cascades (step mode) count each
-    step as ``seconds_per_step`` seconds.
+    The synthesis half of :func:`from_replay`: it maps every leaf
+    state's activation interval in ``timeline`` (a
+    :func:`longeron.replay.record_timeline` product) onto a motion
+    segment along ``waypoints`` -- see the module docstring for the
+    phase table and ``phases=`` for per-state-name overrides.  Because
+    the timeline arrives prebuilt, the diagram replay widget and the
+    globe can play the SAME recording (the time seam's timebase
+    discipline, :class:`longeron.widgets.time.Timebase`).
+
+    ``waypoints`` are ``(lat, lon, alt)`` tuples (no times -- timing
+    comes from the recording); the mission starts at the first waypoint
+    at ``ground_alt``.  Timed timelines keep their instants 1:1 (track
+    seconds ARE trace seconds).  Step-mode timelines have no time axis,
+    so ``seconds_per_step`` states one: a scalar, or a per-step
+    sequence/mapping when steps take unequal durations
+    (:func:`longeron.widgets.time.step_seconds`).  ``epoch`` anchors
+    the track in UTC (:func:`model_epoch` reads it off the model;
+    ``None`` keeps the deterministic default).
     """
 
-    from ..replay import record_timeline  # imports interpreter+render; keep module import light
-
     points, _times = _parse_waypoints(waypoints, minimum=1, allow_times=False)
-    timeline = record_timeline(interpreter, state_machine, events, inputs=inputs)
     segments = _leaf_segments(timeline, seconds_per_step)
     if not segments:
         raise AnalysisError(
@@ -996,13 +1080,6 @@ def from_replay(
             append(t1, position)
         phase_records.append((t0, t1, phase, qname))
 
-    if name is None:  # default to the machine's own name
-        target = (
-            interpreter.resolver.resolve(state_machine)
-            if isinstance(state_machine, str)
-            else state_machine
-        )
-        name = getattr(target, "name", None) or "mission"
     return MissionTrack(
         name=name,
         epoch=epoch if epoch is not None else _DEFAULT_EPOCH,
@@ -1010,6 +1087,58 @@ def from_replay(
         waypoints=points,
         phases=phase_records,
         tilt_deg=_validate_tilt(tilt_deg),
+    )
+
+
+def from_replay(
+    interpreter: Interpreter,
+    state_machine: str | M.Definition | M.Usage,
+    events: list[Any] | None = None,
+    *,
+    waypoints: Sequence[Sequence[float]],
+    inputs: dict[str, Any] | None = None,
+    phases: Mapping[str, str] | None = None,
+    ground_alt: float = 0.0,
+    tilt_deg: float = 0.0,
+    seconds_per_step: float | Sequence[float] | Mapping[int, float] = 10.0,
+    epoch: datetime | None = None,
+    name: str | None = None,
+) -> MissionTrack:
+    """A track driven by the state machine's ACTUAL execution.
+
+    Simulates ``state_machine`` with ``events`` (the
+    ``Interpreter.simulate`` protocol: event names or ``(name,
+    payload)`` tuples, plain numbers advance the clock) via
+    :func:`longeron.replay.record_timeline`, then synthesizes the track
+    with :func:`track_from_timeline` -- see there for ``waypoints``,
+    ``phases``, ``ground_alt``, ``seconds_per_step``, and ``epoch``.
+    ``tilt_deg`` is the forward cruise tilt the airframe holds while it
+    advances along the route (degrees nose-down; derive it from the
+    model with :func:`model_tilt`, or pass any plain float).  ``name``
+    defaults to the machine's own name.  To share one recording across
+    the diagram replay and the globe, record once and call
+    :func:`track_from_timeline` instead.
+    """
+
+    from ..replay import record_timeline  # imports interpreter+render; keep module import light
+
+    timeline = record_timeline(interpreter, state_machine, events, inputs=inputs)
+    if name is None:  # default to the machine's own name
+        target = (
+            interpreter.resolver.resolve(state_machine)
+            if isinstance(state_machine, str)
+            else state_machine
+        )
+        name = getattr(target, "name", None) or "mission"
+    return track_from_timeline(
+        timeline,
+        waypoints=waypoints,
+        phases=phases,
+        ground_alt=ground_alt,
+        tilt_deg=tilt_deg,
+        seconds_per_step=seconds_per_step,
+        epoch=epoch,
+        name=name,
     )
 
 
@@ -1120,6 +1249,9 @@ async function render({ model, el }) {
       }));
   }
   const viewer = new Cesium.Viewer(stage, options);
+  // the browser-test seam: the tier drives the dial and reads the clock
+  // through this handle (tests/browser/test_browser_timeseam.py)
+  stage.longeronViewer = viewer;
   if (!token && imagery === "plain") {
     // a tasteful dark slate the grey route, orange trail, and drone
     // model all read against; no atmosphere haze over the bare globe
@@ -1146,6 +1278,16 @@ async function render({ model, el }) {
     // the camera follows the drone; the CZML viewFrom sets the offset
     viewer.trackedEntity = source.entities.getById("mission-drone");
     viewer.timeline.zoomTo(viewer.clock.startTime, viewer.clock.stopTime);
+    // the CZML document clock carries a baked multiplier as the initial
+    // rate; a linked clock's stated state overrides it (the time seam),
+    // and a playhead seeked before this view rendered is adopted here
+    applyRate();
+    applyPlaying();
+    const stated = model.get("time");
+    if (stated && Math.abs(stated - seconds()) > 1e-3) {
+      viewer.clock.currentTime = Cesium.JulianDate.addSeconds(
+        viewer.clock.startTime, stated, new Cesium.JulianDate());
+    }
     viewer.scene.requestRender();
   }
 
@@ -1166,11 +1308,60 @@ async function render({ model, el }) {
   });
   model.on("change:time", () => {
     const value = model.get("time");
-    if (Math.abs(value - seconds()) < 1e-3) return;  // echo of our set
+    const current = seconds();
+    // bounded-drift reconciliation (the time seam's non-fighting rule):
+    // while the dial animates, a kernel write inside the tolerance is a
+    // peer's local integration, not a seek -- ignore it; a paused
+    // viewer converges exactly (the 1e-3 echo tolerance)
+    const tolerance = viewer.clock.shouldAnimate
+      ? Math.max(model.get("drift_s") || 0.25,
+                 0.25 * Math.abs(viewer.clock.multiplier))
+      : 1e-3;
+    if (Math.abs(value - current) <= tolerance) return;
     viewer.clock.currentTime = Cesium.JulianDate.addSeconds(
       viewer.clock.startTime, value, new Cesium.JulianDate());
     viewer.scene.requestRender();
   });
+
+  // --- the Cesium bridge (the time seam): playing/rate mirror the
+  // dial's shouldAnimate/multiplier both ways.  Cesium's Clock emits no
+  // change event for either, so a 250 ms watcher (the seam's sync rate)
+  // reports dial presses and shuttle changes to the kernel.
+  let lastAnimate = viewer.clock.shouldAnimate;
+  let lastMultiplier = viewer.clock.multiplier;
+  const watchDial = setInterval(() => {
+    if (viewer.clock.shouldAnimate !== lastAnimate) {
+      lastAnimate = viewer.clock.shouldAnimate;
+      model.set("playing", lastAnimate);
+      // the pauser owns the final t: report it with the flip, so every
+      // follower converges exactly (the throttled onTick may not fire
+      // again once the dial stops)
+      if (!lastAnimate) model.set("time", seconds());
+      model.save_changes();
+    }
+    if (viewer.clock.multiplier !== lastMultiplier) {
+      lastMultiplier = viewer.clock.multiplier;
+      model.set("rate", lastMultiplier);
+      model.save_changes();
+    }
+  }, 250);
+  function applyPlaying() {
+    const value = model.get("playing");
+    if (viewer.clock.shouldAnimate !== value) {
+      viewer.clock.shouldAnimate = value;
+      lastAnimate = value;
+      viewer.scene.requestRender();
+    }
+  }
+  function applyRate() {
+    const value = model.get("rate");
+    if (value && viewer.clock.multiplier !== value) {
+      viewer.clock.multiplier = value;
+      lastMultiplier = value;
+    }
+  }
+  model.on("change:playing", applyPlaying);
+  model.on("change:rate", applyRate);
 
   // --- picking: a click reports the hit entity's CZML id on
   // picked_json (the same pick seam as viewer3d.picked_json)
@@ -1194,7 +1385,12 @@ async function render({ model, el }) {
   });
   recaption();
   await load();
-  return () => { unTick(); handler.destroy(); viewer.destroy(); };
+  return () => {
+    clearInterval(watchDial);
+    unTick();
+    handler.destroy();
+    viewer.destroy();
+  };
 }
 export default { render };
 """.replace("%CESIUM_BASE_URL%", CESIUM_BASE_URL)
@@ -1265,6 +1461,16 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         picked_json = traitlets.Unicode("[]").tag(sync=True)
         #: bidirectional playhead, seconds past the track epoch
         time = traitlets.Float(0.0).tag(sync=True)
+        #: bidirectional transport state: mirrors the Cesium dial
+        #: (``clock.shouldAnimate``) both ways -- the time seam's bridge
+        playing = traitlets.Bool(False).tag(sync=True)
+        #: bidirectional playback rate: mirrors the Cesium ``multiplier``
+        #: (track seconds per wall second); 0.0 means "no stated rate",
+        #: leaving the CZML document clock's baked multiplier in charge
+        rate = traitlets.Float(0.0).tag(sync=True)
+        #: bounded-drift reconciliation tolerance while animating, in
+        #: track seconds (``link_time`` scales it for step-mode bindings)
+        drift_s = traitlets.Float(0.25).tag(sync=True)
 
     _VIEWER_CLS = MissionViewer
     return MissionViewer

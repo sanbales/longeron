@@ -815,4 +815,25 @@ package DeepScout {
         attribute battery : Integer;    // measured: the machine's live charge
         require constraint noDeepDischarge { battery >= 0 }
     }
+
+    part goAroundSortie {
+        doc /* The go-around sortie's physical binding, stated in the
+               model: the Piedmont Park loop as waypoint parts
+               (analysis reads lat/lon/alt off the children through
+               model_waypoints) and the mission epoch as an attribute
+               typed Time::Iso8601DateTime -- the standard's own ISO
+               8601 form, so the model states WHEN the sortie flies
+               (model_epoch reads it; see the time-seam design). */
+        attribute epoch : Time::Iso8601DateTime = "2026-06-21T14:30:00Z";
+        part wp0 { attribute lat : Real = 33.7813; attribute lon : Real = -84.3833;
+                   attribute alt : Real = 350.0; }
+        part wp1 { attribute lat : Real = 33.7885; attribute lon : Real = -84.3785;
+                   attribute alt : Real = 390.0; }
+        part wp2 { attribute lat : Real = 33.7900; attribute lon : Real = -84.3695;
+                   attribute alt : Real = 380.0; }
+        part wp3 { attribute lat : Real = 33.7838; attribute lon : Real = -84.3690;
+                   attribute alt : Real = 360.0; }
+        part wp4 { attribute lat : Real = 33.7770; attribute lon : Real = -84.3825;
+                   attribute alt : Real = 350.0; }
+    }
 }

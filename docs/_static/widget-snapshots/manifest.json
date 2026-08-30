@@ -158,8 +158,15 @@
     "nb_cell_index": 22,
     "code_cell_index": 11,
     "output_index": 1,
-    "alt": "longeron.analysis.mission3d._viewer_class",
+    "alt": "VBox",
     "image": "07_geometry_and_the_mission/cell-11.png"
+   },
+   {
+    "nb_cell_index": 24,
+    "code_cell_index": 12,
+    "output_index": 1,
+    "alt": "longeron.analysis.mission3d._viewer_class",
+    "image": "07_geometry_and_the_mission/cell-12.png"
    }
   ],
   "08_the_knowledge_graph": [

@@ -51,11 +51,22 @@ The entries (tutorial numbers refer to :doc:`/tutorials/index`):
   (tutorial 7).
 * ``graph_viewer`` -- the RDF projection as an interactive 3D force
   graph (tutorial 8).
+* ``Clock`` -- the shared playhead for one linked group of time-aware
+  views (the :doc:`time-seam reference </reference/widgets/time>`).
+* ``Timebase`` -- one recording, many views: a trace plus its optional
+  mission binding, aligned on one axis (the time-seam reference).
+* ``link_time`` -- wire time-aware views to one clock, the temporal
+  ``link_selection`` (the time-seam reference).
+* ``time_scrubber`` -- the standalone transport bar: play/pause, rate,
+  the shared time axis (the time-seam reference).
 
-Current resident module:
+Current resident modules:
 
 * :mod:`longeron.widgets.graph3d` -- the 3D graph widget's home
   (``rdf`` + ``viz`` extras).
+* :mod:`longeron.widgets.time` -- the time seam's home: ``Clock``,
+  ``Timebase``, ``link_time``, and the scrubber (``replay`` extra for
+  the scrubber only).
 """
 
 from __future__ import annotations
@@ -81,7 +92,12 @@ if TYPE_CHECKING:  # pragma: no cover - static re-exports for type checkers
     from ..inspector import Inspector as Inspector
     from ..replay import replay_widget as replay_widget
     from . import graph3d as graph3d
+    from . import time as time
     from .graph3d import graph_viewer as graph_viewer
+    from .time import Clock as Clock
+    from .time import Timebase as Timebase
+    from .time import link_time as link_time
+    from .time import time_scrubber as time_scrubber
 
 #: catalog entry -> (home module, attribute); the re-export is the home
 #: object itself (identity, not a copy), imported on first access
@@ -103,14 +119,21 @@ _CATALOG: dict[str, tuple[str, str]] = {
     "mesh_viewer": ("longeron.analysis.viewer3d", "mesh_viewer"),
     "mission_viewer": ("longeron.analysis.mission3d", "mission_viewer"),
     "graph_viewer": ("longeron.widgets.graph3d", "graph_viewer"),
+    "Clock": ("longeron.widgets.time", "Clock"),
+    "Timebase": ("longeron.widgets.time", "Timebase"),
+    "link_time": ("longeron.widgets.time", "link_time"),
+    "time_scrubber": ("longeron.widgets.time", "time_scrubber"),
 }
 
-__all__ = sorted([*_CATALOG, "graph3d"])
+#: resident submodules (widget homes living inside this package)
+_RESIDENTS = ("graph3d", "time")
+
+__all__ = sorted([*_CATALOG, *_RESIDENTS])
 
 
 def __getattr__(name: str) -> Any:
-    if name == "graph3d":
-        return importlib.import_module(f"{__name__}.graph3d")
+    if name in _RESIDENTS:
+        return importlib.import_module(f"{__name__}.{name}")
     try:
         home, attribute = _CATALOG[name]
     except KeyError:

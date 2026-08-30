@@ -285,8 +285,8 @@ class TestPilotNavigability:
 
     def test_relationship_and_node_counts(self, drone_records):
         relationships = self._relationships(drone_records)
-        assert len(relationships) == 1466  # pymbe LPG edges
-        assert len(drone_records) - len(relationships) == 1250  # pymbe LPG nodes
+        assert len(relationships) == 1489  # pymbe LPG edges
+        assert len(drone_records) - len(relationships) == 1273  # pymbe LPG nodes
 
     def test_every_endpoint_resolves(self, drone_records):
         ids = {r["@id"] for r in drone_records}

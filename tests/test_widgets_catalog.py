@@ -32,8 +32,8 @@ CATALOG = widgets._CATALOG
 REPO = Path(longeron.__file__).resolve().parents[2]
 
 
-def test_all_is_the_catalog_plus_the_resident_module():
-    assert set(widgets.__all__) == {*CATALOG, "graph3d"}
+def test_all_is_the_catalog_plus_the_resident_modules():
+    assert set(widgets.__all__) == {*CATALOG, *widgets._RESIDENTS}
     assert widgets.__all__ == sorted(widgets.__all__)
     assert set(widgets.__all__) <= set(dir(widgets))
 
@@ -48,6 +48,12 @@ def test_graph3d_resolves_as_the_resident_module():
     import longeron.widgets.graph3d
 
     assert widgets.graph3d is longeron.widgets.graph3d
+
+
+def test_time_resolves_as_the_resident_module():
+    import longeron.widgets.time
+
+    assert widgets.time is longeron.widgets.time
 
 
 def test_unknown_attribute_raises_attribute_error():
@@ -95,4 +101,4 @@ def test_docs_table_agrees_with_all():
     text = (REPO / "docs" / "reference" / "widgets" / "index.md").read_text()
     rows = re.findall(r"^\| `(\w+)` \|", text, flags=re.MULTILINE)
     assert len(rows) == len(set(rows)), "duplicate rows in the docs catalog table"
-    assert set(rows) == set(widgets.__all__) - {"graph3d"}
+    assert set(rows) == set(widgets.__all__) - set(widgets._RESIDENTS)

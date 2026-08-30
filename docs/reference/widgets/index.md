@@ -39,6 +39,10 @@ submodules, as {mod}`longeron.widgets.graph3d` does.
 | `mesh_viewer` | Baked geometry meshes in a three.js canvas, at true scale. | `viz` | {doc}`Tutorial 4 </tutorials/04_trades_sizing_the_fleet>` |
 | `mission_viewer` | Fly a mission track on a Cesium globe. | `viz` | {doc}`Tutorial 7 </tutorials/07_geometry_and_the_mission>` |
 | `graph_viewer` | The RDF projection as an interactive 3D force graph. | `rdf`, `viz` | {doc}`Tutorial 8 </tutorials/08_the_knowledge_graph>` |
+| `Clock` | The shared playhead for one linked group of time-aware views. | none | [Time seam reference](time.md) |
+| `Timebase` | One recording, many views: a trace plus its optional mission binding. | none | [Time seam reference](time.md) |
+| `link_time` | Wire time-aware views to one clock: the temporal `link_selection`. | none | [Time seam reference](time.md) |
+| `time_scrubber` | The standalone transport bar: play/pause, rate, the shared time axis. | `replay` | [Time seam reference](time.md) |
 
 The pip extras install as `pip install "longeron[replay,viz]"` (or any
 subset). The vendored ipyelk installs as `pip install -e vendor/ipyelk`
@@ -53,4 +57,5 @@ from a repo checkout. `replay_widget` also needs a `node` executable on
 :maxdepth: 1
 
 graph3d
+time
 ```

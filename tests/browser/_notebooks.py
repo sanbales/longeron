@@ -663,6 +663,79 @@ print(
     )
 
 
+def timeseam_notebook() -> dict[str, Any]:
+    """Scenario: the time seam's flagship -- the go-around sortie.
+
+    Cell 0 records ``DeepScout::SortieStates`` once (the timed go-around
+    feed: three re-entries past the launch guard, the pack going 100 ->
+    -20), binds the recording to the model-stated mission (waypoints +
+    epoch off ``DeepScout::goAroundSortie``), and links the replay
+    player, the Cesium globe, and the scrubber to one ``Clock``.  The
+    globe uses ``imagery="plain"`` so the only network dependence is
+    the pinned Cesium CDN bundle (the test skips honestly when it
+    cannot load).  Cell 1 is the checker: one JSON line of kernel-side
+    seam state.
+    """
+
+    return _notebook(
+        """
+import ipywidgets as W
+
+import longeron
+from longeron import replay
+from longeron.analysis import mission3d
+from longeron.widgets import Clock, Timebase, link_time, time_scrubber
+
+model = longeron.load("examples/deepscout")
+interp = longeron.Interpreter(model)
+EVENTS = ["launch", 45.0, "goAround", 45.0, "goAround", 45.0, "goAround", 30.0, "land", 5.0]
+timeline = replay.record_timeline(interp, "DeepScout::SortieStates", EVENTS)
+waypoints = mission3d.model_waypoints(interp, "DeepScout::goAroundSortie")
+epoch = mission3d.model_epoch(interp, "DeepScout::goAroundSortie")
+track = mission3d.track_from_timeline(
+    timeline,
+    waypoints=waypoints,
+    phases={"airborne": "route"},
+    ground_alt=300.0,
+    epoch=epoch,
+    name="go-around sortie",
+)
+player = replay.replay_widget(interp, "DeepScout::SortieStates", timeline=timeline, width_px=620)
+globe = mission3d.mission_viewer(track, height_px=360, imagery="plain")
+timebase = Timebase(timeline, track=track)
+clock = Clock(span=timebase.span)
+scrubber = time_scrubber(timebase, width_px=620)
+unlink = link_time(clock, player, scrubber, globe)
+seam_events = []  # every clock fan-out, counted for the throttle check
+clock.observe(seam_events.append)
+clock.seek(100.0)  # pre-display: every view must render mid-goAround
+W.VBox([player, scrubber, globe])
+""",
+        """
+import json
+
+print(
+    json.dumps(
+        {
+            "clock_t": round(clock.t, 3),
+            "playing": clock.playing,
+            "rate": clock.rate,
+            "player_time": round(player.time, 3),
+            "scrub_time": round(scrubber.time, 3),
+            "globe_time": round(globe.time, 3),
+            "globe_playing": globe.playing,
+            "globe_rate": globe.rate,
+            "span": list(clock.span),
+            "phase": (timebase.phase_at(clock.t) or (None,))[0],
+            "battery": timebase.env_at(clock.t).get("battery"),
+            "events": len(seam_events),
+        }
+    )
+)
+""",
+    )
+
+
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "toolbar_scenario.ipynb": toolbar_notebook,
@@ -674,4 +747,5 @@ SCENARIO_NOTEBOOKS = {
     "app_scenario.ipynb": app_notebook,
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
+    "timeseam_scenario.ipynb": timeseam_notebook,
 }
