@@ -98,6 +98,7 @@ design/notebooks
 design/ocl-stance
 design/openmbee-integration
 design/provenance
+design/surfaces
 design/time
 design/units
 design/verify
