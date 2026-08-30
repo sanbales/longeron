@@ -92,6 +92,7 @@ Deeper design rationale for major subsystems:
 
 design/conformance
 design/geometry
+design/loft
 design/m0-interpretations
 design/mdao-objects
 design/notebooks
