@@ -6,10 +6,17 @@
 > domain bodies redefine, verified in phase A before the vocabulary
 > freezes, with the spike's string spelling surviving only as a
 > documented fallback if redefinition does not validate (Q1); the
-> section stack ships on the instance tuple with the ordered-
-> collection grammar recorded as a candidate for a later language
-> arc -- and the tuple is EXPLICITLY ACCRUED TECH DEBT, named as
-> such here and in the vocabulary's own documentation (Q2); the
+> section ORDER IS DERIVED, not declared (Q2, amended 2026-08-30):
+> every Section carries a normalized longitudinal station in [0, 1],
+> the LoftedBody carries a length (the semispan for a wing), and the
+> framework collects the body's Section-typed members and sorts by
+> station -- the physical position IS the ordering. Duplicate
+> stations refuse by validation (a documented exception path for
+> slope-discontinuity doubled sections may come later, only if
+> earned); relative station times body length is the scaling
+> contract, so resizing the span preserves the shape. The instance
+> tuple and its tech-debt label are REMOVED from the design -- no
+> ordered-collection grammar arc is needed for lofting; the
 > Profiles and AeroTier1 libraries live in the importable libraries
 > directory, grouped under a loft path beside the Python module --
 > and the WHOLE FRAMEWORK IS A TEARABLE UNIT: one Python module
