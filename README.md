@@ -8,9 +8,14 @@
 [![SysML v2 corpus](https://img.shields.io/badge/SysML%20v2%20corpus-309%2F309-brightgreen)](https://sanbales.github.io/longeron/guides/grammar.html)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/sanbales/longeron/blob/main/LICENSE)
 
-*The spine of your system model* — a Python package that defines,
-exports, imports, and **executes** SysML v2 models (import name:
-`longeron`). The parsers are generated with ANTLR 4 from combined grammars
+*The spine of your system model* — a Python toolchain that defines,
+**executes**, verifies, and visualizes SysML v2 models (import name:
+`longeron`). The parsed model is the single source of truth. Every
+surface is a projection of that same model object: the diagrams, the
+explorer, the inspector, the trade studies, the requirements
+scoreboard, the verification tiers, the geometry checks, the mission
+globe, the knowledge graph, and the dashboards. The parsers are
+generated with ANTLR 4 from combined grammars
 for SysML v2 and KerML, taken from
 [hivecore-dev/hcf-runtime](https://github.com/hivecore-dev/hcf-runtime)
 (`SysML.g4`, `KerML.g4`, with local patches — see
@@ -19,8 +24,8 @@ for SysML v2 and KerML, taken from
 The corpus badge is a positive-only acceptance claim: every `.sysml`
 file of the pinned SysML-v2-Release corpus parses and builds
 (`scripts/check_corpus.py`). The negative direction — invalid input
-longeron must *reject* — is `tests/test_rejection.py`: 75 spec-cited
-negative cases enforced (28 parse rejections, 37 semantic errors, 10
+longeron must *reject* — is `tests/test_rejection.py`: 74 spec-cited
+negative cases enforced (28 parse rejections, 36 semantic errors, 10
 reference problems pinned as diagnosed) and 2 known permissiveness
 gaps tracked as strict xfails (design: `docs/design/conformance.md`).
 
@@ -30,9 +35,11 @@ gaps tracked as strict xfails (design: `docs/design/conformance.md`).
 
 ## Demo
 
-![A 35-second tour: the model explorer docked in JupyterLab -- tree
-click to a part definition, the state-machine view, and the Voronoi
-requirements scoreboard with unit tooltips and zoom](https://github.com/sanbales/longeron/releases/latest/download/demo.gif)
+![A 70-second tour of the grand-tour dashboard: the structure diagram
+dives into the QuadCopter, motor clicks light up the linked 3D craft,
+a camera what-if recolors the requirements scoreboard live, an
+OpenMDAO slider re-sizes the loiter, Z3 renders its verdicts, and the
+Cesium mission replay flies](https://github.com/sanbales/longeron/releases/latest/download/demo.gif)
 
 Re-recorded each release with `python scripts/record_demo.py`
 (deterministic playwright choreography; an mp4 rides the same
@@ -44,9 +51,12 @@ Re-recorded each release with `python scripts/record_demo.py`
 |---|---|
 | **Define** | Parse SysML v2 textual notation into a fully-typed Python object model, import a model from its JSON export, or build models programmatically from dataclasses. Multi-file workspaces merge under one root; a content-addressed cache makes warm loads ~1000x faster. |
 | **Export** | Serialize any model to JSON, back to parseable SysML v2 text, project it onto KerML, or emit OMG Systems-Modeling-API JSON records. Parse → print → parse round-trips preserve the model; JSON → model → JSON is lossless. |
-| **Validate** | `longeron.validate()` / `longeron lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems; diagnostics carry `file:line:column`. Names resolve against the vendored standard library (a bare `Real` passes with no import; a typo like `Reall` warns), and plain definitions carry their *implied* specializations (`part def` → `Parts::Part`, `action def` → `Actions::Action`, which is how `start`/`done` resolve); opt out with `stdlib=False` / `--no-stdlib`. |
+| **Validate** | `longeron.validate()` / `longeron lint`: dangling references, expression-name typos, duplicate names, specialization cycles, state-machine problems; diagnostics carry `file:line:column`. Names resolve against the vendored standard library (a bare `Real` passes with no import; a typo like `Reall` warns), and plain definitions carry their *implied* specializations (`part def` → `Parts::Part`, `action def` → `Actions::Action`, which is how `start`/`done` resolve); opt out with `stdlib=False` / `--no-stdlib`. `--strict` promotes the resolution-failure family to errors. A stdlib-only dimensional lint checks `[SI::kg]`-style annotations: `mass + flightTime` warns as `dimension-mismatch`, and cross-scale `°C + K` errors as `scale-mismatch`. |
 | **Execute** | Evaluate expressions, run `calc` definitions, instantiate `part` definitions (against the bundled standard library if you opt in), check constraints and requirements, run `action` definitions with succession-driven control flow, and simulate hierarchical/parallel state machines with a clock. |
-| **Visualize** | `longeron.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. Every house widget — explorer, workbench, dashboards, 3D viewers, replay, the RDF graph — is one lazy import away in the `longeron.widgets` catalog. |
+| **Verify** | `longeron.analysis.verify` hunts requirement violations from nothing but the model text, four tiers over one oracle. `hunt` samples and shrinks over model-derived input domains (Hypothesis), pairing each catch with interpreter-bisected boundary edges. `sequences` finds the minimal event sequence that drives a state machine into violation. `cover` builds t-way covering arrays (in-house IPOG, stdlib only), with Z3 filtering infeasible rows and recall measured against exhaustive ground truth. `prove` returns Z3 absence proofs, with exact rational bounds attributed to their binding constraint. Solvers only propose; every verdict is the interpreter's. |
+| **Analyze** | `longeron.analysis`: trade studies enumerate variation-point catalogs interpreter-exact (a CP-SAT encoder agrees mix-for-mix); the OpenMDAO bridge carries whole M0 individuals and file artifacts across `build_problem`, not just scalars, and derives connections from the model's own `flow` usages; `longeron.m0` rolls up populations of individuals; the MAUT scoreboard scores requirements with model-declared weights and utility shapes; the linked mission dashboard trades three missions on one screen behind an honest Pareto front; geometry checks (view-cone occlusion, rotor-disc clearance) run over meshes baked from the model. |
+| **Visualize** | `longeron.diagrams`: interactive ELK diagrams in JupyterLab (structure, state machines, action flow) with click-selection that resolves back to model elements. `longeron.widgets` is the catalog: 17 lazy entries covering the explorer, the workbench and inspector, the diagram views, replay, the scoreboard, both dashboards, the 3D mesh and mission viewers, and the 3D RDF graph with its force-to-hierarchy morph. A JupyterLab launcher tile opens the workbench with zero notebooks. |
+| **Review & edit** | The inspector shows units first-class (`1.5 kg`, a read-only Unit row, `Real [kg]`), and `longeron.edit` validates before it mutates: a fake unit is refused with nearest-spelling hints, a dimension change is refused naming both dimensions, and compact input (`17 mg`) normalizes through the model's own prefix definitions. Renames rewrite every textual reference or roll back. `save_workspace` writes tracked edits back to their source files; a change it cannot map refuses, names why, and writes nothing. |
 | **Query & retrieve** | Project any model onto RDF (`longeron.rdf`, rdflib) and ask SPARQL questions over structure, specializations, typed attribute values, variation points, and requirements. A dependency-free RAG substrate (`longeron.rag`) chunks the model into stable, re-parseable SysML fragments keyed by qualified name, walks semantic neighborhoods, and does keyword search — retrieval for LLM agents that cite names and resolve them through the interpreter for ground truth. |
 | **Serve & sync** | `longeron serve` exposes any workspace as an OMG Systems-Modeling-API server with honest git-backed history: API commits *are* the git commits touching your `.sysml` sources, and pushed changes are materialized as text for you to review and commit — never auto-committed. `longeron.client.Client` fetches models from (and pushes changes to) any pilot-style server, and `/x/` extension endpoints add validate/instantiate/simulate/render over HTTP. |
 | **Full loop** | Read a model, execute it, snapshot the results back into the model as bound part usages, and save (`.sysml`, `.json`, or `.kerml`). |
@@ -58,6 +68,37 @@ is no lossy fallback. KerML support is asymmetric by design:
 `parse_kerml_text` validates KerML sources syntactically, and `to_kerml`
 projects SysML models onto the kernel language.
 
+## The approach
+
+Five principles hold everywhere, stated here as design facts:
+
+- **Model-derived, never invented.** The unit table derives from the
+  model's own definitional algebra (`newton = kg*m/s^2` lives in the
+  vendored library and seeds the table); no unit is hand-coded.
+  `verify` mines its input domains from the model's constraints
+  through Z3 and flags any fallback. Geometry renders from M0
+  populations: the individuals that exist, keyed per configuration.
+  The OMG standard library is vendored, not reimplemented.
+- **One truth, many projections.** Every surface reads the same model
+  object, and the tutorials assert the agreement where projections
+  overlap: the model's closed-form payload ceiling matches `verify`'s
+  independently bisected edge, the CP-SAT enumeration equals the
+  interpreter's set, and SPARQL answers are checked against the trade
+  dashboard.
+- **Honest refusal over silent corruption.** A fake unit is refused
+  with nearest-spelling hints. A rename that would capture a name
+  rolls back and lists the affected references. A workspace save that
+  cannot map a change refuses, names why, and writes nothing.
+- **Honest absence, counted claims.** The corpus badge claims only
+  positive acceptance; rejection is its own suite, and the two known
+  permissiveness gaps stay visible as strict xfails. Vacuous
+  verification passes are recorded, never coerced into failures.
+  Covering-array recall is measured against exhaustive ground truth,
+  never assumed.
+- **The interpreter is the sole semantic oracle.** Z3, CP-SAT, and
+  Hypothesis only propose; every verdict is the interpreter's. A SAT
+  witness is believed only after the interpreter re-checks it.
+
 ## Installation
 
 ```bash
@@ -67,11 +108,30 @@ pip install -e vendor/ipyelk   # vendored diagram engine (make check runs its te
 make check        # ruff + mypy + the full pytest suite
 ```
 
-Optional: `pip install -e ".[ecore]"` enables the OMG spec-metamodel
-projection and API JSON (pyecore), `pip install -e ".[rdf]"` the RDF
-projection (rdflib; the `longeron.rag` retrieval substrate needs no extra),
-and `pip install -e ".[server]"` / `".[client]"` the Systems Modeling API
-server (`longeron serve`) and REST client;
+Everything past the core toolchain is an extra:
+
+| Extra | Enables |
+|---|---|
+| `verify` | requirement-violation hunting (hypothesis; pulls in `smt`) |
+| `smt` | Z3: absence proofs, covering-array constraints, consistency checks |
+| `mdao` | the OpenMDAO bridge |
+| `trades` | the CP-SAT trade-study encoder (ortools) |
+| `viz` | the widget stack: scoreboard, dashboards, 3D viewers (matplotlib, anywidget) |
+| `replay` | simulation replay + the explorer/workbench widgets (anywidget) |
+| `explorer` | JupyterLab docking for the workbench (ipylab) |
+| `units` | the typed conversion facade (pint; the dimensional lint needs no extra) |
+| `rdf` | the RDF projection (rdflib; `longeron.rag` needs no extra) |
+| `ecore` | the OMG spec-metamodel projection + API JSON (pyecore) |
+| `server`, `client` | the Systems Modeling API server (`longeron serve`) and REST client |
+| `cad` | the exact-boolean occlusion engine (cadquery) |
+| `analysis` | composite: `mdao` + `trades` + `smt` + `viz` |
+| `ui` | composite: `explorer` + `replay` + `viz` |
+| `all` | composite: `analysis` + `ui` + `verify` + `rdf` + `client` + `server` + `ecore` |
+
+`cad` is deliberately excluded from `all`: its OCC kernel is ~1 GB
+installed, so it stays an explicit opt-in (the geometry checks fall
+back to the mesh engine without it).
+
 `pre-commit install` wires ruff+mypy
 into every commit. Using a feature whose extra is missing fails with a
 single exception type, `longeron.errors.MissingExtraError` (both a
@@ -127,16 +187,16 @@ model = longeron.loads("""
 """)
 
 # --- export -------------------------------------------------------------
-print(longeron.to_sysml(model))   # regenerated textual notation
-print(longeron.to_json(model))    # structured JSON
+print(longeron.to_sysml(model))  # regenerated textual notation
+print(longeron.to_json(model))  # structured JSON
 
 # --- execute ------------------------------------------------------------
 interp = longeron.Interpreter(model)
 
-interp.call("Demo::Double", 21.0)            # -> 42.0
-car = interp.instantiate("Demo::Vehicle")    # attributes evaluated
-car.get("wheels")                            # -> [Instance, ...] (4 wheels)
-interp.check(car)[0].passed                  # -> True (mass <= maxMass)
+interp.call("Demo::Double", 21.0)  # -> 42.0
+car = interp.instantiate("Demo::Vehicle")  # attributes evaluated
+car.get("wheels")  # -> [Instance, ...] (4 wheels)
+interp.check(car)[0].passed  # -> True (mass <= maxMass)
 interp.evaluate("(1, 2, 3)->select { in x; x > 1 }")  # -> [2, 3]
 ```
 
@@ -167,11 +227,15 @@ interp.simulate("Ops::Machine", events=["start"]).final_state
 
 A complete walk-through lives in `examples/demo.py`, and the executable
 tutorials live in [`notebooks/`](notebooks/). The nine tutorials form
-one curriculum over one subject -- the DeepScout UAV program in
-`examples/deepscout` -- with one thesis: the SysML v2 model is the
-single source of truth, and every perspective is a view of that same
-data. The arc: *data -> execution -> reading -> trading -> individuals
--> judging -> geometry -> knowledge -> everything at once*.
+one curriculum over one subject, the DeepScout UAV program in
+[`examples/deepscout`](examples/deepscout): one workspace holding a
+parts catalog on nominal manufacturer figures, five multirotor
+architectures (tri, quad, hexa, coax-X8, octo), a winged-VTOL branch,
+three missions, and the requirements that judge them. The thesis: the
+SysML v2 model is the single source of truth, and every perspective is
+a view of that same data. The arc: *data -> execution -> reading ->
+trading -> individuals -> judging -> geometry -> knowledge ->
+everything at once*.
 
 | Notebook | Covers |
 |---|---|
@@ -222,18 +286,69 @@ longeron.Interpreter(again).instantiate("Rotorcraft::QuadCopter")
 SysML or KerML text can be generated from just the JSON definition:
 
 ```python
-model = longeron.from_json(json_text)   # or longeron.from_dict(data)
+model = longeron.from_json(json_text)  # or longeron.from_dict(data)
 print(longeron.to_sysml(model))
-print(longeron.to_kerml(model))         # kernel-language projection
+print(longeron.to_kerml(model))  # kernel-language projection
 ```
+
+### Hunting violations: verify
+
+`longeron.analysis.verify` attacks the model's requirements with
+nothing but the model (`pip install "longeron[verify]"`):
+
+```python
+from longeron.analysis import verify
+
+model = longeron.load("examples/deepscout")
+
+report = verify.hunt(
+    model,
+    "Rotorcraft::QuadCopter",
+    requirements=("DeepScout::FlightEnvelope",),
+    free=("payloadMass",),
+    seed=0,
+)
+report.status  # -> 'violated'
+report.counterexamples[0].bindings  # -> {'payloadMass': 1.0} (shrunk)
+edge = min(report.boundaries, key=lambda b: b.value)
+(edge.violated, round(edge.value, 4))  # -> ('takeoffMassLimit [assert]', 0.29)
+
+seq = verify.sequences(
+    model, "DeepScout::SortieStates", requirements=("DeepScout::SafeSortie",), seed=0
+)
+seq.counterexamples[0].events
+# -> ('launch', 'goAround', 'goAround', 'goAround') -- the minimal sortie
+```
+
+The boundary edges are bisected by the interpreter, not estimated by
+the sampler. `cover` settles t-way covering arrays interpreter-exact,
+and `prove` returns Z3 absence proofs no amount of sampling could give;
+tutorial 6 runs all four tiers.
+
+### Edits that refuse to corrupt
+
+```python
+from longeron import edit
+
+edit.set_attribute_value(model, "ScoutParts::F450Kit::Battery::mass", "395 g")
+# stored as 395 [SI::g]: compact input resolves through the model's own units
+
+edit.set_attribute_value(model, "ScoutParts::F450Kit::Battery::mass", "0.39 [SI::kgg]")
+# EditError: unit 'SI::kgg' does not resolve
+#            (did you mean 'SI::kg' or 'SI::g'?)
+```
+
+Refusals mutate nothing. The same gate runs under the inspector's value
+field, and `save_workspace` writes tracked edits back to the files that
+declared them.
 
 ### Multi-file projects and caching
 
 `load()` accepts a single `.sysml` file, a `.json` export, or a directory:
 
 ```python
-model = longeron.load("models/")            # every *.sysml file, merged
-model = longeron.load_many(["lib.sysml", "app.json"])   # explicit set
+model = longeron.load("models/")  # every *.sysml file, merged
+model = longeron.load_many(["lib.sysml", "app.json"])  # explicit set
 ```
 
 Directory loads merge all files under one root namespace, so cross-file
@@ -253,6 +368,7 @@ are ~1000x faster than cold parses with the ANTLR Python runtime.
 
 ```bash
 longeron parse examples/deepscout                        # syntax check (file or dir)
+longeron lint --strict examples/deepscout                # diagnostics, file:line:column
 longeron export examples/deepscout --format sysml        # json | sysml | kerml
 longeron export model.json --format sysml                # JSON in, SysML out
 longeron export models/ --format json                    # whole directory, merged
@@ -277,22 +393,36 @@ src/longeron/
     builder.py             parse tree -> model (the SysML front-end)
     model.py               model element dataclasses (Literal-typed vocabularies)
     ast.py                 expression AST + precedence-aware printer
-    export.py              model -> JSON / SysML text, save()
+    export.py              model -> JSON / SysML text, save(), workspace save
     importer.py            JSON -> model (lossless round-trip)
     workspace.py           multi-file loading + content-addressed model cache
     kerml.py               model -> KerML projection
-    validation.py          longeron lint / validate()
+    interpreter.py         evaluation, instantiation, actions, states, snapshot
+    m0.py                  M0 interpretations: populations of individuals
+    validation.py          longeron lint / validate(), incl. the dimensional lint
+    units.py               derived unit table + optional pint conversion facade
+    edit.py                validated edits: values, renames, docs
     stdlib.py + _stdlib/   vendored OMG standard library (+ prebuilt JSON)
     ecore.py + _spec/      projection onto the OMG spec metamodel (pyecore)
     api.py                 OMG Systems Modeling API JSON interchange
+    server.py / client.py  Systems Modeling API server (longeron serve) + client
     rdf.py                 RDF projection + SPARQL convenience (rdflib)
     rag.py                 LLM retrieval substrate: chunks, neighborhoods, search
     diagrams.py            interactive ELK diagrams (ipyelk)
     render.py + _js/       headless SVG/PNG export (vendored elkjs via node)
-vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
-    interpreter.py         evaluation, instantiation, actions, states, snapshot
+    replay.py              simulation replay over the diagrams
+    explorer.py            the model explorer + its tree engine
+    app.py + inspector.py  the review workbench + the property sheet
+    toolbar.py + views.py  diagram tools + saved views
+    widgets/               the widget catalog (one import) + graph3d
+    analysis/              scoreboard, trades, mdao, verify, smt, geometry,
+                           3D viewers, mission globe, dashboards, grand tour
+    errors.py              one error family (SysMLError, MissingExtraError)
     cli.py                 the `longeron` console command
-examples/                  the DeepScout program (deepscout/) + kernel.kerml + demo.py
+vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
+npm/                       the JupyterLab launcher tile (prebuilt; ships in the wheel)
+examples/                  the DeepScout program (deepscout/) + analysis
+                           conventions + kernel.kerml + demo.py
 tests/                     pytest suite (see the coverage badge above)
 .github/workflows/ci.yml   pixi-based: check + test matrix (3.10-3.13)
                            + grammar-regen drift check (antlr/JDK from lock)
@@ -362,17 +492,23 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
 ```python
 from longeron import diagrams
 
-diagrams.structure_diagram(model)                 # defs, compartments, edges
+diagrams.structure_diagram(model)  # defs, compartments, edges
 diagrams.state_diagram(model.find("P::Machine"))  # hierarchical states
-diagrams.action_diagram(model.find("P::Flow"))    # the executed succession graph
-diagrams.diagram(element)                          # dispatch by kind
+diagrams.action_diagram(model.find("P::Flow"))  # the executed succession graph
+diagrams.diagram(element)  # dispatch by kind
 
-diagrams.on_select(widget, model, callback)        # clicks -> model elements
+diagrams.on_select(widget, model, callback)  # clicks -> model elements
 ```
 
 Node ids are qualified names, so browser selections resolve straight back to
 model elements. Layout runs in the browser (elkjs), so diagrams also build
-headlessly (tests, nbclient).
+headlessly (tests, nbclient). Beyond the diagrams, `longeron.widgets`
+re-exports every house widget's canonical entry point
+([the catalog](docs/reference/widgets/index.md)):
+
+```python
+from longeron.widgets import explore, mission_dashboard  # one lazy import surface
+```
 
 The same views export to images without a browser — `longeron.render` runs
 the vendored elkjs (0.9.3, EPL-2.0, `longeron/_js/`) in a node subprocess and
@@ -383,7 +519,7 @@ environments):
 from longeron import render
 
 render.to_svg(diagrams.state_diagram(machine), "machine.svg")
-render.to_png(model, "model.png")   # builds a view automatically
+render.to_png(model, "model.png")  # builds a view automatically
 ```
 
 Exported SVGs carry the subject's qualified name as their `<title>`
@@ -404,22 +540,18 @@ diagram (`replay_widget` auto-detects action definitions, or pass
 ```python
 from longeron import replay
 
-replay.replay_widget(interp, "Machines::Player",
-                     events=["play", 3600.0, "play"])
+replay.replay_widget(interp, "Machines::Player", events=["play", 3600.0, "play"])
 replay.replay_widget(interp, "Ops::Deploy", inputs={"tested": True})
 ```
 
 ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and
 installed editable (`pip install -e vendor/ipyelk`; pixi does this
-automatically) so it can be patched as needed. Current local fixes, all
-marked `LOCAL PATCH` and tracked by `git log -- vendor/ipyelk`:
-
-1. **Headless-safe scheduling** — `Pipe.schedule_run` raised
-   `RuntimeError: no running event loop` outside Jupyter (plain scripts,
-   pytest); it now no-ops cleanly when there is no frontend to lay out for.
-2. **Prebuilt labextension grafted** — the git tree only carries TypeScript
-   sources; the built JupyterLab extension from the 2.1.1 wheel is vendored
-   under `src/_d/` so the editable install renders without a node toolchain.
+automatically) so it can be patched as needed. Twelve local patches are
+active, from headless-safe scheduling to a self-healing re-sync for
+widget messages that jupyter-server's rate limiter drops. Each patch is
+marked `LOCAL PATCH` in the sources and cataloged in
+[`vendor/ipyelk/README.vendor.md`](vendor/ipyelk/README.vendor.md);
+history: `git log -- vendor/ipyelk`.
 
 ## Spec-metamodel projection and API interchange
 
@@ -430,17 +562,35 @@ under `longeron/_spec/`):
 ```python
 from longeron import ecore, api
 
-spec = ecore.to_spec(model)      # reified memberships, FeatureTyping, ...
-spec.report                       # what was covered / skipped
-spec.save_xmi("model.xmi")       # EMF XMI
+spec = ecore.to_spec(model)  # reified memberships, FeatureTyping, ...
+spec.report  # what was covered / skipped
+spec.save_xmi("model.xmi")  # EMF XMI
 
-api.to_api_json(model)            # OMG Systems Modeling API records
-api.from_api_json(text)           # records -> spec instances
+api.to_api_json(model)  # OMG Systems Modeling API records
+api.from_api_json(text)  # records -> spec instances
 ```
 
 Both are structural prototypes: names, flags, ownership, and
 specialization/typing relationships are mapped; expression trees are not
 (counted in `SpecReport`, never silently dropped).
+
+## Roadmap
+
+Four arcs are adopted designs, not shipped features. Each design doc
+records the settled decisions:
+
+- [Data provenance](docs/design/provenance.md) -- evidence-linked
+  models that cite documents by sha256 + page + quote; layers 1-2
+  target 0.12.
+- [The time seam](docs/design/time.md) -- one clock across every
+  time-aware view (replay, the mission globe); phase 1 lands in 0.12
+  behind provenance.
+- [Analysis surfaces](docs/design/surfaces.md) -- dashboards declared
+  as SysML view usages, slider ranges mined from the model's own
+  constraints; phase 1 late in 0.12.
+- [Geometry as model content](docs/design/geometry.md) -- models carry
+  primitive solids, booleans, and articulation over the OMG Geometry
+  Domain Library; the 0.13 arc.
 
 ## Grammar patches
 
