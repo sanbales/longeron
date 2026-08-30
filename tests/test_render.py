@@ -844,6 +844,77 @@ def _rect_geometry(svg: str, qname: str) -> tuple[float, float, float, float]:
     return tuple(float(g) for g in match.groups())  # type: ignore[return-value]
 
 
+class TestCompartmentSvg:
+    """Labeled compartments, headless (spec 8.2.3.6 printed p.199): each
+    compartment opens with a full-width separator rule in the node's
+    stroke color, the italic header centered under it; rows carry their
+    element's identity as data-qname, exactly like node rects."""
+
+    _SOURCE = """
+package C {
+    part def Battery {
+        attribute capacity : Real = 5200.0;
+        attribute cells : Integer = 3;
+    }
+    part def Motor;
+    part def Drone {
+        attribute mass : Real;
+        part battery : Battery [2];
+        part motors : Motor [4];
+    }
+}
+"""
+
+    @pytest.fixture(scope="class")
+    def model(self):
+        return longeron.loads(self._SOURCE)
+
+    def test_separator_rules_span_the_node(self, model):
+        widget = diagrams.structure_diagram(model)
+        graph = render.layout(render._to_elk_json(widget.source.value))
+        svg = render._svg_from_layout(graph)
+        bx, by, bw, bh = _rect_geometry(svg, "C::Battery")
+        stroke = render._NODE_STYLES["sysml-definition"]["stroke"]
+        rules = [
+            tuple(float(g) for g in m.groups())
+            for m in re.finditer(
+                rf'<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" '
+                rf'stroke="{stroke}" stroke-width="1"/>',
+                svg,
+            )
+        ]
+        battery_rules = [r for r in rules if abs(r[0] - bx) < 0.1 and by < r[1] < by + bh]
+        assert len(battery_rules) == 1  # one compartment -> one rule
+        _x1, y1, x2, y2 = battery_rules[0]
+        assert y1 == y2  # horizontal
+        assert abs(x2 - (bx + bw)) < 0.1  # edge to edge
+
+    def test_headers_render_italic_and_centered(self, model):
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        header = next(t for t in svg.split("<text ")[1:] if ">attributes<" in t)
+        head = header.split(">")[0]
+        assert 'font-style="italic"' in head
+        assert 'text-anchor="middle"' in head
+        assert "data-qname" not in head  # presentation, not an element
+
+    def test_rows_carry_data_qname(self, model):
+        svg = render.to_svg(diagrams.structure_diagram(model))
+        row = next(t for t in svg.split("<text ")[1:] if "capacity : Real" in t)
+        assert 'data-qname="C::Battery::capacity"' in row.split(">")[0]
+        # titles and headers stay identity-free
+        title = next(t for t in svg.split("<text ")[1:] if ">Battery<" in t)
+        assert "data-qname" not in title.split(">")[0]
+
+    def test_rows_mode_draws_parts_rows_headless(self, model):
+        svg = render.to_svg(diagrams.structure_diagram(model, parts="rows"))
+        assert 'data-qname="C::Drone::battery"' not in svg.split("<text ")[0]
+        row = next(t for t in svg.split("<text ")[1:] if "battery : Battery [2]" in t)
+        assert 'data-qname="C::Drone::battery"' in row.split(">")[0]
+        # the collapsed presentation draws no nested battery box
+        assert '<rect data-qname="C::Drone::battery"' not in svg
+        assert ">parts<" in svg  # the compartment header
+
+
 class TestTranche3Svg:
     """Boundary ports + the remaining connector/annotation notation
     (spec Ports printed p.59; Connections pp.66-67; Allocations p.79;
@@ -1181,7 +1252,9 @@ class TestGalleryNits:
         the turned line.  With the clearance restated per level, every
         hollow-family edge keeps a straight final run at least as long as
         its head's reach (the gallery's annotated-Pump model is the
-        repro)."""
+        repro; the second Pump usage keeps a typed edge BENT now that
+        labeled compartment headers changed the boxes' heights -- the
+        original single-usage layout went straight)."""
 
         model = longeron.loads("""
             package Annotated {
@@ -1190,6 +1263,7 @@ class TestGalleryNits:
                 @Safety about Pump;
                 comment about Pump /* Centrifugal, oil-free. */
                 part pump : Pump { doc /* The unit under review. */ }
+                part backup : Pump;
             }
         """)
         widget = diagrams.structure_diagram(model, annotations=True)

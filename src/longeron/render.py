@@ -314,6 +314,14 @@ _NOTE_FOLD = 10.0
 #: the package box, flush with its top edge
 _TAB_WIDTH, _TAB_HEIGHT = 30.0, 8.0
 
+#: compartment separator rules (spec 8.2.3.6, printed p.199: every labeled
+#: compartment opens with a full-width horizontal rule, the compartment
+#: name in italics under it): the rule draws this many px above the header
+#: label's box top, spanning the node edge to edge.  Both pipelines share
+#: it -- the headless SVG writer here, the vendored browser node view
+#: (LOCAL PATCH 13) hard-codes the same value.
+_COMP_RULE_GAP = 1.0
+
 #: actor stick figure (spec BNF printed p.244; crop gt-actor.png):
 #: bounding box of the figure itself (the name label hangs below);
 #: proportions measured off the spec crop -- width:height = 0.45
@@ -831,6 +839,10 @@ def _arrow_defs() -> str:
 _LABEL_STYLES: dict[str, dict[str, str]] = {
     "sysml-stereotype": {"font-size": "9", "fill": "#888888", "font-style": "italic"},
     "sysml-attribute": {"font-size": "10", "fill": "#444444"},
+    # compartment headers ('attributes', 'parts', ...): the spec writes the
+    # compartment name in italics, centered, under the separator rule
+    # (8.2.3.6 printed p.199; the notation-table crops pp.46/60/62)
+    "sysml-comp-label": {"font-size": "9", "fill": "#777777", "font-style": "italic"},
 }
 
 #: Helvetica AFM advance widths (thousandths of an em, Adobe Core 14) --
@@ -1026,8 +1038,15 @@ def _to_elk_json(root: Any) -> dict:
                 # a truncated row's full text: the SVG writer emits it as the
                 # label's <title> (hover tooltip), mirroring the browser view
                 properties["tooltip"] = label.properties.tooltip
+            entry_id = f"{identifier}.l{index}"
+            if getattr(label.properties, "selectable", False) and label.id:
+                # compartment ROWS are model-element projections: they keep
+                # their real id (the element's qualified name) so the SVG
+                # writer can stamp data-qname, mirroring node identity
+                properties["selectable"] = True
+                entry_id = str(label.id)
             entry: dict[str, Any] = {
-                "id": f"{identifier}.l{index}",
+                "id": entry_id,
                 "text": text,
                 "width": width,
                 "height": height,
@@ -1399,6 +1418,17 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
                 )
             for port in node.get("ports", []):
                 draw_port(port, x, y, style["stroke"], width, height)
+            # compartment separator rules (spec 8.2.3.6 printed p.199): a
+            # full-width horizontal rule above every compartment header
+            # label, in the node kind's stroke color -- the same geometry
+            # the vendored browser node view draws (LOCAL PATCH 13)
+            for label in node.get("labels", []):
+                if "sysml-comp-label" in label.get("properties", {}).get("cssClasses", ""):
+                    ry = y + label.get("y", 0) - _COMP_RULE_GAP
+                    parts.append(
+                        f'<line x1="{x:.1f}" y1="{ry:.1f}" x2="{x + width:.1f}" '
+                        f'y2="{ry:.1f}" stroke="{style["stroke"]}" stroke-width="1"/>'
+                    )
         for label in node.get("labels", []):
             draw_label(label, x, y)
         for child in node.get("children", []):
@@ -1528,8 +1558,13 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
         y = oy + label.get("y", 0) + size
         tooltip = label.get("properties", {}).get("tooltip", "")
         caption = f"<title>{_escape(tooltip)}</title>" if tooltip else ""
+        # compartment ROWS project model elements: their real id (the
+        # element's qualified name) rides data-qname, exactly like nodes
+        qname = ""
+        if label.get("properties", {}).get("selectable"):
+            qname = f' data-qname="{_escape_attr(str(label.get("id")))}"'
         parts.append(
-            f'<text x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
+            f'<text{qname} x="{x:.1f}" y="{y:.1f}" font-size="{style["font-size"]}" '
             f'fill="{style["fill"]}" font-family="Helvetica,Arial,sans-serif"'
             f' text-anchor="{anchor}"{extra}>{caption}{_escape(text)}</text>'
         )

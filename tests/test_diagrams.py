@@ -801,6 +801,194 @@ class TestDirectionKwarg:
             diagrams.structure_diagram(drone_model, direction="diagonal")
 
 
+_COMPARTMENTED = """
+package C {
+    part def Battery {
+        attribute capacity : Real = 5200.0;
+        attribute cells : Integer = 3;
+    }
+    part def Motor;
+    part def Drone {
+        attribute mass : Real;
+        part battery : Battery [2];
+        part motors : Motor [4];
+        ref part spare : Battery;
+        item manual : Manual;
+        constraint massLimit { mass < 2.0 }
+        assert constraint alwaysOn { true }
+    }
+    item def Manual;
+    requirement def Envelope {
+        subject drone : Drone;
+        require constraint margin { true }
+    }
+}
+"""
+
+
+class TestCompartments:
+    """SysML v2 labeled compartments (spec 8.2.3.6 printed p.199): rows
+    group under the spec's compartment headers ('attributes', 'parts',
+    ...), each header opening a separator rule; every row is a
+    first-class selectable projection of its model element."""
+
+    @pytest.fixture(scope="class")
+    def model(self):
+        return longeron.loads(_COMPARTMENTED)
+
+    @staticmethod
+    def _labels(widget, node_id):
+        node = next(n for n in _walk(widget.source.value) if n.id == node_id)
+        return node, list(node.labels)
+
+    def test_attribute_rows_sit_under_the_attributes_header(self, model):
+        widget = diagrams.structure_diagram(model)
+        _, labels = self._labels(widget, "C::Battery")
+        texts = [(label.text, label.properties.cssClasses or "") for label in labels]
+        header = next(i for i, (t, c) in enumerate(texts) if "sysml-comp-label" in c)
+        assert texts[header][0] == "attributes"
+        # the header opens the compartment: every row follows it
+        assert all("sysml-row" in c for _, c in texts[header + 1 :])
+        assert [t for t, _ in texts[header + 1 :]] == [
+            "capacity : Real = 5200.0",
+            "cells : Integer = 3",
+        ]
+
+    def test_rows_carry_their_element_identity(self, model):
+        """A compartment row IS a projection of a model element: it takes
+        the element's qualified name as its id and the ipyelk selectable
+        flag -- the payload the browser's selection seam rides."""
+
+        widget = diagrams.structure_diagram(model)
+        _, labels = self._labels(widget, "C::Battery")
+        row = next(label for label in labels if (label.text or "").startswith("capacity"))
+        assert row.id == "C::Battery::capacity"
+        assert row.properties.selectable is True
+        assert "sysml-attribute" in row.properties.cssClasses  # sizing contract intact
+
+    def test_headers_are_presentation_not_elements(self, model):
+        widget = diagrams.structure_diagram(model)
+        _, labels = self._labels(widget, "C::Battery")
+        header = next(
+            label for label in labels if "sysml-comp-label" in (label.properties.cssClasses or "")
+        )
+        assert not header.properties.selectable
+        assert str(header.id).startswith("__lgn__:")  # synthetic transport id
+
+    def test_constraint_compartments_group_by_declared_kind(self, model):
+        widget = diagrams.structure_diagram(model)
+        _, labels = self._labels(widget, "C::Drone")
+        headers = [
+            label.text
+            for label in labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        ]
+        assert "constraints" in headers
+        assert "assert constraints" in headers
+        _, env_labels = self._labels(widget, "C::Envelope")
+        env_headers = [
+            label.text
+            for label in env_labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        ]
+        assert env_headers == ["require constraints", "subject"]
+
+    def test_compartments_stack_in_spec_order(self, model):
+        widget = diagrams.structure_diagram(model, parts="rows")
+        _, labels = self._labels(widget, "C::Drone")
+        headers = [
+            label.text
+            for label in labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        ]
+        assert headers == ["attributes", "items", "parts", "constraints", "assert constraints"]
+
+    def test_parts_rows_is_the_collapsed_presentation(self, model):
+        """parts="rows": nested usages render as textual 'name : Type'
+        rows in their spec compartments instead of drawn nested boxes
+        (both are legal notation; the option picks).  ref members keep
+        the spec's ``ref`` prefix (printed p.60)."""
+
+        widget = diagrams.structure_diagram(model, parts="rows")
+        drone, labels = self._labels(widget, "C::Drone")
+        assert drone.children == []  # no drawn nested boxes
+        texts = [label.text for label in labels]
+        assert "battery : Battery [2]" in texts
+        assert "motors : Motor [4]" in texts
+        assert "ref spare : Battery" in texts
+        assert "manual : Manual" in texts
+        row = next(label for label in labels if label.text == "battery : Battery [2]")
+        assert row.id == "C::Drone::battery"
+        assert row.properties.selectable is True
+        assert widget._lgn_view_state["options"] == {"parts": "rows"}
+
+    def test_parts_nested_is_the_default_and_unchanged(self, model):
+        widget = diagrams.structure_diagram(model)
+        drone, labels = self._labels(widget, "C::Drone")
+        nested = {child.id for child in drone.children}
+        assert {"C::Drone::battery", "C::Drone::motors", "C::Drone::manual"} <= nested
+        assert "parts" not in [label.text for label in labels]
+        assert widget._lgn_view_state["options"] == {}
+
+    def test_parts_option_validated(self, model):
+        with pytest.raises(ValueError, match="parts must be 'nested' or 'rows'"):
+            diagrams.structure_diagram(model, parts="blob")
+
+    def test_parameters_compartment_on_calc_boxes(self, drone_model):
+        widget = diagrams.structure_diagram(drone_model)
+        hover = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::HoverTime")
+        headers = [
+            label.text
+            for label in hover.labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        ]
+        assert headers == ["parameters"]  # action/calc boxes, printed p.91
+
+    def test_directed_features_compartment_elsewhere(self):
+        model = longeron.loads(
+            "package D { item def Pulse; part def Sensor { in item trigger : Pulse; } }"
+        )
+        widget = diagrams.structure_diagram(model)
+        sensor = next(n for n in _walk(widget.source.value) if n.id == "D::Sensor")
+        headers = [
+            label.text
+            for label in sensor.labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        ]
+        assert headers == ["directed features"]  # printed p.62
+
+    def test_anonymous_rows_draw_but_stay_unselectable(self):
+        model = longeron.loads("package A { part def P { constraint { true } } }")
+        widget = diagrams.structure_diagram(model)
+        box = next(n for n in _walk(widget.source.value) if n.id == "A::P")
+        row = next(
+            label for label in box.labels if "sysml-row" in (label.properties.cssClasses or "")
+        )
+        assert not row.properties.selectable  # no qualified name = no identity
+
+    def test_row_and_rule_styling_rules_exist(self):
+        """The derived stylesheet styles rows as hit targets (cursor,
+        hover ink, selection accent) and binds the separator rules to the
+        node kind's stroke plus the selection/hover state colors."""
+
+        style = diagrams.SYSML_STYLE
+        assert style[" text.elklabel.sysml-row"]["cursor"] == "pointer"
+        assert style[" text.elklabel.sysml-row.mouseover"]["fill"] == "var(--jp-elk-stroke-hover)"
+        assert style[" text.elklabel.sysml-row.selected"]["fill"] == "var(--jp-elk-color-selected)"
+        assert style[" .sysml-comp-rule"]["pointer-events"] == "none"
+        from longeron.render import _NODE_STYLES
+
+        for css, node_style in _NODE_STYLES.items():
+            assert style[f" .{css} > .sysml-comp-rule"]["stroke"] == node_style["stroke"]
+        assert (
+            style[" .elknode.selected ~ .sysml-comp-rule"]["stroke"]
+            == "var(--jp-elk-color-selected)"
+        )
+
+    def test_adornment_contract_holds_with_compartments(self, model):
+        _assert_adornment_contract(diagrams.structure_diagram(model, parts="rows"))
+
+
 _PORTED = """
 package P {
     item def Item1;

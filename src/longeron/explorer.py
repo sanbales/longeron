@@ -1439,14 +1439,27 @@ def _walk_source(node: Any) -> Iterator[Any]:
 
 
 def _diagram_node_ids(widget: Any) -> frozenset[str]:
-    """Every node id in a diagram widget's source tree (qualified names
-    plus synthetic transport ids; only qualified names are ever looked
-    up, so the synthetics never match)."""
+    """Every SELECTABLE id in a diagram widget's source tree: node ids,
+    drawn boundary-port ids, and compartment-row label ids (all qualified
+    names, plus synthetic transport ids; only qualified names are ever
+    looked up, so the synthetics never match).  Rows and port squares are
+    first-class selection targets -- a tree selection of an attribute
+    usage highlights its ROW, not just the owning box."""
 
     root = widget.source.value
     if root is None:
         return frozenset()
-    return frozenset(str(node.id) for node in _walk_source(root) if node.id)
+    ids = set()
+    for node in _walk_source(root):
+        if node.id:
+            ids.add(str(node.id))
+        for port in getattr(node, "ports", None) or []:
+            if port.id and (port.properties.cssClasses or ""):
+                ids.add(str(port.id))
+        for label in node.labels or []:
+            if label.id and getattr(label.properties, "selectable", False):
+                ids.add(str(label.id))
+    return frozenset(ids)
 
 
 class Explorer(W.HBox):

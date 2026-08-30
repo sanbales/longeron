@@ -252,3 +252,23 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    (limiter config neutralized), 33s (20% drops) and 57s (60% drops,
    2426 messages dropped and self-healed). Tests:
    `tests/pipes/test_stale_resync.py`.
+13. **Compartment separator rules** (2026-08-31;
+   `js/sprotty/views/node_views.tsx`; bundles rebuilt as in patch 7, node
+   26.6.0 + jlpm from the longeron pixi env -- only the `elkdisplay`
+   chunk, `remoteEntry` and the labextension `package.json` `_build`
+   pointer changed). SysML v2 labeled compartments (spec 8.2.3.6) open
+   with a full-width horizontal rule above the compartment's header; the
+   kernel cannot draw it because node widths are browser-measured, so
+   only the view knows the final edge-to-edge span. `ElkNodeView.render`
+   now emits one `<path class="sysml-comp-rule">` per child label
+   carrying the `sysml-comp-label` class, at the label's laid-out y
+   minus a 1px gap -- the exact geometry longeron's headless SVG writer
+   draws (`render._COMP_RULE_GAP` mirrors the constant). The paths are
+   siblings of the node's rect, so longeron's derived stylesheet binds
+   their stroke to the node kind's palette and recolors them with the
+   `.elknode` selection/hover state classes via the `~` combinator;
+   `pointer-events: none` keeps them out of the way of row hit targets
+   (rows themselves need NO patch: the upstream `properties.selectable`
+   label flag already makes them selectable/hoverable first-class
+   sprotty elements). Nodes without header labels render byte-identically
+   to before.

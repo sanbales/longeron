@@ -41,6 +41,20 @@ function svgStr(point: Point) {
   return `${point.x},${point.y}`;
 }
 
+// LOCAL PATCH (sysml2-experiments, patch 13): compartment separator rules.
+// SysML v2 compartments (spec 8.2.3.6) open with a full-width horizontal
+// rule above the compartment's header label.  The kernel cannot draw it:
+// node widths are browser-measured here, so only the view knows the final
+// edge-to-edge span.  The node view emits one <path class="sysml-comp-rule">
+// per child label marked with the header class, at the label's laid-out y
+// minus the gap -- the same geometry the headless SVG renderer draws
+// (longeron render._COMP_RULE_GAP mirrors this constant).  Styling (per-kind
+// stroke, selection/hover recolor) comes from the widget stylesheet; the
+// paths are siblings of the node's rect, so the .elknode state classes
+// reach them with the ~ combinator.
+const COMPARTMENT_HEADER_CLASS = 'sysml-comp-label';
+const COMPARTMENT_RULE_GAP = 1.0;
+
 @injectable()
 export class ElkNodeView extends RectangularNodeView {
   render(node: ElkNode, context: ElkModelRenderer): VNode | undefined {
@@ -60,6 +74,7 @@ export class ElkNodeView extends RectangularNodeView {
       <g>
         {mark}
         <g class-elkchildren={true}>{this.renderChildren(node, context)}</g>
+        {this.renderCompartmentRules(node)}
       </g>
     );
   }
@@ -69,6 +84,27 @@ export class ElkNodeView extends RectangularNodeView {
       <rect x="0" y="0" width={node.size.width} height={node.size.height}></rect>
     );
     return mark;
+  }
+
+  // LOCAL PATCH 13: one full-width separator rule per compartment header
+  // label (see the header note above svgStr)
+  renderCompartmentRules(node: ElkNode): VNode[] {
+    const rules: VNode[] = [];
+    const width = node.size.width;
+    if (!(width > 0)) return rules;
+    for (const child of node.children) {
+      const classes: string = (child as any)?.properties?.cssClasses || '';
+      if (
+        child instanceof ElkLabel &&
+        classes.split(' ').indexOf(COMPARTMENT_HEADER_CLASS) >= 0
+      ) {
+        const y = child.position.y - COMPARTMENT_RULE_GAP;
+        rules.push(
+          <path class-sysml-comp-rule={true} d={`M 0,${y} L ${width},${y}`} />,
+        );
+      }
+    }
+    return rules;
   }
 
   renderChildren(node: ElkNode, context: ElkModelRenderer): VNode[] {

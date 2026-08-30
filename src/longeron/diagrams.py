@@ -72,7 +72,15 @@ absurd expression no longer makes its whole node absurd.  Pass
 ``max_label_width=None`` to draw every row at full width.
 
 Node ids are qualified names, so browser-side selections map back to model
-elements: use :func:`on_select` to react to clicks.
+elements: use :func:`on_select` to react to clicks.  Compartment ROWS are
+first-class selectable elements too: each row is the textual projection of
+a model element (an attribute usage, a part usage in the collapsed
+presentation, a constraint...), carries that element's qualified name as
+its id, and clicks on it flow through the SAME selection seam as node and
+edge clicks.  Structure boxes group their rows into the spec's labeled
+compartments -- separator rule + italic name ('attributes', 'parts', ...)
+per 8.2.3.6 (printed p.199) -- and ``structure_diagram(parts="rows")``
+swaps nested part boxes for the spec's collapsed textual presentation.
 """
 
 from __future__ import annotations
@@ -180,6 +188,107 @@ _KIND_STEREOTYPES = {
     # the «satisfy requirement» usage box (spec printed p.133)
     "satisfy": "satisfy requirement",
 }
+
+# ---------------------------------------------------------------------------
+# compartments (spec 8.2.3.6 printed p.199: a definition/usage node is its
+# name compartment plus a compartment-stack; every labeled compartment opens
+# with a full-width separator rule and its name in italics)
+# ---------------------------------------------------------------------------
+
+#: constraint rows group by their declared kind (spec printed pp.127, 132;
+#: require/assume from the BNF, printed pp.243-244)
+_CONSTRAINT_SECTIONS = {
+    None: "constraints",
+    "assert": "assert constraints",
+    "require": "require constraints",
+    "assume": "assume constraints",
+}
+
+#: usage kinds drawn as NESTED BOXES by default that collapse to textual
+#: ``name : Type`` rows under ``structure_diagram(parts="rows")`` -- kind ->
+#: the spec's compartment keyword (each cited at _SECTION_ORDER).  ``ref``
+#: members row into the parts compartment with the ``ref`` prefix exactly
+#: as the spec's parts figure writes them (printed p.60).
+_ROW_SECTIONS = {
+    "occurrence": "occurrences",
+    "individual": "individuals",
+    "timeslice": "timeslices",
+    "snapshot": "snapshots",
+    "item": "items",
+    "part": "parts",
+    "ref": "parts",
+    "action": "actions",
+    "state": "states",
+    "requirement": "requirements",
+    "satisfy": "satisfy requirements",
+    "allocation": "allocations",
+    "actor": "actors",
+    "stakeholder": "stakeholders",
+    "view": "views",
+}
+
+#: compartment order down the stack, following the spec's chapter order.
+#: The keyword strings are the spec's own compartment names (printed-page
+#: citations from the notation tables; BNF pages where no table exists).
+_SECTION_ORDER = (
+    "attributes",  # printed p.46
+    "enums",  # printed p.48
+    "occurrences",  # printed p.53
+    "individuals",  # printed p.53
+    "timeslices",  # printed p.53
+    "snapshots",  # printed p.53
+    "items",  # printed p.57
+    "parts",  # printed p.60
+    "directed features",  # printed p.62
+    "allocations",  # printed p.79
+    "actions",  # printed p.89
+    "parameters",  # printed p.91
+    "states",  # printed p.117
+    "constraints",  # printed p.127
+    "assert constraints",  # printed p.127
+    "require constraints",  # BNF printed p.243
+    "assume constraints",  # BNF printed p.244
+    "requirements",  # printed p.132
+    "satisfy requirements",  # printed p.132
+    "subject",  # BNF printed p.244
+    "actors",  # BNF printed p.244
+    "stakeholders",  # BNF printed p.244
+    "views",  # printed p.153
+)
+
+_SECTION_RANK = {name: rank for rank, name in enumerate(_SECTION_ORDER)}
+
+
+def _section_header(section: str) -> Label:
+    """A compartment header label: the spec writes the compartment name in
+    italics, centered, right under the separator rule (8.2.3.6 printed
+    p.199).  Snug (never pre-sized), so both pipelines center it; the
+    separator rule itself is drawn from this label's position -- by the
+    headless SVG writer and by the vendored browser node view (LOCAL
+    PATCH 13), keyed on the ``sysml-comp-label`` class."""
+
+    return _label(section, "sysml-comp-label")
+
+
+def _row_label(text: str, element: M.Element) -> Label:
+    """A compartment ROW: the textual projection of a model element (an
+    attribute usage, a part usage, a constraint...), and therefore a
+    first-class selectable element.  The row carries the element's
+    identity -- ``label.id`` is the qualified name, exactly like node ids
+    -- and the ipyelk ``selectable`` flag, so the browser's select tool
+    treats a row click like a node click: the same ``SelectAction``, the
+    same selection-tool ids, the same :func:`on_select` resolution.
+    Anonymous elements (no qualified name) draw but stay unselectable --
+    there is no identity to select.  ``sysml-attribute`` keeps the row in
+    every existing sizing/ellipsis contract; ``sysml-row`` is the
+    hit-target marker the stylesheet keys hover/selection styling on."""
+
+    label = _label(text, "sysml-attribute sysml-row")
+    if element.qualified_name:
+        label.id = element.qualified_name
+        label.properties.selectable = True
+    return label
+
 
 #: the node-attached ADORNMENT contract (hover/selection parity, §2.0).
 #:
@@ -420,6 +529,36 @@ def _sysml_style() -> dict[str, dict[str, str]]:
             kind_style["font-style"] = label_style["font-style"]
         style[f" text.elklabel.{css}"] = kind_style
         style[f" text.elklabel.{css}.selected"] = {"fill": selected}
+    # -- compartment rows are first-class hit targets ----------------------
+    # A row (.sysml-row, constructed only by _row_label) is the textual
+    # projection of a model element and selects in its own right (the
+    # ipyelk `selectable` label flag).  Hover shows the pointer and the
+    # theme hover ink; selection takes the house accent through the
+    # per-kind .selected rule above (rows also carry .sysml-attribute).
+    # Hover-while-selected mirrors the rect cascade.  Source order after
+    # the per-kind rules lets equal-specificity hover win at rest.
+    style[" text.elklabel.sysml-row"] = {"cursor": "pointer"}
+    style[" text.elklabel.sysml-row.mouseover"] = {"fill": hover}
+    style[" text.elklabel.sysml-row.selected"] = {"fill": selected}
+    style[" text.elklabel.sysml-row.selected.mouseover"] = {"fill": hover_selected}
+    # -- compartment separator rules (spec 8.2.3.6 printed p.199) ----------
+    # The vendored node view (LOCAL PATCH 13) draws one full-width <path
+    # class="sysml-comp-rule"> per compartment header label, a sibling of
+    # the node's rect -- so the per-kind stroke and the state recolors
+    # bind exactly like the box border (never fattening: width pinned).
+    style[" .sysml-comp-rule"] = {
+        "fill": "none",
+        "stroke-width": "1",
+        "pointer-events": "none",
+    }
+    for css, node_style in _NODE_STYLES.items():
+        style[f" .{css} > .sysml-comp-rule"] = {"stroke": node_style["stroke"]}
+    for state, state_color in (
+        ("selected", selected),
+        ("mouseover", hover),
+        ("selected.mouseover", hover_selected),
+    ):
+        style[f" .elknode.{state} ~ .sysml-comp-rule"] = {"stroke": state_color}
     # ports (interconnection squares to come, flow pins, and the stubs
     # ipyelk substitutes for collapsed content -- 'slack' ports): white
     # body, border in the OWNING node kind's stroke color, stroke width
@@ -1485,6 +1624,7 @@ def structure_diagram(
     membership: str = "nested",
     annotations: bool = False,
     actor_style: str = "figure",
+    parts: str = "nested",
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
@@ -1539,6 +1679,29 @@ def structure_diagram(
     Stakeholders always draw the «stakeholder» box -- the spec reserves
     the figure for actors.
 
+    Textual members group into the spec's LABELED compartments (8.2.3.6
+    printed p.199): every compartment opens with a full-width separator
+    rule and its italic name -- 'attributes' (printed p.46), 'enums'
+    (p.48), 'directed features' (p.62; 'parameters' on action/calc
+    boxes, p.91), the constraint compartments (p.127), 'subject', and so
+    on -- replacing the earlier unlabeled row blob.  Every row is a
+    first-class SELECTABLE projection of its model element: it carries
+    the element's qualified name as its id, clicking it in the browser
+    feeds :func:`on_select` exactly like a node click, and kernel-side
+    selection writes light it up.
+
+    ``parts`` picks the presentation of nested usages (both are legal
+    spec notation; the option only chooses): ``"nested"`` (the default)
+    draws them as nested boxes -- the graphical compartment, required
+    where children anchor edges (connections, flows, proxies) --
+    while ``"rows"`` is the COLLAPSED presentation: parts, items, the
+    occurrence family, actions, states, requirements, named satisfies
+    and allocations, actors, stakeholders and views render as textual
+    ``name : Type`` rows in their spec compartments ('parts' printed
+    p.60, 'items' p.57, 'actions' p.89, 'states' p.117, ...).  Edges
+    that would anchor on the collapsed children are not drawn -- the
+    textual presentation trades them for compactness.
+
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
 
@@ -1569,12 +1732,15 @@ def structure_diagram(
         raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
     if actor_style not in ("figure", "box"):
         raise ValueError(f"actor_style must be 'figure' or 'box', not {actor_style!r}")
+    if parts not in ("nested", "rows"):
+        raise ValueError(f"parts must be 'nested' or 'rows', not {parts!r}")
     builder = _StructureBuilder(
         element,
         show_attributes,
         composition=composition,
         membership=membership,
         actor_style=actor_style,
+        parts=parts,
     )
     root = builder.build()
     if show_relationships:
@@ -1599,6 +1765,8 @@ def structure_diagram(
         options["annotations"] = True
     if actor_style != "figure":
         options["actor_style"] = actor_style
+    if parts != "nested":
+        options["parts"] = parts
     if max_label_width != _MAX_LABEL_WIDTH:
         options["max_label_width"] = max_label_width
     # package tabs ride flush with the box top (outside icon labels; the
@@ -1731,12 +1899,14 @@ class _StructureBuilder:
         composition: str = "defs",
         membership: str = "nested",
         actor_style: str = "figure",
+        parts: str = "nested",
     ):
         self.element = element
         self.show_attributes = show_attributes
         self.composition = composition
         self.membership = membership
         self.actor_style = actor_style
+        self.parts = parts
         owner: M.Element = element
         while owner.owner is not None:
             owner = owner.owner
@@ -1853,6 +2023,51 @@ class _StructureBuilder:
         return node
 
     def _fill_features(self, node: Node, element: M.Namespace) -> None:
+        """Fill a definition/usage box: labeled compartments plus children.
+
+        Textual members group into the spec's LABELED compartments
+        (8.2.3.6 printed p.199): rows collect per compartment keyword,
+        then emit in :data:`_SECTION_ORDER`, each compartment opened by
+        its header label (separator rule + italic name, drawn by both
+        pipelines from the header's position).  Every row is a
+        first-class selectable projection of its model element
+        (:func:`_row_label`).
+
+        Member-kind coverage (the honest ledger):
+
+        * always rows -- attributes ('attributes'), enum literals
+          ('enums'), directed features ('directed features'; 'parameters'
+          on action/calc boxes, printed p.91), constraints (grouped by
+          declared kind: 'constraints' / 'assert constraints' / 'require
+          constraints' / 'assume constraints'), subjects ('subject');
+        * ports -- ALWAYS the spec's boundary squares (printed p.59),
+          never rows: the square is the interconnection presentation and
+          carries direction/conjugation the textual 'ports' compartment
+          row would lose;
+        * nested-box kinds (parts, items, occurrence family, actions,
+          states, requirements, satisfies, allocations, actors,
+          stakeholders, views) -- drawn nested boxes by default
+          (``parts="nested"``), textual rows in their spec compartments
+          under ``parts="rows"`` (:data:`_ROW_SECTIONS`); ``ref``
+          members row into 'parts' with the ``ref`` prefix (printed
+          p.60);
+        * honest omissions -- connections/bindings/interfaces/flows/
+          dependencies draw as EDGES (their spec node form is the edge),
+          so no 'connections'/'interfaces'/'flows' compartments; usage
+          kinds longeron never draws (calc, concern, verification,
+          use_case, viewpoint, rendering, message, event, frame,
+          objective, ...) stay undrawn in both presentations -- adding
+          their compartments without their semantics would decorate,
+          not inform; drawn nested children form the spec's GRAPHICAL
+          compartment, whose view-usage header (7.26.5) is likewise
+          omitted until view usages name them.
+        """
+
+        sections: dict[str, list[Label]] = {}
+
+        def row(section: str, text: str, member: M.Usage) -> None:
+            sections.setdefault(section, []).append(_row_label(text, member))
+
         for member in element.members:
             if not isinstance(member, M.Usage):
                 child = self._visit(member)
@@ -1868,16 +2083,24 @@ class _StructureBuilder:
                 text = _usage_title(member)
                 if member.value is not None:
                     text += f" = {member.value.expr.to_text()}"
-                node.labels.append(_label(text, "sysml-attribute"))
+                row("attributes", text, member)
             elif member.kind == "enum_literal":
-                node.labels.append(_label(member.label, "sysml-attribute"))
+                row("enums", member.label, member)
             elif member.direction is not None and self.show_attributes:
                 title = (
                     _usage_title(member)
                     if member.name
                     else (f": {member.types[0]}" if member.types else "")
                 )
-                node.labels.append(_label(f"{member.direction} {title}".strip(), "sysml-attribute"))
+                # action/calc boxes call their directed features
+                # 'parameters' (printed p.91); everything else uses the
+                # 'directed features' compartment (printed p.62)
+                section = (
+                    "parameters"
+                    if getattr(element, "kind", None) in ("action", "calc")
+                    else "directed features"
+                )
+                row(section, f"{member.direction} {title}".strip(), member)
             elif member.kind == "constraint" and self.show_attributes:
                 kind = member.constraint_kind or "constraint"
                 text = f"{kind} {member.name}" if member.name else kind
@@ -1886,13 +2109,29 @@ class _StructureBuilder:
                     if len(expr) > 30:
                         expr = expr[:29] + "\u2026"
                     text += f" {{{expr}}}"
-                node.labels.append(_label(text, "sysml-attribute"))
+                row(_CONSTRAINT_SECTIONS[member.constraint_kind], text, member)
             elif member.kind == "subject" and self.show_attributes:
-                node.labels.append(_label(f"subject {_usage_title(member)}", "sysml-attribute"))
+                row("subject", f"subject {_usage_title(member)}", member)
+            elif (
+                self.parts == "rows"
+                and member.kind in _ROW_SECTIONS
+                and (member.name or member.kind not in ("satisfy", "allocation"))
+            ):
+                # the COLLAPSED presentation: the member as a textual
+                # 'name : Type' row in its spec compartment instead of a
+                # drawn nested box (anonymous satisfy/allocate shorthands
+                # keep their keyword-edge form, exactly as under nesting)
+                text = _usage_title(member)
+                if member.is_ref or member.kind == "ref":
+                    text = f"ref {text}"
+                row(_ROW_SECTIONS[member.kind], text, member)
             else:
                 child = self._visit(member)
                 if child is not None:
                     node.children.append(child)
+        for section in sorted(sections, key=lambda name: _SECTION_RANK[name]):
+            node.labels.append(_section_header(section))
+            node.labels.extend(sections[section])
         self._finalize_ports(node)
 
     def _add_package_tab(self, node: Node) -> None:
@@ -3169,6 +3408,12 @@ def on_select(
     """Invoke ``callback`` with the model elements selected in the browser.
 
     Node ids are qualified names, so selections resolve directly.
+    Compartment ROWS carry the same identity (the projected element's
+    qualified name -- an attribute usage, a part usage, a constraint...),
+    so a row click arrives here exactly like a node click; port squares
+    likewise.  Synthetic transport ids (edges, markers) skip resolution
+    -- relationship edges resolve through the widget's ``_lgn_rel_edges``
+    seam instead.
     """
 
     interp = Interpreter(model)

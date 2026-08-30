@@ -604,6 +604,70 @@ class TestRelationshipSelection:
 
 
 # ---------------------------------------------------------------------------
+# compartment rows in the linked views
+# ---------------------------------------------------------------------------
+
+ROWS_MODEL = """
+package Rig {
+    item def Pulse;
+    part def Axle {
+        attribute len : Real = 1.5;
+        port tap : Tap;
+    }
+    port def Tap { in item x : Pulse; }
+    part axle : Axle;
+}
+"""
+
+
+class TestRowSelection:
+    """Compartment rows are first-class linked-view citizens: they carry
+    their element's identity (qualified-name ids, the ipyelk selectable
+    flag), a tree selection highlights the ROW itself -- not just the
+    owning box -- and a row click selects and reveals the element in the
+    tree through the SAME seam as node and edge clicks.  Port squares
+    ride the same contract."""
+
+    @pytest.fixture()
+    def rex(self):
+        return explore(longeron.loads(ROWS_MODEL), layout="inline")
+
+    def test_diagram_ids_include_rows_and_ports(self, rex):
+        rex.select("Rig::Axle")
+        ids = _diagram_node_ids(rex.diagram)
+        assert "Rig::Axle::len" in ids  # the attribute ROW
+        assert "Rig::Axle::tap" in ids  # the boundary port square
+
+    def test_tree_selection_highlights_the_row(self, rex):
+        rex.select("Rig::Axle::len")
+        assert rex.element is rex._index["Rig::Axle::len"]
+        assert tuple(rex.diagram.view.selection.ids) == ("Rig::Axle::len",)
+
+    def test_tree_selection_highlights_the_port_square(self, rex):
+        rex.select("Rig::Axle::tap")
+        assert tuple(rex.diagram.view.selection.ids) == ("Rig::Axle::tap",)
+
+    def test_row_click_selects_and_reveals_the_element(self, rex):
+        rex.select("Rig")
+        widget = rex.diagram
+        widget.view.selection.ids = ["Rig::Axle::len"]  # a browser row click
+        assert rex.element is rex._index["Rig::Axle::len"]
+        assert rex.tree.selected == ["Rig::Axle::len"]
+        assert rex.diagram is widget  # the clicked diagram is NOT rebuilt
+
+    def test_row_click_echo_settles(self, rex):
+        rex.select("Rig")
+        widget = rex.diagram
+        tree_writes: list = []
+        diagram_writes: list = []
+        rex.tree.observe(lambda ch: tree_writes.append(ch["new"]), "selected")
+        widget.view.selection.observe(lambda ch: diagram_writes.append(ch["new"]), "ids")
+        widget.view.selection.ids = ["Rig::Axle::len"]
+        assert tree_writes == [["Rig::Axle::len"]]
+        assert diagram_writes == [("Rig::Axle::len",)]  # only the click itself
+
+
+# ---------------------------------------------------------------------------
 # applicable diagram kinds
 # ---------------------------------------------------------------------------
 
@@ -753,10 +817,13 @@ class TestExplorer:
         assert "DeepScout::FlightStates::flying" in ids  # the whole machine
         assert tuple(ex.diagram.view.selection.ids) == ("DeepScout::FlightStates::idle",)
 
-    def test_undrawn_selection_highlights_nearest_drawn_ancestor(self, ex):
-        # attributes render as compartment rows, not nodes
+    def test_attribute_selection_highlights_its_row(self, ex):
+        # attributes render as compartment ROWS -- first-class selection
+        # targets: the row itself highlights, not just the owning box
+        # (the ancestor fallback for genuinely undrawn elements keeps its
+        # coverage in test_undrawn_relationship_falls_back_to_the_ancestor)
         ex.select("ScoutParts::F450Kit::Battery::capacity")
-        assert tuple(ex.diagram.view.selection.ids) == ("ScoutParts::F450Kit::Battery",)
+        assert tuple(ex.diagram.view.selection.ids) == ("ScoutParts::F450Kit::Battery::capacity",)
 
     def test_diagrams_are_cached_per_scope_and_kind(self, ex):
         ex.select("ScoutParts::F450Kit::Battery")

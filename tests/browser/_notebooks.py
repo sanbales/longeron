@@ -270,6 +270,55 @@ print(json.dumps({
     )
 
 
+def row_selection_notebook() -> dict[str, Any]:
+    """Scenario: compartment rows are first-class selectable elements.
+
+    An INLINE explorer over a model whose ``Winch`` box carries an
+    'attributes' compartment (two rows), plus the sidebar app
+    (``layout="lab"``): the explorer is ADOPTED into the app
+    (``_adopt_into_active_app``), so a row click must flow diagram ->
+    explorer tree -> app inspector seam -> the right-sidebar sheet --
+    the full linked-views path the maintainer asked for.  Names share no
+    substrings ("torque", "inertia", "crane") because Playwright's
+    ``has_text`` is case-insensitive substring matching.
+    """
+
+    return _notebook(
+        '''
+import json
+
+import longeron
+from longeron import app as app_module
+from longeron.explorer import explore
+
+model = longeron.loads("""
+package Gear {
+    part def Winch {
+        attribute torque : Real = 42.0;
+        attribute inertia : Real = 3.5;
+    }
+    part crane : Winch;
+}
+""")
+application = app_module.open(layout="lab")
+ex = explore(model, layout="inline", height="420px")
+ex
+''',
+        """
+print(json.dumps({
+    "selected": list(ex.tree.selected),
+    "element": ex.element.qualified_name if ex.element is not None else None,
+    "diagram_selection": list(ex.diagram.view.selection.ids),
+    "inspector": (
+        application.inspector.element.qualified_name
+        if application.inspector is not None and application.inspector.element is not None
+        else None
+    ),
+}))
+""",
+    )
+
+
 def hbox_fit_notebook() -> dict[str, Any]:
     """Scenario: a plain inline diagram inside a narrow HBox self-fits.
 
@@ -741,6 +790,7 @@ SCENARIO_NOTEBOOKS = {
     "toolbar_scenario.ipynb": toolbar_notebook,
     "label_fit_scenario.ipynb": label_fit_notebook,
     "explorer_scenario.ipynb": explorer_notebook,
+    "row_selection_scenario.ipynb": row_selection_notebook,
     "explorer_dock_scenario.ipynb": explorer_dock_notebook,
     "hbox_fit_scenario.ipynb": hbox_fit_notebook,
     "layout_failure_scenario.ipynb": layout_failure_notebook,
