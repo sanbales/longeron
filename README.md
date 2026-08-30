@@ -487,6 +487,7 @@ This is a modeling sandbox, not a full KerML semantic engine. What executes:
 ## Interactive diagrams
 
 `longeron.diagrams` renders models as interactive ELK diagrams in JupyterLab
+thanks to the [ipyelk](https://github.com/jupyrdf/ipyelk) library
 (see `notebooks/03_views_for_review.ipynb`):
 
 ```python
