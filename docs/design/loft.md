@@ -1,17 +1,33 @@
 # The lofting framework and the multisection wing (design)
 
-> **Status: DRAFT.** Nothing below is implemented. Four commitments
-> arrive settled, and the body states them as commitments, not
-> questions: the generalization itself (a domain-neutral loft
-> framework, with domain content as model libraries); the tier-3
-> posture (a real seam for cited artifacts, with runnable stand-ins:
-> AeroSandbox as the different-physics stand-in, OpenAeroStruct as
-> the binding demo on the existing mdao bridge, and the
-> real-CFD-via-cited-`FileArtifact` rung retained above both); the
-> editor's landing (0.13, beside geometry phases 1-2, with the loft
-> compiler as its rendering engine); and the editor's day-one
-> round-trip through workspace save. The open questions at the end
-> each carry one recommendation.
+> **Status: adopted 2026-08-30.** Nothing below is implemented; this
+> is the contract for the 0.13 arc. Decisions: the profile binding is
+> a TYPED REFERENCE -- a redefinable calc usage on `LoftedBody` that
+> domain bodies redefine, verified in phase A before the vocabulary
+> freezes, with the spike's string spelling surviving only as a
+> documented fallback if redefinition does not validate (Q1); the
+> section stack ships on the instance tuple with the ordered-
+> collection grammar recorded as a candidate for a later language
+> arc -- and the tuple is EXPLICITLY ACCRUED TECH DEBT, named as
+> such here and in the vocabulary's own documentation (Q2); the
+> Profiles and AeroTier1 libraries live in the importable libraries
+> directory, grouped under a loft path beside the Python module --
+> and the WHOLE FRAMEWORK IS A TEARABLE UNIT: one Python module
+> (`longeron.widgets.loft` + the loft library directory + one lazy
+> catalog entry), no tendrils into core modules, removable in one
+> commit if the experiment fails (Q3, maintainer requirement); the
+> PARSEC write-back is flagged with a dedicated `DerivedValue`
+> metadata in the Evidence package (solver name, input hash, solve
+> date) sharing the drift-checking machinery, while `SourceEvidence`
+> keeps meaning 'a document says so' (Q4); profile-parameter
+> binding is body-level in phase A, with section-level overrides
+> verified behind the root-to-tip thickness-ramp acceptance test
+> before the editor un-grays those fields (Q5); the editor enters
+> the catalog as `loft_editor` (home `longeron.widgets.loft`) with
+> the rendering usage `asLoftEditor` in the surfaces vocabulary
+> (Q6); every vocabulary angle attribute carries degree unit
+> brackets from phase A, so editor edits inherit dimension checking
+> through the unit gate (Q7).
 
 Goal: lofted bodies as model content. A multisection wing -- real
 airfoils, taper, twist, dihedral -- is an ordered stack of sections
