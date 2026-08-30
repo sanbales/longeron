@@ -96,6 +96,7 @@ __all__ = [
     "Change",
     "EditError",
     "Tracker",
+    "add_metadata",
     "rename",
     "set_attribute_value",
     "set_doc",
@@ -112,7 +113,7 @@ __all__ = [
 class Change(NamedTuple):
     """One recorded edit: unpacks as ``(op, qname, detail)``."""
 
-    op: str  #: "rename" | "set_value" | "set_doc"
+    op: str  #: "rename" | "set_value" | "set_doc" | "add_metadata"
     qname: str  #: qualified name of the edited element (after the edit)
     detail: dict[str, Any]  #: op-specific payload (old/new values, ...)
 
@@ -1095,6 +1096,61 @@ def _dim_label(table: UnitTable, dim: Dim) -> str:
         if "::" not in key and key[:1].islower() and quantity_dim == dim:
             return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", key).lower()
     return table.format_dim(dim)
+
+
+# ---------------------------------------------------------------------------
+# add_metadata
+# ---------------------------------------------------------------------------
+
+
+def add_metadata(
+    model: M.Model,
+    element_or_qname: M.Element | str,
+    typed_by: str,
+    values: dict[str, Any] | None = None,
+) -> M.MetadataUsage:
+    """Append a metadata annotation (``@TypedBy { key = value; ... }``).
+
+    ``typed_by`` is the annotation's (possibly qualified) metadata
+    definition name; ``values`` maps body member names to literal values
+    (strings, numbers, booleans), each stored as a
+    :class:`~longeron.model.MetadataValue` in the given order.  The
+    usage is *appended* to the target's members -- never inserted -- so
+    existing siblings keep their index-path element ids (the ``set_doc``
+    rule).  Like every operation here, a refusal
+    (:class:`~longeron.errors.EditError`) mutates nothing and records
+    nothing on the tracker.  Returns the new metadata usage.
+    """
+
+    resolver = _resolver(model)
+    target = _target(model, element_or_qname, resolver)
+    if not isinstance(target, M.Namespace):
+        raise EditError(
+            f"{target.qualified_name or target.label!r} is a "
+            f"{type(target).__name__}; only namespaces carry metadata annotations"
+        )
+    if not isinstance(typed_by, str) or not typed_by.strip():
+        raise EditError("typed_by must be a non-empty metadata definition name")
+    usage = M.MetadataUsage(typed_by=typed_by)
+    for key, value in (values or {}).items():
+        if not isinstance(value, (str, bool, int, float)):
+            raise EditError(
+                f"metadata value {key!r} must be a literal "
+                f"(str, bool, int, or float), not {type(value).__name__}"
+            )
+        usage.add(M.MetadataValue(redefines=key, value=M.FeatureValue(expr=A.Literal(value))))
+    target.add(usage)  # APPEND, never insert (index-path id stability)
+    _record(
+        model,
+        "add_metadata",
+        target.qualified_name,
+        {
+            "typed_by": typed_by,
+            "values": dict(values or {}),
+            "tops": _top_indices(model, target),
+        },
+    )
+    return usage
 
 
 # ---------------------------------------------------------------------------

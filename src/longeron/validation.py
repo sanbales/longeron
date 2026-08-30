@@ -242,6 +242,7 @@ def validate(
     stdlib: bool | None = None,
     strict_imports: bool = False,
     strict: bool = False,
+    evidence_coverage: bool = False,
 ) -> list[Diagnostic]:
     """Validate a model; returns diagnostics sorted errors-first.
 
@@ -266,6 +267,16 @@ def validate(
     standard library packages.  Qualified names (``ScalarValues::Real``)
     and explicitly imported names stay silent.
 
+    ``evidence_coverage`` opts into the coverage lint of
+    :mod:`longeron.evidence` (``unevidenced-value``): a warning per
+    stated attribute value that carries no ``SourceEvidence`` citation.
+    Off by default -- most models legitimately carry derived and assumed
+    values, so absence is a report, not a defect (the provenance
+    design's ratified posture).  ``evidence-drift`` needs no flag: when
+    the model carries citations, each one that verifies as drifted or
+    quote-lost warns.  Verification never touches the network here --
+    URL documents check against the local evidence cache only.
+
     Elements inside ``library`` packages are never the subject of
     diagnostics: a merged-in standard library (e.g. via the CLI's
     ``--stdlib``) is resolution context, not the model under validation.
@@ -279,7 +290,13 @@ def validate(
             library = None  # degrade to resolution without the library
     elif stdlib:
         library = stdlib_module.standard_library_model(cache=True)
-    checker = _Checker(model, library=library, strict_imports=strict_imports, strict=strict)
+    checker = _Checker(
+        model,
+        library=library,
+        strict_imports=strict_imports,
+        strict=strict,
+        evidence_coverage=evidence_coverage,
+    )
     checker.check_all()
     if strict:
         for diagnostic in checker.diagnostics:
@@ -296,12 +313,15 @@ class _Checker:
         library: M.Model | None = None,
         strict_imports: bool = False,
         strict: bool = False,
+        evidence_coverage: bool = False,
     ):
         self.model = model
         self.resolver = Resolver(model, library=library)
         self.strict_imports = strict_imports
         self.strict = strict
+        self.evidence_coverage = evidence_coverage
         self._used_implicit = False  # set by _resolves, read right after
+        self._citations: list[M.MetadataUsage] = []  # SourceEvidence usages seen
         self.diagnostics: list[Diagnostic] = []
         self._unit_table: units_module.UnitTable | None = None
         self._meanings: dict[int, _Meaning | None] = {}  # id(usage) -> declared meaning
@@ -325,6 +345,7 @@ class _Checker:
 
     def check_all(self) -> None:
         self._check_tree(self.model)
+        self.check_evidence()
 
     def _check_tree(self, element: M.Element) -> None:
         if isinstance(element, M.Package) and (element.is_library or element.is_standard):
@@ -360,6 +381,10 @@ class _Checker:
             self.check_succession_ends(element)
         if element.metadata or isinstance(element, M.MetadataUsage):
             self.check_metadata_refs(element)
+        if isinstance(element, M.MetadataUsage) and element.typed_by.split("::")[-1] == (
+            "SourceEvidence"
+        ):
+            self._citations.append(element)
         if isinstance(element, M.Import):
             self.check_target(element, element.target, "import")
             self.check_bare_import(element)
@@ -1204,6 +1229,64 @@ class _Checker:
                     f"metadata annotation {ref!r} must reference a metadata "
                     "definition, not a package",
                 )
+
+    # -- evidence (docs/design/provenance.md) ------------------------------------
+
+    def check_evidence(self) -> None:
+        """evidence-drift (always) and unevidenced-value (opt-in).
+
+        ``evidence-drift`` warns when a ``SourceEvidence`` citation exists
+        but :func:`longeron.evidence.verify` says the document drifted
+        (sha256 mismatch) or the quote is lost (hash intact, text no
+        longer contains it).  Verification is offline here
+        (``fetch=False``): URL documents check against the local evidence
+        cache only, and an unreachable or uncached document stays silent
+        -- the lint only speaks when it *knows* the citation broke, the
+        dimensional lint's contract.  Models without citations skip all
+        of this (the evidence module is not even imported).
+
+        ``unevidenced-value`` (``evidence_coverage=True`` /
+        ``--evidence-coverage``) warns per stated attribute value with no
+        citation -- the opt-in posture: coverage is a report, absence is
+        not a defect by default.
+        """
+
+        if not self._citations and not self.evidence_coverage:
+            return
+        from . import evidence
+        from .errors import MissingExtraError
+
+        if self._citations:
+            try:
+                verdicts = evidence.verify(self.model, fetch=False)
+            except (MissingExtraError, OSError):
+                verdicts = []  # cannot read the documents: cannot judge
+            for verdict in verdicts:
+                if verdict.status == "drifted":
+                    self.report(
+                        "warning",
+                        "evidence-drift",
+                        verdict.citation.element,
+                        f"cited document {verdict.citation.document!r} has "
+                        f"drifted: {verdict.detail}",
+                    )
+                elif verdict.status == "lost":
+                    self.report(
+                        "warning",
+                        "evidence-drift",
+                        verdict.citation.element,
+                        f"quote {verdict.citation.quote!r} no longer appears "
+                        f"in {verdict.citation.document!r}",
+                    )
+        if self.evidence_coverage:
+            for fact in evidence.coverage(self.model).facts:
+                if not fact.cited:
+                    self.report(
+                        "warning",
+                        "unevidenced-value",
+                        fact.element,
+                        f"stated value {fact.value} carries no SourceEvidence citation",
+                    )
 
     # -- expressions ------------------------------------------------------------------
 

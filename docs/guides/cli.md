@@ -1,6 +1,6 @@
 # Command-line reference
 
-The package installs one console command, `longeron`. The eight subcommands map onto the
+The package installs one console command, `longeron`. The nine subcommands map onto the
 Python API one-to-one, so anything the command line does, a script can do.
 
 | Subcommand | Does | Python equivalent |
@@ -12,6 +12,7 @@ Python API one-to-one, so anything the command line does, a script can do.
 | [`check`](#longeron-check) | instantiate a `part def` and check its constraints | {meth}`Interpreter.instantiate <longeron.interpreter.Interpreter.instantiate>` + `check` |
 | [`run`](#longeron-run) | execute an `action def` | {meth}`Interpreter.run_action <longeron.interpreter.Interpreter.run_action>` |
 | [`simulate`](#longeron-simulate) | simulate a `state def` | {meth}`Interpreter.simulate <longeron.interpreter.Interpreter.simulate>` |
+| [`evidence`](#longeron-evidence) | verify `SourceEvidence` citations, or set up LFS storage | {func}`~longeron.evidence.verify`, {func}`~longeron.evidence.init_lfs` |
 | [`serve`](#longeron-serve) | serve a workspace over the Systems Modeling API | {func}`~longeron.server.serve` |
 
 ## Model inputs and shared options
@@ -68,6 +69,7 @@ show their traceback.
 | `0` | Success. For `check`: no constraint failed. For `lint`: no error-severity diagnostic. |
 | `1` | `lint` found errors (with `--strict`, resolution warnings count as errors), `check` found a failed constraint, `parse` found no matching files in a directory or any file failed to parse, or an expected failure was reported (`error: ...` on stderr). |
 | `2` | Command-line usage error (reported by argparse). |
+| `N` | `evidence verify` exits with the count of drifted and lost citations. |
 
 ## `longeron parse`
 
@@ -120,6 +122,7 @@ prefix. Pass `--no-cache` to re-parse and get positions back.
 |---|---|
 | `--strict` | Strict mode: unresolved references and the other resolution failures become errors, and a bare `import` (no visibility prefix) warns (`bare-import`). See [the two strict modes](validation.md#the-two-strict-modes). |
 | `--strict-imports` | Additionally warn (`stdlib-implicit-name`) when a bare standard-library name is used without an import. |
+| `--evidence-coverage` | Additionally warn (`unevidenced-value`) on stated attribute values with no `SourceEvidence` citation. `evidence-drift` needs no flag. See the [evidence guide](evidence.md). |
 | `--no-stdlib` | Do not resolve names against the standard library. Every library reference then warns. |
 
 The [Validation guide](validation.md) documents every diagnostic code,
@@ -215,6 +218,44 @@ Events the machine cannot consume are reported on an
 To advance the simulation clock for `accept after`/`accept at` triggers,
 use the Python API, where a plain number in the `events` list advances
 the clock ({meth}`~longeron.interpreter.Interpreter.simulate`).
+
+## `longeron evidence`
+
+`evidence` carries the provenance workflow of the
+[evidence guide](evidence.md), as two sub-commands.
+
+`evidence verify` loads a model (the shared model-input forms and
+`--no-cache`/`--stdlib` apply), re-checks every `SourceEvidence`
+citation, and prints one verdict per citation:
+
+```console
+$ longeron evidence verify examples/deepscout
+status  element                               document                                   detail
+------  ------------------------------------  -----------------------------------------  ------
+intact  ScoutParts::F450Kit::Propeller::mass  https://www.apcprop.com/product/10x4-5mr/
+1 citation(s): 0 drifted or lost
+```
+
+The exit code is the count of drifted and lost citations, so a CI step
+can gate on it directly.
+
+| Option | Effect |
+|---|---|
+| `--no-fetch` | Stay offline: URL documents verify against the local evidence cache only. An uncached URL document reports `unreachable`. |
+
+`evidence init` writes the git-LFS stanza for the `evidence/` directory
+into `.gitattributes` (storage pattern 1: owned documents commit as LFS
+objects). It preserves existing `.gitattributes` content and is
+idempotent.
+
+```console
+$ longeron evidence init
+wrote .gitattributes
+```
+
+| Option | Effect |
+|---|---|
+| `path` | Repository root; defaults to `.`. |
 
 ## `longeron serve`
 

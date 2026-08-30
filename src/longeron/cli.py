@@ -104,6 +104,12 @@ def main(argv=None) -> int:
         help="warn when bare stdlib names are used without an import (stdlib-implicit-name)",
     )
     p.add_argument(
+        "--evidence-coverage",
+        action="store_true",
+        help="warn on stated attribute values with no SourceEvidence citation "
+        "(unevidenced-value; evidence-drift needs no flag)",
+    )
+    p.add_argument(
         "--no-stdlib", action="store_true", help="do not resolve names against the standard library"
     )
 
@@ -125,6 +131,29 @@ def main(argv=None) -> int:
     p = sub.add_parser("simulate", parents=[common], help="simulate a state def")
     p.add_argument("name")
     p.add_argument("--events", help="comma-separated event names", default="")
+
+    p = sub.add_parser(
+        "evidence",
+        help="provenance: set up LFS storage for evidence documents, "
+        "or verify a model's SourceEvidence citations",
+    )
+    esub = p.add_subparsers(dest="evidence_command", required=True)
+    q = esub.add_parser(
+        "init",
+        parents=[flags],
+        help="write the evidence/ git-LFS stanza into .gitattributes",
+    )
+    q.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
+    q = esub.add_parser(
+        "verify",
+        parents=[common],
+        help="re-check every citation; exit code = drifted + lost count",
+    )
+    q.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="stay offline: verify URL documents against the local cache only",
+    )
 
     p = sub.add_parser(
         "serve",
@@ -187,6 +216,12 @@ def _run(ns: argparse.Namespace) -> int:
         serve(ns.path, host=ns.host, port=ns.port)
         return 0
 
+    if ns.command == "evidence" and ns.evidence_command == "init":
+        from .evidence import init_lfs
+
+        print(f"wrote {init_lfs(ns.path)}")
+        return 0
+
     model = load(ns.file, cache=False if ns.no_cache else None)
     if ns.stdlib:
         from .stdlib import add_standard_library
@@ -200,6 +235,7 @@ def _run(ns: argparse.Namespace) -> int:
             stdlib=False if ns.no_stdlib else None,
             strict_imports=ns.strict_imports,
             strict=ns.strict,
+            evidence_coverage=ns.evidence_coverage,
         )
         for diagnostic in diagnostics:
             print(diagnostic)
@@ -207,6 +243,16 @@ def _run(ns: argparse.Namespace) -> int:
         warnings = len(diagnostics) - errors
         print(f"{errors} error(s), {warnings} warning(s)")
         return 1 if errors else 0
+
+    if ns.command == "evidence":  # verify (init returned before the load)
+        from .evidence import format_table, verify
+
+        verdicts = verify(model, fetch=not ns.no_fetch)
+        rows = [(v.status, v.citation.qname, v.citation.document, v.detail) for v in verdicts]
+        print(format_table(("status", "element", "document", "detail"), rows))
+        broken = sum(v.status in ("drifted", "lost") for v in verdicts)
+        print(f"{len(verdicts)} citation(s): {broken} drifted or lost")
+        return broken
 
     if ns.command == "export":
         if ns.format == "api":

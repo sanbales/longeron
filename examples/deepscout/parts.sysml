@@ -22,7 +22,11 @@ package ScoutParts {
            classes (small F450-scale, heavy 6S-scale) plus payloads,
            cargo bays, and structural materials.  Every spec below is a
            NOMINAL manufacturer figure (catalog masses, bench-table
-           thrust points, C-ratings, street prices).  These are teaching
+           thrust points, C-ratings, street prices).  Where a
+           manufacturer page for the exact part is fetchable, the figure
+           carries an Evidence::SourceEvidence citation (URL + sha256 +
+           quote -- longeron.evidence wrote and verified it; see
+           docs/guides/evidence.md).  These are teaching
            examples, not engineering data: real builds vary unit to
            unit, and no number here was measured on these airframes. */
 
@@ -63,7 +67,14 @@ package ScoutParts {
 
                    PropThrust is calibrated to the 100% point; MotorCurrent
                    reproduces the current column within a few percent. */
-            attribute kV : Real = 935.0;             // rpm/V
+            attribute kV : Real = 935.0 {            // rpm/V
+                @Evidence::SourceEvidence {
+                    document = "https://shop.emax-usa.com/products/emx-mt-1534-emax-multicopter-motor-mt2213-with-prop1045-combo-935kv";
+                    sha256 = "5d3d4f09a84de1d3b0685383f01472ab65f10ac5482f1407cde69b5177a49685";
+                    quote = "at 935KV it pairs perfectly with 10x4.5 inch propellers on 3S LiPo";
+                    retrieved = "2026-08-29";
+                }
+            }
             attribute maxCurrent : Real = 12.0 [SI::A];  // full throttle, 10x4.5 prop, 11.1 V
             attribute mass : Real = 0.055 [SI::kg];
             attribute cost : Real = 17.0;            // USD, nominal street price
@@ -72,9 +83,30 @@ package ScoutParts {
         part def Propeller {
             doc /* APC 10x4.5MR, the multi-rotor slow-fly workhorse; discArea
                    is the swept disc. */
-            attribute diameter : Real = 0.254 [SI::m];   // 10 in
-            attribute pitch : Real = 0.1143 [SI::m];     // 4.5 in
-            attribute mass : Real = 0.015 [SI::kg];
+            attribute diameter : Real = 0.254 [SI::m] {   // 10 in
+                @Evidence::SourceEvidence {
+                    document = "https://www.apcprop.com/product/10x4-5mr/";
+                    sha256 = "dcb33746a711fa105695d760db95d3d9e33e4d02bea6af07a386e3f0bb496ada";
+                    quote = "Propeller Diameter (in.) 10";
+                    retrieved = "2026-08-29";
+                }
+            }
+            attribute pitch : Real = 0.1143 [SI::m] {     // 4.5 in
+                @Evidence::SourceEvidence {
+                    document = "https://www.apcprop.com/product/10x4-5mr/";
+                    sha256 = "dcb33746a711fa105695d760db95d3d9e33e4d02bea6af07a386e3f0bb496ada";
+                    quote = "Pitch (inches) 4.5";
+                    retrieved = "2026-08-29";
+                }
+            }
+            attribute mass : Real = 0.015 [SI::kg] {      // 0.53 oz
+                @Evidence::SourceEvidence {
+                    document = "https://www.apcprop.com/product/10x4-5mr/";
+                    sha256 = "dcb33746a711fa105695d760db95d3d9e33e4d02bea6af07a386e3f0bb496ada";
+                    quote = "Product Weight 0.53 oz.";
+                    retrieved = "2026-08-29";
+                }
+            }
             attribute cost : Real = 4.0;                 // USD, nominal street price
             attribute discArea : Real = pi * (diameter / 2.0) ** 2.0;   // m^2
         }
