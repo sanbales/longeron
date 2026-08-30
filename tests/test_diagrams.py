@@ -32,6 +32,17 @@ def _walk(node):
         yield from _walk(child)
 
 
+def _headers(labels):
+    """Compartment header names, twist glyph stripped (the fold
+    affordance rides the header text; see diagrams._section_header)."""
+
+    return [
+        diagrams._section_of(label.text or "")
+        for label in labels
+        if "sysml-comp-label" in (label.properties.cssClasses or "")
+    ]
+
+
 def _assert_adornment_contract(widget):
     """Walk EVERYTHING a built widget emits and assert the node-adornment
     contract (see TestAdornmentContract): every node-attached ICON label
@@ -846,7 +857,8 @@ class TestCompartments:
         _, labels = self._labels(widget, "C::Battery")
         texts = [(label.text, label.properties.cssClasses or "") for label in labels]
         header = next(i for i, (t, c) in enumerate(texts) if "sysml-comp-label" in c)
-        assert texts[header][0] == "attributes"
+        assert diagrams._section_of(texts[header][0]) == "attributes"
+        assert texts[header][0].startswith(diagrams._TWIST_OPEN)  # the fold affordance
         # the header opens the compartment: every row follows it
         assert all("sysml-row" in c for _, c in texts[header + 1 :])
         assert [t for t, _ in texts[header + 1 :]] == [
@@ -878,29 +890,16 @@ class TestCompartments:
     def test_constraint_compartments_group_by_declared_kind(self, model):
         widget = diagrams.structure_diagram(model)
         _, labels = self._labels(widget, "C::Drone")
-        headers = [
-            label.text
-            for label in labels
-            if "sysml-comp-label" in (label.properties.cssClasses or "")
-        ]
+        headers = _headers(labels)
         assert "constraints" in headers
         assert "assert constraints" in headers
         _, env_labels = self._labels(widget, "C::Envelope")
-        env_headers = [
-            label.text
-            for label in env_labels
-            if "sysml-comp-label" in (label.properties.cssClasses or "")
-        ]
-        assert env_headers == ["require constraints", "subject"]
+        assert _headers(env_labels) == ["require constraints", "subject"]
 
     def test_compartments_stack_in_spec_order(self, model):
         widget = diagrams.structure_diagram(model, parts="rows")
         _, labels = self._labels(widget, "C::Drone")
-        headers = [
-            label.text
-            for label in labels
-            if "sysml-comp-label" in (label.properties.cssClasses or "")
-        ]
+        headers = _headers(labels)
         assert headers == ["attributes", "items", "parts", "constraints", "assert constraints"]
 
     def test_parts_rows_is_the_collapsed_presentation(self, model):
@@ -937,12 +936,7 @@ class TestCompartments:
     def test_parameters_compartment_on_calc_boxes(self, drone_model):
         widget = diagrams.structure_diagram(drone_model)
         hover = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::HoverTime")
-        headers = [
-            label.text
-            for label in hover.labels
-            if "sysml-comp-label" in (label.properties.cssClasses or "")
-        ]
-        assert headers == ["parameters"]  # action/calc boxes, printed p.91
+        assert _headers(hover.labels) == ["parameters"]  # action/calc boxes, printed p.91
 
     def test_directed_features_compartment_elsewhere(self):
         model = longeron.loads(
@@ -950,12 +944,7 @@ class TestCompartments:
         )
         widget = diagrams.structure_diagram(model)
         sensor = next(n for n in _walk(widget.source.value) if n.id == "D::Sensor")
-        headers = [
-            label.text
-            for label in sensor.labels
-            if "sysml-comp-label" in (label.properties.cssClasses or "")
-        ]
-        assert headers == ["directed features"]  # printed p.62
+        assert _headers(sensor.labels) == ["directed features"]  # printed p.62
 
     def test_anonymous_rows_draw_but_stay_unselectable(self):
         model = longeron.loads("package A { part def P { constraint { true } } }")
@@ -1011,6 +1000,387 @@ package P {
     }
 }
 """
+
+
+_COLLAPSIBLE = """
+package K {
+    part def Battery;
+    part def Motor;
+    part drone {
+        attribute mass : Real = 2.0;
+        part battery : Battery;
+        part motor : Motor;
+        connect battery to motor;
+    }
+    part gps;
+    connect gps to drone.battery;
+    package Depot {
+        part def Crate;
+        part def Pallet;
+    }
+}
+"""
+
+
+class TestPerNodeCollapse:
+    """Per-node collapse cycles ONE node through the three legal
+    renditions -- expanded nested boxes, partial 'name : Type' rows
+    under the 'parts' header (printed p.60), and the fully collapsed
+    name compartment alone -- with connector edges re-anchoring as proxy
+    dots on the shrunken box (printed p.67), per-compartment folds, and
+    exact round trips back to expanded."""
+
+    @pytest.fixture(scope="class")
+    def model(self):
+        return longeron.loads(_COLLAPSIBLE)
+
+    @staticmethod
+    def _node(widget, node_id):
+        return next(n for n in _walk(widget.source.value) if n.id == node_id)
+
+    @staticmethod
+    def _edges(widget):
+        def _iter(node):
+            yield from node.edges
+            for child in node.children:
+                yield from _iter(child)
+
+        return [
+            e
+            for e in _iter(widget.source.value)
+            if "sysml-packing" not in (e.properties.cssClasses or "")
+        ]
+
+    # -- the partial level: rows under the 'parts' header -------------------
+
+    def test_partial_swaps_children_for_rows(self, model):
+        widget = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
+        drone = self._node(widget, "K::drone")
+        assert drone.children == []  # the boxes left the canvas
+        assert _headers(drone.labels) == ["attributes", "parts"]
+        rows = [
+            label.text
+            for label in drone.labels
+            if "sysml-row" in (label.properties.cssClasses or "")
+        ]
+        assert rows == ["mass : Real = 2.0", "battery : Battery", "motor : Motor"]
+        # rows are first-class selectable projections, exactly like
+        # parts="rows" builds them (same _row_label pipeline)
+        row = next(label for label in drone.labels if label.text == "battery : Battery")
+        assert row.id == "K::drone::battery"
+        assert row.properties.selectable is True
+        # the REST of the diagram keeps nested boxes: only the named node
+        # shrank (gps and the defs are untouched leaves)
+        assert self._node(widget, "K::gps") is not None
+
+    # -- the collapsed level: the name compartment alone ---------------------
+
+    def test_collapsed_is_the_name_compartment_alone(self, model):
+        widget = diagrams.structure_diagram(model, levels={"K::drone": "collapsed"})
+        drone = self._node(widget, "K::drone")
+        assert drone.children == []
+        assert _headers(drone.labels) == []  # no compartment stack at all
+        texts = [label.text for label in drone.labels]
+        assert texts == ["\u00abpart\u00bb", "drone"]  # kind chip + name only
+
+    def test_collapsed_package_is_the_folder_box_alone(self, model):
+        """Packages have no rowable members: their cycle skips 'partial'
+        and 'collapsed' draws the folder box alone (members undrawn) --
+        whatever the membership mode."""
+
+        widget = diagrams.structure_diagram(model, levels={"K::Depot": "collapsed"})
+        depot = self._node(widget, "K::Depot")
+        assert depot.children == []
+        assert all(n.id != "K::Depot::Crate" for n in _walk(widget.source.value))
+        unnested = diagrams.structure_diagram(
+            model, membership="edges", levels={"K::Depot": "collapsed"}
+        )
+        assert all(n.id != "K::Depot::Crate" for n in _walk(unnested.source.value))
+
+    # -- edge re-anchoring ---------------------------------------------------
+
+    def test_boundary_connector_reanchors_as_a_proxy_dot(self, model):
+        """An edge that anchored on an undrawn child re-anchors on the
+        shrunken node itself, as the spec's proxy-connection dot with
+        the residual path label (printed p.67) -- at BOTH shrunken
+        levels."""
+
+        for to in ("partial", "collapsed"):
+            widget = diagrams.structure_diagram(model, levels={"K::drone": to})
+            drone = self._node(widget, "K::drone")
+            proxies = [
+                p for p in drone.ports if "sysml-port-proxy" in (p.properties.cssClasses or "")
+            ]
+            assert [label.text for proxy in proxies for label in proxy.labels] == [".battery"]
+            connects = [
+                e
+                for e in self._edges(widget)
+                if "sysml-edge-connect" in (e.properties.cssClasses or "")
+            ]
+            assert len(connects) == 1  # gps -> drone.battery survived, re-anchored
+            assert connects[0].source.id == "K::gps"
+            assert connects[0].target is proxies[0]
+            # synthetic transport ids are namespaced per collapse STATE, so
+            # a relayout never matches one state's synthetic element with an
+            # unrelated element of the next (sprotty updates match by id)
+            assert str(proxies[0].id).startswith("__lgn__:c")
+
+    def test_internal_connector_is_collapsed_content(self, model):
+        """A connector living ENTIRELY inside the shrunken node (both
+        ends on its children) is part of the collapsed graphical
+        compartment: not drawn, and no orphan proxy dots either."""
+
+        expanded = diagrams.structure_diagram(model)
+        partial = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
+        connect_css = "sysml-edge-connect"
+        assert (
+            len([e for e in self._edges(expanded) if connect_css in e.properties.cssClasses]) == 2
+        )  # battery--motor + gps--drone.battery
+        assert (
+            len([e for e in self._edges(partial) if connect_css in e.properties.cssClasses]) == 1
+        )  # the internal one collapsed away
+        drone = self._node(partial, "K::drone")
+        assert len(drone.ports) == 1  # ONLY the boundary edge's dot; no orphans
+
+    def test_typing_edges_from_undrawn_children_are_not_drawn(self, model):
+        """The specialization/typing family from undrawn children drops
+        with the boxes -- at partial, the rows' ': Type' text carries it,
+        exactly as under the diagram-wide parts="rows"."""
+
+        expanded = diagrams.structure_diagram(model)
+        partial = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
+        typed_css = "sysml-edge-typed"
+        assert any(typed_css in (e.properties.cssClasses or "") for e in self._edges(expanded))
+        assert not any(typed_css in (e.properties.cssClasses or "") for e in self._edges(partial))
+
+    def test_flow_ends_reanchor_on_the_collapsed_node(self):
+        """Flow connections never draw proxy dots (their pins ride the
+        endpoints); a flow end naming an undrawn child re-anchors on
+        the shrunken node itself -- the shallowest drawn ancestor."""
+
+        model = longeron.loads(
+            """
+            package F {
+                part def Pump;
+                part rig {
+                    part pump : Pump;
+                }
+                part tank;
+                flow feed from rig.pump to tank;
+            }
+            """
+        )
+        widget = diagrams.structure_diagram(model, levels={"F::rig": "collapsed"})
+        flows = [
+            e for e in self._edges(widget) if "sysml-edge-flow" in (e.properties.cssClasses or "")
+        ]
+        assert len(flows) == 1
+        assert flows[0].source.id == "F::rig"
+        assert flows[0].target.id == "F::tank"
+
+    # -- per-compartment folds -------------------------------------------------
+
+    def test_fold_drops_rows_and_keeps_the_header(self, model):
+        widget = diagrams.structure_diagram(model)
+        diagrams.fold(widget, "K::drone", "attributes")
+        drone = self._node(widget, "K::drone")
+        texts = [label.text for label in drone.labels]
+        assert f"{diagrams._TWIST_FOLDED} attributes" in texts  # header stays, closed twist
+        assert "mass : Real = 2.0" not in texts  # the rows left
+        assert drone.children  # the node stays at its level
+        # folds compose with levels: fold 'parts' at the partial level
+        diagrams.level(widget, "K::drone", "partial")
+        diagrams.fold(widget, "K::drone", "parts")
+        drone = self._node(widget, "K::drone")
+        texts = [label.text for label in drone.labels]
+        assert f"{diagrams._TWIST_FOLDED} attributes" in texts
+        assert f"{diagrams._TWIST_FOLDED} parts" in texts
+        assert "battery : Battery" not in texts
+
+    def test_headers_carry_the_fold_affordance(self, model):
+        """Headers are presentation, not model elements: the twist rides
+        the header text (both pipelines draw it), the pointer cursor
+        advertises the click, and the header can never enter the
+        selection seam (no qualified-name id, no selectable flag)."""
+
+        widget = diagrams.structure_diagram(model)
+        drone = self._node(widget, "K::drone")
+        header = next(
+            label
+            for label in drone.labels
+            if "sysml-comp-label" in (label.properties.cssClasses or "")
+        )
+        assert (header.text or "").startswith(diagrams._TWIST_OPEN)
+        assert not header.properties.selectable
+        assert str(header.id).startswith("__lgn__:")  # synthetic transport id
+        assert diagrams.SYSML_STYLE[" text.elklabel.sysml-comp-label"]["cursor"] == "pointer"
+
+    def test_fold_click_channel_resolves_headers(self, model):
+        """The browser reports header clicks through the fit sentinel's
+        fold channel (never through selection); the tool resolves the
+        clicked header by its label id -- sprotty DOM ids end with the
+        element id -- and toggles that one compartment."""
+
+        import json as _json
+
+        widget = diagrams.structure_diagram(model)
+        tool = widget.get_tool(diagrams.CollapseTool)
+        header_id, (qname, section) = next(
+            (hid, entry) for hid, entry in tool._headers.items() if entry[0] == "K::drone"
+        )
+        report = _json.dumps({"header": f"sprotty_7_{header_id}", "node": "", "text": "", "n": 1})
+        tool._on_fold_click({"new": report})
+        assert tool.folded == {qname: (section,)}
+        # selection is untouched: the click never reached the seam
+        assert list(widget.view.selection.ids) == []
+        # the SAME header (fresh id after the rebuild) toggles it back
+        header_id = next(hid for hid, entry in tool._headers.items() if entry == (qname, section))
+        report = _json.dumps({"header": f"sprotty_7_{header_id}", "node": "", "text": "", "n": 2})
+        tool._on_fold_click({"new": report})
+        assert tool.folded == {}
+
+    # -- round trips -----------------------------------------------------------
+
+    def test_level_round_trip_is_payload_identical(self, model):
+        """Cycling a node back to expanded restores nested boxes and
+        child-anchored edges EXACTLY: the rebuild goes through the same
+        builder + preparation as the birth tree, so the round-tripped
+        payload is identical."""
+
+        pristine = diagrams.structure_diagram(model).source.value.dict()
+        widget = diagrams.structure_diagram(model)
+        for to in ("partial", "collapsed"):
+            diagrams.level(widget, model.find("K::drone"), to)
+            assert self._node(widget, "K::drone").children == []
+        diagrams.level(widget, "K::drone", "expanded")
+        assert widget.source.value.dict() == pristine
+        # folds round-trip the same way
+        diagrams.fold(widget, "K::drone", "attributes")
+        diagrams.fold(widget, "K::drone", "attributes", folded=False)
+        assert widget.source.value.dict() == pristine
+        # and seeding FROM the constructor equals driving LIVE
+        seeded = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
+        live = diagrams.structure_diagram(model)
+        diagrams.level(live, "K::drone", "partial")
+        assert live.source.value.dict() == seeded.source.value.dict()
+
+    # -- the toolbar button: the cycle -----------------------------------------
+
+    def test_toolbar_button_cycles_the_selected_node(self, model):
+        """The affordance: select a node, click the toolbar's collapse
+        button (the same gesture ipyelk's stock tool used).  Each click
+        is one step less detail -- expanded -> partial -> collapsed --
+        and the click after the smallest form restores everything.  A
+        selected ROW of a shrunken node cycles its owner, and the
+        selection id survives because row and box share the qualified
+        name."""
+
+        widget = diagrams.structure_diagram(model)
+        tool = widget.get_tool(diagrams.CollapseTool)
+        widget.view.selection.ids = ["K::drone"]
+        tool._cycle_selected()
+        assert tool.levels == {"K::drone": "partial"}
+        tool._cycle_selected()
+        assert tool.levels == {"K::drone": "collapsed"}
+        tool._cycle_selected()
+        assert tool.levels == {}
+        assert {c.id for c in self._node(widget, "K::drone").children} == {
+            "K::drone::battery",
+            "K::drone::motor",
+        }
+        # a selected row cycles its owner (partial -> collapsed)
+        tool._cycle_selected()  # -> partial again
+        widget.view.selection.ids = ["K::drone::battery"]
+        tool._cycle_selected()
+        assert tool.levels == {"K::drone": "collapsed"}
+
+    def test_packages_cycle_without_the_partial_level(self, model):
+        widget = diagrams.structure_diagram(model)
+        tool = widget.get_tool(diagrams.CollapseTool)
+        widget.view.selection.ids = ["K::Depot"]
+        tool._cycle_selected()
+        assert tool.levels == {"K::Depot": "collapsed"}
+        tool._cycle_selected()
+        assert tool.levels == {}
+
+    def test_refresh_contract_marks_the_inlet_dirty(self, model):
+        """The collapse tool's refresh path: the rebuilt tree lands on the
+        source, the pipe inlet is marked dirty with the birth flow
+        (MERGED with anything pending), and on_done (Diagram.refresh)
+        runs -- the routing/direction tools' contract."""
+
+        widget = diagrams.structure_diagram(model)
+        tool = widget.get_tool(diagrams.CollapseTool)
+        refreshes = []
+        tool.on_done = lambda: refreshes.append(True)
+        before = widget.source.value
+        tool.levels = {"K::drone": "partial"}
+        assert widget.source.value is not before  # a rebuild, not a mutation
+        assert "new" in widget.pipe.inlet.flow
+        assert refreshes == [True]
+
+    # -- the kernel API ----------------------------------------------------------
+
+    def test_kernel_api_validates(self, model):
+        widget = diagrams.structure_diagram(model)
+        assert diagrams.level(widget, "K::drone") == "expanded"
+        with pytest.raises(ValueError, match="names nothing"):
+            diagrams.level(widget, "K::nope", "partial")
+        with pytest.raises(ValueError, match="collapse level"):
+            diagrams.level(widget, "K::drone", "smaller")
+        with pytest.raises(ValueError, match="unknown compartment"):
+            diagrams.fold(widget, "K::drone", "gadgets")
+        with pytest.raises(ValueError, match="collapse level"):
+            diagrams.structure_diagram(model, levels={"K::drone": "smaller"})
+        machine = diagrams.state_diagram(
+            longeron.loads("package P { state def M { entry; then a; state a; } }").find("P::M")
+        )
+        with pytest.raises(ValueError, match="collapse tool"):
+            diagrams.level(machine, "P::M", "partial")
+
+    # -- composition with the diagram-wide presentations -------------------------
+
+    def test_composes_with_diagram_wide_rows(self, model):
+        """Under parts="rows" every node is already textual: 'partial'
+        changes nothing visible (same nodes, labels and edges --
+        synthetic transport ids differ, they are namespaced per collapse
+        state), the toolbar cycle skips it (expanded -> collapsed ->
+        expanded), and 'collapsed'/folds work unchanged."""
+
+        def signature(widget):
+            return [
+                (
+                    str(n.id),
+                    [label.text for label in n.labels],
+                    [str(c.id) for c in n.children if not str(c.id).startswith("__lgn__:")],
+                )
+                for n in _walk(widget.source.value)
+                if n.id and not str(n.id).startswith("__lgn__:")
+            ]
+
+        rows = diagrams.structure_diagram(model, parts="rows")
+        both = diagrams.structure_diagram(model, parts="rows", levels={"K::drone": "partial"})
+        assert signature(rows) == signature(both)
+        assert len(self._edges(rows)) == len(self._edges(both))
+        tool = rows.get_tool(diagrams.CollapseTool)
+        rows.view.selection.ids = ["K::drone"]
+        tool._cycle_selected()
+        assert tool.levels == {"K::drone": "collapsed"}  # partial skipped
+        tool._cycle_selected()
+        assert tool.levels == {}
+
+    def test_collapse_state_is_presentation_not_a_builder_option(self, model):
+        """Like direction/routing, levels and folds are LIVE presentation:
+        captured off the tool at save time (longeron.views), never baked
+        into the view-state options stamp."""
+
+        widget = diagrams.structure_diagram(
+            model, levels={"K::drone": "partial"}, folded={"K::drone": ["attributes"]}
+        )
+        assert widget._lgn_view_state["options"] == {}
+        tool = widget.get_tool(diagrams.CollapseTool)
+        assert tool.levels == {"K::drone": "partial"}
+        assert tool.folded == {"K::drone": ("attributes",)}
 
 
 class TestPortNotation:

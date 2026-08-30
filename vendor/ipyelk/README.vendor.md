@@ -272,3 +272,49 @@ Local patches are tracked in this repo: `git log -- vendor/ipyelk`.
    label flag already makes them selectable/hoverable first-class
    sprotty elements). Nodes without header labels render byte-identically
    to before.
+14. **Relayout robustness for wholesale tree swaps** (2026-09-01;
+   `js/display_widget.ts` + `src/ipyelk/pipes/marks.py`; bundles rebuilt
+   as in patch 7, node 26.6.0 + jlpm from the longeron pixi env -- only
+   the `elkdisplay` chunk, `remoteEntry` and the labextension
+   `package.json` `_build` pointer changed). Longeron's per-node
+   collapse (`longeron.diagrams.CollapseTool`) REBUILDS the diagram's
+   source tree and re-runs the pipeline with the birth flow; two stock
+   assumptions broke:
+   - **`MarkElementWidget.persist()` self-heals a stale index** (python).
+     The whole pipeline shares ONE `MarkIndex` (every endpoint aliases
+     the source's); `persist()` assumed endpoint values only ever mutate
+     in place and `ElementIndex.update` raised `NotFoundError` on the
+     first id the rebuilt tree introduced (also reachable without
+     longeron: a cancelled run's late browser reply landing a different
+     tree generation than the index was built from). It now rebuilds the
+     index from the current value -- exactly what first use does --
+     instead of erroring the pipeline forever. Test:
+     `tests/pipes/test_persist_selfheal.py`.
+   - **`diagramLayout` re-applies the kernel's live selection** (TS).
+     Every relayout (routing/direction toggles, collapse rebuilds)
+     submits a NEW sprotty model, and stock sprotty transfers no
+     selection state across `UpdateModelAction`s -- the kernel-side
+     selection tool still held its ids while the canvas showed nothing
+     selected. After each `updateLayout`, the view now re-dispatches a
+     `SelectAction` for the selection tool's current ids, filtered to
+     elements that exist in the new model -- which is also what lets a
+     collapsed child's selection survive as its compartment ROW (same
+     qualified-name id, different element kind). The patch-11
+     `pendingSelected` replay (selection BEFORE the first layout) keeps
+     precedence.
+   - **`handle(SelectAction)`'s write-back is generation-guarded** (TS).
+     The write-back of sprotty's selection into the selection tool's
+     `ids` is ASYNC (`getSelection()` resolves one action-queue slot
+     later), so two `SelectAction`s dispatched close together -- the
+     post-relayout re-apply above racing a kernel-driven
+     `updateSelected` -- each read the OTHER action's resulting state
+     and wrote it back, flipping `ids` between the two values forever: a
+     self-sustaining microtask oscillation that pegged the renderer main
+     thread and hung the whole page (observed: the app explorer's
+     relationship-row click landing while the diagram's initial layout
+     settled). A generation stamp now drops every superseded gather;
+     only the LATEST `SelectAction`'s write-back lands, which matches
+     the final sprotty state, so the feedback loop cannot ignite. (The
+     race is latent in stock ipyelk -- two fast clicks could start the
+     same oscillation -- but the relayout re-apply made it reliably
+     reachable.)

@@ -404,15 +404,50 @@ class TestRestoreView:
             model,
             "Rig",
             name="axle structure",
-            options={"direction": "down", "routing": "splines", "collapsed": ["Rig::Axle"]},
+            options={
+                "direction": "down",
+                "routing": "splines",
+                "levels": {"Rig::Axle": "partial"},
+                "folded": {"Rig::Axle": ["parts"]},
+            },
             sidecar=tmp_path,
         )
         widget = views.restore_view(model, "Rig::axle structure", sidecar=tmp_path)
         root = widget.source.value
         assert root.layoutOptions["elk.direction"] == "DOWN"
         assert root.layoutOptions["elk.edgeRouting"] == "SPLINES"
+        # the partial node's parts take the spec's textual presentation --
+        # no drawn child boxes -- and the folded compartment keeps its
+        # header (closed twist) without its rows
         axle = next(n for n in self._walk(root) if n.id == "Rig::Axle")
-        assert axle.children and all(child.properties.hidden for child in axle.children)
+        assert axle.children == []
+        texts = [label.text for label in axle.labels]
+        assert "\u25b8 parts" in texts
+        assert "hub : Hub [2]" not in texts
+        # and the widget's collapse tool is seeded, so a re-save captures it
+        from longeron.diagrams import CollapseTool
+
+        tool = widget.get_tool(CollapseTool)
+        assert tool.levels == {"Rig::Axle": "partial"}
+        assert tool.folded == {"Rig::Axle": ("parts",)}
+
+    def test_legacy_collapsed_list_maps_to_the_smallest_rendition(self, tmp_path):
+        """Old sidecars wrote a flat 'collapsed' list (the stock tool's
+        hidden-children state): structure restores map it to level
+        'collapsed' -- the name compartment alone."""
+
+        model = rig_model()
+        views.save_view(
+            model,
+            "Rig",
+            name="legacy",
+            options={"collapsed": ["Rig::Axle"]},
+            sidecar=tmp_path,
+        )
+        widget = views.restore_view(model, "Rig::legacy", sidecar=tmp_path)
+        axle = next(n for n in self._walk(widget.source.value) if n.id == "Rig::Axle")
+        assert axle.children == []
+        assert [label.text for label in axle.labels] == ["\u00abpart def\u00bb", "Axle"]
 
     def _walk(self, node):
         yield node
@@ -521,3 +556,28 @@ class TestRestoreView:
         assert entry["direction"] == "down"
         restored = views.restore_view(model, "Rig::axle structure", sidecar=tmp_path)
         assert restored.source.value.layoutOptions["elk.direction"] == "DOWN"
+
+    def test_live_collapse_round_trips_through_save(self, tmp_path):
+        """Collapse state is LIVE presentation like direction/routing:
+        toggled after construction (the toolbar button / kernel API), it
+        is captured off the widget's collapse tool at save time and
+        re-applied through the builder on restore."""
+
+        from longeron import diagrams
+
+        model = rig_model()
+        widget = diagrams.structure_diagram(model.find("Rig"))
+        diagrams.level(widget, "Rig::Axle", "partial")
+        diagrams.fold(widget, "Rig::Axle", "parts")
+        assert views.capture_presentation(widget) == {
+            "levels": {"Rig::Axle": "partial"},
+            "folded": {"Rig::Axle": ["parts"]},
+        }
+        views.save_view(model, widget, name="axle structure", sidecar=tmp_path)
+        entry = views.load_sidecar(tmp_path)["Rig::axle structure"]
+        assert entry["levels"] == {"Rig::Axle": "partial"}
+        assert entry["folded"] == {"Rig::Axle": ["parts"]}
+        restored = views.restore_view(model, "Rig::axle structure", sidecar=tmp_path)
+        axle = next(n for n in self._walk(restored.source.value) if n.id == "Rig::Axle")
+        assert axle.children == []
+        assert "\u25b8 parts" in [label.text for label in axle.labels]

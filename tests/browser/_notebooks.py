@@ -785,8 +785,76 @@ print(
     )
 
 
+def collapse_notebook() -> dict[str, Any]:
+    """Scenario: per-node collapse levels + per-compartment folds.
+
+    A REAL DeepScout wiring scope (MultiRotor + QuadCopter, the
+    requirements-view synthetic-package idiom, so qualified names stay
+    real): QuadCopter draws nested part boxes and the phaseLeads
+    connection crosses into its ``motors`` child.  The toolbar's
+    collapse button must CYCLE the selected node -- nested boxes ->
+    'name : Type' rows under the 'parts' header -> the name compartment
+    alone -> back -- re-anchoring phaseLeads as a proxy dot on the box
+    (spec printed pp.60/67), and each compartment header's twist must
+    fold that ONE compartment without ever touching the selection seam.
+    Cells 1/2 are kernel drivers (the level() API) the test runs on
+    demand; they stay DORMANT during run-all (the arming cell runs last)
+    so birth is one clean pipeline run.  The checker reports the tool
+    traits, the live selection, the on_select event count (seam
+    discipline), and the pipeline's error state.  (The payload
+    round-trip proof is kernel-tier: tests/test_diagrams.py
+    TestPerNodeCollapse.)
+    """
+
+    return _notebook(
+        """
+import json
+
+import longeron
+from longeron import diagrams
+from longeron import model as M
+
+model = longeron.load("examples/deepscout")
+scope = M.Package(name="wiring")
+scope.members = [model.find("DeepScout::MultiRotor"), model.find("Rotorcraft::QuadCopter")]
+root = M.Model(source_name="wiring view")
+root.add(scope)
+
+widget = diagrams.structure_diagram(root, height="640px")
+tool = widget.get_tool(diagrams.CollapseTool)
+selections = []
+diagrams.on_select(widget, root, selections.append)
+widget
+""",
+        """
+if "_armed" in globals():
+    diagrams.level(widget, "Rotorcraft::QuadCopter", "partial")
+print("partial")
+""",
+        """
+if "_armed" in globals():
+    diagrams.level(widget, "Rotorcraft::QuadCopter", "expanded")
+print("expanded")
+""",
+        """
+_armed = True  # run-all leaves the drivers dormant; the test arms them
+print("armed")
+""",
+        """
+print(json.dumps({
+    "levels": dict(tool.levels),
+    "folded": {q: list(s) for q, s in tool.folded.items()},
+    "selection": list(widget.view.selection.ids),
+    "select_events": len(selections),
+    "pipe_error": str(widget.pipe.status.exception) if widget.pipe.status.exception else None,
+}))
+""",
+    )
+
+
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
+    "collapse_scenario.ipynb": collapse_notebook,
     "toolbar_scenario.ipynb": toolbar_notebook,
     "label_fit_scenario.ipynb": label_fit_notebook,
     "explorer_scenario.ipynb": explorer_notebook,

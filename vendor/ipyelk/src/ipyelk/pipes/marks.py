@@ -14,6 +14,7 @@ from ..elements import (
     Registry,
     elk_serialization,
 )
+from ..exceptions import NotFoundError
 
 
 class MarkIndex(W.DOMWidget):
@@ -52,7 +53,17 @@ class MarkElementWidget(W.DOMWidget):
         if self.index.elements is None:
             self.build_index()
         else:
-            self.index.elements.update(ElementIndex.from_els(self.value))
+            try:
+                self.index.elements.update(ElementIndex.from_els(self.value))
+            except NotFoundError:
+                # LOCAL PATCH 14 (sysml2-experiments): an endpoint whose VALUE
+                # was replaced wholesale (longeron's per-node collapse rebuilds
+                # the whole source tree; a cancelled run's late browser reply
+                # can also land a different tree generation than the one the
+                # pipeline's shared index was built from) must not crash the
+                # pipeline over the stale index -- rebuild it from the current
+                # value instead, exactly what first use does.
+                self.build_index()
         return self
 
     def build_index(self) -> MarkIndex:

@@ -123,6 +123,10 @@ export class ELKViewerView extends DOMWidgetView {
   // submitted (no sprotty model/index exists yet); replayed by
   // diagramLayout after the first submit
   pendingSelected: string[] | null = null;
+  // LOCAL PATCH 14 (sysml2-experiments): generation stamp for the async
+  // selection write-back in handle(SelectAction) -- superseded gathers
+  // are dropped so racing SelectActions cannot oscillate (see handle)
+  selectionWriteBackGen = 0;
   // LOCAL PATCH (sysml2-experiments): delay (ms) before the next
   // stale-state check; doubles per silent retry up to a 10s cap
   private staleDelay = 2000;
@@ -305,7 +309,22 @@ export class ELKViewerView extends DOMWidgetView {
   handle(action: Action) {
     switch (action.kind) {
       case SelectAction.KIND:
+        // LOCAL PATCH 14 (sysml2-experiments): the selection write-back
+        // below is ASYNC (getSelection resolves one action-queue slot
+        // later), so two SelectActions dispatched close together -- e.g.
+        // the post-relayout re-apply in diagramLayout racing a
+        // kernel-driven updateSelected -- each read the OTHER action's
+        // resulting state and wrote it back, flipping `ids` forever: a
+        // self-sustaining microtask oscillation that pegged the renderer
+        // main thread (observed: kernel edge-select landing during an
+        // explorer relayout).  The generation stamp drops every
+        // superseded gather; only the LATEST SelectAction's write-back
+        // lands, which by construction matches the final sprotty state.
+        const writeBackGen = ++this.selectionWriteBackGen;
         this.source.getSelection().then((selection) => {
+          if (writeBackGen !== this.selectionWriteBackGen) {
+            return; // a newer SelectAction superseded this gather
+          }
           let ids = [];
           let nodes = [];
           selection.forEach((node, i) => {
@@ -443,6 +462,28 @@ export class ELKViewerView extends DOMWidgetView {
         }),
       );
       this.setSelectedNodes(selected);
+    } else {
+      // LOCAL PATCH 14 (sysml2-experiments): every relayout (routing /
+      // direction toggles, longeron's per-node collapse rebuilds) submits
+      // a NEW sprotty model, and stock sprotty transfers no selection
+      // state across updates -- the kernel-side selection silently
+      // vanished from the canvas.  Re-apply the selection tool's live ids
+      // to whatever elements still exist in the new model (a collapsed
+      // child's id may now name its compartment ROW: same qualified name,
+      // different element kind -- exactly the transfer longeron's
+      // collapse levels rely on).
+      const selection = this.model.get('selection');
+      const ids: string[] = selection != null ? selection.get('ids') || [] : [];
+      const present = ids.filter((id) => this.source.getById(id) != null);
+      if (present.length) {
+        await this.actionDispatcher.dispatch(
+          SelectAction.create({
+            selectedElementsIDs: present,
+            deselectedElementsIDs: [],
+          }),
+        );
+        this.setSelectedNodes(present);
+      }
     }
     this.model.layoutUpdated.emit();
     this.model.diagramUpdated.emit();

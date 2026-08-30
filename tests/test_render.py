@@ -891,7 +891,9 @@ package C {
 
     def test_headers_render_italic_and_centered(self, model):
         svg = render.to_svg(diagrams.structure_diagram(model))
-        header = next(t for t in svg.split("<text ")[1:] if ">attributes<" in t)
+        header = next(
+            t for t in svg.split("<text ")[1:] if f">{diagrams._TWIST_OPEN} attributes<" in t
+        )
         head = header.split(">")[0]
         assert 'font-style="italic"' in head
         assert 'text-anchor="middle"' in head
@@ -912,7 +914,7 @@ package C {
         assert 'data-qname="C::Drone::battery"' in row.split(">")[0]
         # the collapsed presentation draws no nested battery box
         assert '<rect data-qname="C::Drone::battery"' not in svg
-        assert ">parts<" in svg  # the compartment header
+        assert f">{diagrams._TWIST_OPEN} parts<" in svg  # the compartment header (open twist)
 
 
 class TestTranche3Svg:

@@ -58,7 +58,15 @@ orientation button that toggles the layout flow left-to-right /
 top-to-bottom (the ``direction=`` kwarg seeds it), plus
 a live search box that
 highlights matching elements without touching the selection; pass
-``toolbar=False`` to keep ipyelk's stock text buttons.  Every widget
+``toolbar=False`` to keep ipyelk's stock text buttons.  On STRUCTURE
+views the collapse button CYCLES the selected node through the three
+legal renditions -- nested child boxes, textual ``name : Type`` rows
+under the 'parts' compartment header, and the name compartment alone --
+while every compartment header carries its own fold twist (click the
+header row to fold that one compartment); the :func:`level` /
+:func:`fold` kernel API mirrors both (see :class:`CollapseTool`;
+state/action views keep ipyelk's stock hide-the-children collapse).
+Every widget
 (with or without the compact toolbar) fits-and-centers itself ONCE when
 its first layout arrives -- a small margin, never zoomed past 1:1 --
 and later relayouts keep the user's viewport
@@ -80,19 +88,29 @@ its id, and clicks on it flow through the SAME selection seam as node and
 edge clicks.  Structure boxes group their rows into the spec's labeled
 compartments -- separator rule + italic name ('attributes', 'parts', ...)
 per 8.2.3.6 (printed p.199) -- and ``structure_diagram(parts="rows")``
-swaps nested part boxes for the spec's collapsed textual presentation.
+swaps nested part boxes for the spec's collapsed textual presentation;
+the same swap is available PER NODE, interactively (the toolbar's
+collapse button cycles a selected box through expanded / partial /
+name-only renditions; header twists fold single compartments) and from
+the kernel (:func:`level` / :func:`fold`, or ``structure_diagram(
+levels=..., folded=...)``), with connector edges re-anchoring on the
+shrunken box as the spec's proxy dots (printed p.67).
 """
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import json
 import math
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 try:
     import ipyelk
+    import ipywidgets as W
+    import traitlets as T
     from ipyelk.contrib.molds.connectors import Rhomb
     from ipyelk.elements import (
         Edge,
@@ -108,6 +126,8 @@ try:
     from ipyelk.elements.elements import ElementMetadata
     from ipyelk.elements.shapes import SVG, Diamond, Icon, Path, Point, PortShape
     from ipyelk.elements.symbol import EndpointSymbol, Symbol, SymbolSpec
+    from ipyelk.pipes import flows as F
+    from ipyelk.tools import ToggleCollapsedTool, Tool
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
@@ -170,12 +190,15 @@ from .render import (
     _note_path_d,
     _port_arrow_d,
 )
-from .toolbar import AutoFitTool, apply_direction, apply_routing, upgrade_toolbar
+from .toolbar import AutoFitTool, _iconify, apply_direction, apply_routing, upgrade_toolbar
 
 __all__ = [
     "SYSML_STYLE",
+    "CollapseTool",
     "action_diagram",
     "diagram",
+    "fold",
+    "level",
     "on_select",
     "state_diagram",
     "structure_diagram",
@@ -258,16 +281,64 @@ _SECTION_ORDER = (
 
 _SECTION_RANK = {name: rank for rank, name in enumerate(_SECTION_ORDER)}
 
+#: the compartment-header twist glyphs (the explorer tree's twist
+#: precedent): every header row opens with its fold affordance -- open
+#: twist while the rows follow, closed twist while the compartment is
+#: folded to its header alone.  Part of the header TEXT, so both
+#: pipelines measure and draw it identically.
+_TWIST_OPEN = "\u25be"
+_TWIST_FOLDED = "\u25b8"
 
-def _section_header(section: str) -> Label:
+#: the three per-node collapse levels, in cycling order (each toolbar
+#: click REDUCES detail one step, then wraps back to full): nested child
+#: boxes -> textual rows -> the name compartment alone
+_LEVELS = ("expanded", "partial", "collapsed")
+
+
+def _section_of(header_text: str) -> str:
+    """The compartment name behind a header label's text (strip the
+    twist glyph the fold affordance prepends)."""
+
+    return header_text[2:] if header_text[:1] in (_TWIST_OPEN, _TWIST_FOLDED) else header_text
+
+
+def _collapsible(element: M.Element) -> bool:
+    """Whether per-node collapse would ROW anything on this element: it
+    owns members the collapsed presentation draws as textual rows (the
+    :data:`_ROW_SECTIONS` kinds; anonymous satisfy/allocate shorthands
+    keep their keyword-edge form).  Anything else -- packages above all
+    -- collapses by the legacy hidden-children presentation instead
+    (see :class:`PartsCollapseTool`)."""
+
+    if not isinstance(element, (M.Definition, M.Usage)):
+        return False
+    return any(
+        isinstance(member, M.Usage)
+        and member.kind in _ROW_SECTIONS
+        and (member.name or member.kind not in ("satisfy", "allocation"))
+        for member in element.members
+    )
+
+
+def _section_header(section: str, folded: bool = False) -> Label:
     """A compartment header label: the spec writes the compartment name in
     italics, centered, right under the separator rule (8.2.3.6 printed
     p.199).  Snug (never pre-sized), so both pipelines center it; the
     separator rule itself is drawn from this label's position -- by the
     headless SVG writer and by the vendored browser node view (LOCAL
-    PATCH 13), keyed on the ``sysml-comp-label`` class."""
+    PATCH 13), keyed on the ``sysml-comp-label`` class.
 
-    return _label(section, "sysml-comp-label")
+    The header opens with its FOLD affordance, the explorer tree's twist
+    (open ``\u25be`` while the rows follow, closed ``\u25b8`` while the
+    compartment is folded to its header alone); clicking the header row
+    in the browser toggles the fold (:class:`CollapseTool`).  Headers
+    are PRESENTATION artifacts, not model elements: they carry no
+    qualified name and no ``selectable`` flag, so a header click can
+    never enter the model-selection seam (the anonymous-row precedent).
+    """
+
+    twist = _TWIST_FOLDED if folded else _TWIST_OPEN
+    return _label(f"{twist} {section}", "sysml-comp-label")
 
 
 def _row_label(text: str, element: M.Element) -> Label:
@@ -541,6 +612,12 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     style[" text.elklabel.sysml-row.mouseover"] = {"fill": hover}
     style[" text.elklabel.sysml-row.selected"] = {"fill": selected}
     style[" text.elklabel.sysml-row.selected.mouseover"] = {"fill": hover_selected}
+    # compartment HEADERS are the fold affordance (CollapseTool): the
+    # pointer cursor advertises the click; the click itself is consumed
+    # before sprotty ever sees it (the fit sentinel's fold channel), so
+    # headers never hover/select -- they are presentation, not elements.
+    # MERGED into the per-kind typography rule built above (same key).
+    style[" text.elklabel.sysml-comp-label"]["cursor"] = "pointer"
     # -- compartment separator rules (spec 8.2.3.6 printed p.199) ----------
     # The vendored node view (LOCAL PATCH 13) draws one full-width <path
     # class="sysml-comp-rule"> per compartment header label, a sibling of
@@ -1464,7 +1541,7 @@ def _symbols() -> SymbolSpec:
     )
 
 
-def _assign_ids(root: Node) -> None:
+def _assign_ids(root: Node, salt: str = "") -> None:
     """Stamp a stable synthetic id on every element without one.
 
     The ipyelk browser transport serializes ``element.id`` verbatim: an
@@ -1484,14 +1561,25 @@ def _assign_ids(root: Node) -> None:
     toolbar search, ``on_select`` resolution) all skip.  Idempotent:
     re-running on a stamped tree changes nothing, and positions are
     stable because every element is counted whether stamped or not.
+
+    ``salt`` (the per-node collapse machinery passes a digest of the
+    collapsed set) namespaces the synthetic ids per TREE STATE: sprotty's
+    update animation matches elements by id across relayouts, and a
+    recycled DFS position would pair one state's edge with an unrelated
+    element of the next -- garbage morphs.  Distinct states never share
+    synthetic ids; the SAME state (the empty salt above all, so a
+    collapse round trip ends byte-identical to birth) always regenerates
+    the same ids.  Salted ids still carry :data:`_SYNTH_ID_PREFIX`, so
+    every consumer skip-rule keeps working.
     """
 
     counter = itertools.count()
+    prefix = f"{_SYNTH_ID_PREFIX}{salt}:" if salt else _SYNTH_ID_PREFIX
 
     def visit(element: Any) -> None:
         position = next(counter)
         if element.id is None:
-            element.id = f"{_SYNTH_ID_PREFIX}{position}"
+            element.id = f"{prefix}{position}"
         for label in element.labels or []:
             visit(label)
         for port in getattr(element, "ports", None) or []:
@@ -1504,15 +1592,35 @@ def _assign_ids(root: Node) -> None:
     visit(root)
 
 
-def _finish(
+def _collapse_salt(levels: Mapping[str, str], folded: Mapping[str, tuple[str, ...]]) -> str:
+    """The synthetic-id namespace for one collapse state (see
+    :func:`_assign_ids`): empty for the expanded default -- birth trees
+    and round-tripped-back-to-expanded trees share ids byte for byte --
+    and a short stable digest of the levels + folds otherwise."""
+
+    if not levels and not folded:
+        return ""
+    lines = [f"{qname}={level}" for qname, level in sorted(levels.items())]
+    lines += [
+        f"{qname}#{section}" for qname, sections in sorted(folded.items()) for section in sections
+    ]
+    digest = hashlib.sha1("\n".join(lines).encode("utf-8")).hexdigest()
+    return f"c{digest[:8]}"
+
+
+def _prepare_root(
     root: Node,
-    style: dict | None = None,
-    direction: str = "RIGHT",
-    toolbar: bool = True,
+    *,
     layout: dict[str, str] | None = None,
     routing: str = "orthogonal",
-    height: str | None = None,
-) -> Any:
+    direction: str = "RIGHT",
+    id_salt: str = "",
+) -> None:
+    """Make a built element tree transport-ready: the shared tail of
+    :func:`_finish` and the per-node collapse rebuilds
+    (:meth:`PartsCollapseTool.apply`), so a rebuilt tree goes through
+    EXACTLY the birth tree's preparation."""
+
     root.layoutOptions = dict(_ROOT_LAYOUT)
     if layout:
         root.layoutOptions.update(layout)
@@ -1539,7 +1647,20 @@ def _finish(
     apply_direction(root, direction)
     # every element ships to the browser with a REAL id (null ids kill the
     # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
-    _assign_ids(root)
+    _assign_ids(root, salt=id_salt)
+
+
+def _finish(
+    root: Node,
+    style: dict | None = None,
+    direction: str = "RIGHT",
+    toolbar: bool = True,
+    layout: dict[str, str] | None = None,
+    routing: str = "orthogonal",
+    height: str | None = None,
+    id_salt: str = "",
+) -> Any:
+    _prepare_root(root, layout=layout, routing=routing, direction=direction, id_salt=id_salt)
     result = ipyelk.from_element(root)
     # browser-roundtrip budget: ipyelk's 30s pipe default classifies a slow
     # machine (a loaded, shared CI runner rendering two dozen diagrams
@@ -1625,6 +1746,8 @@ def structure_diagram(
     annotations: bool = False,
     actor_style: str = "figure",
     parts: str = "nested",
+    levels: Mapping[str, str] | None = None,
+    folded: Mapping[str, Iterable[str]] | None = None,
     toolbar: bool = True,
     routing: str = "orthogonal",
     direction: str = "right",
@@ -1702,6 +1825,43 @@ def structure_diagram(
     that would anchor on the collapsed children are not drawn -- the
     textual presentation trades them for compactness.
 
+    ``levels`` names individual nodes (qualified names, or elements ->
+    ``"partial"`` / ``"collapsed"``) whose rendition starts below the
+    expanded default -- the state behind the toolbar's collapse button
+    (which CYCLES the selected node: expanded -> partial -> collapsed ->
+    expanded, each click one step less detail) and the :func:`level`
+    kernel API (see :class:`CollapseTool`).  ``"partial"`` is the
+    per-node version of ``parts="rows"``: the node's rowable members
+    become textual rows.  ``"collapsed"`` is the smallest legal
+    rendition: the name compartment alone -- kind chip + name, no
+    compartment stack, no drawn children (boundary port squares stay:
+    they are border interface points, the classic black-box view); a
+    collapsed PACKAGE likewise draws its folder box alone, whatever the
+    ``membership`` mode.  ``folded`` names per-node FOLDED compartments
+    (qualified name -> compartment names): a folded compartment keeps
+    its header -- with the closed twist -- and drops its rows while the
+    node stays at its level (the header row's click affordance in the
+    browser; the :func:`fold` kernel API).
+
+    How collapse composes, level x presentation:
+
+    * edges -- connector-family edges (connections, bindings,
+      interfaces, flows, allocates) that anchored on a shrunken node's
+      children re-anchor as the spec's proxy dots on the node itself
+      (printed p.67) at BOTH shrunken levels; connectors living entirely
+      inside one shrunken node are part of the collapsed content and are
+      not drawn; the specialization/typing family from undrawn children
+      is not drawn (at partial, the rows' ``: Type`` text carries it) --
+      all exactly as under the diagram-wide ``parts="rows"``;
+    * ``parts="rows"`` -- every node is already textual, so
+      ``"partial"`` changes nothing there and the toolbar cycle skips it
+      (expanded -> collapsed -> expanded); ``"collapsed"`` and ``folded``
+      work unchanged;
+    * folds -- independent of the level: they apply to whatever
+      compartments the node currently shows (attributes at expanded,
+      parts rows at partial, none at collapsed) and are remembered
+      through level changes.
+
     ``toolbar=False`` keeps ipyelk's stock text-button toolbar instead of
     the compact icon+search one (:mod:`longeron.toolbar`).
 
@@ -1726,31 +1886,38 @@ def structure_diagram(
     below that floor.
     """
 
-    if max_label_width is not None and max_label_width <= 0:
-        raise ValueError(f"max_label_width must be positive or None, not {max_label_width!r}")
-    if membership not in ("nested", "edges"):
-        raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
-    if actor_style not in ("figure", "box"):
-        raise ValueError(f"actor_style must be 'figure' or 'box', not {actor_style!r}")
-    if parts not in ("nested", "rows"):
-        raise ValueError(f"parts must be 'nested' or 'rows', not {parts!r}")
-    builder = _StructureBuilder(
+    levels_map = {
+        str(getattr(name, "qualified_name", None) or name): str(value)
+        for name, value in (levels or {}).items()
+    }
+    for value in levels_map.values():
+        if value not in _LEVELS:
+            choices = ", ".join(_LEVELS)
+            raise ValueError(f"a collapse level must be one of {choices}; not {value!r}")
+    levels_map = dict(sorted((q, v) for q, v in levels_map.items() if v != "expanded"))
+    folded_map = dict(
+        sorted(
+            (
+                str(getattr(name, "qualified_name", None) or name),
+                tuple(sorted({str(section) for section in sections})),
+            )
+            for name, sections in (folded or {}).items()
+            if tuple(sections)
+        )
+    )
+    root, builder = _build_structure_root(
         element,
-        show_attributes,
+        show_attributes=show_attributes,
+        show_relationships=show_relationships,
         composition=composition,
         membership=membership,
+        annotations=annotations,
         actor_style=actor_style,
         parts=parts,
+        levels=levels_map,
+        folded=folded_map,
+        max_label_width=max_label_width,
     )
-    root = builder.build()
-    if show_relationships:
-        builder.add_relationship_edges(root)
-    if annotations:
-        builder.add_annotations(root)
-    builder.pack_components(root)
-    if max_label_width is not None:
-        _ellipsize_rows(root, max_label_width)
-    _size_compartment_rows(root)
     # the sidecar tier persists only DEVIATIONS from these defaults
     options: dict[str, Any] = {}
     if not show_attributes:
@@ -1769,14 +1936,6 @@ def structure_diagram(
         options["parts"] = parts
     if max_label_width != _MAX_LABEL_WIDTH:
         options["max_label_width"] = max_label_width
-    # package tabs ride flush with the box top (outside icon labels; the
-    # spacing option applies per hierarchy level, so EVERY container
-    # restates it -- pack_components wraps loose packages in synthetic
-    # groups, and a package behind such a group otherwise fell back to
-    # the elkjs default 5px: the tab floated off its box)
-    for node in _walk_nodes(root):
-        if node.children:
-            node.layoutOptions.setdefault("elk.spacing.labelNode", "0")
     widget = _finish(
         root,
         toolbar=toolbar,
@@ -1784,6 +1943,7 @@ def structure_diagram(
         routing=routing,
         direction=direction,
         height=height,
+        id_salt=_collapse_salt(levels_map, folded_map),
     )
     # relationship edges carry SYNTHETIC transport ids (_assign_ids ran in
     # _finish); this kernel-side seam maps them back to the model elements
@@ -1793,7 +1953,92 @@ def structure_diagram(
     widget._lgn_rel_edges = {
         str(edge.id): rel for edge, rel in builder.rel_edges if edge.id is not None
     }
-    return _stamp_view_state(widget, element, "structure", options)
+    _stamp_view_state(widget, element, "structure", options)
+    # per-node collapse: the toolbar's collapse button, the browser's
+    # header-fold clicks, and the level()/fold() kernel API all drive
+    # rebuilds through this tool, which replays the FULL resolved builder
+    # options with the live levels/folds
+    _install_collapse_tool(
+        widget,
+        CollapseTool(
+            widget,
+            element=element,
+            options={
+                "show_attributes": show_attributes,
+                "show_relationships": show_relationships,
+                "composition": composition,
+                "membership": membership,
+                "annotations": annotations,
+                "actor_style": actor_style,
+                "parts": parts,
+                "max_label_width": max_label_width,
+            },
+            builder=builder,
+            selection=widget.view.selection,
+            levels=levels_map,
+            folded=folded_map,
+        ),
+        compact=toolbar,
+    )
+    return widget
+
+
+def _build_structure_root(
+    element: M.Model | M.Namespace,
+    *,
+    show_attributes: bool = True,
+    show_relationships: bool = True,
+    composition: str = "defs",
+    membership: str = "nested",
+    annotations: bool = False,
+    actor_style: str = "figure",
+    parts: str = "nested",
+    levels: Mapping[str, str] | None = None,
+    folded: Mapping[str, tuple[str, ...]] | None = None,
+    max_label_width: float | None = _MAX_LABEL_WIDTH,
+) -> tuple[Node, _StructureBuilder]:
+    """Build a structure view's element tree: the shared front of
+    :func:`structure_diagram` and the per-node collapse rebuilds
+    (:meth:`CollapseTool.apply`), so a rebuilt tree is BY CONSTRUCTION
+    the tree the builder would have produced at birth -- cycling a node
+    back to expanded round-trips to a payload-identical tree."""
+
+    if max_label_width is not None and max_label_width <= 0:
+        raise ValueError(f"max_label_width must be positive or None, not {max_label_width!r}")
+    if membership not in ("nested", "edges"):
+        raise ValueError(f"membership must be 'nested' or 'edges', not {membership!r}")
+    if actor_style not in ("figure", "box"):
+        raise ValueError(f"actor_style must be 'figure' or 'box', not {actor_style!r}")
+    if parts not in ("nested", "rows"):
+        raise ValueError(f"parts must be 'nested' or 'rows', not {parts!r}")
+    builder = _StructureBuilder(
+        element,
+        show_attributes,
+        composition=composition,
+        membership=membership,
+        actor_style=actor_style,
+        parts=parts,
+        levels=levels or {},
+        folded=folded or {},
+    )
+    root = builder.build()
+    if show_relationships:
+        builder.add_relationship_edges(root)
+    if annotations:
+        builder.add_annotations(root)
+    builder.pack_components(root)
+    if max_label_width is not None:
+        _ellipsize_rows(root, max_label_width)
+    _size_compartment_rows(root)
+    # package tabs ride flush with the box top (outside icon labels; the
+    # spacing option applies per hierarchy level, so EVERY container
+    # restates it -- pack_components wraps loose packages in synthetic
+    # groups, and a package behind such a group otherwise fell back to
+    # the elkjs default 5px: the tab floated off its box)
+    for node in _walk_nodes(root):
+        if node.children:
+            node.layoutOptions.setdefault("elk.spacing.labelNode", "0")
+    return root, builder
 
 
 def _ellipsize_rows(node: Node, max_width: float) -> None:
@@ -1900,6 +2145,8 @@ class _StructureBuilder:
         membership: str = "nested",
         actor_style: str = "figure",
         parts: str = "nested",
+        levels: Mapping[str, str] | None = None,
+        folded: Mapping[str, tuple[str, ...]] | None = None,
     ):
         self.element = element
         self.show_attributes = show_attributes
@@ -1907,6 +2154,18 @@ class _StructureBuilder:
         self.membership = membership
         self.actor_style = actor_style
         self.parts = parts
+        #: PER-NODE collapse levels (qualified name -> "partial" |
+        #: "collapsed"; absent = expanded): "partial" rows the node's
+        #: rowable members exactly like parts="rows", "collapsed" draws
+        #: the smallest legal rendition -- the name compartment alone
+        #: (kind chip + name; boundary port squares stay, they are border
+        #: interface points, not compartments) -- while the rest of the
+        #: diagram keeps nested boxes
+        self.levels = dict(levels or {})
+        #: PER-COMPARTMENT folds (qualified name -> compartment names):
+        #: a folded compartment keeps its header (closed twist), drops
+        #: its rows; the node stays at its level
+        self.folded = {qname: frozenset(sections) for qname, sections in (folded or {}).items()}
         owner: M.Element = element
         while owner.owner is not None:
             owner = owner.owner
@@ -1949,11 +2208,22 @@ class _StructureBuilder:
             root.edges.append(_edge(owner_node, member_node, "sysml-edge-owned"))
         return root
 
+    def _level(self, element: M.Element) -> str:
+        return self.levels.get(element.qualified_name or "", "expanded")
+
+    def _shrunk(self, element: M.Element) -> bool:
+        """Whether the element's nested members are UNDRAWN because of a
+        per-node collapse level (partial rows them, collapsed drops them
+        entirely) -- the gate for connector-end re-anchoring."""
+
+        return self._level(element) in ("partial", "collapsed")
+
     def _visit(self, element: M.Element) -> Node | None:
         if isinstance(element, M.Package):
             node = _node(element, element.label, "sysml-package", "package")
             self._add_package_tab(node)
-            for member in element.members:
+            members = [] if self._level(element) == "collapsed" else element.members
+            for member in members:
                 child = self._visit(member)
                 if child is None:
                     continue
@@ -1967,7 +2237,7 @@ class _StructureBuilder:
             if element.is_individual:  # «individual part def» (errata N15)
                 stereotype = f"individual {stereotype}".strip()
             node = _node(element, element.label, "sysml-definition", f"{stereotype} def".strip())
-            self._fill_features(node, element)
+            self._fill_node(node, element)
         elif (
             isinstance(element, M.Usage)
             and element.kind == "actor"
@@ -2016,11 +2286,29 @@ class _StructureBuilder:
                 return None
             stereotype = _KIND_STEREOTYPES.get(element.kind, element.kind)
             node = _node(element, _usage_title(element), "sysml-usage", stereotype)
-            self._fill_features(node, element)
+            self._fill_node(node, element)
         else:
             return None
         self.nodes[id(element)] = node
         return node
+
+    def _fill_node(self, node: Node, element: M.Namespace) -> None:
+        """Level dispatch for a definition/usage box: the full compartment
+        fill, or -- at the "collapsed" level -- the smallest legal
+        rendition, the name compartment alone (kind chip + name, no
+        compartment stack, no drawn children).  Boundary port squares
+        STAY: they are border interface points, not compartments (the
+        classic black-box view), so port-anchored edges keep their
+        anchors; edges to undrawn children re-anchor as proxy dots
+        exactly like the partial level's."""
+
+        if self._level(element) == "collapsed":
+            for member in element.members:
+                if isinstance(member, M.Usage) and member.kind == "port":
+                    self._add_boundary_port(node, member)
+            self._finalize_ports(node)
+            return
+        self._fill_features(node, element)
 
     def _fill_features(self, node: Node, element: M.Namespace) -> None:
         """Fill a definition/usage box: labeled compartments plus children.
@@ -2113,14 +2401,16 @@ class _StructureBuilder:
             elif member.kind == "subject" and self.show_attributes:
                 row("subject", f"subject {_usage_title(member)}", member)
             elif (
-                self.parts == "rows"
+                (self.parts == "rows" or self._level(element) == "partial")
                 and member.kind in _ROW_SECTIONS
                 and (member.name or member.kind not in ("satisfy", "allocation"))
             ):
-                # the COLLAPSED presentation: the member as a textual
+                # the PARTIAL (textual) presentation: the member as a
                 # 'name : Type' row in its spec compartment instead of a
                 # drawn nested box (anonymous satisfy/allocate shorthands
                 # keep their keyword-edge form, exactly as under nesting)
+                # -- diagram-wide under parts="rows", per-node at the
+                # "partial" collapse level
                 text = _usage_title(member)
                 if member.is_ref or member.kind == "ref":
                     text = f"ref {text}"
@@ -2129,9 +2419,15 @@ class _StructureBuilder:
                 child = self._visit(member)
                 if child is not None:
                     node.children.append(child)
+        node_folds = self.folded.get(element.qualified_name or "", frozenset())
         for section in sorted(sections, key=lambda name: _SECTION_RANK[name]):
-            node.labels.append(_section_header(section))
-            node.labels.extend(sections[section])
+            # a folded compartment keeps its header (closed twist, so the
+            # affordance stays discoverable and clickable) and drops its
+            # rows; the node stays at its level
+            section_folded = section in node_folds
+            node.labels.append(_section_header(section, folded=section_folded))
+            if not section_folded:
+                node.labels.extend(sections[section])
         self._finalize_ports(node)
 
     def _add_package_tab(self, node: Node) -> None:
@@ -2373,10 +2669,15 @@ class _StructureBuilder:
         # features draw the proxy dot on the shallowest drawn ancestor
         # (spec printed p.67)
         endpoints: list[Node | Port] = []
+        resolved: list[tuple[Node | Port, list[str]]] = []
         for end in ends:
             anchor, residual = self._resolve_end_anchor(end.target, element)
             if anchor is None:
                 return  # an unresolvable end draws nothing (as before)
+            resolved.append((anchor, residual))
+        if self._swallowed([anchor for anchor, _ in resolved]):
+            return  # every end collapsed into ONE node: not drawn
+        for anchor, residual in resolved:
             if residual and isinstance(anchor, Node):
                 anchor = self._add_proxy_port(anchor, residual)
             endpoints.append(anchor)
@@ -2483,6 +2784,8 @@ class _StructureBuilder:
             if anchor is None:
                 return
             endpoints.append(anchor)
+        if self._swallowed(endpoints):
+            return  # every end collapsed into ONE node: not drawn
         for source, target in itertools.pairwise(endpoints):
             edge = _edge(
                 source,
@@ -2524,6 +2827,12 @@ class _StructureBuilder:
         ports).  Returns the deepest such endpoint plus the residual
         segments that could not be descended -- a non-empty residual is
         the proxy-connection case (spec printed p.67).
+
+        An end naming a PER-NODE-COLLAPSED child directly (the child is
+        undrawn, its parent box is) anchors on that collapsed ancestor
+        with the path below it as the residual -- the same proxy-dot
+        presentation, reached from the other side.  Ends undrawn for any
+        other reason stay unresolved, exactly as before.
         """
 
         parts = name.split(".")
@@ -2533,6 +2842,8 @@ class _StructureBuilder:
             return None, []
         anchor = self._lookup(found)
         residual: list[str] = []
+        if anchor is None and self.levels:
+            anchor, residual = self._collapsed_ancestor(found)
         for index, part in enumerate(parts[1:], start=1):
             try:
                 found = self.interp.resolver.resolve(part, found)
@@ -2548,6 +2859,47 @@ class _StructureBuilder:
             else:
                 residual.append(part)
         return anchor, residual
+
+    def _collapsed_ancestor(self, element: M.Element) -> tuple[Node | None, list[str]]:
+        """The drawn node of a PER-NODE-collapsed (partial or fully
+        collapsed) ancestor of an undrawn feature, plus the residual path
+        segments down to the feature -- the anchor of the spec's
+        proxy-connection presentation (printed p.67) when collapse
+        undraws a connector end.  ``(None, [])`` when no drawn ancestor
+        exists or the nearest drawn ancestor is NOT collapse-shrunk
+        (undrawn ends then stay undrawn, exactly as before this
+        feature)."""
+
+        residual = [element.name or element.label]
+        owner = element.owner
+        while owner is not None:
+            node = self.nodes.get(id(owner))
+            if node is not None:
+                if self._shrunk(owner):
+                    return node, residual[::-1]
+                return None, []
+            residual.append(owner.name or owner.label)
+            owner = owner.owner
+        return None, []
+
+    def _swallowed(self, anchors: Sequence[Node | Port]) -> bool:
+        """True when a connector's every end anchors on the SAME collapsed
+        node as the node ITSELF (an undrawn child re-anchored by
+        :meth:`_collapsed_ancestor` or :meth:`_resolve_end_anchor`'s
+        residual walk, before any proxy dot materializes) -- ends on real
+        drawn port squares keep the edge drawing.  Such a connector lives
+        entirely inside the collapsed graphical compartment; the textual
+        presentation does not draw it, and materializing its proxy dots
+        would orphan them on the border."""
+
+        if not anchors:
+            return False
+        first = anchors[0]
+        if not isinstance(first, Node):
+            return False
+        if self.levels.get(str(first.id or "")) not in ("partial", "collapsed"):
+            return False
+        return all(anchor is first for anchor in anchors[1:])
 
     def _add_proxy_port(self, owner: Node, residual: list[str]) -> Port:
         """The proxy-connection dot (spec printed p.67): a small FILLED
@@ -2914,6 +3266,403 @@ class _StructureBuilder:
         if found is None or found is element:
             return None
         return self.nodes.get(id(found))
+
+
+# ---------------------------------------------------------------------------
+# per-node collapse (structure view): levels + per-compartment folds
+# ---------------------------------------------------------------------------
+
+
+class CollapseTool(Tool):
+    """Per-node collapse through the THREE levels of a structure box,
+    plus per-compartment folds.
+
+    The structure view replaces ipyelk's stock ``ToggleCollapsedTool``
+    with this one -- same toolbar slot, same select-then-click gesture
+    (the affordance users already know).  Each click on the button
+    CYCLES the selected node one step DOWN in detail, then wraps back to
+    full (documented cycle: each click shows less, the click after the
+    smallest form restores everything):
+
+    * **expanded** -- nested child boxes (the full form, the default);
+    * **partial** -- the children leave the canvas and reappear as
+      selectable ``name : Type`` rows under their spec compartment
+      headers ('parts' printed p.60) -- skipped when the node has no
+      rowable members (packages, boxes of non-rowable children) and
+      under the diagram-wide ``parts="rows"`` (everything is rows
+      already);
+    * **collapsed** -- the smallest legal rendition: the name
+      compartment alone (kind chip + name, no compartment stack, no
+      drawn children; boundary port squares stay -- the black-box view).
+
+    Connector edges that anchored on undrawn children re-anchor as proxy
+    dots on the box itself (printed p.67) at both shrunken levels.
+    Selection survives level changes because rows carry the SAME id (the
+    qualified name) their boxes carried.
+
+    Independently of the level, every compartment header carries a FOLD
+    affordance (the explorer tree's twist, part of the header text):
+    clicking the header row in the browser folds that ONE compartment to
+    its header while the node stays at its level.  Headers are
+    presentation artifacts, not model elements -- the click is consumed
+    before sprotty sees it (the toolbar fit-sentinel reports it on a
+    dedicated channel), so it can never enter the model-selection seam.
+
+    :attr:`levels` (qualified name -> level) and :attr:`folded`
+    (qualified name -> folded compartment names) are the state seams:
+    the toolbar button and header clicks toggle them, the
+    :func:`level` / :func:`fold` kernel API edits them, view persistence
+    captures them (:func:`longeron.views.capture_presentation`) and
+    re-seeds them through ``structure_diagram(levels=..., folded=...)``.
+    Every change REBUILDS the diagram's source tree through the same
+    builder the constructor used (:func:`_build_structure_root`, then
+    the :func:`_prepare_root` + loader-defaults preparation of the birth
+    tree) and re-runs the pipeline with the birth flow -- so cycling a
+    node back to expanded is payload-identical BY CONSTRUCTION.
+    """
+
+    levels = T.Dict(
+        key_trait=T.Unicode(),
+        value_trait=T.Unicode(),
+        help="per-node collapse level (qualified name -> 'partial' | 'collapsed')",
+    )
+    folded = T.Dict(
+        key_trait=T.Unicode(),
+        help="per-node folded compartments (qualified name -> tuple of names)",
+    )
+    selection = T.Any(default_value=None, allow_none=True)
+
+    def __init__(
+        self,
+        diagram: Any,
+        element: M.Model | M.Namespace,
+        options: Mapping[str, Any],
+        builder: _StructureBuilder,
+        **kwargs: Any,
+    ) -> None:
+        self._diagram = diagram
+        self._element = element
+        #: the FULL resolved builder options (not the sidecar deviations):
+        #: rebuilds replay them verbatim, whatever the defaults become
+        self._options = dict(options)
+        self._ready = False  # the birth tree already reflects the state
+        self._refresh_maps(diagram.source.value, builder)
+        super().__init__(**kwargs)
+        self.reports = (F.New,)
+        self.ui = self._build_ui()
+        self._ready = True
+
+    async def run(self) -> None:  # Tool protocol; the button cycles sync
+        pass
+
+    # -- state normalization -------------------------------------------------
+
+    @T.validate("levels")
+    def _normalize_levels(self, proposal: Any) -> dict[str, str]:
+        levels: dict[str, str] = {}
+        for qname, value in dict(proposal["value"]).items():
+            name = str(value)
+            if name == "expanded":
+                continue  # the default level is ABSENCE, so states compare
+            if name not in _LEVELS:
+                choices = ", ".join(_LEVELS)
+                raise T.TraitError(f"a collapse level must be one of {choices}; not {value!r}")
+            levels[str(qname)] = name
+        return dict(sorted(levels.items()))
+
+    @T.validate("folded")
+    def _normalize_folded(self, proposal: Any) -> dict[str, tuple[str, ...]]:
+        folded: dict[str, tuple[str, ...]] = {}
+        for qname, sections in dict(proposal["value"]).items():
+            names = tuple(sorted({str(section) for section in sections}))
+            if names:
+                folded[str(qname)] = names
+        return dict(sorted(folded.items()))
+
+    @T.observe("levels", "folded")
+    def _on_state(self, change: Any = None) -> None:
+        if self._ready:
+            self.apply()
+
+    # -- the rebuild ----------------------------------------------------------
+
+    def apply(self) -> None:
+        """Rebuild the diagram's source tree with the active collapse
+        state and re-run the pipeline (the routing/direction tools'
+        refresh path, with the birth ``new`` flow)."""
+
+        root, builder = _build_structure_root(
+            self._element, levels=dict(self.levels), folded=dict(self.folded), **self._options
+        )
+        # live presentation carries over: the CURRENT tree holds whatever
+        # routing/direction the toolbar toggles left on it
+        tree = getattr(self._diagram.source, "value", None)
+        layout = (tree.layoutOptions or {}) if tree is not None else {}
+        _prepare_root(
+            root,
+            layout={"elk.spacing.labelNode": "0"},
+            routing=layout.get("elk.edgeRouting", "ORTHOGONAL"),
+            direction=layout.get("elk.direction", "RIGHT"),
+            id_salt=_collapse_salt(self.levels, self.folded),
+        )
+        # what ipyelk.from_element applied to the birth tree (label
+        # placement defaults above all) -- the rebuilt tree must match it
+        ipyelk.ElementLoader().apply_layout_defaults(root)
+        self._diagram._lgn_rel_edges = {
+            str(edge.id): rel for edge, rel in builder.rel_edges if edge.id is not None
+        }
+        self._refresh_maps(root, builder)
+        source = self._diagram.source
+        source.value = root
+        # the WHOLE pipeline shares this one element index (ipyelk wires
+        # every endpoint to the source's MarkIndex): built for the old
+        # tree, it cannot be UPDATED with the rebuilt tree's ids -- a
+        # mid-flight text-sizer persist() would die on the first new id.
+        # Dropping it makes every persist()/build_index() rebuild from
+        # whatever value is current, so racing browser roundtrips settle
+        # instead of erroring.
+        source.index.elements = None
+        if self.tee is not None:
+            # mark the inlet dirty and MERGE with the pending flow (see
+            # EdgeRoutingTool.apply), then refresh through on_done
+            tee_inlet = self.tee.inlet
+            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
+            if callable(self.on_done):
+                self.on_done()
+
+    def _refresh_maps(self, root: Node | None, builder: _StructureBuilder) -> None:
+        """Rebuild the per-tree lookaside maps: which drawn nodes can row
+        their members (the cycle skips 'partial' where it changes
+        nothing), and which header LABEL ids belong to which (node,
+        compartment) -- the browser reports fold clicks by header id."""
+
+        self._rowable = {
+            el.qualified_name: _collapsible(el)
+            for el in builder.nodes_elements()
+            if el.qualified_name
+        }
+        self._headers: dict[str, tuple[str, str]] = {}
+        for node in _walk_nodes(root) if root is not None else ():
+            if not node.id:
+                continue
+            for label in node.labels or []:
+                if "sysml-comp-label" in (label.properties.cssClasses or "") and label.id:
+                    self._headers[str(label.id)] = (str(node.id), _section_of(label.text or ""))
+
+    # -- the toolbar button: cycle the selected node ---------------------------
+
+    def _order(self, qname: str) -> tuple[str, ...]:
+        """The level cycle for one node: partial participates only where
+        it would CHANGE the rendition (the node rows something and the
+        diagram is not already rows-wide)."""
+
+        if self._options.get("parts") == "rows" or not self._rowable.get(qname, False):
+            return ("expanded", "collapsed")
+        return _LEVELS
+
+    def cycle(self, *qnames: str) -> None:
+        """Cycle each named node one level down (expanded -> partial ->
+        collapsed -> expanded), skipping levels that change nothing.  A
+        compartment ROW of a shrunken node cycles its owner (the row IS
+        that child's collapsed presentation); nodes with nothing to
+        collapse are no-ops."""
+
+        tree = getattr(self._diagram.source, "value", None)
+        if tree is None:
+            return
+        nodes = {str(node.id): node for node in _walk_nodes(tree) if node.id}
+        levels = dict(self.levels)
+        for qname in qnames:
+            target = qname
+            if target not in levels and target not in nodes:
+                # a row under a shrunken node: cycle the owner instead
+                owner = next((name for name in levels if target.startswith(f"{name}::")), None)
+                if owner is None:
+                    continue
+                target = owner
+            node = nodes.get(target)
+            current = levels.get(target, "expanded")
+            if current == "expanded" and (node is None or not self._has_content(node)):
+                continue  # nothing to collapse
+            order = self._order(target)
+            position = order.index(current) if current in order else 0
+            after = order[(position + 1) % len(order)]
+            if after == "expanded":
+                levels.pop(target, None)
+            else:
+                levels[target] = after
+        if levels != dict(self.levels):
+            self.levels = levels  # the observer applies
+
+    @staticmethod
+    def _has_content(node: Node) -> bool:
+        """Whether the smallest rendition differs from what is drawn:
+        the node shows children or a compartment stack.  (Boundary port
+        squares do not count -- they survive every level.)"""
+
+        if node.children:
+            return True
+        return any(
+            "sysml-comp-label" in (label.properties.cssClasses or "") for label in node.labels or []
+        )
+
+    def _cycle_selected(self, *_: Any) -> None:
+        ids = tuple(getattr(self.selection, "ids", None) or ())
+        self.cycle(*(str(i) for i in ids if not str(i).startswith(_SYNTH_ID_PREFIX)))
+
+    def _build_ui(self) -> Any:
+        # the stock tool's look; structure_diagram compacts it to the
+        # icon button when the longeron toolbar is active
+        btn = W.Button(description="Toggle Collapsed")
+        btn.on_click(self._cycle_selected)
+        return btn
+
+    # -- header clicks: per-compartment folds ----------------------------------
+
+    def fold(self, qname: str, section: str, folded: bool = True) -> None:
+        """Fold (or unfold) ONE compartment of one node: the rows leave,
+        the header stays (closed twist).  The node keeps its level."""
+
+        state = {name: set(sections) for name, sections in self.folded.items()}
+        sections = state.setdefault(qname, set())
+        if folded:
+            sections.add(section)
+        else:
+            sections.discard(section)
+        normalized = {name: tuple(sorted(secs)) for name, secs in state.items() if secs}
+        if normalized != dict(self.folded):
+            self.folded = normalized  # the observer applies
+
+    def _on_fold_click(self, change: Any) -> None:
+        """A header click reported by the diagram's fit sentinel (the
+        browser consumes the click BEFORE sprotty, so the selection seam
+        never sees it).  Resolve the clicked header to (node,
+        compartment) by the header label's id -- sprotty DOM ids end
+        with the element id -- and toggle that compartment's fold."""
+
+        try:
+            report = json.loads(change["new"] or "{}")
+        except ValueError:
+            return
+        dom_id = str(report.get("header") or "")
+        found = next((entry for hid, entry in self._headers.items() if dom_id.endswith(hid)), None)
+        if found is None:
+            return
+        qname, section = found
+        self.fold(qname, section, folded=section not in self.folded.get(qname, ()))
+
+
+def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> None:
+    """Swap ipyelk's stock ``ToggleCollapsedTool`` for the structure
+    view's :class:`CollapseTool`, in the SAME toolbar slot (the
+    affordance users already know); re-assigning ``tools`` rewires
+    tee/on_done for every tool (``Diagram._update_tools``).  The fold
+    channel is the fit sentinel's ``fold_click`` trait (the hidden
+    anywidget every diagram carries; absent without anywidget, where
+    header clicks simply degrade to no-ops)."""
+
+    tools = list(widget.tools)
+    index = next(
+        (i for i, existing in enumerate(tools) if isinstance(existing, ToggleCollapsedTool)),
+        None,
+    )
+    if index is None:
+        tools.append(tool)
+    else:
+        tools[index] = tool
+    widget.tools = tuple(tools)
+    if compact:  # match the longeron toolbar's icon-button look
+        _iconify(
+            tool.ui,
+            icon="sitemap",
+            tooltip=(
+                "Collapse or expand the children of the selected element "
+                "(cycles boxes -> 'name : Type' rows -> name only -> boxes)"
+            ),
+        )
+    sentinel = next(
+        (t.sentinel for t in widget.tools if isinstance(t, AutoFitTool) and t.sentinel is not None),
+        None,
+    )
+    if sentinel is not None:
+        sentinel.observe(tool._on_fold_click, "fold_click")
+
+
+def _collapse_tool(widget: Any) -> CollapseTool:
+    for tool in getattr(widget, "tools", ()):
+        if isinstance(tool, CollapseTool):
+            return tool
+    raise ValueError(
+        "per-node collapse drives a structure-diagram widget's collapse tool; this widget has none"
+    )
+
+
+def _collapse_qname(tool: CollapseTool, element: Any) -> str:
+    """Normalize a :func:`level`/:func:`fold` argument to a qualified
+    name, validating that it names something this diagram can know about
+    (typos should fail loudly, not silently draw nothing): a drawn node
+    of the current tree first -- synthetic scopes like the requirements
+    view keep REAL qualified names on nodes their model wrap cannot
+    resolve -- then the diagram's model."""
+
+    qname = str(getattr(element, "qualified_name", None) or element)
+    tree = getattr(tool._diagram.source, "value", None)
+    if tree is not None and any(str(node.id) == qname for node in _walk_nodes(tree) if node.id):
+        return qname
+    owner: M.Element = tool._element
+    while owner.owner is not None:
+        owner = owner.owner
+    model = owner if isinstance(owner, M.Model) else M.Model()
+    try:
+        Interpreter(model).resolve(qname)
+    except Exception as err:
+        raise ValueError(f"{qname!r} names nothing in this diagram's model") from err
+    return qname
+
+
+def level(widget: Any, element: Any, to: str | None = None) -> str:
+    """Get or set one node's collapse level on a structure diagram.
+
+    ``to=None`` returns the current level (``"expanded"`` when the node
+    was never collapsed).  Otherwise set it: ``"expanded"`` restores the
+    nested child boxes, ``"partial"`` rows the node's parts under their
+    compartment headers, ``"collapsed"`` draws the smallest legal
+    rendition -- the name compartment alone (see :class:`CollapseTool`).
+    Accepts a model element or a qualified name; returns the resulting
+    level.  The kernel mirror of the toolbar's collapse button.
+    """
+
+    tool = _collapse_tool(widget)
+    qname = _collapse_qname(tool, element)
+    if to is None:
+        return str(tool.levels.get(qname, "expanded"))
+    if to not in _LEVELS:
+        choices = ", ".join(_LEVELS)
+        raise ValueError(f"a collapse level must be one of {choices}; not {to!r}")
+    levels = dict(tool.levels)
+    if to == "expanded":
+        levels.pop(qname, None)
+    else:
+        levels[qname] = to
+    tool.levels = levels
+    return to
+
+
+def fold(widget: Any, element: Any, section: str, folded: bool = True) -> None:
+    """Fold (or unfold, with ``folded=False``) ONE compartment of one
+    node on a structure diagram: the compartment's rows leave, its
+    header stays with the closed twist, and the node keeps its collapse
+    level.  ``section`` is the spec compartment name exactly as the
+    header writes it ('attributes', 'parts', 'constraints', ...).  The
+    kernel mirror of clicking the header row in the browser.
+    """
+
+    tool = _collapse_tool(widget)
+    qname = _collapse_qname(tool, element)
+    if section not in _SECTION_RANK:
+        known = ", ".join(_SECTION_ORDER)
+        raise ValueError(f"unknown compartment {section!r}; the spec compartments are: {known}")
+    tool.fold(qname, section, folded=folded)
 
 
 # ---------------------------------------------------------------------------

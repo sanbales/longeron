@@ -7,7 +7,9 @@ buttons).  It reworks ipyelk's hover-revealed toolbar in place:
 * the stock ``Fit`` / ``Center`` / ``Toggle Collapsed`` text buttons
   become icon-only buttons with tooltips (the underlying
   :class:`~ipyelk.tools.Tool` instances are reused, so behavior is
-  exactly ipyelk's);
+  exactly ipyelk's; on STRUCTURE views ``longeron.diagrams`` then swaps
+  the stock collapse tool for its three-level
+  :class:`~longeron.diagrams.CollapseTool` in the same slot);
 * an :class:`EdgeRoutingTool` button CYCLES the diagram's ELK edge
   routing style -- ORTHOGONAL (the default) -> POLYLINE -> SPLINES --
   and re-lays the live diagram out through the pipeline; the active
@@ -783,7 +785,12 @@ class EdgeRoutingTool(Tool):
 #
 # One ResizeObserver + one MutationObserver per widget -- no polling
 # loops, so a notebook full of diagrams (the notation gallery renders
-# ~24) stays cheap.
+# ~24) stays cheap.  The sentinel also carries the diagram's FOLD
+# channel: capture-phase listeners consume clicks on compartment header
+# labels (text.sysml-comp-label) before sprotty can select anything and
+# report them on the fold_click trait -- headers are presentation
+# artifacts, and folding must never enter the model-selection seam
+# (longeron.diagrams.CollapseTool resolves the reports).
 _SENTINEL_ESM = """
 function render({ model, el }) {
   el.style.display = "none";
@@ -797,9 +804,43 @@ function render({ model, el }) {
   let mutations = null;
   let sizer = null;
   let downAt = null;
+  let foldSeq = 0;
 
   const bump = (name) => {
     model.set(name, model.get(name) + 1);
+    model.save_changes();
+  };
+
+  // -- fold: compartment-header clicks (CollapseTool's fold channel) --
+  // Headers (text.sysml-comp-label) are presentation artifacts, not
+  // model elements: their click folds ONE compartment and must never
+  // reach sprotty's selection machinery.  Capture-phase listeners on
+  // the widget box run before any descendant handler, so stopping
+  // propagation consumes the gesture entirely (mousedown/mouseup are
+  // what sprotty selects on; click is what reports the fold).
+  const headerOf = (ev) =>
+    ev.target instanceof Element ? ev.target.closest("text.sysml-comp-label") : null;
+  const onHeaderPress = (ev) => {
+    if (headerOf(ev)) {
+      ev.stopPropagation();
+      ev.preventDefault();
+    }
+  };
+  const onHeaderClick = (ev) => {
+    const header = headerOf(ev);
+    if (!header) return;
+    ev.stopPropagation();
+    ev.preventDefault();
+    const g = header.closest("g[id]");
+    model.set(
+      "fold_click",
+      JSON.stringify({
+        header: header.id || "",
+        node: g ? g.id : "",
+        text: header.textContent || "",
+        n: ++foldSeq,
+      }),
+    );
     model.save_changes();
   };
 
@@ -879,6 +920,9 @@ function render({ model, el }) {
     box.addEventListener("pointerdown", onDown, true);
     box.addEventListener("pointermove", onMove, true);
     box.addEventListener("pointerup", onUp, true);
+    box.addEventListener("mousedown", onHeaderPress, true);
+    box.addEventListener("mouseup", onHeaderPress, true);
+    box.addEventListener("click", onHeaderClick, true);
     checkFresh();
     onResize();
   };
@@ -893,6 +937,9 @@ function render({ model, el }) {
       box.removeEventListener("pointerdown", onDown, true);
       box.removeEventListener("pointermove", onMove, true);
       box.removeEventListener("pointerup", onUp, true);
+      box.removeEventListener("mousedown", onHeaderPress, true);
+      box.removeEventListener("mouseup", onHeaderPress, true);
+      box.removeEventListener("click", onHeaderClick, true);
     }
   };
 }
@@ -943,6 +990,13 @@ def _sentinel_class() -> type | None:
         fit_stamp = T.Int(0, help="bumped per kernel auto-fit; clears the user latch").tag(
             sync=True
         )
+        fold_click = T.Unicode(
+            "",
+            help=(
+                "the last compartment-header click, as JSON {header, node, text, n} "
+                "(the CollapseTool fold channel; consumed before sprotty sees the click)"
+            ),
+        ).tag(sync=True)
 
     _SENTINEL_CLS = _FitSentinel
     return _FitSentinel

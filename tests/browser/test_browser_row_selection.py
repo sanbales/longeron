@@ -41,7 +41,8 @@ def test_row_click_and_tree_round_trip(lab):
     # -- presentation: header + separator rule + hover affordance ---------
     page.wait_for_selector(".sprotty svg text.sysml-comp-label", state="attached", timeout=60_000)
     header = page.locator(".sprotty svg text.sysml-comp-label", has_text="attributes").first
-    assert header.text_content() == "attributes"
+    # the header text opens with the fold twist (the CollapseTool affordance)
+    assert header.text_content() == "\u25be attributes"
     rules = page.locator(".sprotty svg path.sysml-comp-rule")
     assert rules.count() >= 1, "no compartment separator rule rendered (LOCAL PATCH 13)"
     row = _row(page)

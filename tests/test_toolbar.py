@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("ipyelk")
 
 import ipywidgets as W
+from ipyelk.exceptions import NotFoundError
 from ipyelk.tools import PipelineProgressBar, ToggleCollapsedTool
 
 import longeron
@@ -80,7 +81,7 @@ class TestComposition:
         cases = [
             (widget.view.fit_tool.ui, "expand"),
             (widget.view.center_tool.ui, "crosshairs"),
-            (widget.get_tool(ToggleCollapsedTool).ui, "sitemap"),
+            (widget.get_tool(diagrams.CollapseTool).ui, "sitemap"),
         ]
         for button, icon in cases:
             assert isinstance(button, W.Button)
@@ -111,7 +112,7 @@ class TestComposition:
         controls = [
             widget.view.fit_tool.ui,
             widget.view.center_tool.ui,
-            widget.get_tool(ToggleCollapsedTool).ui,
+            widget.get_tool(diagrams.CollapseTool).ui,
             widget.get_tool(EdgeRoutingTool).ui,
             widget.get_tool(DirectionTool).ui,
             box,
@@ -121,6 +122,17 @@ class TestComposition:
             widget.toolbar.close_btn,
         ]
         assert all(control.tooltip for control in controls)
+
+    def test_state_views_keep_the_stock_collapse_tool(self, drone_model):
+        """Per-node rows-collapse is STRUCTURE notation (compartments);
+        the state/action views keep ipyelk's stock hide-the-children
+        tool, still iconified by the compact toolbar."""
+
+        machine = diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
+        stock = machine.get_tool(ToggleCollapsedTool)
+        assert stock.ui.icon == "sitemap"
+        with pytest.raises(NotFoundError):
+            machine.get_tool(diagrams.CollapseTool)
 
     def test_search_ui_is_compact(self, widget):
         box, _count, clear = _search(widget).ui.children

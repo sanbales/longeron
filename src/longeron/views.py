@@ -117,7 +117,7 @@ SIDECAR_SCHEMA = "longeron/views"
 SIDECAR_VERSION = 1
 
 #: sidecar entry keys that are NOT diagram-builder kwargs
-_PRESENTATION_KEYS = ("direction", "routing", "collapsed")
+_PRESENTATION_KEYS = ("direction", "routing", "collapsed", "levels", "folded")
 
 #: metaclass names longeron's kind vocabulary cannot state more precisely
 #: (matched by element CLASS, not kind; deliberate small courtesy set)
@@ -478,8 +478,11 @@ def capture_presentation(widget: Any) -> dict[str, Any]:
 
     Reads the CURRENT layout direction and edge routing off the widget's
     source tree (the toolbar tools re-apply their traits there, so live
-    toggles are captured) and the collapse tool's state (nodes whose
-    children are all hidden).  Only deviations from the defaults are
+    toggles are captured) and the collapse state: the structure view's
+    per-node levels and per-compartment folds
+    (:class:`longeron.diagrams.CollapseTool`) plus any nodes whose
+    children are all hidden (the state/action widgets' stock collapse,
+    the legacy ``collapsed`` key).  Only deviations from the defaults are
     returned -- absent sidecar keys mean defaults, so the file only grows
     when a user actually deviates from them.
     """
@@ -495,6 +498,21 @@ def capture_presentation(widget: Any) -> dict[str, Any]:
         out["direction"] = direction
     if routing != "orthogonal":
         out["routing"] = routing
+    # per-node collapse state: the structure view's CollapseTool traits
+    # are authoritative (levels + per-compartment folds); the
+    # hidden-children scan still covers the state/action widgets' stock
+    # hidden collapse (the legacy 'collapsed' key)
+    for tool in getattr(widget, "tools", ()):
+        levels = getattr(tool, "levels", None)
+        folds = getattr(tool, "folded", None)
+        if isinstance(levels, dict) and isinstance(folds, dict):
+            if levels:
+                out["levels"] = {str(q): str(v) for q, v in sorted(levels.items())}
+            if folds:
+                out["folded"] = {
+                    str(q): [str(s) for s in sections] for q, sections in sorted(folds.items())
+                }
+            break
     collapsed = sorted(
         str(node.id)
         for node in _walk_widget_nodes(tree)
@@ -661,7 +679,12 @@ def restore_view(
     (:func:`expose_closure`; dangling exposes warn and are skipped, a
     fully dangling view restores to an empty diagram), and the sidecar
     entry re-applies presentation: ``direction``, ``routing``, builder
-    ``options``, and the collapsed-node set.  No sidecar entry means spec
+    ``options``, and the collapse state (structure/requirements widgets
+    rebuild per-node ``levels`` and per-compartment ``folded`` through
+    ``structure_diagram(levels=..., folded=...)``; a legacy flat
+    ``collapsed`` list maps to the smallest rendition, level
+    ``"collapsed"``; state/action widgets keep the stock hidden-children
+    collapse).  No sidecar entry means spec
     content with default presentation -- the degraded mode IS the
     standard mode.
 
@@ -688,6 +711,31 @@ def restore_view(
 
     direction = str(entry.get("direction", "right"))
     routing = str(entry.get("routing", "orthogonal"))
+    collapsed = tuple(str(name) for name in entry.get("collapsed") or ())
+    # per-node collapse levels (stale sidecars are TOLERATED: unknown
+    # level values are dropped, unknown qnames draw nothing); the legacy
+    # flat 'collapsed' list maps to the smallest rendition
+    levels_entry = entry.get("levels")
+    levels = (
+        {
+            str(qname): str(value)
+            for qname, value in levels_entry.items()
+            if str(value) in ("partial", "collapsed")
+        }
+        if isinstance(levels_entry, Mapping)
+        else {}
+    )
+    for name in collapsed:
+        levels.setdefault(name, "collapsed")
+    folded_entry = entry.get("folded")
+    folded = (
+        {
+            str(qname): tuple(str(section) for section in sections)
+            for qname, sections in folded_entry.items()
+        }
+        if isinstance(folded_entry, Mapping)
+        else {}
+    )
     options = entry.get("options")
     options = dict(options) if isinstance(options, Mapping) else {}
 
@@ -711,7 +759,7 @@ def restore_view(
                 routing=routing,
                 **_known_options(builder, options),
             )
-            _apply_collapsed(widget, entry.get("collapsed"))
+            _apply_collapsed(widget, collapsed)
             return widget
 
     scope = _structure_scope(element, tops)
@@ -723,6 +771,8 @@ def restore_view(
             resolver=resolver,
             direction=direction,
             routing=routing,
+            levels=levels,
+            folded=folded,
             **_known_options(diagrams.structure_diagram, options),
         )
     else:
@@ -730,9 +780,10 @@ def restore_view(
             scope,  # type: ignore[arg-type]
             direction=direction,
             routing=routing,
+            levels=levels,
+            folded=folded,
             **_known_options(diagrams.structure_diagram, options),
         )
-    _apply_collapsed(widget, entry.get("collapsed"))
     return widget
 
 
@@ -842,8 +893,11 @@ def _known_options(builder: Any, options: dict[str, Any]) -> dict[str, Any]:
 
 
 def _apply_collapsed(widget: Any, collapsed: Any) -> None:
-    """Re-apply the sidecar's collapse state: hide the children of every
-    named node (exactly what ipyelk's ToggleCollapsedTool toggles)."""
+    """Re-apply the sidecar's collapse state on a STATE/ACTION widget:
+    hide the children of every named node (exactly what ipyelk's stock
+    ToggleCollapsedTool toggles).  Structure/requirements widgets never
+    come here -- their collapsed set rides the builder's ``collapsed=``
+    (rows for rowable nodes, hidden children for the rest)."""
 
     if not collapsed:
         return
