@@ -373,6 +373,17 @@ cmd = "pytest -v -m browser --reruns 1 --timeout 700 --timeout-method thread tes
 env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 
+[tool.pixi.feature.browser.tasks.test-browser-shard]
+# one CI shard of the browser tier: identical flags, env, and the
+# sync-labextension dependency (a shard testing a stale bundle proves
+# nothing), but the file list comes from $BROWSER_SHARD -- the CI matrix
+# splits the 22 scenarios across four runners because a 2-core runner
+# cannot carry the whole tier in one session without starving the widget
+# comm channel (see tests/browser/README.md).
+cmd = "pytest -v -m browser --reruns 1 --timeout 700 --timeout-method thread $BROWSER_SHARD"
+env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
+depends-on = ["sync-labextension"]
+
 [tool.pixi.feature.browser.tasks.capture-widgets]
 # regenerate the tutorial widget snapshots (docs/_static/widget-snapshots/):
 # boots a headless JupyterLab on notebooks/, runs every notebook, and

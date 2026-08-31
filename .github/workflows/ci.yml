@@ -50,6 +50,42 @@ jobs:
     # headless Chromium -- catches what kernel-side tests cannot (stale
     # bundles, marker paint, layout-error starvation, auto-fit). Runs in
     # parallel with the matrix; one Python (the locked browser env).
+    # SHARDED four ways: the 2-core runner cannot carry all 22 scenarios
+    # in one session without starving the widget comm channel (observed
+    # as dropped trait updates and parked render pipelines -- six
+    # consecutive runs each failed a different load-marginal beat while
+    # local single-runs stayed green). Each shard boots its own lab
+    # server and carries a quarter of the load; the heavy files
+    # (dashboard, gallery, app) anchor separate shards.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: app-explorer
+            files: >-
+              tests/browser/test_browser_app.py
+              tests/browser/test_browser_explorer.py
+              tests/browser/test_browser_explorer_docking.py
+              tests/browser/test_browser_launcher.py
+          - name: dashboard-surfaces
+            files: >-
+              tests/browser/test_browser_dashboard.py
+              tests/browser/test_browser_surfaces.py
+              tests/browser/test_browser_config_view.py
+              tests/browser/test_browser_row_selection.py
+          - name: gallery-diagrams
+            files: >-
+              tests/browser/test_browser_gallery.py
+              tests/browser/test_browser_collapse.py
+              tests/browser/test_browser_inline_fit.py
+              tests/browser/test_browser_label_fit.py
+              tests/browser/test_browser_layout_failure.py
+              tests/browser/test_browser_toolbar.py
+          - name: tutorials-time
+            files: >-
+              tests/browser/test_browser_views_tutorial.py
+              tests/browser/test_browser_timeseam.py
+              tests/browser/test_browser_replay.py
     runs-on: ubuntu-latest
     # cold runners pay env-solve + chromium download before the ~8 min of
     # scenarios (and a timeout-cancel skips the cache save, keeping the
@@ -79,23 +115,21 @@ jobs:
       - name: Install chromium (no-op on cache hit)
         run: pixi run -e browser playwright install --with-deps chromium
 
-      - name: Run the browser tier (log tee'd into the artifact)
+      - name: Run the browser shard (log tee'd into the artifact)
         # pipefail so tee cannot launder pytest's nonzero exit; the log
         # lands inside build/test-artifacts/ so the existing upload step
-        # carries it (before this, failures shipped only screenshots +
-        # console/server logs and the pytest output had to be hand-copied
-        # from the run page)
+        # carries it
         run: |
           set -o pipefail
           mkdir -p build/test-artifacts
-          pixi run test-browser 2>&1 | tee build/test-artifacts/pytest-browser.log
+          BROWSER_SHARD="${{ matrix.shard.files }}" pixi run -e browser test-browser-shard 2>&1 | tee build/test-artifacts/pytest-browser.log
 
       - name: Upload artifacts (screenshots, console + server + pytest logs)
         # always(): a timeout/cancel must still leave evidence behind
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-test-artifacts
+          name: browser-test-artifacts-${{ matrix.shard.name }}
           path: build/test-artifacts/
           if-no-files-found: ignore
 

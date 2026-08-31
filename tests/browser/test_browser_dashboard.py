@@ -210,7 +210,11 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     # points -- the front keeps its ink in the full cloud, and the
     # legend now names the gray too; the hint is gone
     _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1600)
-    assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == state["front"]
+    # the redraw is two-stage on a slow browser -- dots first, front/
+    # dominated re-classing after -- so the .front census is ALSO a
+    # postcondition to poll, not a state to assert mid-transition (the
+    # sharded-CI lesson: all 1600 dots briefly wore .front)
+    _poll_count(lab, ".longeron-moefront-dot.front:not(.legend)", state["front"])
     assert (
         lab.page.locator(
             ".longeron-moefront-legend", has_text="dominated: a better design exists"
