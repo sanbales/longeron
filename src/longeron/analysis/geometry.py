@@ -21,7 +21,7 @@ rectangular slab.  Motor cylinders come from motor mass
 (solid-cylinder density heuristic), prop disks from diameter, and the
 battery box from battery mass (LiPo density + brick proportions).  One
 call turns a configuration into the mesh dict
-:mod:`longeron.analysis.viewer3d` paints:
+:mod:`longeron.widgets.viewer3d` paints:
 
     {"unit": "m",
      "parts": [{"name", "color", "opacity",
@@ -1870,7 +1870,7 @@ def lineup(
     (rows along Z, row-major from the front, uniform cells sized by the
     largest footprint) so four configurations read as 2x2, six as 2x3,
     eight as 2x4.  With ``labels`` the scene carries a ``labels`` list
-    (``{text, anchor}``) that :func:`longeron.analysis.viewer3d.mesh_viewer`
+    (``{text, anchor}``) that :func:`longeron.widgets.viewer3d.mesh_viewer`
     renders as a billboard caption above each cell.
     """
 
@@ -1961,7 +1961,7 @@ def tag_parts(
     selection (:func:`longeron.analysis.link.individual_qname`).
     Several mesh parts may share one key, and parts not named keep no
     key and fall back to their ``name`` as their identity in
-    :mod:`longeron.analysis.viewer3d`.  Vertex and face arrays are
+    :mod:`longeron.widgets.viewer3d`.  Vertex and face arrays are
     shared with the input, not copied.
 
     With ``strict`` (the default) every mapping entry must name a part,

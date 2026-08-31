@@ -3,7 +3,7 @@
 Two browser-truth requirements (the 0.10.0 tranche-1 bugs):
 
 1. NO PILE-UP -- restart-kernel + run-all leaves exactly ONE live explorer
-   panel: the fresh kernel's :class:`~longeron.explorer._DockSweeper`
+   panel: the fresh kernel's :class:`~longeron.widgets.explorer._DockSweeper`
    closes the dead kernel's orphaned panel through lumino's own tab-close
    path (the Python-side registry cannot reach it -- its comm is dead);
 2. NO SQUEEZE -- the default ``mode="tab-after"`` docks the explorer as a

@@ -6,7 +6,7 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
 
 * a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
   compact toolbar on) -- the linked-selection hub;
-* a **3D CAD** pane (:func:`longeron.analysis.viewer3d.mesh_viewer`),
+* a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
   (tutorial 7's seam, promoted): clicking ANY craft in the diagram --
   a build configuration, a fleet airframe shell, or the mission
@@ -28,7 +28,7 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
 * a **Z3 verdict** strip -- requirement-consistency cards
   (:func:`longeron.analysis.smt.to_smt`): the design point's SAT witness
   beside an impossible what-if's UNSAT conflict core;
-* a **Cesium mission** pane (:func:`longeron.analysis.mission3d`) flying
+* a **Cesium mission** pane (:mod:`longeron.widgets.mission3d`) flying
   the drone's own geometry through its recorded state-machine execution
   over satellite imagery (offline front-ends degrade to a printed note;
   the dashboard composes regardless).
@@ -447,7 +447,9 @@ def grand_dashboard(
     """
 
     from ..diagrams import structure_diagram  # pulls the vendored ipyelk
-    from . import link, mdao, mission3d, smt, viewer3d
+    from ..widgets import mission3d as mission3d_widget
+    from ..widgets import viewer3d
+    from . import link, mdao, mission3d, smt
     from .scoreboard import scoreboard
 
     widgets = _ipywidgets()
@@ -513,7 +515,7 @@ def grand_dashboard(
         ground_alt=ground_alt,
         tilt_deg=tilt_deg,
     )
-    mission = mission3d.mission_viewer(
+    mission = mission3d_widget.mission_viewer(
         track,
         mesh=mesh,
         label=f"{states} replay -- the drone's own geometry over {imagery} imagery",

@@ -11,10 +11,10 @@ pytest.importorskip("ipyelk")
 pytest.importorskip("anywidget")
 
 import longeron
-from longeron import explorer as explorer_module
 from longeron import model as M
 from longeron.errors import MissingExtraError
-from longeron.explorer import (
+from longeron.widgets import explorer as explorer_module
+from longeron.widgets.explorer import (
     DIAGRAM_KINDS,
     Explorer,
     ModelTree,
@@ -761,7 +761,7 @@ class TestRequirementsView:
     def test_nested_candidates_never_duplicate_node_ids(self, uav_model):
         widget = requirements_view(uav_model)
         counted: dict[str, int] = {}
-        from longeron.explorer import _walk_source
+        from longeron.widgets.explorer import _walk_source
 
         for node in _walk_source(widget.source.value):
             if node.id:

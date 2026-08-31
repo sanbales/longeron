@@ -24,6 +24,7 @@ import pytest
 import longeron
 from longeron.analysis import geometry, mission3d
 from longeron.analysis._expr import AnalysisError
+from longeron.widgets import mission3d as mission3d_widget
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
@@ -765,7 +766,7 @@ class TestDroneModelPacket:
 class TestMissionViewer:
     def test_construction_and_traits(self, track):
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
+        widget = mission3d_widget.mission_viewer(track)
         packets = json.loads(widget.czml_json)
         assert packets[0]["id"] == "document" and packets[-1]["id"] == "mission-drone"
         assert widget.height_px == 480  # the explicit-height discipline
@@ -777,14 +778,16 @@ class TestMissionViewer:
 
     def test_overrides(self, track):
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track, label="sortie 12", height_px=560, ion_token="tok")
+        widget = mission3d_widget.mission_viewer(
+            track, label="sortie 12", height_px=560, ion_token="tok"
+        )
         assert widget.label == "sortie 12"
         assert widget.height_px == 560
         assert widget.ion_token == "tok"
 
     def test_mesh_flies_the_airframe_model(self, track, mesh):
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track, mesh=mesh, model_scale=3.0)
+        widget = mission3d_widget.mission_viewer(track, mesh=mesh, model_scale=3.0)
         drone = json.loads(widget.czml_json)[-1]
         assert drone["model"]["gltf"].startswith("data:model/gltf-binary;base64,")
         assert drone["model"]["scale"] == 3.0
@@ -793,9 +796,9 @@ class TestMissionViewer:
     def test_imagery_choices(self, track):
         pytest.importorskip("anywidget")
         for base in ("satellite", "plain", "osm"):
-            assert mission3d.mission_viewer(track, imagery=base).imagery == base
+            assert mission3d_widget.mission_viewer(track, imagery=base).imagery == base
         with pytest.raises(AnalysisError, match="imagery must be one of"):
-            mission3d.mission_viewer(track, imagery="street")
+            mission3d_widget.mission_viewer(track, imagery="street")
 
     def test_esm_cdn_contract(self, track):
         """The documented offline tradeoff, encoded: the pinned CDN URLs
@@ -803,9 +806,13 @@ class TestMissionViewer:
         (and clears the cached promise so a re-render retries)."""
 
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
-        assert mission3d.CESIUM_VERSION in mission3d.CESIUM_JS_URL
-        for url in (mission3d.CESIUM_JS_URL, mission3d.CESIUM_CSS_URL, mission3d.CESIUM_BASE_URL):
+        widget = mission3d_widget.mission_viewer(track)
+        assert mission3d_widget.CESIUM_VERSION in mission3d_widget.CESIUM_JS_URL
+        for url in (
+            mission3d_widget.CESIUM_JS_URL,
+            mission3d_widget.CESIUM_CSS_URL,
+            mission3d_widget.CESIUM_BASE_URL,
+        ):
             assert url in widget._esm, url
         for token in (
             "CESIUM_BASE_URL",  # workers/assets resolve against the CDN base
@@ -821,7 +828,7 @@ class TestMissionViewer:
         camera tracks the drone, and an idle globe renders on demand."""
 
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
+        widget = mission3d_widget.mission_viewer(track)
         for token in (
             "baseLayerPicker: false",
             "geocoder: false",
@@ -846,7 +853,7 @@ class TestMissionViewer:
         street tiles."""
 
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
+        widget = mission3d_widget.mission_viewer(track)
         for token in (
             "UrlTemplateImageryProvider",
             "services.arcgisonline.com",
@@ -864,7 +871,7 @@ class TestMissionViewer:
         """The pick seam (viewer3d idiom) and the bidirectional playhead."""
 
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
+        widget = mission3d_widget.mission_viewer(track)
         for token in (
             "ScreenSpaceEventHandler",
             "LEFT_CLICK",
@@ -877,7 +884,7 @@ class TestMissionViewer:
 
     def test_css_height_discipline(self, track):
         pytest.importorskip("anywidget")
-        widget = mission3d.mission_viewer(track)
+        widget = mission3d_widget.mission_viewer(track)
         assert "width: 98%" in widget._css  # never overflows the cell
         assert "box-sizing: border-box" in widget._css
         assert 'model.get("height_px") + "px"' in widget._esm  # explicit height

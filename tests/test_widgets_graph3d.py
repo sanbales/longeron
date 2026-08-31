@@ -68,7 +68,7 @@ class TestGraphView:
         assert node(view, "ScoutSizing::IsrStation")["color"] == "#b0413e"  # requirement
 
     def test_kind_families_mirror_the_explorer(self):
-        explorer = pytest.importorskip("longeron.explorer")
+        explorer = pytest.importorskip("longeron.widgets.explorer")
         assert graph3d._KIND_FAMILIES == explorer._KIND_FAMILIES
 
     def test_anonymous_elements_get_stable_synthetic_ids(self, view):

@@ -40,7 +40,7 @@ def test_diagrams_needs_ipyelk(monkeypatch):
 
 
 def test_replay_widget_needs_anywidget(monkeypatch):
-    from longeron import replay
+    from longeron.widgets import replay
 
     monkeypatch.setattr(replay, "_WIDGET_CLS", None)
     _block(monkeypatch, "anywidget")
@@ -92,7 +92,7 @@ def test_structure_widgets_need_anywidget(monkeypatch):
 
 
 def test_viewer3d_needs_anywidget(monkeypatch):
-    from longeron.analysis import viewer3d
+    from longeron.widgets import viewer3d
 
     monkeypatch.setattr(viewer3d, "_VIEWER_CLS", None)
     _block(monkeypatch, "anywidget")

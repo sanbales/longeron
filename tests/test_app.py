@@ -18,11 +18,11 @@ pytest.importorskip("ipyelk")
 pytest.importorskip("anywidget")
 
 import longeron
-from longeron import app as app_module
 from longeron import edit
-from longeron import explorer as explorer_module
-from longeron.app import ModelEntry
 from longeron.errors import MissingExtraError, SysMLError
+from longeron.widgets import app as app_module
+from longeron.widgets import explorer as explorer_module
+from longeron.widgets.app import ModelEntry
 
 ROOT = Path(__file__).resolve().parent.parent
 

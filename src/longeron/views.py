@@ -764,7 +764,7 @@ def restore_view(
 
     scope = _structure_scope(element, tops)
     if kind == "requirements":
-        from .explorer import requirements_view
+        from .widgets.explorer import requirements_view
 
         widget = requirements_view(
             scope,  # type: ignore[arg-type]
@@ -861,7 +861,7 @@ def _structure_scope(view: M.Usage, tops: list[M.Element]) -> M.Element:
     itself (the saved-diagram common case, ``expose Pkg::**``), or -- for
     multi-expose and filtered closures -- a synthetic package listing the
     top elements WITHOUT re-parenting them, the
-    :func:`longeron.explorer.requirements_view` projection idiom (owner
+    :func:`longeron.widgets.explorer.requirements_view` projection idiom (owner
     chains, and therefore diagram node ids, stay those of the real
     model)."""
 

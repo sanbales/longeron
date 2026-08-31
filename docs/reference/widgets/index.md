@@ -16,7 +16,16 @@ command when you reach for it.
 
 The package is also the shared toolkit for widget authors and the
 mandatory home for every new widget. New widgets land here as
-submodules, as {mod}`longeron.widgets.graph3d` does.
+submodules, beside the resident homes ({mod}`longeron.widgets.explorer`,
+{mod}`longeron.widgets.app`, {mod}`longeron.widgets.inspector`,
+{mod}`longeron.widgets.replay`, {mod}`longeron.widgets.viewer3d`,
+{mod}`longeron.widgets.mission3d`, {mod}`longeron.widgets.graph3d`,
+{mod}`longeron.widgets.time`). The pre-0.12 homes
+(`longeron.explorer`, `longeron.inspector`, `longeron.app`,
+`longeron.analysis.viewer3d`, plus `replay_widget` on
+`longeron.replay` and `mission_viewer` on
+`longeron.analysis.mission3d`) remain importable as deprecated aliases
+that warn once and will be removed in a future release.
 
 ## The catalog
 
@@ -32,7 +41,7 @@ submodules, as {mod}`longeron.widgets.graph3d` does.
 | `structure_diagram` | Parts, ports, and connections as an interactive ELK diagram. | vendored ipyelk | {doc}`Tutorial 4 </tutorials/04_trades_sizing_the_fleet>` |
 | `state_diagram` | A state machine as an interactive ELK diagram. | vendored ipyelk | {doc}`Tutorial 2 </tutorials/02_the_model_executes>` |
 | `action_diagram` | An action's control flow as an interactive ELK diagram. | vendored ipyelk | {doc}`Tutorial 3 </tutorials/03_views_for_review>` (via `diagram`) |
-| `replay_widget` | Simulate an element and replay the run over its diagram. | `replay`, vendored ipyelk, node | [Replay reference](../replay.md) |
+| `replay_widget` | Simulate an element and replay the run over its diagram. | `replay`, vendored ipyelk, node | [Replay widget reference](replay.md) |
 | `scoreboard` | The MAUT requirements scoreboard: area is importance, color is utility. | `viz` (the widget; scoring needs none) | {doc}`Tutorial 6 </tutorials/06_requirements_score_hunt_prove>` |
 | `mission_dashboard` | The linked mission-compromise dashboard. | `viz` | {doc}`Tutorial 4 </tutorials/04_trades_sizing_the_fleet>` |
 | `grand_dashboard` | The grand tour: diagram, CAD, scoreboard, sizing, consistency, and the mission globe on one surface. | `viz`, `mdao`, `smt`, vendored ipyelk | {doc}`Tutorial 9 </tutorials/09_grand_tour>` |
@@ -56,6 +65,10 @@ from a repo checkout. `replay_widget` also needs a `node` executable on
 ```{toctree}
 :maxdepth: 1
 
+explorer
 graph3d
+mission3d
+replay
 time
+viewer3d
 ```

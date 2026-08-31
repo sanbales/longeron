@@ -13,7 +13,7 @@ Two kinds of output over the mix tables produced by
   constraint(s) binding there -- feasible stretches stay unshaded, the
   absence of shading IS the feasible region);
 * an interactive parallel-coordinates anywidget -- :func:`parcoords` --
-  following the house widget pattern (:mod:`longeron.replay`): Python bakes
+  following the house widget pattern (:mod:`longeron.widgets.replay`): Python bakes
   the whole payload (axis specs, tick labels, normalized line positions)
   into one JSON-string traitlet, the inline vanilla-JS front-end only
   paints.  Brush gestures live in a narrow zone around each axis (the
@@ -206,7 +206,7 @@ function resizeInterval(brush, end, t) {
 }
 """
 
-# Conventions follow longeron.replay: DOM built once per bake, per-interaction
+# Conventions follow longeron.widgets.replay: DOM built once per bake, per-interaction
 # work is class toggles + one tooltip move; payload is pre-normalized so the
 # JS never sees raw metric values (only t in [0,1] and baked display
 # strings).  Interaction separation: brush gestures start ONLY inside a

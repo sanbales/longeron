@@ -60,7 +60,10 @@ def test_one_declaration_serves_two_subjects(lab: Any) -> None:
     driven = lab.run_cell_json(3)
     assert driven["verdict"] == "fail"
     assert driven["occluded"] > 0.0
-    page.wait_for_selector("text=FAIL", timeout=30_000)
+    # exact-text match scoped to the surface: bare text=FAIL is
+    # case-insensitive-substring and matches unrelated sidebar session
+    # labels (e.g. 'layout-failure-scenario...')
+    page.wait_for_selector('.jp-OutputArea :text-is("FAIL")', timeout=30_000)
     page.screenshot(path=str(EVIDENCE / "surfaces_quad_verdict_fail.png"), full_page=True)
 
     # -- and back: the declared defaults restore the clean verdict ----------

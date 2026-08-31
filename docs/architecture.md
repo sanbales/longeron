@@ -46,7 +46,7 @@ adds no third-party dependencies:
 - {mod}`longeron.analysis.viz`, {mod}`longeron.analysis.structure`,
   {mod}`longeron.analysis.dashboard` — figures, N2/network views of the
   generated problems, and the linked mission-compromise dashboard.
-- {mod}`longeron.analysis.geometry` / {mod}`longeron.analysis.viewer3d` —
+- {mod}`longeron.analysis.geometry` / {mod}`longeron.widgets.viewer3d` —
   parametric to-scale meshes for architecture mixes (stdlib-only math)
   and a small three.js viewer. Real CAD solids (STEP export) live behind
   the `cad` extra.

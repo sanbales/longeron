@@ -2,7 +2,7 @@
 
 One :func:`mission_dashboard` call composes the existing house widgets
 (:func:`longeron.analysis.viz.parcoords`,
-:func:`longeron.analysis.viewer3d.mesh_viewer`) with plain ipywidgets into
+:func:`longeron.widgets.viewer3d.mesh_viewer`) with plain ipywidgets into
 the single artifact that ties requirements -> architectures ->
 performance -> cost.  The layout is built to fit one 1080p screen
 (1920x950 content area) without vertical scrolling: the design row
@@ -905,7 +905,7 @@ def _dash_viewer_class() -> type[anywidget.AnyWidget]:
     global _DASH_VIEWER_CLS
     if _DASH_VIEWER_CLS is not None:
         return _DASH_VIEWER_CLS
-    from . import viewer3d
+    from ..widgets import viewer3d
 
     surgeries = (
         (

@@ -45,7 +45,7 @@ shared ``rate`` and reconciles against the clock at ~4 Hz; a follower
 snaps only when its local time drifts past a bounded tolerance
 (0.25 axis units, scaled by the rate), and on ``pause`` every view
 converges exactly.  The scrubber's front-end and the mission viewer's
-Cesium bridge (:mod:`longeron.analysis.mission3d`) both implement it.
+Cesium bridge (:mod:`longeron.widgets.mission3d`) both implement it.
 
 Everything but the scrubber's front-end is pure kernel code: headless
 tests drive ``clock.seek`` / ``clock.play`` and assert trait fan-out,

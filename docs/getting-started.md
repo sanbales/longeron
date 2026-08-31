@@ -25,7 +25,7 @@ the core install stays light:
 |---|---|---|
 | `ecore` | OMG spec-metamodel projection ({mod}`longeron.ecore`) and Systems Modeling API JSON ({mod}`longeron.api`) | `pyecore` |
 | `rdf` | RDF projection + SPARQL ({mod}`longeron.rdf`) | `rdflib` |
-| `replay` | simulation/action replay widget ({mod}`longeron.replay`) | `anywidget` |
+| `replay` | simulation/action replay widget ({mod}`longeron.widgets.replay`) | `anywidget` |
 | `mdao` | OpenMDAO sizing bridge ({mod}`longeron.analysis.mdao`) | `openmdao` |
 | `trades` | CP-SAT architecture trade studies ({mod}`longeron.analysis.trades`) | `ortools` |
 | `smt` | requirement-consistency checks on Z3 ({mod}`longeron.analysis.smt`) | `z3-solver` |

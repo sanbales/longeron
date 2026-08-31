@@ -3,7 +3,7 @@
 :func:`link_selection` composes two existing public seams -- the
 diagrams' click-selection callback (:func:`longeron.diagrams.on_select`,
 whose node ids are qualified names) and the mesh viewer's highlight
-traitlet (:mod:`longeron.analysis.viewer3d`) -- so clicking a part in a
+traitlet (:mod:`longeron.widgets.viewer3d`) -- so clicking a part in a
 structure diagram pops the corresponding geometry in the three.js
 scene, and clicking a mesh selects the diagram node.
 
@@ -231,7 +231,7 @@ def link_selection(
 
     ``diagram`` is an interactive diagram from :mod:`longeron.diagrams`
     (node ids are qualified names), ``viewer`` a widget from
-    :func:`longeron.analysis.viewer3d.mesh_viewer`.  Every browser (or
+    :func:`longeron.widgets.viewer3d.mesh_viewer`.  Every browser (or
     programmatic) selection on the diagram resolves through
     :func:`selection_keys` and lands on the viewer's ``highlight_json``
     -- affirmative matches pop and dim the rest, no match clears.  A

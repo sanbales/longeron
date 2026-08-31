@@ -2708,7 +2708,7 @@ class TestUniversalFitMachinery:
     an HBox beside a 3D viewer, a bare notebook cell: same machinery."""
 
     def _builders(self, drone_model):
-        from longeron.explorer import requirements_view
+        from longeron.widgets.explorer import requirements_view
 
         yield diagrams.structure_diagram(drone_model)
         yield diagrams.state_diagram(drone_model.find("DeepScout::FlightStates"))
@@ -2767,7 +2767,7 @@ class TestBuilderHeight:
         assert widget.layout.min_height == "0"
 
     def test_requirements_view_passes_height_through(self, drone_model):
-        from longeron.explorer import requirements_view
+        from longeron.widgets.explorer import requirements_view
 
         widget = requirements_view(drone_model, height="480px")
         assert widget.layout.height == "480px"

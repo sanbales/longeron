@@ -72,14 +72,16 @@ def test_import_is_lazy_and_access_opens_the_seam():
             "leaked = [m for m in banned if m in sys.modules]",
             "assert not leaked, f'import longeron.widgets pulled {leaked}'",
             "homes = [m for m in sys.modules if m.startswith((",
-            "    'longeron.explorer', 'longeron.inspector', 'longeron.app',",
+            "    'longeron.widgets.explorer', 'longeron.widgets.inspector',",
+            "    'longeron.widgets.app', 'longeron.widgets.replay',",
+            "    'longeron.widgets.viewer3d', 'longeron.widgets.mission3d',",
             "    'longeron.diagrams', 'longeron.replay', 'longeron.analysis.',",
-            "    'longeron.widgets.graph3d'))]",
+            "    'longeron.widgets.graph3d', 'longeron.widgets.time'))]",
             "assert not homes, f'import longeron.widgets pulled {homes}'",
             "longeron.widgets.explore  # first touch imports the home module",
-            "assert 'longeron.explorer' in sys.modules",
+            "assert 'longeron.widgets.explorer' in sys.modules",
             "assert 'anywidget' in sys.modules",
-            "from longeron.explorer import explore",
+            "from longeron.widgets.explorer import explore",
             "assert longeron.widgets.explore is explore",
         ]
     )
@@ -91,7 +93,7 @@ def test_missing_extra_surfaces_on_access(monkeypatch):
     # the house convention: sys.modules[name] = None makes `import name`
     # raise ImportError, simulating the missing extra
     monkeypatch.setitem(sys.modules, "anywidget", None)
-    monkeypatch.delitem(sys.modules, "longeron.explorer", raising=False)
+    monkeypatch.delitem(sys.modules, "longeron.widgets.explorer", raising=False)
     monkeypatch.delattr(widgets, "explore", raising=False)  # drop the lazy cache
     with pytest.raises(MissingExtraError, match=r'pip install "longeron\[replay\]"'):
         _ = widgets.explore

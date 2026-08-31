@@ -62,11 +62,31 @@ The entries (tutorial numbers refer to :doc:`/tutorials/index`):
 
 Current resident modules:
 
+* :mod:`longeron.widgets.app` -- the review workbench (``ModelApp``,
+  ``open``) and its Lab docking (``replay`` extra).
+* :mod:`longeron.widgets.explorer` -- the model explorer: tree engine,
+  diagram pane, Lab docking (``replay`` extra).
 * :mod:`longeron.widgets.graph3d` -- the 3D graph widget's home
   (``rdf`` + ``viz`` extras).
+* :mod:`longeron.widgets.inspector` -- the item property sheet
+  (``replay`` extra).
+* :mod:`longeron.widgets.mission3d` -- the Cesium mission viewer
+  (``viz`` extra); its track/CZML synthesis stays in
+  :mod:`longeron.analysis.mission3d`.
+* :mod:`longeron.widgets.replay` -- the diagram replay widget
+  (``replay`` extra); the timeline recorders stay in
+  :mod:`longeron.replay`.
 * :mod:`longeron.widgets.time` -- the time seam's home: ``Clock``,
   ``Timebase``, ``link_time``, and the scrubber (``replay`` extra for
   the scrubber only).
+* :mod:`longeron.widgets.viewer3d` -- the three.js mesh viewer
+  (``viz`` extra).
+
+The pre-0.12 homes (``longeron.explorer``, ``longeron.inspector``,
+``longeron.app``, ``longeron.analysis.viewer3d``, plus
+``replay_widget`` on ``longeron.replay`` and ``mission_viewer`` on
+``longeron.analysis.mission3d``) remain importable as deprecated
+aliases that warn once and will be removed in a future release.
 """
 
 from __future__ import annotations
@@ -77,47 +97,53 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover - static re-exports for type checkers
     from ..analysis.dashboard import mission_dashboard as mission_dashboard
     from ..analysis.grand import grand_dashboard as grand_dashboard
-    from ..analysis.mission3d import mission_viewer as mission_viewer
     from ..analysis.scoreboard import scoreboard as scoreboard
-    from ..analysis.viewer3d import mesh_viewer as mesh_viewer
-    from ..app import ModelApp as ModelApp
-    from ..app import open as open
     from ..diagrams import action_diagram as action_diagram
     from ..diagrams import diagram as diagram
     from ..diagrams import state_diagram as state_diagram
     from ..diagrams import structure_diagram as structure_diagram
-    from ..explorer import Explorer as Explorer
-    from ..explorer import ModelTree as ModelTree
-    from ..explorer import explore as explore
-    from ..inspector import Inspector as Inspector
-    from ..replay import replay_widget as replay_widget
+    from . import app as app
+    from . import explorer as explorer
     from . import graph3d as graph3d
+    from . import inspector as inspector
+    from . import mission3d as mission3d
+    from . import replay as replay
     from . import time as time
+    from . import viewer3d as viewer3d
+    from .app import ModelApp as ModelApp
+    from .app import open as open
+    from .explorer import Explorer as Explorer
+    from .explorer import ModelTree as ModelTree
+    from .explorer import explore as explore
     from .graph3d import graph_viewer as graph_viewer
+    from .inspector import Inspector as Inspector
+    from .mission3d import mission_viewer as mission_viewer
+    from .replay import replay_widget as replay_widget
     from .time import Clock as Clock
     from .time import Timebase as Timebase
     from .time import link_time as link_time
     from .time import time_scrubber as time_scrubber
+    from .viewer3d import mesh_viewer as mesh_viewer
 
 #: catalog entry -> (home module, attribute); the re-export is the home
 #: object itself (identity, not a copy), imported on first access
 _CATALOG: dict[str, tuple[str, str]] = {
-    "explore": ("longeron.explorer", "explore"),
-    "Explorer": ("longeron.explorer", "Explorer"),
-    "ModelTree": ("longeron.explorer", "ModelTree"),
-    "ModelApp": ("longeron.app", "ModelApp"),
-    "open": ("longeron.app", "open"),
-    "Inspector": ("longeron.inspector", "Inspector"),
+    "explore": ("longeron.widgets.explorer", "explore"),
+    "Explorer": ("longeron.widgets.explorer", "Explorer"),
+    "ModelTree": ("longeron.widgets.explorer", "ModelTree"),
+    "ModelApp": ("longeron.widgets.app", "ModelApp"),
+    "open": ("longeron.widgets.app", "open"),
+    "Inspector": ("longeron.widgets.inspector", "Inspector"),
     "diagram": ("longeron.diagrams", "diagram"),
     "structure_diagram": ("longeron.diagrams", "structure_diagram"),
     "state_diagram": ("longeron.diagrams", "state_diagram"),
     "action_diagram": ("longeron.diagrams", "action_diagram"),
-    "replay_widget": ("longeron.replay", "replay_widget"),
+    "replay_widget": ("longeron.widgets.replay", "replay_widget"),
     "scoreboard": ("longeron.analysis.scoreboard", "scoreboard"),
     "mission_dashboard": ("longeron.analysis.dashboard", "mission_dashboard"),
     "grand_dashboard": ("longeron.analysis.grand", "grand_dashboard"),
-    "mesh_viewer": ("longeron.analysis.viewer3d", "mesh_viewer"),
-    "mission_viewer": ("longeron.analysis.mission3d", "mission_viewer"),
+    "mesh_viewer": ("longeron.widgets.viewer3d", "mesh_viewer"),
+    "mission_viewer": ("longeron.widgets.mission3d", "mission_viewer"),
     "graph_viewer": ("longeron.widgets.graph3d", "graph_viewer"),
     "Clock": ("longeron.widgets.time", "Clock"),
     "Timebase": ("longeron.widgets.time", "Timebase"),
@@ -126,7 +152,7 @@ _CATALOG: dict[str, tuple[str, str]] = {
 }
 
 #: resident submodules (widget homes living inside this package)
-_RESIDENTS = ("graph3d", "time")
+_RESIDENTS = ("app", "explorer", "graph3d", "inspector", "mission3d", "replay", "time", "viewer3d")
 
 __all__ = sorted([*_CATALOG, *_RESIDENTS])
 

@@ -1153,7 +1153,7 @@ def _edge(
     start = _START_SYMBOLS.get(start_form) if start_form else None
     if end or start:
         edge.properties.shape = EdgeShape(start=start, end=end)
-    if event:  # carried through to the SVG data-event (longeron.replay)
+    if event:  # carried through to the SVG data-event (longeron.widgets.replay)
         edge.metadata = _EdgeMetadata(event=event)
     if text:
         # not inline: inline labels sit ON the line (the sprotty renderer
@@ -2185,7 +2185,7 @@ class _StructureBuilder:
         # (a connection/binding/flow/satisfy/allocate/dependency/alias):
         # the seam behind the widget's ``_lgn_rel_edges`` attribute, which
         # maps the edges' synthetic transport ids back to model elements
-        # so consumers (longeron.explorer) can select edges and resolve
+        # so consumers (longeron.widgets.explorer) can select edges and resolve
         # edge clicks -- edge ids are assigned late (_assign_ids), hence
         # the edge OBJECTS are recorded here and the ids read after
         self.rel_edges: list[tuple[Edge, M.Element]] = []

@@ -140,13 +140,13 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.wait_for_selector(".jp-OutputArea .widget-vbox", timeout=120_000)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
 
-    # -- baked state: 1280 crossed candidates, one tab set, toggle off ------
+    # -- baked state: 1600 crossed candidates, one tab set, toggle off ------
     state = lab.run_cell_json(1)
-    assert state["candidates"] == 1280
+    assert state["candidates"] == 1600
     assert state["tabs"] == ["all missions", "ISR", "logistics", "intercept"]
     assert state["toggle"] is False
-    assert state["pool"] == 1280
-    assert 0 < state["front"] < 1280
+    assert state["pool"] == 1600
+    assert 0 < state["front"] < 1600
 
     # -- (1) the whole dashboard fits a 1080p content area AND fills the
     # available output width (finding 3: no more fixed 1500 px on a wide
@@ -173,7 +173,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle = lab.page.get_by_role("button", name="Pareto only")
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is True)
-    assert state["pool"] == state["front"] < 1280
+    assert state["pool"] == state["front"] < 1600
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_pareto_on.png"))
 
     # -- (2b) the reported scenario: 'Pareto only' at N=8 shows picks that
@@ -220,12 +220,12 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
 
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is False)
-    assert state["pool"] == 1280
+    assert state["pool"] == 1600
 
     # -- (2d) toggle OFF: gray returns, but ONLY on truly dominated
     # points -- the front keeps its ink in the full cloud, and the
     # legend now names the gray too; the hint is gone
-    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1280)
+    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1600)
     assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == state["front"]
     assert (
         lab.page.locator(
@@ -300,7 +300,12 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     state = _poll_checker(lab, lambda s: s["selected"] is None)
     assert lab.page.locator(".longeron-lineup-card.pinned").count() == 0
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_click3d_before.png"))
-    for fx, fy in ((0.5, 0.58), (0.36, 0.6), (0.64, 0.6), (0.5, 0.45), (0.42, 0.68)):
+    # probe a denser grid: the lineup's top picks are now flying wings
+    # (thin shells in plan view) after the catalog grew to 1600 -- the
+    # old five probe points could all land in gaps between meshes
+    probe_points = [(0.5, 0.58), (0.36, 0.6), (0.64, 0.6), (0.5, 0.45), (0.42, 0.68)]
+    probe_points += [(fx / 100.0, fy / 100.0) for fy in range(35, 76, 8) for fx in range(28, 73, 6)]
+    for fx, fy in probe_points:
         lab.page.mouse.click(stage["x"] + fx * stage["width"], stage["y"] + fy * stage["height"])
         try:
             state = _poll_checker(lab, lambda s: s["selected"] is not None, timeout=8.0)

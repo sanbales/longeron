@@ -46,7 +46,7 @@ ceiling for very large graphs, which is why :func:`graph_viewer` caps
 the view at ``node_cap`` nodes (highest degree first, with an in-scene
 notice) instead of degrading silently.
 
-Interaction follows :mod:`longeron.analysis.viewer3d`: drag to orbit,
+Interaction follows :mod:`longeron.widgets.viewer3d`: drag to orbit,
 shift-drag or right-drag to pan, scroll to zoom, double-click to
 re-fit.  Hovering a sphere names it (qualified name plus the folded
 literals) and lights its k=1 neighborhood; clicking selects it -- the
@@ -91,7 +91,7 @@ themselves in the standalone page; the morph slider, search, labels,
 legend, and selection emphasis all work.
 
 Offline tradeoff: the front-end imports three.js from the jsDelivr CDN
-at view time, exactly like :mod:`longeron.analysis.viewer3d`; offline
+at view time, exactly like :mod:`longeron.widgets.viewer3d`; offline
 front-ends (and the exported page, offline) get a printed notice
 instead of a scene.
 
@@ -111,10 +111,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
 from .. import rdf
-from ..analysis.viewer3d import THREE_URL
 from ..errors import MissingExtraError
 from ..rdf import ELEMENT_BASE, VOCABULARY
 from ._chrome import CONTROL_CSS
+from .viewer3d import THREE_URL
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Iterable
@@ -180,7 +180,7 @@ _EDGE_FAMILIES: dict[str, str] = {
 }
 
 #: usage/definition ``kind`` -> node family; anything unlisted is
-#: ``structure``.  Mirrors ``longeron.explorer._KIND_FAMILIES`` verbatim
+#: ``structure``.  Mirrors ``longeron.widgets.explorer._KIND_FAMILIES`` verbatim
 #: (kept local so this module stays importable without anywidget; a test
 #: asserts the two stay identical).
 _KIND_FAMILIES: dict[str, str] = {
@@ -638,7 +638,7 @@ def dag_layout(
     return points
 
 
-# Conventions follow longeron.analysis.viewer3d's front-end: DOM built
+# Conventions follow longeron.widgets.viewer3d's front-end: DOM built
 # once, geometry rebuilt only when the payload traitlet changes, the
 # same ~30-line spherical orbit handler, rendering on demand.  Here:
 # one InstancedMesh carries every node, one LineSegments per edge

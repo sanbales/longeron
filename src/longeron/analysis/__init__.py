@@ -26,16 +26,16 @@ third-party dependencies):
   alone).
 * :mod:`longeron.analysis.viz` -- figures and a parallel-coordinates widget
   over trade-study results (``pip install "longeron[viz]"``).
-* :mod:`longeron.analysis.geometry` / :mod:`longeron.analysis.viewer3d` --
-  parametric to-scale meshes for architecture mixes (stdlib only) and a
-  small three.js anywidget that renders them (``viz`` extra; CAD-solid
-  export needs ``pip install "longeron[cad]"``).
-* :mod:`longeron.analysis.mission3d` -- mission flight replay on a
+* :mod:`longeron.analysis.geometry` --
+  parametric to-scale meshes for architecture mixes (stdlib only;
+  CAD-solid export needs ``pip install "longeron[cad]"``); the
+  three.js viewer that renders them lives in
+  :mod:`longeron.widgets.viewer3d`.
+* :mod:`longeron.analysis.mission3d` -- mission flight tracks for the
   CesiumJS globe: waypoint- or state-machine-timeline-driven track
-  synthesis and an anywidget that flies the drone -- its own to-scale
-  mesh, exported to binary glTF in-house -- over satellite imagery
-  with Cesium's native timeline as the playback UI (``viz`` extra; no
-  Cesium ion token required).
+  synthesis with CZML and in-house binary-glTF baking; the Cesium
+  viewer widget lives in :mod:`longeron.widgets.mission3d` (``viz``
+  extra; no Cesium ion token required).
 * :mod:`longeron.analysis.dashboard` -- the linked mission-compromise
   dashboard composing the widgets above with ipywidgets (``viz`` extra).
 * :mod:`longeron.analysis.grand` -- the grand-tour dashboard: structure
@@ -77,6 +77,5 @@ __all__ = [
     "surfaces",
     "trades",
     "verify",
-    "viewer3d",
     "viz",
 ]

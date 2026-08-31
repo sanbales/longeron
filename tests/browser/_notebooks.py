@@ -50,7 +50,7 @@ def replay_notebook() -> dict[str, Any]:
     return _notebook(
         '''
 import longeron
-from longeron import replay
+from longeron.widgets import replay_widget
 
 model = longeron.loads("""
 package Machines {
@@ -69,7 +69,7 @@ package Machines {
 }
 """)
 interp = longeron.Interpreter(model)
-widget = replay.replay_widget(
+widget = replay_widget(
     interp, "Machines::TrafficLight", ["go", "caution", "stop"], width_px=720
 )
 widget
@@ -222,7 +222,7 @@ def explorer_notebook() -> dict[str, Any]:
 import json
 
 import longeron
-from longeron.explorer import explore
+from longeron.widgets import explore
 
 model = longeron.loads("""
 package Rig {
@@ -288,8 +288,8 @@ def row_selection_notebook() -> dict[str, Any]:
 import json
 
 import longeron
-from longeron import app as app_module
-from longeron.explorer import explore
+from longeron.widgets import app as app_module
+from longeron.widgets import explore
 
 model = longeron.loads("""
 package Gear {
@@ -441,7 +441,7 @@ def explorer_dock_notebook() -> dict[str, Any]:
 import json
 
 import longeron
-from longeron.explorer import explore
+from longeron.widgets import explore
 
 model = longeron.loads("""
 package Dock {
@@ -457,7 +457,7 @@ ex
 # manufacture an orphan: forget the kernel-side handle (exactly what a
 # kernel restart does), then re-explore -- the browser-side sweeper is
 # the ONLY thing that can close the first panel now
-from longeron import explorer as _explorer_module
+from longeron.widgets import explorer as _explorer_module
 
 _explorer_module._DOCKED_PANELS.clear()
 ex = explore(model, layout="lab")
@@ -506,7 +506,7 @@ import json
 from pathlib import Path
 
 import longeron
-from longeron import app as app_module
+from longeron.widgets import app as app_module
 
 application = app_module.open(layout="lab")
 print(type(application).__name__)
@@ -618,13 +618,14 @@ import ipywidgets as W
 
 import longeron
 from longeron import diagrams
-from longeron.analysis import link, viewer3d
+from longeron.analysis import link
 from longeron.analysis.grand import scene_for
+from longeron.widgets import mesh_viewer
 
 model = longeron.load("examples/deepscout")
 mesh, part_map = scene_for(model, "Rotorcraft::QuadCopter")
 structure = diagrams.structure_diagram(model.find("Rotorcraft"), height="620px")
-viewer = viewer3d.mesh_viewer(
+viewer = mesh_viewer(
     mesh, label="Rotorcraft::QuadCopter", width_px=520, height_px=620
 )
 binding = link.bind_config_view(structure, viewer, model, showing="Rotorcraft::QuadCopter")
@@ -733,7 +734,14 @@ import ipywidgets as W
 import longeron
 from longeron import replay
 from longeron.analysis import mission3d
-from longeron.widgets import Clock, Timebase, link_time, time_scrubber
+from longeron.widgets import (
+    Clock,
+    Timebase,
+    link_time,
+    mission_viewer,
+    replay_widget,
+    time_scrubber,
+)
 
 model = longeron.load("examples/deepscout")
 interp = longeron.Interpreter(model)
@@ -749,8 +757,8 @@ track = mission3d.track_from_timeline(
     epoch=epoch,
     name="go-around sortie",
 )
-player = replay.replay_widget(interp, "DeepScout::SortieStates", timeline=timeline, width_px=620)
-globe = mission3d.mission_viewer(track, height_px=360, imagery="plain")
+player = replay_widget(interp, "DeepScout::SortieStates", timeline=timeline, width_px=620)
+globe = mission_viewer(track, height_px=360, imagery="plain")
 timebase = Timebase(timeline, track=track)
 clock = Clock(span=timebase.span)
 scrubber = time_scrubber(timebase, width_px=620)

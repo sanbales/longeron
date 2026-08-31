@@ -74,11 +74,11 @@ def test_setup_data_files_cover_the_whole_build() -> None:
 def test_tile_icon_matches_the_app_monogram() -> None:
     """The tile's svg is the sidebar tab's monogram, shape for shape.
 
-    ``longeron.app._ICON_SVG`` is the identity users learn from the
+    ``longeron.widgets.app._ICON_SVG`` is the identity users learn from the
     docked panel's tab; the launcher tile must not drift from it.
     """
 
-    from longeron.app import _ICON_SVG
+    from longeron.widgets.app import _ICON_SVG
 
     index_ts = (NPM / "src" / "index.ts").read_text(encoding="utf-8")
     for line in _ICON_SVG.strip().splitlines():

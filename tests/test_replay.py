@@ -9,6 +9,7 @@ import longeron
 from longeron import replay
 from longeron.errors import ExecutionError
 from longeron.interpreter import StateMachine
+from longeron.widgets import replay as replay_widgets
 
 FLAT_MODEL = """
 package Machines {
@@ -442,7 +443,7 @@ def test_state_svg_addressable(flat_interp):
 def test_replay_widget_smoke(timed_interp):
     pytest.importorskip("anywidget")
     _needs_diagrams()
-    widget = replay.replay_widget(timed_interp, "P::Toaster", ["start", 10.0], width_px=640)
+    widget = replay_widgets.replay_widget(timed_interp, "P::Toaster", ["start", 10.0], width_px=640)
     assert widget.width_px == 640
     assert widget.time == 0.0
     assert widget.svg.startswith("<svg")
@@ -466,7 +467,7 @@ def test_action_svg_addressable(action_interp):
 def test_replay_widget_action_autodetect(action_interp):
     pytest.importorskip("anywidget")
     _needs_diagrams()
-    widget = replay.replay_widget(
+    widget = replay_widgets.replay_widget(
         action_interp, "Ops::Deploy", inputs={"tested": True}
     )  # kind inferred
     assert 'data-qname="Ops::Deploy::inspect"' in widget.svg
@@ -478,13 +479,13 @@ def test_replay_widget_action_autodetect(action_interp):
 def test_replay_widget_unknown_kind(flat_interp):
     pytest.importorskip("anywidget")
     with pytest.raises(ExecutionError, match="unknown replay kind"):
-        replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"], kind="nope")
+        replay_widgets.replay_widget(flat_interp, "Machines::TrafficLight", ["go"], kind="nope")
 
 
 def test_replay_widget_missing_extra(monkeypatch, flat_interp):
     import builtins
 
-    monkeypatch.setattr(replay, "_WIDGET_CLS", None)
+    monkeypatch.setattr(replay_widgets, "_WIDGET_CLS", None)
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -494,14 +495,14 @@ def test_replay_widget_missing_extra(monkeypatch, flat_interp):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(ImportError, match=r"longeron\[replay\]"):
-        replay.replay_widget(flat_interp, "Machines::TrafficLight", ["go"])
+        replay_widgets.replay_widget(flat_interp, "Machines::TrafficLight", ["go"])
 
 
 def test_edge_paths_never_get_non_scaling_stroke():
     """Chromium does not paint markers (arrowheads) on paths with
     vector-effect: non-scaling-stroke -- the replay widget's edge paths
     must never carry it (nodes may; they have no markers)."""
-    from longeron import replay
+    from longeron.widgets import replay
 
     edge_block = replay._ESM.split('querySelectorAll("[data-edge]")')[1].split("});")[0]
     assert "non-scaling-stroke" not in edge_block

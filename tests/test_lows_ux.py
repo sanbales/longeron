@@ -341,7 +341,8 @@ class TestPaletteSingleSource:
         )
 
     def test_replay_css_marker_reference_matches_fired_stroke(self):
-        from longeron import render, replay
+        from longeron import render
+        from longeron.widgets import replay
 
         assert f"stroke: {render._FIRED_STROKE};" in replay._CSS
         assert f"marker-end: url(#{render._arrow_id(render._FIRED_STROKE)});" in replay._CSS
@@ -349,7 +350,8 @@ class TestPaletteSingleSource:
         assert f'id="{render._arrow_id(render._FIRED_STROKE)}"' in render._arrow_defs()
 
     def test_replay_branch_highlight_uses_the_usage_green(self):
-        from longeron import render, replay
+        from longeron import render
+        from longeron.widgets import replay
 
         assert render._NODE_STYLES["sysml-usage"]["stroke"] in replay._CSS
 

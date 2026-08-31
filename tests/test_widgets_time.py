@@ -17,6 +17,8 @@ import pytest
 import longeron
 from longeron import replay
 from longeron.analysis import mission3d
+from longeron.widgets import mission3d as mission3d_widget
+from longeron.widgets import replay as replay_widgets
 from longeron.widgets.time import (
     _TOLERANCE,
     Clock,
@@ -402,7 +404,7 @@ anywidget = pytest.importorskip("anywidget")
 def _player(timed_timeline):
     """A ReplayWidget without the diagram bake (traits are the seam)."""
 
-    cls = replay._widget_class()
+    cls = replay_widgets._widget_class()
     return cls(svg="<svg></svg>", timeline_json=timed_timeline.to_json())
 
 
@@ -413,7 +415,7 @@ def seam(timed_timeline, timed_track):
     base = Timebase(timed_timeline, track=timed_track)
     player = _player(timed_timeline)
     scrubber = time_scrubber(base)
-    globe = mission3d.mission_viewer(timed_track, imagery="plain")
+    globe = mission3d_widget.mission_viewer(timed_track, imagery="plain")
     clock = Clock(span=base.span)
     unlink = link_time(clock, player, scrubber, globe)
     return clock, player, scrubber, globe, unlink
@@ -470,7 +472,7 @@ class TestLinkTime:
         base = Timebase(timed_timeline, track=timed_track)
         clock = Clock(span=base.span, rate=2.0)
         clock.seek(50.0)
-        globe = mission3d.mission_viewer(timed_track, imagery="plain")
+        globe = mission3d_widget.mission_viewer(timed_track, imagery="plain")
         link_time(clock, globe)
         assert globe.time == 50.0
         assert globe.rate == 2.0
@@ -517,7 +519,7 @@ class TestStepModeGlobeBinding:
         track = mission3d.track_from_timeline(
             step_timeline, waypoints=WAYPOINTS, phases={"airborne": "route"}, seconds_per_step=10.0
         )
-        globe = mission3d.mission_viewer(track, imagery="plain")
+        globe = mission3d_widget.mission_viewer(track, imagery="plain")
         base = Timebase(step_timeline, track=track, seconds_per_step=10.0)
         clock = Clock(span=base.span, step_mode=True)
         with pytest.raises(ValueError, match="refusing the globe"):
@@ -527,7 +529,7 @@ class TestStepModeGlobeBinding:
         track = mission3d.track_from_timeline(
             step_timeline, waypoints=WAYPOINTS, phases={"airborne": "route"}, seconds_per_step=10.0
         )
-        globe = mission3d.mission_viewer(track, imagery="plain")
+        globe = mission3d_widget.mission_viewer(track, imagery="plain")
         base = Timebase(step_timeline, track=track, seconds_per_step=10.0)
         clock = Clock(span=base.span, step_mode=True)
         link_time(clock, globe, seconds_per_step=10.0)
@@ -547,7 +549,7 @@ class TestStepModeGlobeBinding:
             phases={"airborne": "route"},
             seconds_per_step=per_step,
         )
-        globe = mission3d.mission_viewer(track, imagery="plain")
+        globe = mission3d_widget.mission_viewer(track, imagery="plain")
         clock = Clock(span=(0.0, float(step_timeline.n_steps - 1)), step_mode=True)
         link_time(clock, globe, seconds_per_step=per_step)
         clock.seek(1.5)
@@ -621,7 +623,7 @@ class TestScrubberSpec:
 
 class TestCesiumBridgeKernelSide:
     def test_viewer_bridge_traits_default_honestly(self, timed_track):
-        globe = mission3d.mission_viewer(timed_track, imagery="plain")
+        globe = mission3d_widget.mission_viewer(timed_track, imagery="plain")
         assert globe.playing is False
         assert globe.rate == 0.0  # "no stated rate": the CZML multiplier rules
         assert globe.drift_s == 0.25
@@ -642,7 +644,7 @@ class TestCesiumBridgeKernelSide:
     def test_bridge_esm_contracts(self):
         """The front-end contracts the kernel relies on, as structure."""
 
-        esm = mission3d._ESM
+        esm = mission3d_widget._ESM
         assert "change:playing" in esm
         assert "change:rate" in esm
         assert "shouldAnimate" in esm and "multiplier" in esm

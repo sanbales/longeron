@@ -54,7 +54,7 @@ new ELK().layout(graph).then(
 # palette -- the single source of truth for diagram colors (V3)
 # ---------------------------------------------------------------------------
 # The browser stylesheet (diagrams.SYSML_STYLE) and the replay widget's CSS
-# (replay._CSS) are DERIVED from these tables; change colors here only.
+# (widgets/replay._CSS) are DERIVED from these tables; change colors here only.
 
 #: cssClasses fragment -> SVG attributes.  A non-CSS ``shape`` key selects a
 #: non-rectangular glyph drawing (consumed by ``draw_node`` headless and by
@@ -245,7 +245,7 @@ def _edge_start(css: str) -> str | None:
 #: guarded transitions/successions (edges also carrying sysml-edge-guarded)
 _GUARDED_DASHARRAY = "6 2"
 
-#: replay highlight (longeron.replay swaps fired edges to this marker)
+#: replay highlight (longeron.widgets.replay swaps fired edges to this marker)
 _FIRED_STROKE = "#e05a00"
 
 # ---------------------------------------------------------------------------
@@ -770,7 +770,7 @@ def _arrow_defs() -> str:
     ``_EDGE_STARTS``).
 
     Open V heads for every edge color (plus the default gray and the
-    replay fired-edge orange -- longeron.replay swaps fired edges to that
+    replay fired-edge orange -- longeron.widgets.replay swaps fired edges to that
     marker id, so it must stay defined); closed hollow triangles -- plain
     and shaft-adorned, white-filled so they occlude the line underneath --
     for the specialization family; flow pin(+arrowhead) squares and the
@@ -1209,7 +1209,7 @@ def _to_elk_json(root: Any) -> dict:
         for index, edge in enumerate(node.edges):
             edge_id = f"{identifier}.e{index}"
             # `event` rides through elkjs untouched (like cssClasses) and
-            # becomes the SVG data-event attribute (longeron.replay matches
+            # becomes the SVG data-event attribute (longeron.widgets.replay matches
             # fired transitions against it).  Edges may anchor on invisible
             # convergence PORTS; identity (data-edge, replay keys) always
             # uses the owning NODE's id, so the replay contract is
@@ -1340,7 +1340,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             )
             # data-qname (the node id: a model qualified name, instance-
             # qualified for expanded typed submachine states) makes states
-            # addressable from longeron.replay
+            # addressable from longeron.widgets.replay
             qname = f'data-qname="{_escape_attr(str(node.get("id")))}"'
             shape = style.get("shape")
             if shape == "diamond":
@@ -1580,7 +1580,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             dashes = None
         if "sysml-edge-guarded" in css:
             dashes = _GUARDED_DASHARRAY
-        # a group per edge, addressable from longeron.replay: data-edge is
+        # a group per edge, addressable from longeron.widgets.replay: data-edge is
         # "<source id>-><target id>" (qualified names for model nodes; the
         # OWNING node even when the edge anchors on a convergence port),
         # data-event the comma-joined accepted event names (or "")

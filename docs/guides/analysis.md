@@ -154,6 +154,6 @@ The view modules ({mod}`~longeron.analysis.viz`,
 {mod}`~longeron.analysis.structure`,
 {mod}`~longeron.analysis.dashboard`,
 {mod}`~longeron.analysis.geometry`,
-{mod}`~longeron.analysis.viewer3d`) render the results: Pareto fronts,
+{mod}`~longeron.widgets.viewer3d`) render the results: Pareto fronts,
 parallel coordinates, N2 matrices, constraint networks, to-scale 3D
 meshes, and the linked mission-compromise dashboard.

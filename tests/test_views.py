@@ -204,7 +204,7 @@ class TestListViews:
 
     def test_view_kinds_mirror_the_explorer_vocabulary(self):
         # the sidecar 'kind' values are explorer.DIAGRAM_KINDS by contract
-        explorer = pytest.importorskip("longeron.explorer")
+        explorer = pytest.importorskip("longeron.widgets.explorer")
         assert views.VIEW_KINDS == explorer.DIAGRAM_KINDS
 
 

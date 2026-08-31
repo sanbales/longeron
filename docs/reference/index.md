@@ -30,10 +30,9 @@ objects are defined.
 | Page | Modules | What lives there |
 |---|---|---|
 | [Diagrams](diagrams.md) | `longeron.diagrams`, `longeron.toolbar` | interactive ELK diagrams (ipyelk) and their compact search toolbar |
-| [Model explorer](explorer.md) | `longeron.explorer` | the tree + diagram-pane explorer widget |
 | [View persistence](views.md) | `longeron.views` | saving diagrams as SysML v2 views, sidecar presentation, restore |
 | [Rendering](render.md) | `longeron.render` | headless SVG/PNG export (elkjs via node) |
-| [Replay](replay.md) | `longeron.replay` | animated simulation/action replays |
+| [Replay](replay.md) | `longeron.replay` | timeline recording for simulation/action replays (the widget lives in `longeron.widgets.replay`) |
 
 The {doc}`notation gallery <notation_gallery>` belongs here too: an
 executable notebook that shows every implemented SysML v2 glyph beside
@@ -51,7 +50,6 @@ same ground.
 | [SMT](analysis/smt.md) | `longeron.analysis.smt` | Z3 requirement consistency |
 | [Visualization](analysis/viz.md) | `longeron.analysis.viz` | figures, parallel coordinates |
 | [Geometry](analysis/geometry.md) | `longeron.analysis.geometry` | parametric to-scale meshes, CAD export |
-| [3D viewer](analysis/viewer3d.md) | `longeron.analysis.viewer3d` | three.js mesh viewer |
 | [Structure views](analysis/structure.md) | `longeron.analysis.structure` | N2 matrix, connection networks |
 | [Dashboard](analysis/dashboard.md) | `longeron.analysis.dashboard` | linked mission-compromise dashboard |
 | [Grand tour](analysis/grand.md) | `longeron.analysis.grand` | the all-seams demo dashboard |
@@ -61,6 +59,10 @@ same ground.
 | Page | Module | What lives there |
 |---|---|---|
 | [Overview](widgets/index.md) | `longeron.widgets` | THE catalog: every house widget behind one lazy import; the authors' toolkit; the home for new widgets |
+| [Model explorer](widgets/explorer.md) | `longeron.widgets.explorer` | the tree + diagram-pane explorer widget |
+| [Replay widget](widgets/replay.md) | `longeron.widgets.replay` | animated simulation/action replays |
+| [3D viewer](widgets/viewer3d.md) | `longeron.widgets.viewer3d` | three.js mesh viewer |
+| [Mission viewer](widgets/mission3d.md) | `longeron.widgets.mission3d` | Cesium globe mission playback |
 | [RDF graph in 3D](widgets/graph3d.md) | `longeron.widgets.graph3d` | force-directed RDF projection explorer |
 
 ```{toctree}
@@ -82,7 +84,6 @@ m0
 api-server
 cli
 diagrams
-explorer
 views
 render
 replay

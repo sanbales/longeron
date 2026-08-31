@@ -21,11 +21,11 @@ pytest.importorskip("anywidget")
 import ipywidgets as W
 
 import longeron
-from longeron import app as app_module
 from longeron import edit
-from longeron import explorer as explorer_module
-from longeron import inspector as inspector_module
 from longeron import model as M
+from longeron.widgets import app as app_module
+from longeron.widgets import explorer as explorer_module
+from longeron.widgets import inspector as inspector_module
 
 ROOT = Path(__file__).resolve().parent.parent
 

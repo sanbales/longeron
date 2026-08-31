@@ -15,7 +15,7 @@ pytest.importorskip("anywidget")
 pytest.importorskip("ipyelk")
 
 from longeron import diagrams
-from longeron.analysis import viewer3d
+from longeron.widgets import viewer3d
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
