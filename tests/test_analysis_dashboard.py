@@ -200,7 +200,7 @@ class TestFrontJustifications:
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
-        assert len(data["candidates"]) == 8 * 4 * 4 * 5 * 2
+        assert len(data["candidates"]) == 10 * 4 * 4 * 5 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_thresholds_anchored_in_the_model(self, data):
@@ -382,10 +382,10 @@ class TestParetoToggle:
 
 class TestFrontJustificationsLive:
     """THE reported legibility defect: 'Pareto only' at N=8 keeps picks
-    that LOOK dominated in the cost-MOE scatter (the liion loiter birds
-    sit below-right of the tattu haulers).  The filter is correct --
-    dominance spans all four objectives -- so the display must say
-    where each pick wins."""
+    that LOOK dominated in the cost-MOE scatter (since 0.12 the twin
+    flying wings own that plane, and the winged-VTOL haulers sit
+    below-right of them).  The filter is correct -- dominance spans all
+    four objectives -- so the display must say where each pick wins."""
 
     @staticmethod
     def _pareto_n8(dash):
@@ -398,14 +398,22 @@ class TestFrontJustificationsLive:
         for point in json.loads(dash.scatter.payload_json)["points"]:
             assert point["why"], point  # 4-D front members, all justified
 
-    def test_the_looks_dominated_picks_name_station_minutes(self, dash):
+    def test_the_looks_dominated_picks_name_their_hidden_wins(self, dash):
         self._pareto_n8(dash)
         cards = {dash.pool[c["line"]]: c for c in json.loads(dash.lineup.cards_json)}
-        for index in (1008, 1017, 1018, 1019):
+        # the winged-VTOL haulers look dominated under the twins and must
+        # name the hidden metrics they still win on (freight and dash --
+        # their loiter no longer beats a flying wing's)
+        for index in (1056, 1057):
             assert index in dash.picks
             why = cards[index]["why"]
-            assert why.startswith("front: stationMinutes ")
-            assert why.endswith("tops every pick that beats it in this plane")
+            assert why.startswith("front: every pick that beats it in this plane trails it on ")
+            assert "payloadRangeKgKm" in why
+        # ... and the sprint twin's alibi is a single named metric
+        assert 1566 in dash.picks
+        why = cards[1566]["why"]
+        assert why.startswith("front: maxTargetSpeed ")
+        assert why.endswith("tops every pick that beats it in this plane")
 
     def test_named_metrics_really_beat_all_plane_beaters(self, dash, data):
         """Honesty, brute-forced, over every front member in the pool:
@@ -584,7 +592,7 @@ class TestDashboardWiring:
         dash.sliders["ISR"].value = 100
         dash.sliders["intercept"].value = 0
         top = data["candidates"][dash.picks[0]]
-        assert top["selection"]["airframe"] == "vtolWing"
+        assert top["selection"]["airframe"] == "flyingWingSingle"
 
     def test_requirement_sliders_refilter_live(self, dash):
         """Moving a requirement threshold re-evaluates feasibility over

@@ -89,6 +89,8 @@ FLEET_PARTS = {
     "Rotorcraft::RingOcto": ["frame", "motors", "props", "battery", "esc"],
     "WingedVtol::VtolWing": ["frame", "wing", "tail", "motors", "props", "battery"],
     "WingedVtol::DartInterceptor": ["frame", "wing", "tail", "motors", "props", "battery"],
+    "FlyingWings::FlyingWingSingle": ["wing", "winglets", "motors", "props", "battery"],
+    "FlyingWings::FlyingWingTwin": ["wing", "winglets", "motors", "props", "battery"],
 }
 
 

@@ -1071,6 +1071,16 @@ class TestMissionBridge:
         dart = geometry.mission_geometry(mission_study, mix("dartInterceptor"))
         span_z = dart["bounds"][1][2] - dart["bounds"][0][2]
         assert span_z == pytest.approx(1.05, abs=1e-3)
+        # the tailless family: no fuselage part at all -- the wing IS the
+        # airframe -- and the pusher stations set the motor count
+        for airframe, span, pods in (("flyingWingSingle", 2.2, 1), ("flyingWingTwin", 2.6, 2)):
+            wing = geometry.mission_geometry(mission_study, mix(airframe))
+            names = [p["name"] for p in wing["parts"]]
+            assert names == ["wing", "winglets", "motors", "props", "battery"]
+            props = next(p for p in wing["parts"] if p["name"] == "props")
+            assert len(_component_boxes(props)) == pods
+            span_z = wing["bounds"][1][2] - wing["bounds"][0][2]
+            assert span_z == pytest.approx(span, abs=0.05)  # winglet sections add slop
 
     def test_sized_arms_show_in_the_mesh(self, mission_study):
         """The structural sizing reaches the geometry: a mix whose

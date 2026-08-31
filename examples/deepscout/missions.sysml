@@ -8,9 +8,10 @@
 //   LogisticsUav -- carry a parcel out, return empty (max payload x radius)
 //   InterceptUav -- one-way dash to catch a crossing target (max target speed)
 //
-// The catalog CROSSES architecture with part class: eight airframes
-// (six rotor-borne, two winged) against four motors, four props, and
-// five packs spanning the small F450 class and the heavy 6S class.
+// The catalog CROSSES architecture with part class: ten airframes
+// (six rotor-borne, two winged VTOL, two flying wings) against four
+// motors, four props, and five packs spanning the small F450 class and
+// the heavy 6S class.
 // Dishonest mixes stay in the space and fail honestly -- propFit keeps
 // big props off small motors, packPower keeps 2 kW motors off starved
 // packs, cellMatch keeps 3S motors off 6S packs, and the mission floors
@@ -26,7 +27,7 @@
 // the Cartesian candidate space and let the interpreter score every mix
 // exactly (see tutorial T4).
 package ScoutMissions {
-    doc /* The DeepScout trade space: eight airframe families across two
+    doc /* The DeepScout trade space: ten airframe families across three
            branches, real COTS propulsion and payload options in two
            part classes, a battery-chemistry trade, a structural-material
            trade, and three mission contexts with executable physics.
@@ -38,6 +39,7 @@ package ScoutMissions {
     private import ScoutParts::*;
     private import Rotorcraft::*;
     private import WingedVtol::*;
+    private import FlyingWings::*;
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
     private import DeepScout::Propulsion::*;
@@ -63,6 +65,8 @@ package ScoutMissions {
             variant part ringOcto : RingOcto;
             variant part vtolWing : VtolWing;
             variant part dartInterceptor : DartInterceptor;
+            variant part flyingWingSingle : FlyingWingSingle;
+            variant part flyingWingTwin : FlyingWingTwin;
         }
         variation part def MotorChoice :> Motor {
             variant part mt2213 : EmaxMt2213;
@@ -373,11 +377,11 @@ package ScoutMissions {
     // and their combined invoice.  Tutorial T6 injects per-candidate
     // values over these defaults through the trade-study bridge.
 
-    attribute stationMinutes : Real = 208.7 [SI::min];  // the ISR winner's loiter
-    attribute payloadRangeKgKm : Real = 163.4;          // the logistics winner, kg km
+    attribute stationMinutes : Real = 283.3 [SI::min];  // the ISR winner's loiter
+    attribute payloadRangeKgKm : Real = 193.3;          // the logistics winner, kg km
     attribute maxTargetSpeed : Real = 72.9;             // the dart's catchable crossing, m/s
-    attribute fleetCost : Real = 10837.0;               // USD: the three winners' invoices
-    attribute heaviestBirdKg : Real = 9.4;              // kg: the loaded courier at launch
+    attribute fleetCost : Real = 9666.0;                // USD: the three winners' invoices
+    attribute heaviestBirdKg : Real = 6.7;              // kg: the loaded courier at launch
 
     requirement scoring {
         doc /* The fleet-level MAUT hierarchy: mission effectiveness

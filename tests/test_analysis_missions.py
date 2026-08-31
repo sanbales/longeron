@@ -24,6 +24,9 @@ MISSIONS = {
     "intercept": ("ScoutMissions::InterceptUav", "maxTargetSpeed"),
 }
 
+#: the catapult-launched branch of 0.12 (never hover-capable)
+FLYING_WINGS = {"flyingWingSingle", "flyingWingTwin"}
+
 
 @pytest.fixture(scope="module")
 def model():
@@ -77,6 +80,8 @@ class TestModelShape:
             "ringOcto",
             "vtolWing",
             "dartInterceptor",
+            "flyingWingSingle",
+            "flyingWingTwin",
         }
         assert set(studies["intercept"].points["battery"].variants) == {
             "tattu3s",
@@ -97,12 +102,13 @@ class TestModelShape:
         }
 
     def test_candidate_space_sizes(self, spaces):
-        # the architecture x part-class crossing: 8 airframes x 4 motors
+        # the architecture x part-class crossing: 10 airframes x 4 motors
         # x 4 props x 5 packs x 2 materials (the legacy fleet space was
-        # 4 x 3 x 3 x 4 x 2 = 288 shared mixes)
-        assert len(spaces["isr"]) == 8 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["logistics"]) == 8 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["intercept"]) == 8 * 4 * 4 * 5 * 2
+        # 4 x 3 x 3 x 4 x 2 = 288 shared mixes; the flying wings of 0.12
+        # grew the 8-airframe crossing to 10)
+        assert len(spaces["isr"]) == 10 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["logistics"]) == 10 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["intercept"]) == 10 * 4 * 4 * 5 * 2
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -159,9 +165,11 @@ class TestFronts:
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
         # the crossed catalog: the multirotor shells earn honest seats
-        # (the S1000-class hexa loiters, the coax octo dashes) and the
-        # small class populates the cheap corners
-        assert counts == {"isr": 145, "logistics": 125, "intercept": 372}
+        # (the S1000-class hexa loiters, the coax octo dashes), the
+        # small class populates the cheap corners, and the flying wings
+        # of 0.12 add the catapult-launched seats (145/125/372 before
+        # they joined)
+        assert counts == {"isr": 377, "logistics": 275, "intercept": 526}
 
     def test_crossing_is_purely_additive(self, spaces):
         # every pre-crossing mix keeps its exact verdict: restricted to
@@ -186,18 +194,54 @@ class TestFronts:
 
 
 class TestFamilyWinners:
-    def test_winged_vtol_wins_isr(self, spaces):
+    def test_flying_wing_wins_isr(self, spaces):
+        """The catapult-launched single-pusher wing spends nothing on
+        hover and turns the li-ion pack's watt-hours straight into
+        loiter -- it out-sits every hover-capable airframe."""
+
         best = max(
             (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
+        )
+        assert best.selection["airframe"] == "flyingWingSingle"
+        assert best.selection["material"] == "carbonFiber"  # grams buy minutes
+        assert best.selection["battery"] == "liion6s6p"  # chemistry buys the loiter
+        assert best.metrics["stationMinutes"] > 240.0  # past the four-hour ramp
+
+    def test_winged_vtol_keeps_the_hover_capable_isr_crown(self, spaces):
+        best = max(
+            (
+                a
+                for a in spaces["isr"]
+                if a.verified and a.selection["airframe"] not in FLYING_WINGS
+            ),
+            key=lambda a: a.metrics["stationMinutes"],
         )
         assert best.selection["airframe"] == "vtolWing"
         assert best.selection["material"] == "carbonFiber"  # grams buy minutes
         assert best.selection["battery"] == "liion6s6p"  # chemistry buys the loiter
         assert best.metrics["stationMinutes"] > 100.0
 
-    def test_winged_vtol_wins_logistics(self, spaces):
+    def test_flying_wing_twin_wins_logistics(self, spaces):
+        """The twin's gentle Antigravity pushers stay inside the li-ion
+        discharge ceiling (no hover climb to feed), so the ENERGY pack
+        wins the delivery trade the winged VTOL had to fly on LiPo."""
+
         best = max(
             (a for a in spaces["logistics"] if a.verified),
+            key=lambda a: a.metrics["payloadRangeKgKm"],
+        )
+        assert best.selection["airframe"] == "flyingWingTwin"
+        assert best.selection["motors"] == "mn4006"
+        assert best.selection["battery"] == "liion6s6p"
+        assert best.metrics["payloadRangeKgKm"] > 180.0
+
+    def test_winged_vtol_keeps_the_hover_capable_logistics_crown(self, spaces):
+        best = max(
+            (
+                a
+                for a in spaces["logistics"]
+                if a.verified and a.selection["airframe"] not in FLYING_WINGS
+            ),
             key=lambda a: a.metrics["payloadRangeKgKm"],
         )
         assert best.selection["airframe"] == "vtolWing"
@@ -232,15 +276,25 @@ class TestFamilyWinners:
         assert others < darts[2]
 
     def test_cheap_corners_split_by_mission(self, spaces):
-        # the quad keeps the ISR and logistics cheap corners; the
-        # crossing hands intercept's to the small-class teardrop (an
-        # MT2213 dash bird on the slick shell undercuts every 6S mix)
-        for name in ("isr", "logistics"):
-            cheapest = min(
-                (a for a in spaces[name] if a.verified), key=lambda a: a.metrics["missionCost"]
-            )
-            assert cheapest.selection["airframe"] == "boxQuad", name
-            assert cheapest.selection["material"] == "aluminum", name  # Al owns cheap
+        # the flying wing takes the ISR cheap corner (a bench-kit MT2213
+        # and 3S pack loiter 37 wing-borne minutes -- no multirotor gets
+        # the gimbal aloft on the small class); the quad keeps the
+        # logistics corner; the crossing hands intercept's to the
+        # small-class teardrop (an MT2213 dash bird on the slick shell
+        # undercuts every 6S mix)
+        cheapest = min(
+            (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["missionCost"]
+        )
+        assert cheapest.selection["airframe"] == "flyingWingSingle"
+        assert cheapest.selection["motors"] == "mt2213"
+        assert cheapest.selection["battery"] == "tattu3s"
+        assert cheapest.selection["material"] == "aluminum"  # Al owns cheap
+        cheapest = min(
+            (a for a in spaces["logistics"] if a.verified),
+            key=lambda a: a.metrics["missionCost"],
+        )
+        assert cheapest.selection["airframe"] == "boxQuad"
+        assert cheapest.selection["material"] == "aluminum"
         cheapest = min(
             (a for a in spaces["intercept"] if a.verified),
             key=lambda a: a.metrics["missionCost"],
@@ -250,16 +304,21 @@ class TestFamilyWinners:
         assert cheapest.selection["battery"] == "tattu3s"
         assert cheapest.selection["material"] == "aluminum"
 
-    def test_a_robust_mix_sits_on_two_fronts(self, spaces):
+    def test_the_specialists_split_the_fronts(self, spaces):
+        """Before the flying wings joined, one winged-VTOL base mix sat
+        on both the ISR and logistics fronts -- the buy-once bird.  The
+        specialists ended that: the single wing owns the whole ISR
+        front, the twin takes the logistics top, and no base mix sits
+        on two fronts anymore, let alone three."""
+
         fronts = {
             name: {base_mix(a) for a in front_2d(spaces[name], MISSIONS[name][1])}
             for name in MISSIONS
         }
-        overlap = fronts["isr"] & fronts["logistics"]
-        assert overlap  # the winged std/slim bird serves both
-        assert any(dict(mix)["airframe"] == "vtolWing" for mix in overlap)
-        # nothing is on all three fronts: missions really pull apart
-        assert not (overlap & fronts["intercept"])
+        assert {dict(mix)["airframe"] for mix in fronts["isr"]} == {"flyingWingSingle"}
+        assert "flyingWingTwin" in {dict(mix)["airframe"] for mix in fronts["logistics"]}
+        assert not (fronts["isr"] & fronts["logistics"])
+        assert not (fronts["isr"] & fronts["logistics"] & fronts["intercept"])
 
     def test_both_materials_earn_front_seats(self, spaces):
         """The material axis is a real trade: carbon's lighter structure
@@ -281,6 +340,33 @@ class TestExplainableInfeasibility:
         darts = [a for a in spaces["logistics"] if a.selection["airframe"] == "dartInterceptor"]
         assert darts and all(not a.verified for a in darts)
         assert all("cargoFits" in a.violations for a in darts)
+
+    def test_single_flying_wing_is_an_isr_specialist(self, spaces):
+        # 1.0 kg capacity < the smallest bay + parcel (1.12 kg): the
+        # loiter specialist is honestly excluded from the freight trade,
+        # exactly like the teardrop
+        wings = [a for a in spaces["logistics"] if a.selection["airframe"] == "flyingWingSingle"]
+        assert wings and all(not a.verified for a in wings)
+        assert all("cargoFits" in a.violations for a in wings)
+
+    def test_twin_pays_for_its_second_motor(self, studies):
+        # the redundancy price in watts: TWO X4112S climb-outs
+        # (2 x 800 W at the wings' full-throttle catapult climb) burst
+        # the li-ion ceiling the single stays inside
+        for airframe, ok in (("flyingWingSingle", True), ("flyingWingTwin", False)):
+            arch = studies["isr"].evaluate(
+                {
+                    "airframe": airframe,
+                    "motors": "x4112s",
+                    "props": "apc11x55",
+                    "battery": "liion6s6p",
+                    "sensor": "zenmuseH20",
+                    "material": "carbonFiber",
+                }
+            )
+            assert arch.verified is ok
+            if not ok:
+                assert "packPower" in arch.violations
 
     def test_teardrop_bay_too_slim_for_parcels(self, spaces):
         # 1.0 kg capacity < the smallest bay + parcel (1.12 kg): the

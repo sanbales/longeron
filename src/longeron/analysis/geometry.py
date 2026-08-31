@@ -86,6 +86,7 @@ __all__ = [
     "camera_occlusion",
     "disc_overlap",
     "drone_geometry",
+    "flying_wing_geometry",
     "geometry_checks",
     "interceptor_geometry",
     "lineup",
@@ -1662,6 +1663,101 @@ def interceptor_geometry(
     )
 
 
+def flying_wing_geometry(
+    *,
+    wing_span: float,
+    wing_area: float,
+    taper: float,
+    motor_count: float,
+    prop_diameter: float,
+    motor_mass: float,
+    battery_mass: float,
+    segments: int = 24,
+) -> dict[str, Any]:
+    """A to-scale tailless flying wing: trailing-edge pusher props.
+
+    The wing IS the airframe (the DeepScout ``FlyingWings`` convention:
+    ``fuselageLength`` 0 marks the family): one straight-tapered panel
+    pair lofted from a symmetric 15% section, a winglet on each tip,
+    one pusher motor can per station on the trailing edge (a single at
+    the root, a counter-rotating pair either side of it), each prop a
+    thin aft-facing disk, and the battery as an indigo sleeve bulging
+    through the root bay.  Two honest stand-ins, named here so nobody
+    reads more than the mesh knows: the loft is straight and unswept
+    (:func:`_lift_surface` has no sweep) and the section is symmetric
+    rather than reflexed -- the swept, blended planform this family
+    really flies is a job for the loft framework's lofted wing body.
+    """
+
+    if min(wing_span, wing_area, taper, prop_diameter) <= 0:
+        raise AnalysisError("flying wing dimensions must be positive")
+    stations = max(1, round(motor_count))
+    mean_chord = wing_area / wing_span
+    root = 2.0 * mean_chord / (1.0 + taper)
+    tip = root * taper
+    half = wing_span / 2
+
+    right = _lift_surface(
+        origin=(0.0, 0.0, 0.0),
+        direction=(0.0, 0.0, 1.0),
+        length=half,
+        root_chord=root,
+        tip_chord=tip,
+        section="0015",  # the family's thick-root bay section
+    )
+    wing = _merge(right, _mirror_z(right))
+
+    fin = _lift_surface(
+        origin=(0.0, 0.0, half),  # the tip quarter-chord point
+        direction=(0.0, 1.0, 0.0),
+        length=0.16 * half,
+        root_chord=0.8 * tip,
+        tip_chord=0.5 * tip,
+        section=TAIL_SECTION,
+    )
+    winglets = _merge(fin, _mirror_z(fin))
+
+    motor_d, motor_h = motor_size(motor_mass)
+    if stations == 1:
+        z_pods = [0.0]
+    else:  # a symmetric row across the middle third of the span
+        z_pods = [(2.0 * i / (stations - 1) - 1.0) * half / 3.0 for i in range(stations)]
+    motor_meshes: list[Mesh] = []
+    prop_meshes: list[Mesh] = []
+    for z in z_pods:
+        chord = root + (tip - root) * abs(z) / half
+        x_te = -0.75 * chord  # chords run LE +0.25c .. TE -0.75c
+        can = _tube(
+            [(x_te - 0.002, motor_d / 2), (x_te - 0.002 - motor_h, 0.4 * motor_d)], segments
+        )
+        disk = _tube(
+            [
+                (x_te - motor_h - 0.006, prop_diameter / 2),
+                (x_te - motor_h - 0.0085, prop_diameter / 2),
+            ],
+            max(segments, 32),
+        )
+        motor_meshes.append((_translate(can[0], 0.0, 0.0, z), can[1]))
+        prop_meshes.append((_translate(disk[0], 0.0, 0.0, z), disk[1]))
+
+    bat_l, bat_w, _bat_h = battery_size(battery_mass)
+    battery = _tube(
+        [(min(bat_l / 2, 0.24 * root), bat_w / 2 + 0.002), (-bat_l / 2, bat_w / 2 + 0.002)],
+        segments,
+    )
+
+    return _pack(
+        [
+            ("wing", wing, 1.0),
+            ("winglets", winglets, 1.0),
+            ("motors", _merge(*motor_meshes), 1.0),
+            ("props", _merge(*prop_meshes), 0.55),
+            ("battery", battery, 1.0),
+        ],
+        colors={"winglets": COLORS["tail"]},
+    )
+
+
 def teardrop_quad_geometry(
     *,
     fuselage_length: float,
@@ -1948,8 +2044,10 @@ def airframe_geometry(
     :func:`drone_geometry` (the N-arm multirotor -- ``arm_count`` sets
     the frame family, and a station count of twice the arm count
     stacks the coaxial pairs); no wing but a real fuselage ->
-    :func:`teardrop_quad_geometry` (the upended bullet); a single
-    motor station -> :func:`interceptor_geometry`; otherwise
+    :func:`teardrop_quad_geometry` (the upended bullet); a wing with no
+    fuselage -> :func:`flying_wing_geometry` (the tailless family: the
+    wing IS the fuselage); a single motor station ->
+    :func:`interceptor_geometry`; otherwise
     :func:`winged_vtol_geometry` (the cruciform tail-sitter, rendered
     in hover attitude).  ``arm_thickness``/``arm_width`` draw the quad
     families' arms at a load-sized tube diameter when given;
@@ -1981,6 +2079,16 @@ def airframe_geometry(
             arm_count=arm_count if arm_count > 0 else 4,
             coaxial=arm_count > 0 and motor_count == 2 * arm_count,
             **arm_kw,
+        )
+    if fuselage_length <= 0:  # tailless: the wing IS the fuselage
+        return flying_wing_geometry(
+            wing_span=wing_span,
+            wing_area=wing_area,
+            taper=taper,
+            motor_count=motor_count,
+            prop_diameter=prop_diameter,
+            motor_mass=motor_mass,
+            battery_mass=battery_mass,
         )
     if motor_count <= 1:
         return interceptor_geometry(

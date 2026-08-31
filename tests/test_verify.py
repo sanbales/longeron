@@ -539,17 +539,27 @@ class TestCover:
             verify.cover(catalog, "ScoutSizing::TradeQuad", assume=("noSuchRule",))
 
     def test_nonlinear_catalog_recall_still_measured(self, uav):
-        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2)
-        assert report.coverage.exhaustive == 3840
+        # the 4800-mix space outgrew the default 4096 census cap when
+        # the flying wings joined; the explicit cap keeps ground truth
+        # measured (and the default-cap behavior -- recall honestly
+        # unmeasured -- is pinned just below)
+        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2, exhaustive_cap=4800)
+        assert report.coverage.exhaustive == 4800
         # the crossed catalog makes every violation class pairwise-
         # visible (a small motor on a heavy shell trips isrLift in one
         # pair), so the measured recall reports full coverage -- against
-        # the 3840-mix exhaustive census, from a ~40-row array
+        # the 4800-mix exhaustive census, from a ~50-row array
         assert report.coverage.recall == 1.0
         assert "isrLift" in report.violations
         assert "cellMatch" in report.violations  # the class axis, caught
         assert len(report.coverage.rows) < 60
         assert report.status == "violated"
+
+    def test_recall_honestly_unmeasured_past_the_census_cap(self, uav):
+        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2)
+        assert report.coverage.exhaustive is None
+        assert report.coverage.recall is None
+        assert report.status == "violated"  # the catches are still real
 
     def test_cover_catch_materializes_via_from_architecture(self, catalog):
         report = verify.cover(catalog, "ScoutSizing::TradeQuad", t=2)

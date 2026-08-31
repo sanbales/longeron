@@ -165,7 +165,7 @@ def test_sparql_variation_points_and_variants(graph):
             """,
         )
     )
-    assert len(rows) == 40  # the crossed catalog (8+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
+    assert len(rows) == 42  # the crossed catalog (10+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
     assert (str(rows[0].point), str(rows[0].variant), str(rows[0].target)) == (
         "AirframeChoice",
         "boxQuad",
