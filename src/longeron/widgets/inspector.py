@@ -94,7 +94,7 @@ from __future__ import annotations
 import re
 import time
 from html import escape
-from typing import Any
+from typing import Any, cast
 
 try:
     import ipywidgets as W
@@ -112,7 +112,14 @@ from ..errors import EditError
 from ..interpreter import Interpreter
 from ..units import unit_table
 from .app import _TAB_ICON_CSS, _AppSweeper
-from .explorer import _chip, _display_name, _family, _import_shape, _is_relationship
+from .explorer import (
+    ResolvedLayout,
+    _chip,
+    _display_name,
+    _family,
+    _import_shape,
+    _is_relationship,
+)
 
 __all__ = ["Inspector"]
 
@@ -312,12 +319,14 @@ class Inspector(W.VBox):
     #: sweeper joins the panel -- needs an explicit type here
     children: Any
 
-    def __init__(self, app: Any, *, layout: str | None = None, activate: bool = False) -> None:
+    def __init__(
+        self, app: Any, *, layout: ResolvedLayout | None = None, activate: bool = False
+    ) -> None:
         self.app = app
         strategy = layout if layout is not None else getattr(app, "layout_strategy", "inline")
         if strategy not in ("inline", "lab"):
             raise ValueError(f"layout must be 'inline' or 'lab', not {strategy!r}")
-        self.layout_strategy = strategy
+        self.layout_strategy: ResolvedLayout = cast("ResolvedLayout", strategy)
         self._activate = bool(activate)
         self._element: M.Element | None = None
         self._syncing = False

@@ -54,7 +54,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, Protocol, cast
 
 from .. import ast as A
 from .. import model as M
@@ -75,9 +75,16 @@ __all__ = [
     "Coupling",
     "Panel",
     "RangeInfo",
+    "SurfaceWidget",
+    "VerdictKind",
     "WiringMap",
     "surface",
 ]
+
+#: the standard ``VerdictKind`` vocabulary a verdict panel aggregates to
+#: (``"error"`` is the honest extra state: the evaluation itself failed),
+#: cross-asserted against the tone table by the test suite
+VerdictKind = Literal["pass", "fail", "inconclusive", "error"]
 
 #: rendering qualified name -> the widgets-catalog entry (or engine-built
 #: panel) it names; the registry the ``render`` references dispatch
@@ -161,7 +168,7 @@ class Panel:
     ranges: dict[str, RangeInfo] = field(default_factory=dict)
     returns: tuple[str, ...] = ()  #: the case's declared result names
     results: dict[str, float] = field(default_factory=dict)  #: last run's returns
-    verdict: str = ""  #: VerdictKind for verdict panels
+    verdict: VerdictKind | Literal[""] = ""  #: VerdictKind for verdict panels ('' elsewhere)
     rows: list[RequirementResult] = field(default_factory=list)
     tool: tuple[str, str] | None = None  #: the @ToolExecution (toolName, uri)
     readout: Any = None
@@ -213,6 +220,24 @@ class WiringMap:
             lines.append("notes:")
             lines += [f"  {note}" for note in self.notes]
         return "\n".join(lines)
+
+
+class SurfaceWidget(Protocol):
+    """What :func:`surface` returns: an ipywidgets ``VBox`` (displayable
+    as usual) carrying the derivation as data.  The attributes below are
+    the composite's kernel-side surface -- everything a notebook or test
+    reads and scripts; ``swap`` re-derives every panel for another
+    subject (the picker's programmatic twin)."""
+
+    panels: list[Panel]  #: one per declared subview, derived or absent
+    wiring: WiringMap  #: the printable derivation record
+    view: str  #: the view usage's qualified name
+    subject: str  #: the current subject definition's qualified name
+    subjects: list[str]  #: every definition the exposed cases admit
+    picker: Any  #: the subject dropdown (an ipywidgets Dropdown)
+    header: Any  #: the title bar (an ipywidgets HTML)
+    children: Any  #: the VBox composition seam
+    swap: Callable[[str | M.Definition], None]  #: re-derive for a subject
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +601,7 @@ def _verdict_rows(
     return rows
 
 
-def _verdict_kind(rows: list[RequirementResult]) -> str:
+def _verdict_kind(rows: list[RequirementResult]) -> VerdictKind:
     """Aggregate requirement rows into the standard ``VerdictKind``."""
 
     constraints = [c for row in rows if row.applicable for c in row.requirements]
@@ -700,7 +725,7 @@ def surface(
     *,
     subject: str | M.Definition | None = None,
     ranges: Mapping[str, tuple[float, float]] | None = None,
-) -> Any:
+) -> SurfaceWidget:
     """Derive the composed dashboard a view usage declares.
 
     ``view`` names the surface's view usage (qualified name or element).
@@ -727,11 +752,12 @@ def surface(
     tells the truth -- the interpreter and the verdict panels report the
     violation the model states.
 
-    Returns an ipywidgets ``VBox`` carrying the derivation as data:
-    ``.panels`` (:class:`Panel` per subview), ``.wiring`` (the printable
-    :class:`WiringMap`), ``.subject``, ``.subjects`` (every definition
-    the exposed cases admit), ``.picker`` (a dropdown that re-derives on
-    change), and ``.swap(subject)`` (the same re-derivation, scriptable).
+    Returns an ipywidgets ``VBox`` carrying the derivation as data (the
+    :class:`SurfaceWidget` protocol): ``.panels`` (:class:`Panel` per
+    subview), ``.wiring`` (the printable :class:`WiringMap`), ``.subject``,
+    ``.subjects`` (every definition the exposed cases admit), ``.picker``
+    (a dropdown that re-derives on change), and ``.swap(subject)`` (the
+    same re-derivation, scriptable).
     """
 
     widgets = _ipywidgets()
@@ -827,7 +853,7 @@ def surface(
     box.picker = picker
     box.header = header
     box.swap = swap
-    return box
+    return cast(SurfaceWidget, box)  # a VBox wearing the protocol's attributes
 
 
 # ---------------------------------------------------------------------------

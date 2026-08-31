@@ -31,6 +31,7 @@ from typing import Any, cast
 from . import model as M
 from .api import model_from_api_records
 from .errors import MissingExtraError, SysMLError
+from .m0 import Strategy
 
 
 class Client:
@@ -273,7 +274,7 @@ class Client:
     def interpret(
         self,
         qname: str,
-        strategy: str = "nominal",
+        strategy: Strategy = "nominal",
         seed: int | None = None,
         commit: str | None = None,
         bindings: dict[str, Any] | None = None,

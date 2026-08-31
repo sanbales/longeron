@@ -65,7 +65,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fractions import Fraction
 from math import ceil, floor, prod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .. import ast as A
 from .. import m0
@@ -84,10 +84,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "Boundary",
     "Counterexample",
+    "CounterexampleSource",
     "Coverage",
     "Domain",
     "Proof",
+    "ProofStatus",
     "Report",
+    "ReportStatus",
     "Verdict",
     "attribute_domains",
     "bisect_boundary",
@@ -101,6 +104,22 @@ __all__ = [
     "verdict",
     "verify",
 ]
+
+# ---------------------------------------------------------------------------
+# closed vocabularies
+# ---------------------------------------------------------------------------
+
+#: which tier caught a counterexample
+CounterexampleSource = Literal["hunt", "sequences", "cover", "prove"]
+
+#: one negated check's verdict: UNSAT (nothing satisfying every other check
+#: and assumption can violate it), a SAT witness the interpreter confirmed,
+#: or the solver gave up / its witness did not survive the re-check
+ProofStatus = Literal["proven-safe", "violation", "unknown"]
+
+#: the whole report's outcome: nothing found, at least one confirmed
+#: violation, or every negated check proven safe (``prove`` only)
+ReportStatus = Literal["clean", "violated", "proven"]
 
 #: bounds used when no range can be derived from the model (flagged on the
 #: report -- never silent)
@@ -187,7 +206,7 @@ class Counterexample:
     bindings: dict[str, Any] = field(default_factory=dict)  # shrunk scalars
     events: tuple[str, ...] = ()  # minimal violating sequence
     violated: tuple[str, ...] = ()  # checks actually false
-    source: str = "hunt"  # 'hunt' | 'sequences' | 'cover' | 'prove'
+    source: CounterexampleSource = "hunt"
     selection: dict[str, str] = field(default_factory=dict)  # variant pins
     _materializer: Callable[[], Interpretation] | None = field(
         default=None, repr=False, compare=False
@@ -218,7 +237,7 @@ class Proof:
     """
 
     requirement: str
-    status: str  # 'proven-safe' | 'violation' | 'unknown'
+    status: ProofStatus
     bound: str = ""  # exact rational text when a bound query was asked
     binding_constraint: str = ""  # which check the bound is attributed to
 
@@ -252,7 +271,7 @@ class Report:
     """The one report shape every tier (and the umbrella) returns."""
 
     scope: str
-    status: str = "clean"  # 'violated' | 'clean' | 'proven'
+    status: ReportStatus = "clean"
     violations: list[str] = field(default_factory=list)  # deduplicated names
     counterexamples: list[Counterexample] = field(default_factory=list)
     proofs: list[Proof] = field(default_factory=list)
@@ -1189,7 +1208,7 @@ def prove(
         report.gaps.append("prove: no encodable checks to negate")
         return report
 
-    statuses: list[tuple[str, str]] = []
+    statuses: list[tuple[str, ProofStatus]] = []
     for label, expr in checks:
         solver = z3.Solver()
         for _, keep in base:

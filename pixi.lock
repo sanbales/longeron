@@ -21016,7 +21016,7 @@ packages:
 - pypi: ./
   name: longeron
   version: 0.11.0
-  sha256: 3ab84477ec3f53731e3eff0150b2a79b20ebb36137f742970ae1dfc41d81efe3
+  sha256: 4f0ef047b071674312c18709862efdb3b886d22ae75b7faaad991098a5b79536
   requires_dist:
   - antlr4-python3-runtime==4.13.2
   - pytest>=8 ; extra == 'dev'

@@ -162,7 +162,11 @@ select = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/longeron"]
+# tests/typing holds the never-executed Literal-vocabulary fixtures
+# (tests/typing/literal_bite.py): wrong-literal calls under
+# `# type: ignore[arg-type]` that warn_unused_ignores turns into failures
+# the moment a vocabulary loosens back to plain str.
+files = ["src/longeron", "tests/typing"]
 exclude = ["src/longeron/_gen"]
 check_untyped_defs = true
 no_implicit_optional = true

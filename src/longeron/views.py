@@ -55,7 +55,7 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from . import ast as A
 from . import model as M
@@ -63,11 +63,16 @@ from .ecore import _DEF_CLASSES, _USAGE_CLASSES, _UUID_NAMESPACE
 from .errors import ResolutionError, SysMLError
 from .interpreter import Resolver
 
+if TYPE_CHECKING:  # pragma: no cover - typing only (diagrams needs ipyelk)
+    from .diagrams import CompartmentSection, NodeLevel
+    from .toolbar import EdgeRouting, LayoutDirection
+
 __all__ = [
     "SIDECAR_SCHEMA",
     "SIDECAR_VERSION",
     "VIEW_KINDS",
     "ViewInfo",
+    "ViewKind",
     "capture_presentation",
     "expose_closure",
     "list_views",
@@ -81,11 +86,15 @@ __all__ = [
 
 #: the longeron diagram kinds a view can persist (mirrors
 #: ``explorer.DIAGRAM_KINDS``; asserted equal by the test suite)
-VIEW_KINDS = ("structure", "state", "action", "requirements")
+ViewKind = Literal["structure", "state", "action", "requirements"]
+
+#: the runtime table :data:`ViewKind` projects to (the model.py house
+#: pattern: the Literal is the authority, so the two cannot drift)
+VIEW_KINDS: tuple[ViewKind, ...] = get_args(ViewKind)
 
 #: longeron diagram kind -> standard view definition (the typing that makes
 #: a saved view legible to other tools; design doc mapping table)
-VIEW_DEFINITIONS: dict[str, str] = {
+VIEW_DEFINITIONS: dict[ViewKind, str] = {
     "structure": "StandardViewDefinitions::InterconnectionView",
     "state": "StandardViewDefinitions::StateTransitionView",
     "action": "StandardViewDefinitions::ActionFlowView",
@@ -106,7 +115,7 @@ VIEW_RENDERING = "Views::asInterconnectionDiagram"
 #: cannot answer alone (``None`` falls through to the sidecar kind); the
 #: tree/table/textual renderings restore through the structure fallback
 #: with a warning (design doc scope fence)
-_KIND_BY_RENDERING: dict[str, str | None] = {
+_KIND_BY_RENDERING: dict[str, ViewKind | None] = {
     "asInterconnectionDiagram": None,
     "asTreeDiagram": "structure",
     "asElementTable": "structure",
@@ -147,7 +156,7 @@ class ViewInfo:
     exposes: list[M.Expose] = field(default_factory=list)
 
 
-def view_kind(view: M.Usage) -> str | None:
+def view_kind(view: M.Usage) -> ViewKind | None:
     """The longeron diagram kind stated by a view usage's typing.
 
     Matches the last segment of each declared type against the
@@ -321,7 +330,7 @@ def save_view(
     exposed: Any,
     *,
     name: str | None = None,
-    kind: str | None = None,
+    kind: ViewKind | None = None,
     options: Mapping[str, Any] | None = None,
     sidecar: str | Path | None = None,
 ) -> M.Usage:
@@ -369,7 +378,7 @@ def save_view(
                 f"exposed element {element.label!r} is not addressable in this model "
                 "(it needs a resolvable qualified name)"
             )
-    kind = kind or widget_kind or _inferred_kind(elements[0])
+    kind = kind or cast("ViewKind | None", widget_kind) or _inferred_kind(elements[0])
     if kind not in VIEW_KINDS:
         choices = ", ".join(repr(k) for k in VIEW_KINDS)
         raise SysMLError(f"kind must be one of {choices}; not {kind!r}")
@@ -438,10 +447,10 @@ def _resolve_or_none(resolver: Resolver, qname: str) -> M.Element | None:
         return None
 
 
-def _inferred_kind(element: M.Element) -> str:
+def _inferred_kind(element: M.Element) -> ViewKind:
     kind = getattr(element, "kind", None)
     if kind in ("state", "action"):
-        return str(kind)
+        return cast(ViewKind, str(kind))
     return "structure"
 
 
@@ -709,16 +718,19 @@ def restore_view(
             stacklevel=2,
         )
 
-    direction = str(entry.get("direction", "right"))
-    routing = str(entry.get("routing", "orthogonal"))
+    # the sidecar is data from disk: the casts state the trust boundary
+    # (illegal values keep failing loudly in apply_direction/apply_routing,
+    # exactly as before)
+    direction = cast("LayoutDirection", str(entry.get("direction", "right")))
+    routing = cast("EdgeRouting", str(entry.get("routing", "orthogonal")))
     collapsed = tuple(str(name) for name in entry.get("collapsed") or ())
     # per-node collapse levels (stale sidecars are TOLERATED: unknown
     # level values are dropped, unknown qnames draw nothing); the legacy
     # flat 'collapsed' list maps to the smallest rendition
     levels_entry = entry.get("levels")
-    levels = (
+    levels: dict[str | M.Element, NodeLevel] = (
         {
-            str(qname): str(value)
+            str(qname): cast("NodeLevel", str(value))
             for qname, value in levels_entry.items()
             if str(value) in ("partial", "collapsed")
         }
@@ -728,9 +740,9 @@ def restore_view(
     for name in collapsed:
         levels.setdefault(name, "collapsed")
     folded_entry = entry.get("folded")
-    folded = (
+    folded: dict[str, tuple[CompartmentSection, ...]] = (
         {
-            str(qname): tuple(str(section) for section in sections)
+            str(qname): tuple(cast("CompartmentSection", str(section)) for section in sections)
             for qname, sections in folded_entry.items()
         }
         if isinstance(folded_entry, Mapping)
@@ -813,7 +825,7 @@ def _sidecar_entry_for(
     return dict(entry) if isinstance(entry, Mapping) else {}
 
 
-def _restore_kind(view: M.Usage, entry: Mapping[str, Any], resolver: Resolver) -> str:
+def _restore_kind(view: M.Usage, entry: Mapping[str, Any], resolver: Resolver) -> ViewKind:
     kind = view_kind(view)
     if kind is not None:
         return kind
@@ -837,7 +849,7 @@ def _restore_kind(view: M.Usage, entry: Mapping[str, Any], resolver: Resolver) -
                 return mapped
     sidecar_kind = entry.get("kind")
     if sidecar_kind in VIEW_KINDS:
-        return str(sidecar_kind)
+        return cast("ViewKind", str(sidecar_kind))
     return "structure"
 
 

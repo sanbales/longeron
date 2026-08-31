@@ -127,7 +127,7 @@ def _cache_store(path: Path, model: M.Model) -> None:
 # ---------------------------------------------------------------------------
 
 
-def load_file(path, *, cache: bool = True) -> M.Model:
+def load_file(path: str | Path, *, cache: bool = True) -> M.Model:
     """Parse and build a single ``.sysml`` file (optionally cached)."""
 
     source = Path(path)
@@ -154,7 +154,7 @@ def load_many(paths: Iterable, *, cache: bool = True) -> M.Model:
     return _merge_models_move(models, source_name=", ".join(str(p) for p in sources))
 
 
-def load_dir(root, *, recursive: bool = True, cache: bool = True) -> M.Model:
+def load_dir(root: str | Path, *, recursive: bool = True, cache: bool = True) -> M.Model:
     """Load every ``*.sysml`` file under a directory into one model.
 
     Files are loaded in sorted path order for determinism.  ``.kerml``
@@ -213,7 +213,7 @@ def _load_single(path: Path, *, cache: bool) -> M.Model:
     return load_file(path, cache=cache)
 
 
-def load(path, *, cache: bool | None = None) -> M.Model:
+def load(path: str | Path, *, cache: bool | None = None) -> M.Model:
     """Load a model from a ``.sysml`` file, a ``.json`` export, or a
     directory of ``.sysml`` files.
 

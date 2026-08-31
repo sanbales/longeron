@@ -77,6 +77,7 @@ __all__ = [
     "Citation",
     "CoverageReport",
     "Fact",
+    "Status",
     "Verdict",
     "attach",
     "cache_dir",

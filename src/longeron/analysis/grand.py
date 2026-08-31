@@ -63,6 +63,7 @@ from typing import Any
 
 from .. import model as M
 from ..interpreter import Interpreter
+from ..widgets.mission3d import Imagery
 from . import geometry
 from ._expr import AnalysisError
 from .dashboard import _ipywidgets
@@ -416,7 +417,7 @@ def grand_dashboard(
     waypoints: Sequence[Sequence[float]] = ATLANTA_LOOP,
     events: Sequence[Any] = FLIGHT_EVENTS,
     ground_alt: float = 300.0,
-    imagery: str = "satellite",
+    imagery: Imagery = "satellite",
 ) -> Any:
     """The grand-tour dashboard (an ipywidgets ``VBox``) -- one call.
 

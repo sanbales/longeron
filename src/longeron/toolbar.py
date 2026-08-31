@@ -47,7 +47,7 @@ via :func:`longeron.diagrams.on_select` can never fire from a search.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 try:
     import ipywidgets as W
@@ -78,11 +78,27 @@ __all__ = [
     "AutoFitTool",
     "DiagramSearch",
     "DirectionTool",
+    "EdgeRouting",
     "EdgeRoutingTool",
+    "LayoutDirection",
     "apply_direction",
     "apply_routing",
     "upgrade_toolbar",
 ]
+
+#: the edge-routing styles a diagram view accepts (``routing=`` on every
+#: view constructor; the toolbar's routing button cycles the same set).
+#: The lowercase spellings are the public vocabulary; :data:`ROUTING_STYLES`
+#: holds the equivalent ``elk.edgeRouting`` option values, and
+#: :func:`apply_routing` normalizes case between the two.
+EdgeRouting = Literal["orthogonal", "polyline", "splines"]
+
+#: the layout flow directions a diagram view accepts (``direction=`` on
+#: every view constructor; the toolbar's orientation button toggles the
+#: same pair).  Lowercase is the public vocabulary; :data:`DIRECTIONS`
+#: holds the ``elk.direction`` option values, and :func:`apply_direction`
+#: normalizes case between the two.
+LayoutDirection = Literal["right", "down"]
 
 #: the ELK layered edge routing styles the routing button cycles through
 #: (spec figures mix straight and orthogonal connectors; SPLINES rounds

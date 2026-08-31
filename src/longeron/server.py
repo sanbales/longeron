@@ -55,7 +55,10 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .m0 import Strategy
 
 from . import model as M
 from .builder import build_model
@@ -852,7 +855,9 @@ def create_app(path: str | Path = ".") -> Any:
             interpretation = interpret(
                 model,
                 qname,
-                strategy=strategy,
+                # request payloads are open strings; interpret() itself
+                # rejects unknown strategies (caught as SysMLError below)
+                strategy=cast("Strategy", strategy),
                 seed=seed,
                 bindings=body.get("bindings"),
                 selection=body.get("selection"),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 
 from antlr4 import CommonTokenStream, InputStream, Token
 from antlr4.error.ErrorListener import ErrorListener
@@ -13,6 +14,10 @@ from ._gen.kerml.KerMLParser import KerMLParser
 from ._gen.sysml.SysMLLexer import SysMLLexer
 from ._gen.sysml.SysMLParser import SysMLParser
 from .errors import ParseError, SyntaxIssue
+
+#: the two grammars this front-end parses (inferred from the file suffix
+#: by :func:`parse_file` when not given explicitly)
+Language = Literal["sysml", "kerml"]
 
 # ANTLR's "mismatched input X expecting {...}" / "extraneous input X
 # expecting {...}" messages dump the full expected-token set -- 40+ token
@@ -76,7 +81,7 @@ class _CollectingErrorListener(ErrorListener):
 class ParseResult:
     """A parse tree plus the machinery needed to interpret it."""
 
-    def __init__(self, tree, parser, tokens, language: str, source_name: str):
+    def __init__(self, tree, parser, tokens, language: Language, source_name: str):
         self.tree = tree
         self.parser = parser
         self.tokens = tokens
@@ -94,7 +99,7 @@ def _run_parser(
     lexer_cls,
     parser_cls,
     source_name: str,
-    language: str,
+    language: Language,
     rule: str = "rootNamespace",
     require_eof: bool = True,
 ) -> ParseResult:
@@ -138,7 +143,7 @@ def parse_kerml_text(text: str, source_name: str = "<text>") -> ParseResult:
     return _run_parser(text, KerMLLexer, KerMLParser, source_name, "kerml")
 
 
-def parse_file(path, language: str | None = None) -> ParseResult:
+def parse_file(path: str | Path, language: Language | None = None) -> ParseResult:
     """Parse a ``.sysml`` or ``.kerml`` file (language inferred from suffix)."""
 
     path = Path(path)

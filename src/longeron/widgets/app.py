@@ -147,7 +147,7 @@ import weakref
 from collections.abc import Callable
 from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 try:
     import anywidget
@@ -164,6 +164,8 @@ from ..analysis.scoreboard import _root_requirements
 from ..analysis.scoreboard import scoreboard as _build_scoreboard
 from ..errors import MissingExtraError, SysMLError
 from .explorer import (
+    LayoutChoice,
+    ResolvedLayout,
     _display_name,
     _dock_key,
     _DockSweeper,
@@ -175,7 +177,14 @@ from .explorer import (
 if TYPE_CHECKING:
     from .explorer import Explorer
 
-__all__ = ["ModelApp", "open"]
+__all__ = ["EntryOrigin", "ModelApp", "open"]
+
+#: where a loaded model came from -- and what the app may do with it:
+#: ``"file"`` (Save enabled, back to the path), ``"dir"`` (a directory
+#: merge; Save writes tracked edits back file by file), ``"text"`` (an
+#: in-memory model; save needs an explicit path), or ``"api"`` (Push
+#: enabled through the entry's client)
+EntryOrigin = Literal["file", "dir", "text", "api"]
 
 #: the app's constant dock identity: ONE app panel per Lab window
 _APP_KEY = "longeron-app"
@@ -235,11 +244,12 @@ _ICON_SVG = """\
 </svg>
 """
 
-#: the layout strategies :func:`open` accepts
-_LAYOUTS = ("auto", "inline", "lab")
+#: the layout strategies :func:`open` accepts (the explorer's vocabulary:
+#: :data:`~longeron.widgets.explorer.LayoutChoice` is the authority)
+_LAYOUTS: tuple[LayoutChoice, ...] = get_args(LayoutChoice)
 
 
-def _resolve_layout(choice: str) -> str:
+def _resolve_layout(choice: LayoutChoice) -> ResolvedLayout:
     """``auto``/``inline``/``lab`` -> a concrete strategy (explorer's rules).
 
     ``lab`` without ipylab raises the house :class:`MissingExtraError`
@@ -578,7 +588,7 @@ class ModelEntry:
 
     model: M.Model
     source: str
-    origin: str
+    origin: EntryOrigin
     path: Path | None = None
     client: Any = None
     project: str | None = None
@@ -610,7 +620,7 @@ class ModelApp(W.VBox):
     def __init__(
         self,
         *,
-        layout: str = "auto",
+        layout: LayoutChoice = "auto",
         activate: bool = True,
         inspector: bool = True,
         reveal_inspector: bool = True,
@@ -961,7 +971,7 @@ class ModelApp(W.VBox):
             model = workspace.load(target)
         finally:
             self._clear_busy()
-        origin = "dir" if target.is_dir() else "file"
+        origin: EntryOrigin = "dir" if target.is_dir() else "file"
         entry = ModelEntry(model=model, source=str(target), origin=origin, path=target)
         self._add_entry(entry)
         self._status(f"loaded {_display_name(model)} from {target}", kind="ok")
@@ -1234,7 +1244,7 @@ class ModelApp(W.VBox):
         """
 
         entry = self._entry_for(model)
-        layout = "lab" if self.layout_strategy == "lab" else "inline"
+        layout: LayoutChoice = "lab" if self.layout_strategy == "lab" else "inline"
         ex = explore(entry.model, layout=layout)
         # construction already adopted ex into the kernel's ACTIVE app;
         # wire THIS app too when it is not that one (idempotent)
@@ -1712,7 +1722,7 @@ class ModelApp(W.VBox):
 
 def open(
     *,
-    layout: str = "auto",
+    layout: LayoutChoice = "auto",
     activate: bool = True,
     inspector: bool = True,
     reveal_inspector: bool = True,

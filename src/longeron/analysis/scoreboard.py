@@ -120,7 +120,10 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    import anywidget
 
 from .. import model as M
 from ..errors import MissingExtraError, SysMLError
@@ -130,12 +133,37 @@ from ._expr import AnalysisError, is_scalar
 __all__ = [
     "AGGREGATORS",
     "UTILITY_FUNCTIONS",
+    "Aggregation",
     "Aggregator",
     "Row",
     "Scoreboard",
+    "Tessellation",
+    "UtilityShape",
+    "ValueFormat",
     "architecture_values",
     "scoreboard",
 ]
+
+# ---------------------------------------------------------------------------
+# closed vocabularies (each cross-asserted against its runtime registry by
+# the test suite, so alias and table cannot drift)
+# ---------------------------------------------------------------------------
+
+#: the named aggregation strategies (:data:`AGGREGATORS` maps each to its
+#: implementation; any :class:`Aggregator` callable is accepted too)
+Aggregation = Literal["saw", "min", "geometric"]
+
+#: the declared utility shapes (:data:`UTILITY_FUNCTIONS` maps each to its
+#: ``fn(raw, params) -> [0, 1]`` implementation)
+UtilityShape = Literal["larger-is-better", "smaller-is-better", "ramp", "target-is-best", "step"]
+
+#: the scoreboard widget's cell tessellations: squarified treemap, or the
+#: vendored d3-voronoi-treemap
+Tessellation = Literal["treemap", "voronoi"]
+
+#: how utilities/aggregates print and render: ``"percent"`` (one decimal,
+#: ``61.1%``) or ``"float"`` (three decimals, ``0.611``)
+ValueFormat = Literal["percent", "float"]
 
 #: the vendored d3-voronoi-treemap bundle (see module docstring for licenses)
 _VORONOI_JS = Path(__file__).resolve().parents[1] / "_js" / "voronoi_treemap.bundled.js"
@@ -359,14 +387,17 @@ class Scoreboard:
         target: M.Model | M.Package | M.Definition | M.Usage,
         *,
         values: Mapping[str, Any] | None = None,
-        aggregation: str | Aggregator = "saw",
+        aggregation: Aggregation | Aggregator = "saw",
         weights: Mapping[str, float] | None = None,
-        utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
-        value_format: str = "percent",
+        utilities: Mapping[str, UtilityShape | Callable[[Any], float]] | None = None,
+        value_format: ValueFormat = "percent",
     ) -> None:
         if value_format not in ("percent", "float"):
             raise AnalysisError(f"value_format must be 'percent' or 'float'; not {value_format!r}")
         self.value_format = value_format
+        #: the aggregation strategy's display name (an :data:`Aggregation`
+        #: member, or a custom callable's cleaned ``__name__``)
+        self.aggregation: str
         if isinstance(aggregation, str):
             if aggregation not in AGGREGATORS:
                 options = ", ".join(sorted(AGGREGATORS))
@@ -449,7 +480,11 @@ class Scoreboard:
         return weight
 
     def _score_leaf(self, node: _Node, req: M.Definition | M.Usage, qname: str, name: str) -> None:
-        shape = self._utilities.get(qname, self._utilities.get(name))
+        # a declared shape read from the MODEL is an open string here; it is
+        # validated against UTILITY_FUNCTIONS below, exactly as before
+        shape: UtilityShape | Callable[[Any], float] | str | None = self._utilities.get(
+            qname, self._utilities.get(name)
+        )
         if shape is None:
             declared = self._attr_value(req, UTILITY_ATTR)
             shape = str(declared) if declared is not None else "step"
@@ -640,7 +675,7 @@ class Scoreboard:
 
     def widget(
         self,
-        tessellation: str = "treemap",
+        tessellation: Tessellation = "treemap",
         *,
         collapsed: Iterable[str] = (),
         zoom_root: str = "",
@@ -648,8 +683,8 @@ class Scoreboard:
         seed: int = 42,
         width_px: int = 960,
         height_px: int = 540,
-        value_format: str | None = None,
-    ) -> Any:
+        value_format: ValueFormat | None = None,
+    ) -> anywidget.AnyWidget:
         """The scoreboard as one interactive anywidget.
 
         ``tessellation`` picks ``"treemap"`` (squarified) or
@@ -763,11 +798,11 @@ class Scoreboard:
 def scoreboard(
     model_or_element: M.Model | M.Package | M.Definition | M.Usage,
     values: Mapping[str, Any] | None = None,
-    aggregation: str | Aggregator = "saw",
+    aggregation: Aggregation | Aggregator = "saw",
     *,
     weights: Mapping[str, float] | None = None,
-    utilities: Mapping[str, str | Callable[[Any], float]] | None = None,
-    value_format: str = "percent",
+    utilities: Mapping[str, UtilityShape | Callable[[Any], float]] | None = None,
+    value_format: ValueFormat = "percent",
 ) -> Scoreboard:
     """MAUT-score the requirement hierarchy under ``model_or_element``.
 
@@ -1748,10 +1783,10 @@ button.lgn-sb-crumb:hover {
 .lgn-sb-tip-dim { color: rgba(255, 255, 255, 0.62); font-size: 10.5px; }
 """
 
-_WIDGET_CLS: type[Any] | None = None
+_WIDGET_CLS: type[anywidget.AnyWidget] | None = None
 
 
-def _widget_class() -> type[Any]:
+def _widget_class() -> type[anywidget.AnyWidget]:
     """Define ScoreboardWidget lazily -- anywidget is an optional extra."""
 
     global _WIDGET_CLS

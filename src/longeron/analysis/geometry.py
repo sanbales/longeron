@@ -73,13 +73,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from importlib.util import find_spec
 from math import atan, atan2, ceil, cos, floor, pi, radians, sin, sqrt, tan
-from typing import Any
+from typing import Any, Literal
 
 from ..errors import MissingExtraError
 from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy
 
 __all__ = [
+    "GeometryEngine",
     "airframe_geometry",
     "architecture_geometry",
     "architecture_params",
@@ -103,6 +104,12 @@ __all__ = [
 ]
 
 Mesh = tuple[list[float], list[int]]  # flat vertices, flat triangle indices
+
+#: which implementation the interference/occlusion checks run on:
+#: ``"cad"`` (exact booleans on the OCC kernel, behind the ``cad`` extra),
+#: ``"mesh"`` (the dependency-free sampled fallback), or ``"auto"``
+#: (cad when importable, mesh otherwise -- the honest default)
+GeometryEngine = Literal["auto", "cad", "mesh"]
 
 IN = 0.0254  # metres per inch
 
@@ -906,7 +913,7 @@ def _require_cadquery(feature: str) -> Any:
     return cadquery
 
 
-def _resolve_engine(engine: str, mesh: Mapping[str, Any]) -> str:
+def _resolve_engine(engine: GeometryEngine, mesh: Mapping[str, Any]) -> Literal["cad", "mesh"]:
     """``auto`` picks CAD when cadquery AND a stamped recipe are at hand."""
 
     if engine not in ("auto", "cad", "mesh"):
@@ -985,7 +992,7 @@ def view_cone(camera: Mapping[str, Any], *, length: float) -> Any:
 
 
 def _occlusion_result(
-    engine: str,
+    engine: Literal["cad", "mesh"],
     occluded: float,
     cone_volume: float,
     length: float,
@@ -1051,7 +1058,7 @@ def occlusion_report(
     sensing_range: float | None = None,
     resolution: int = 24,
     exclude: tuple[str, ...] = ("camera",),
-    engine: str = "auto",
+    engine: GeometryEngine = "auto",
 ) -> dict[str, Any]:
     """How much of the camera's view cone the airframe fills, and what.
 
@@ -1118,7 +1125,7 @@ def camera_occlusion(
     sensing_range: float | None = None,
     resolution: int = 24,
     exclude: tuple[str, ...] = ("camera",),
-    engine: str = "auto",
+    engine: GeometryEngine = "auto",
 ) -> float:
     """The airframe volume inside the view cone over the cone volume.
 
@@ -1199,7 +1206,7 @@ def _overlap_mesh(
 
 
 def overlap_report(
-    mesh: Mapping[str, Any], *, resolution: int = 24, engine: str = "auto"
+    mesh: Mapping[str, Any], *, resolution: int = 24, engine: GeometryEngine = "auto"
 ) -> list[dict[str, Any]]:
     """Per-disc overlap: how much of each propeller disc is inside what.
 
@@ -1235,7 +1242,9 @@ def overlap_report(
     return _overlap_mesh(mesh, discs, resolution)
 
 
-def disc_overlap(mesh: Mapping[str, Any], *, resolution: int = 24, engine: str = "auto") -> float:
+def disc_overlap(
+    mesh: Mapping[str, Any], *, resolution: int = 24, engine: GeometryEngine = "auto"
+) -> float:
     """The total propeller-disc overlap volume, in cubic metres.
 
     The scalar measure behind the ``propClearance`` requirement of
@@ -1254,7 +1263,7 @@ def geometry_checks(
     *,
     sensing_range: float | None = None,
     resolution: int = 24,
-    engine: str = "auto",
+    engine: GeometryEngine = "auto",
 ) -> dict[str, float]:
     """Both geometric requirement measures, keyed for the scoreboard.
 

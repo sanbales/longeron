@@ -98,7 +98,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .. import ast as A
 from .. import model as M
@@ -121,6 +121,7 @@ if TYPE_CHECKING:
     from .trades import TradeStudy
 
 __all__ = [
+    "Fidelity",
     "FileArtifact",
     "ProblemBuild",
     "add_optimization",
@@ -139,6 +140,11 @@ __all__ = [
 ]
 
 _COMPARISONS = {"<", "<=", ">", ">=", "=="}
+
+#: one calc's evaluation route: its model body through the interpreter, or
+#: the wrapped higher-fidelity tool its ``@ExternalAnalysis`` annotation
+#: declares (``build_problem(fidelity={"CalcName": "external"})``)
+Fidelity = Literal["model", "external"]
 
 
 def _om() -> Any:
@@ -281,7 +287,7 @@ def _return_name(interp: Interpreter, calc: M.Definition | M.Usage) -> str | Non
 class _Fidelity:
     """Per-calc fidelity choices (``'model'`` | ``'external'``) + bookkeeping."""
 
-    def __init__(self, interp: Interpreter, fidelity: Mapping[str, str] | None):
+    def __init__(self, interp: Interpreter, fidelity: Mapping[str, Fidelity] | None):
         self.interp = interp
         self.requested = dict(fidelity or {})
         self.used: set[str] = set()
@@ -289,7 +295,7 @@ class _Fidelity:
         if bad:
             raise AnalysisError(f"fidelity values must be 'model' or 'external' (got {bad})")
 
-    def mode(self, calc: M.Definition | M.Usage) -> str:
+    def mode(self, calc: M.Definition | M.Usage) -> Fidelity:
         """The effective fidelity: bodiless annotated calcs default external."""
 
         spec = external_binding(calc)
@@ -692,7 +698,7 @@ def build_problem(
     part: str | M.Definition | M.Usage,
     requirements: tuple[str, ...] = (),
     setup: bool = True,
-    fidelity: Mapping[str, str] | None = None,
+    fidelity: Mapping[str, Fidelity] | None = None,
     interpretation: Interpretation | None = None,
 ) -> ProblemBuild:
     """Build an OpenMDAO ``Problem`` mirroring a part definition's tree.

@@ -18,7 +18,7 @@ needs no widget toolkit.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .. import model as M
 from ..errors import ExecutionError, MissingExtraError
@@ -31,7 +31,12 @@ if TYPE_CHECKING:
     from ..interpreter import Interpreter
     from ..replay import Timeline
 
-__all__ = ["replay_widget"]
+__all__ = ["ReplayKind", "replay_widget"]
+
+#: which view and recorder :func:`replay_widget` uses: the state diagram
+#: with :func:`~longeron.replay.record_timeline`, or the action diagram
+#: with :func:`~longeron.replay.record_action_timeline`
+ReplayKind = Literal["state", "action"]
 
 
 # Conventions (shared with longeron.widgets.viewer3d): the SVG is injected
@@ -371,7 +376,7 @@ def replay_widget(
     *,
     inputs: dict[str, Any] | None = None,
     width_px: int = 760,
-    kind: str | None = None,
+    kind: ReplayKind | None = None,
     timeline: Timeline | None = None,
 ) -> anywidget.AnyWidget:
     """Simulate ``element`` and replay it over its diagram.

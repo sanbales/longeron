@@ -27,7 +27,7 @@ Requires the ``smt`` extra: ``pip install "longeron[smt]"``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast
 
 from .. import ast as A
 from .. import model as M
@@ -35,7 +35,10 @@ from ..errors import EvaluationError, MissingExtraError, ResolutionError
 from ..interpreter import Instance, Interpreter
 from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
-__all__ = ["SmtResult", "SmtSystem", "to_smt"]
+__all__ = ["SmtResult", "SmtStatus", "SmtSystem", "to_smt"]
+
+#: a Z3 check outcome, verbatim
+SmtStatus = Literal["sat", "unsat", "unknown"]
 
 
 def _z3() -> Any:
@@ -48,7 +51,7 @@ def _z3() -> Any:
 
 @dataclass
 class SmtResult:
-    status: str  # 'sat' | 'unsat' | 'unknown'
+    status: SmtStatus
     witness: dict[str, float | bool] = field(default_factory=dict)
     core: list[str] = field(default_factory=list)  # unsat only
 
@@ -79,7 +82,7 @@ class SmtSystem:
         if status == "unsat":
             labels = [tracked[lit] for lit in solver.unsat_core()]
             return SmtResult("unsat", core=sorted(labels))
-        return SmtResult(status)
+        return SmtResult(cast(SmtStatus, status))  # z3 reports sat/unsat/unknown
 
     def maximize(self, path: str, exclude: tuple[str, ...] = ()) -> tuple[str, SmtResult]:
         """Supremum of a variable over the feasible region (exact, as text).
@@ -96,7 +99,7 @@ class SmtSystem:
         handle = opt.maximize(self.variables[path])
         status = str(opt.check())
         if status != "sat":
-            return "", SmtResult(status)
+            return "", SmtResult(cast(SmtStatus, status))  # z3 reports sat/unsat/unknown
         return str(opt.upper(handle)), SmtResult("sat", witness=self._witness(opt.model()))
 
     def _witness(self, model: Any) -> dict[str, float | bool]:

@@ -11,13 +11,17 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from . import model as M
 from .ast import Expr, expr_to_dict, expr_to_text
 from .errors import SysMLError
+
+#: the on-disk formats :func:`save` writes (inferred from the file suffix
+#: when not given explicitly)
+ExportFormat = Literal["sysml", "kerml", "json"]
 
 # Reserved words of the SysML grammar (cannot be used as basic names).
 RESERVED_WORDS = frozenset(
@@ -117,13 +121,13 @@ def _omit_lossless(value, f: dataclasses.Field) -> bool:
     return False
 
 
-def to_dict(element):
+def to_dict(element: M.Element | Expr) -> dict[str, Any] | None:
     """Convert a model element (or expression) to JSON-able data."""
 
     if isinstance(element, Expr):
         return expr_to_dict(element)
     if dataclasses.is_dataclass(element):
-        data = {"@type": type(element).__name__}
+        data: dict[str, Any] = {"@type": type(element).__name__}
         for f in dataclasses.fields(element):
             if f.name in _SKIP_FIELDS:
                 continue
@@ -135,11 +139,11 @@ def to_dict(element):
     return _to_data(element)
 
 
-def _to_data(value):
+def _to_data(value: Any) -> Any:
     if isinstance(value, Expr):
         return expr_to_dict(value)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return to_dict(value)
+        return to_dict(value)  # type: ignore[arg-type]  # model elements are dataclasses
     if isinstance(value, (list, tuple)):
         return [_to_data(v) for v in value]
     if isinstance(value, float) and value == float("inf"):
@@ -147,11 +151,11 @@ def _to_data(value):
     return value
 
 
-def to_json(element, indent: int = 2) -> str:
+def to_json(element: M.Element | Expr, indent: int = 2) -> str:
     return json.dumps(to_dict(element), indent=indent)
 
 
-def save(element: M.Element, path, fmt: str | None = None) -> None:
+def save(element: M.Element, path: str | Path, fmt: ExportFormat | None = None) -> None:
     """Write a model element to disk as ``.sysml``, ``.kerml``, or ``.json``.
 
     The format is inferred from the file suffix unless given explicitly.
@@ -161,7 +165,8 @@ def save(element: M.Element, path, fmt: str | None = None) -> None:
 
     target = Path(path)
     if fmt is None:
-        fmt = {".json": "json", ".kerml": "kerml"}.get(target.suffix.lower(), "sysml")
+        suffix_formats: dict[str, ExportFormat] = {".json": "json", ".kerml": "kerml"}
+        fmt = suffix_formats.get(target.suffix.lower(), "sysml")
     if fmt == "json":
         text = to_json(element)
     elif fmt == "kerml":
@@ -326,7 +331,9 @@ def indent_string(indent: int | str) -> str:
     return " " * indent if isinstance(indent, int) else indent
 
 
-def find_emitter(printer, element: M.Element, prefix: str = "emit_"):
+def find_emitter(
+    printer: Any, element: M.Element, prefix: str = "emit_"
+) -> Callable[[Any, int], None] | None:
     """Look up ``<prefix><ClassName>`` on ``printer`` along the element's MRO.
 
     Shared dispatch helper for the textual printers (:class:`_Printer` here
@@ -336,7 +343,9 @@ def find_emitter(printer, element: M.Element, prefix: str = "emit_"):
     """
 
     for klass in type(element).__mro__:
-        handler = getattr(printer, f"{prefix}{klass.__name__}", None)
+        handler: Callable[[Any, int], None] | None = getattr(
+            printer, f"{prefix}{klass.__name__}", None
+        )
         if handler is not None:
             return handler
     return None

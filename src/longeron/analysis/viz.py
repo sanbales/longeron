@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..errors import MissingExtraError
 from ._expr import AnalysisError
@@ -39,7 +39,18 @@ from .trades import Architecture, TradeStudy, pareto
 if TYPE_CHECKING:
     import anywidget
 
-__all__ = ["margin_sweep_figure", "mix_table", "parcoords", "parcoords_payload", "pareto_figure"]
+__all__ = [
+    "Sense",
+    "margin_sweep_figure",
+    "mix_table",
+    "parcoords",
+    "parcoords_payload",
+    "pareto_figure",
+]
+
+#: one plotted objective's direction of improvement (there is deliberately
+#: no silent maximize default: see :func:`pareto_figure`)
+Sense = Literal["min", "max"]
 
 # Shared palette (restrained: one accent, grays for scaffolding).  The
 # accent family varies lightness, never hue -- see the categorical /
@@ -559,7 +570,7 @@ def pareto_figure(
     *,
     x: str,
     y: str,
-    sense: tuple[str, str] = ("min", "min"),
+    sense: tuple[Sense, Sense] = ("min", "min"),
     panel_y: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,

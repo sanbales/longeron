@@ -132,7 +132,7 @@ import re
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import PurePath
-from typing import Any, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, cast, get_args, runtime_checkable
 
 try:
     import anywidget
@@ -148,11 +148,15 @@ from .. import model as M
 from ..ast import expr_to_text
 from ..interpreter import Interpreter, Resolver
 from ..toolbar import SEARCH_HIT_COLOR
+from ..views import ViewKind
 
 __all__ = [
     "DIAGRAM_KINDS",
     "Explorer",
+    "LayoutChoice",
     "ModelTree",
+    "ResolvedLayout",
+    "StructureScope",
     "TreeNode",
     "TreeView",
     "applicable_kinds",
@@ -160,8 +164,27 @@ __all__ = [
     "requirements_view",
 ]
 
-#: every diagram kind the switcher can offer, in display order
-DIAGRAM_KINDS = ("structure", "state", "action", "requirements")
+# ---------------------------------------------------------------------------
+# closed vocabularies
+# ---------------------------------------------------------------------------
+
+#: the layout strategies :func:`explore` (and the app's ``open``) accept:
+#: detect the frontend, force the side-by-side HBox, or force the
+#: JupyterLab dock (which requires ipylab)
+LayoutChoice = Literal["auto", "inline", "lab"]
+
+#: what ``"auto"`` resolves to: the concrete strategy a built widget runs
+#: (:attr:`Explorer.layout_strategy`; the inspector accepts the same pair)
+ResolvedLayout = Literal["inline", "lab"]
+
+#: what the structure view scopes to: the selection's owning package, or
+#: the selected element itself
+StructureScope = Literal["package", "element"]
+
+#: every diagram kind the switcher can offer, in display order (the same
+#: vocabulary a view persists: :data:`longeron.views.ViewKind`; derived
+#: from it, so the two cannot drift)
+DIAGRAM_KINDS: tuple[ViewKind, ...] = get_args(ViewKind)
 
 #: tooltip per diagram kind (rides the switcher buttons)
 _KIND_TOOLTIPS = {
@@ -1051,7 +1074,7 @@ def _has_requirements(scope: M.Element) -> bool:
     )
 
 
-def applicable_kinds(element: M.Element) -> tuple[str, ...]:
+def applicable_kinds(element: M.Element) -> tuple[ViewKind, ...]:
     """Which :data:`DIAGRAM_KINDS` apply to ``element``.
 
     ``structure`` always applies; ``state`` / ``action`` apply to state
@@ -1061,7 +1084,7 @@ def applicable_kinds(element: M.Element) -> tuple[str, ...]:
     model root) contains requirement definitions/usages or satisfies.
     """
 
-    kinds = ["structure"]
+    kinds: list[ViewKind] = ["structure"]
     kind = getattr(element, "kind", None)
     if kind == "state":
         kinds.append("state")
@@ -1369,8 +1392,9 @@ class _DockSweeper(anywidget.AnyWidget):
 # the explorer widget
 # ---------------------------------------------------------------------------
 
-#: the layout strategies :func:`explore` accepts
-_LAYOUTS = ("auto", "inline", "lab")
+#: the layout strategies :func:`explore` accepts (:data:`LayoutChoice` is
+#: the authority; this runtime table derives from it)
+_LAYOUTS: tuple[LayoutChoice, ...] = get_args(LayoutChoice)
 
 #: callbacks invoked with every newly constructed :class:`Explorer` --
 #: the seam :mod:`longeron.widgets.app` uses to ADOPT direct ``explore()`` calls
@@ -1405,7 +1429,7 @@ def _lab_frontend_detected() -> bool:
     return bool(os.environ.get("JPY_SESSION_NAME"))
 
 
-def _resolve_layout(choice: str) -> str:
+def _resolve_layout(choice: LayoutChoice) -> ResolvedLayout:
     """Resolve ``auto``/``inline``/``lab`` to a concrete strategy.
 
     ``lab`` without ipylab raises the house :class:`MissingExtraError`
@@ -1499,9 +1523,9 @@ class Explorer(W.HBox):
         model: M.Model,
         *,
         tree: TreeView | None = None,
-        layout: str = "auto",
+        layout: LayoutChoice = "auto",
         mode: str = "tab-after",
-        structure_scope: str = "package",
+        structure_scope: StructureScope = "package",
         height: str = "600px",
     ) -> None:
         if structure_scope not in ("package", "element"):
@@ -1583,7 +1607,7 @@ class Explorer(W.HBox):
         self._rel_edge_ids: dict[int, dict[int, tuple[str, ...]]] = {}
         self._req_cache: dict[int, bool] = {}
         self._element: M.Element | None = None
-        self._kind: str = "structure"
+        self._kind: ViewKind = "structure"
         self._syncing = False
 
         engine.on_select(self._on_tree_select)
@@ -1724,13 +1748,13 @@ class Explorer(W.HBox):
         return self._element
 
     @property
-    def kind(self) -> str:
+    def kind(self) -> ViewKind:
         """The active diagram kind (one of :data:`DIAGRAM_KINDS`)."""
 
         return self._kind
 
     @kind.setter
-    def kind(self, value: str) -> None:
+    def kind(self, value: ViewKind) -> None:
         if value not in self.kind_switcher.options:
             applicable = ", ".join(self.kind_switcher.options)
             raise ValueError(f"kind must be one of {applicable}; not {value!r}")
@@ -1841,8 +1865,8 @@ class Explorer(W.HBox):
 
     # -- selection plumbing (idempotent at every hop; see module docstring) ---
 
-    def _kinds_for(self, element: M.Element) -> tuple[str, ...]:
-        kinds = ["structure"]
+    def _kinds_for(self, element: M.Element) -> tuple[ViewKind, ...]:
+        kinds: list[ViewKind] = ["structure"]
         kind = getattr(element, "kind", None)
         if kind == "state":
             kinds.append("state")
@@ -1863,7 +1887,7 @@ class Explorer(W.HBox):
     def _on_kind(self, change: Any) -> None:
         if self._syncing or change["new"] is None:
             return
-        self._kind = str(change["new"])
+        self._kind = cast("ViewKind", str(change["new"]))  # switcher options are DIAGRAM_KINDS
         if self._element is not None:
             self._show(self._element, self._kind, highlight=True)
 
@@ -2042,10 +2066,19 @@ class Explorer(W.HBox):
         return diagrams.structure_diagram(scope)  # type: ignore[arg-type]
 
 
-def explore(model: M.Model, **kwargs: Any) -> Explorer:
+def explore(
+    model: M.Model,
+    *,
+    tree: TreeView | None = None,
+    layout: LayoutChoice = "auto",
+    mode: str = "tab-after",
+    structure_scope: StructureScope = "package",
+    height: str = "600px",
+) -> Explorer:
     """Explore ``model``: a tree navigator beside a diagram pane.
 
-    Keyword arguments reach :class:`Explorer`:
+    Keyword arguments reach :class:`Explorer` (spelled out here so the
+    vocabularies typecheck at the call site):
 
     * ``layout`` -- ``"auto"`` (the default: dock into JupyterLab when
       ipylab is installed and a Lab frontend is detected, else render
@@ -2076,4 +2109,6 @@ def explore(model: M.Model, **kwargs: Any) -> Explorer:
       dock's split handles own the sizing.
     """
 
-    return Explorer(model, **kwargs)
+    return Explorer(
+        model, tree=tree, layout=layout, mode=mode, structure_scope=structure_scope, height=height
+    )

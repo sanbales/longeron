@@ -9,6 +9,7 @@ name parts, e.g. ``("ISQ", "mass")`` for ``ISQ::mass``.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import Any
 from typing import Literal as L
 
 INF = float("inf")
@@ -416,12 +417,12 @@ def _render(expr: Expr) -> tuple[str, int]:
     raise TypeError(f"cannot render expression node {expr!r}")
 
 
-def expr_to_dict(expr: Expr):
+def expr_to_dict(expr: Expr | None) -> dict[str, Any] | None:
     """Serialize an expression AST node to plain JSON-able data."""
 
     if expr is None:
         return None
-    result = {"@expr": type(expr).__name__}
+    result: dict[str, Any] = {"@expr": type(expr).__name__}
     for f in fields(expr):
         value = getattr(expr, f.name)
         result[f.name] = _value_to_data(value)

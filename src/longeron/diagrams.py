@@ -104,8 +104,8 @@ import itertools
 import json
 import math
 import os
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any
+from collections.abc import Callable, Collection, Mapping, Sequence
+from typing import Any, Literal, cast, get_args
 
 try:
     import ipyelk
@@ -190,11 +190,25 @@ from .render import (
     _note_path_d,
     _port_arrow_d,
 )
-from .toolbar import AutoFitTool, _iconify, apply_direction, apply_routing, upgrade_toolbar
+from .toolbar import (
+    AutoFitTool,
+    EdgeRouting,
+    LayoutDirection,
+    _iconify,
+    apply_direction,
+    apply_routing,
+    upgrade_toolbar,
+)
 
 __all__ = [
     "SYSML_STYLE",
+    "ActorStyle",
     "CollapseTool",
+    "CompartmentSection",
+    "CompositionMode",
+    "MembershipMode",
+    "NodeLevel",
+    "PartsMode",
     "action_diagram",
     "diagram",
     "fold",
@@ -202,6 +216,61 @@ __all__ = [
     "on_select",
     "state_diagram",
     "structure_diagram",
+]
+
+# ---------------------------------------------------------------------------
+# closed vocabularies (the ``structure_diagram`` presentation options; the
+# routing/direction pair lives with its toolbar tools:
+# :data:`longeron.toolbar.EdgeRouting` / :data:`longeron.toolbar.LayoutDirection`)
+# ---------------------------------------------------------------------------
+
+#: how nested part-family usages present: nested child boxes (the spec's
+#: primary presentation) or textual ``name : Type`` rows in their
+#: compartments (the spec's collapsed presentation)
+PartsMode = Literal["nested", "rows"]
+
+#: how package membership presents: members nested inside the package box,
+#: or as sibling nodes joined by circle-plus owned-membership edges
+MembershipMode = Literal["nested", "edges"]
+
+#: definition-level composition edges: drawn (``"defs"``) or suppressed
+CompositionMode = Literal["defs", "none"]
+
+#: actor notation: the spec's stick figure, or the «actor» keyword box
+ActorStyle = Literal["figure", "box"]
+
+#: one node's collapse level, in cycling order (each toolbar click REDUCES
+#: detail one step, then wraps back to full): nested child boxes ->
+#: textual rows -> the name compartment alone
+NodeLevel = Literal["expanded", "partial", "collapsed"]
+
+#: the spec compartment names, in stacking order down the node (the
+#: keyword strings are the spec's own compartment names; printed-page
+#: citations at :data:`_SECTION_ORDER`, which derives from this alias)
+CompartmentSection = Literal[
+    "attributes",
+    "enums",
+    "occurrences",
+    "individuals",
+    "timeslices",
+    "snapshots",
+    "items",
+    "parts",
+    "directed features",
+    "allocations",
+    "actions",
+    "parameters",
+    "states",
+    "constraints",
+    "assert constraints",
+    "require constraints",
+    "assume constraints",
+    "requirements",
+    "satisfy requirements",
+    "subject",
+    "actors",
+    "stakeholders",
+    "views",
 ]
 
 _KIND_STEREOTYPES = {
@@ -250,36 +319,22 @@ _ROW_SECTIONS = {
     "view": "views",
 }
 
-#: compartment order down the stack, following the spec's chapter order.
-#: The keyword strings are the spec's own compartment names (printed-page
-#: citations from the notation tables; BNF pages where no table exists).
-_SECTION_ORDER = (
-    "attributes",  # printed p.46
-    "enums",  # printed p.48
-    "occurrences",  # printed p.53
-    "individuals",  # printed p.53
-    "timeslices",  # printed p.53
-    "snapshots",  # printed p.53
-    "items",  # printed p.57
-    "parts",  # printed p.60
-    "directed features",  # printed p.62
-    "allocations",  # printed p.79
-    "actions",  # printed p.89
-    "parameters",  # printed p.91
-    "states",  # printed p.117
-    "constraints",  # printed p.127
-    "assert constraints",  # printed p.127
-    "require constraints",  # BNF printed p.243
-    "assume constraints",  # BNF printed p.244
-    "requirements",  # printed p.132
-    "satisfy requirements",  # printed p.132
-    "subject",  # BNF printed p.244
-    "actors",  # BNF printed p.244
-    "stakeholders",  # BNF printed p.244
-    "views",  # printed p.153
-)
+#: compartment order down the stack, following the spec's chapter order --
+#: derived from :data:`CompartmentSection` (the model.py house pattern:
+#: the Literal is the authority, the runtime table its projection), so the
+#: two cannot drift.  Printed-page citations from the notation tables (BNF
+#: pages where no table exists): attributes p.46, enums p.48, occurrences /
+#: individuals / timeslices / snapshots p.53, items p.57, parts p.60,
+#: directed features p.62, allocations p.79, actions p.89, parameters p.91,
+#: states p.117, constraints + assert constraints p.127, require
+#: constraints BNF p.243, assume constraints BNF p.244, requirements +
+#: satisfy requirements p.132, subject / actors / stakeholders BNF p.244,
+#: views p.153.
+_SECTION_ORDER: tuple[CompartmentSection, ...] = get_args(CompartmentSection)
 
-_SECTION_RANK = {name: rank for rank, name in enumerate(_SECTION_ORDER)}
+#: rank by section name (keyed ``str``, not the Literal: it ranks header
+#: strings coming back from label text too)
+_SECTION_RANK: dict[str, int] = {name: rank for rank, name in enumerate(_SECTION_ORDER)}
 
 #: the compartment-header twist glyphs (the explorer tree's twist
 #: precedent): every header row opens with its fold affordance -- open
@@ -289,17 +344,22 @@ _SECTION_RANK = {name: rank for rank, name in enumerate(_SECTION_ORDER)}
 _TWIST_OPEN = "\u25be"
 _TWIST_FOLDED = "\u25b8"
 
-#: the three per-node collapse levels, in cycling order (each toolbar
-#: click REDUCES detail one step, then wraps back to full): nested child
-#: boxes -> textual rows -> the name compartment alone
-_LEVELS = ("expanded", "partial", "collapsed")
+#: the three per-node collapse levels, in cycling order -- derived from
+#: :data:`NodeLevel` (the Literal is the authority) so alias and table
+#: cannot drift
+_LEVELS: tuple[NodeLevel, ...] = get_args(NodeLevel)
 
 
-def _section_of(header_text: str) -> str:
+def _section_of(header_text: str) -> CompartmentSection:
     """The compartment name behind a header label's text (strip the
-    twist glyph the fold affordance prepends)."""
+    twist glyph the fold affordance prepends).  Header text is built
+    from :data:`_SECTION_ORDER`, so the cast states a construction
+    invariant, not a hope."""
 
-    return header_text[2:] if header_text[:1] in (_TWIST_OPEN, _TWIST_FOLDED) else header_text
+    return cast(
+        CompartmentSection,
+        header_text[2:] if header_text[:1] in (_TWIST_OPEN, _TWIST_FOLDED) else header_text,
+    )
 
 
 def _collapsible(element: M.Element) -> bool:
@@ -1741,19 +1801,19 @@ def structure_diagram(
     *,
     show_attributes: bool = True,
     show_relationships: bool = True,
-    composition: str = "defs",
-    membership: str = "nested",
+    composition: CompositionMode = "defs",
+    membership: MembershipMode = "nested",
     annotations: bool = False,
-    actor_style: str = "figure",
-    parts: str = "nested",
-    levels: Mapping[str, str] | None = None,
-    folded: Mapping[str, Iterable[str]] | None = None,
+    actor_style: ActorStyle = "figure",
+    parts: PartsMode = "nested",
+    levels: Mapping[str | M.Element, NodeLevel] | None = None,
+    folded: Mapping[str, Collection[CompartmentSection]] | None = None,
     toolbar: bool = True,
-    routing: str = "orthogonal",
-    direction: str = "right",
+    routing: EdgeRouting = "orthogonal",
+    direction: LayoutDirection = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
     height: str | None = None,
-) -> Any:
+) -> ipyelk.Diagram:
     """Containment structure with specialization/typing/connection edges.
 
     ``composition="defs"`` (the default) draws definition-level membership
@@ -3441,7 +3501,7 @@ class CollapseTool(Tool):
             for el in builder.nodes_elements()
             if el.qualified_name
         }
-        self._headers: dict[str, tuple[str, str]] = {}
+        self._headers: dict[str, tuple[str, CompartmentSection]] = {}
         for node in _walk_nodes(root) if root is not None else ():
             if not node.id:
                 continue
@@ -3519,7 +3579,7 @@ class CollapseTool(Tool):
 
     # -- header clicks: per-compartment folds ----------------------------------
 
-    def fold(self, qname: str, section: str, folded: bool = True) -> None:
+    def fold(self, qname: str, section: CompartmentSection, folded: bool = True) -> None:
         """Fold (or unfold) ONE compartment of one node: the rows leave,
         the header stays (closed twist).  The node keeps its level."""
 
@@ -3620,7 +3680,9 @@ def _collapse_qname(tool: CollapseTool, element: Any) -> str:
     return qname
 
 
-def level(widget: Any, element: Any, to: str | None = None) -> str:
+def level(
+    widget: ipyelk.Diagram, element: str | M.Element, to: NodeLevel | None = None
+) -> NodeLevel:
     """Get or set one node's collapse level on a structure diagram.
 
     ``to=None`` returns the current level (``"expanded"`` when the node
@@ -3635,7 +3697,7 @@ def level(widget: Any, element: Any, to: str | None = None) -> str:
     tool = _collapse_tool(widget)
     qname = _collapse_qname(tool, element)
     if to is None:
-        return str(tool.levels.get(qname, "expanded"))
+        return cast(NodeLevel, str(tool.levels.get(qname, "expanded")))
     if to not in _LEVELS:
         choices = ", ".join(_LEVELS)
         raise ValueError(f"a collapse level must be one of {choices}; not {to!r}")
@@ -3648,7 +3710,12 @@ def level(widget: Any, element: Any, to: str | None = None) -> str:
     return to
 
 
-def fold(widget: Any, element: Any, section: str, folded: bool = True) -> None:
+def fold(
+    widget: ipyelk.Diagram,
+    element: str | M.Element,
+    section: CompartmentSection,
+    folded: bool = True,
+) -> None:
     """Fold (or unfold, with ``folded=False``) ONE compartment of one
     node on a structure diagram: the compartment's rows leave, its
     header stays with the closed twist, and the node keeps its collapse
@@ -3675,11 +3742,11 @@ def state_diagram(
     *,
     submachine_depth: int | None = None,
     toolbar: bool = True,
-    routing: str = "orthogonal",
-    direction: str = "right",
+    routing: EdgeRouting = "orthogonal",
+    direction: LayoutDirection = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
     height: str | None = None,
-) -> Any:
+) -> ipyelk.Diagram:
     """A hierarchical state machine: states, entry markers, transitions.
 
     A state usage typed by a state def (``state swap : ToteSwap;``) is
@@ -3865,11 +3932,11 @@ def action_diagram(
     *,
     lanes: Mapping[str, Sequence[str]] | bool | None = None,
     toolbar: bool = True,
-    routing: str = "orthogonal",
-    direction: str = "right",
+    routing: EdgeRouting = "orthogonal",
+    direction: LayoutDirection = "right",
     max_label_width: float | None = _MAX_LABEL_WIDTH,
     height: str | None = None,
-) -> Any:
+) -> ipyelk.Diagram:
     """The succession control-flow graph the interpreter executes.
 
     Successions render dashed with open-V arrows and the behavior nodes
@@ -4140,7 +4207,7 @@ def _statement_title(member: M.Element) -> str:
 # ---------------------------------------------------------------------------
 
 
-def diagram(element: M.Model | M.Element, **kwargs: Any) -> Any:
+def diagram(element: M.Model | M.Element, **kwargs: Any) -> ipyelk.Diagram:
     """Pick a view by element kind: state machines, actions, else structure."""
 
     kind = getattr(element, "kind", None)
@@ -4152,7 +4219,7 @@ def diagram(element: M.Model | M.Element, **kwargs: Any) -> Any:
 
 
 def on_select(
-    diagram_widget: Any, model: M.Model, callback: Callable[[list[M.Element]], None]
+    diagram_widget: ipyelk.Diagram, model: M.Model, callback: Callable[[list[M.Element]], None]
 ) -> None:
     """Invoke ``callback`` with the model elements selected in the browser.
 

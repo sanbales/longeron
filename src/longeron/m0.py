@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import random as _random
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from . import ast as A
 from . import model as M
@@ -46,7 +46,19 @@ if TYPE_CHECKING:
     from .analysis.trades import Architecture, TradeStudy
     from .replay import Timeline
 
-__all__ = ["Individual", "Interpretation", "from_architecture", "from_timeline", "interpret"]
+__all__ = [
+    "Individual",
+    "Interpretation",
+    "Strategy",
+    "from_architecture",
+    "from_timeline",
+    "interpret",
+]
+
+#: the population-construction strategies :func:`interpret` accepts
+#: (:attr:`Interpretation.strategy` additionally records ``"trace"`` for
+#: interpretations replayed from a timeline by :func:`from_timeline`)
+Strategy = Literal["nominal", "random"]
 
 #: random strategy: individuals drawn for an unbounded upper bound ``[n..*]``
 #: are capped at ``lower + _UNBOUNDED_SPAN``
@@ -93,7 +105,7 @@ class Interpretation:
     """A population of M0 individuals for one M1 element."""
 
     source: str  #: qualified name of the interpreted element
-    strategy: str  #: 'nominal' | 'random' | 'trace' (from_timeline)
+    strategy: Strategy | Literal["trace"]  #: 'trace': replayed by :func:`from_timeline`
     seed: int | None
     root: Individual
     #: variant chosen per variation-typed feature path (per-index for
@@ -240,7 +252,7 @@ def interpret(
     model: M.Model | M.Definition | M.Usage,
     element: str | M.Definition | M.Usage | None = None,
     *,
-    strategy: str = "nominal",
+    strategy: Strategy = "nominal",
     seed: int | None = None,
     bindings: dict[str, Any] | None = None,
     selection: dict[str, str] | None = None,
@@ -306,7 +318,7 @@ class _Populator(_PopulationEngine):
     recursion_error = "population recursion limit exceeded (cyclic composition?)"
 
     def __init__(
-        self, interp: Interpreter, strategy: str, seed: int | None, selection: dict[str, str]
+        self, interp: Interpreter, strategy: Strategy, seed: int | None, selection: dict[str, str]
     ):
         super().__init__(interp)
         self.strategy = strategy

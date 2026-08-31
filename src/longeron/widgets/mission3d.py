@@ -55,7 +55,7 @@ Requires the ``viz`` extra for anywidget:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from ..analysis._expr import AnalysisError
 from ..errors import MissingExtraError
@@ -72,11 +72,17 @@ __all__ = [
     "CESIUM_CSS_URL",
     "CESIUM_JS_URL",
     "CESIUM_VERSION",
+    "Imagery",
     "mission_viewer",
 ]
 
-#: the imagery bases mission_viewer accepts (all tokenless)
-_IMAGERY_BASES = ("satellite", "plain", "osm")
+#: the imagery bases mission_viewer accepts (all tokenless): Esri World
+#: Imagery, a neutral dark globe with no tiles at all, or OpenStreetMap
+#: streets -- :data:`_IMAGERY_BASES` derives from this alias, so the two
+#: cannot drift
+Imagery = Literal["satellite", "plain", "osm"]
+
+_IMAGERY_BASES: tuple[Imagery, ...] = get_args(Imagery)
 
 #: pinned CDN release (monthly Cesium train); bump deliberately, with the
 #: evidence capture re-run -- never float a `latest` tag
@@ -424,7 +430,7 @@ def mission_viewer(
     model_scale: float = 1.0,
     label: str | None = None,
     height_px: int = 480,
-    imagery: str = "satellite",
+    imagery: Imagery = "satellite",
     ion_token: str = "",
 ) -> anywidget.AnyWidget:
     """Fly ``track`` on a Cesium globe in the notebook.

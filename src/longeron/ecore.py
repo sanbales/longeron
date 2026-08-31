@@ -166,7 +166,7 @@ class SpecModel:
         #: only meaningful while the source model is alive
         self.instances = instances
 
-    def save_xmi(self, path) -> None:
+    def save_xmi(self, path: str | Path) -> None:
         from pyecore.resources import URI
 
         rset = _resource_set()
