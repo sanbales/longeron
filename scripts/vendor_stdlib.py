@@ -28,6 +28,8 @@ QUANTITIES = """ISQ ISQBase Quantities QuantityCalculations
 MeasurementReferences MeasurementRefCalculations SI SIPrefixes Time
 VectorCalculations TensorCalculations""".split()
 
+ANALYSIS = """AnalysisTooling TradeStudies""".split()
+
 
 def fetch(url: str) -> bytes:
     with urllib.request.urlopen(url, timeout=60) as response:
@@ -41,6 +43,7 @@ def main() -> None:
     for subdir, names, upstream in (
         ("systems", SYSTEMS, "Systems%20Library"),
         ("quantities", QUANTITIES, "Domain%20Libraries/Quantities%20and%20Units"),
+        ("analysis", ANALYSIS, "Domain%20Libraries/Analysis"),
     ):
         target = STDLIB / subdir
         target.mkdir(parents=True, exist_ok=True)

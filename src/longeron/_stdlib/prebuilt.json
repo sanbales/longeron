@@ -1,5 +1,5 @@
 {
- "fingerprint": "cc6556ff1b049c90",
+ "fingerprint": "c6c3096b27d0b9e7",
  "model": {
   "@type": "Model",
   "members": [
@@ -430,6 +430,688 @@
     ],
     "is_library": true,
     "is_standard": true
+   },
+   {
+    "@type": "Package",
+    "name": "ScalarFunctions",
+    "members": [
+     {
+      "@type": "Documentation",
+      "body": "/* Kernel scalar functions (abs, max, ...) are interpreter builtins in\n           longeron; the package name exists so imports of it resolve\n           (TradeStudies imports it). */"
+     }
+    ],
+    "is_library": true,
+    "is_standard": true
+   },
+   {
+    "@type": "Package",
+    "name": "ControlFunctions",
+    "members": [
+     {
+      "@type": "Documentation",
+      "body": "/* Kernel control functions (collection -> operators) are interpreter\n           builtins in longeron; the package name exists so imports of it\n           resolve (TradeStudies imports it). */"
+     }
+    ],
+    "is_library": true,
+    "is_standard": true
+   },
+   {
+    "@type": "Package",
+    "name": "AnalysisTooling",
+    "members": [
+     {
+      "@type": "Documentation",
+      "body": "/*\n\t * This package contains definitions for metadata annotations related\n\t * to analysis tool integration.\n\t */"
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "ScalarValues",
+      "is_namespace": true
+     },
+     {
+      "@type": "Definition",
+      "name": "ToolExecution",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * ToolExecution metadata identifies an external analysis tool to be\n\t\t * used to implement the annotated action.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "name": "toolName",
+        "kind": "attribute",
+        "types": [
+         "String"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "uri",
+        "kind": "attribute",
+        "types": [
+         "String"
+        ]
+       }
+      ],
+      "kind": "metadata"
+     },
+     {
+      "@type": "Definition",
+      "name": "ToolVariable",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * ToolVariable metadata is used in the context of an action that has\n\t\t * been annotated with ToolExecution metadata. It is used to annotate\n\t\t * a parameter or other feature of the action with the name of the\n\t\t * variable in the tool that is to correspond to the annotated\n\t\t * feature.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "name": "name",
+        "kind": "attribute",
+        "types": [
+         "String"
+        ]
+       }
+      ],
+      "kind": "metadata"
+     }
+    ],
+    "is_library": true,
+    "is_standard": true
+   },
+   {
+    "@type": "Package",
+    "name": "TradeStudies",
+    "members": [
+     {
+      "@type": "Documentation",
+      "body": "/*\n\t * This package provides a simple framework for defining trade-off study analysis cases.\n\t */"
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "Base::Anything"
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "ScalarValues",
+      "is_namespace": true
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "ScalarFunctions",
+      "is_namespace": true
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "ControlFunctions",
+      "is_namespace": true
+     },
+     {
+      "@type": "Definition",
+      "name": "EvaluationFunction",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * An EvaluationFunction is a calculation that evaluates a TradeStudy alternative,\n\t\t * producing a ScalarValue that can be comparted with the evaluation of other\n\t\t * alternatives.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "name": "alternative",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The alternative to be evaluated.\n\t\t\t */"
+         }
+        ],
+        "kind": "ref",
+        "direction": "in",
+        "is_ref": true,
+        "types": [
+         "Anything"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "result",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * A ScalarValue representing the evaluation of the given alternative.\n\t\t\t */"
+         }
+        ],
+        "kind": "attribute",
+        "direction": "return",
+        "types": [
+         "ScalarValue"
+        ],
+        "multiplicity": {
+         "@type": "Multiplicity",
+         "upper": {
+          "@expr": "Literal",
+          "value": 1,
+          "text": "1"
+         }
+        }
+       }
+      ],
+      "kind": "calc",
+      "is_abstract": true
+     },
+     {
+      "@type": "Definition",
+      "name": "TradeStudyObjective",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * A TradeStudyObjective is the base definition for the objective of a TradeStudy.\n\t\t * The requirement is to choose from a given set of alternatives the selectedAlternative\n\t\t * for that has the best evaluation according to a given EvaluationFunction. What\n\t\t * value is considered \"best\" is not defined in the abstract base definition but must be\n\t\t * computed in any concrete specialization.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "name": "selectedAlternative",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The alternative that should be selected, as evaluated using the given \n\t\t\t * ObjectiveFunction.\n\t\t\t */"
+         }
+        ],
+        "kind": "subject",
+        "types": [
+         "Anything"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "alternatives",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The alternatives being considered in the TradeStudy for which this TradeStudyObjective \n\t\t\t * is the objective.\n\t\t\t */"
+         }
+        ],
+        "kind": "ref",
+        "direction": "in",
+        "is_ref": true,
+        "types": [
+         "Anything"
+        ],
+        "multiplicity": {
+         "@type": "Multiplicity",
+         "lower": {
+          "@expr": "Literal",
+          "value": 1,
+          "text": "1"
+         },
+         "upper": {
+          "@expr": "Literal",
+          "value": "*",
+          "text": "*"
+         }
+        }
+       },
+       {
+        "@type": "Usage",
+        "name": "eval",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The EvaluationFunction to be used in evaluating the given alternatives.\n\t\t\t */"
+         }
+        ],
+        "kind": "calc",
+        "direction": "in",
+        "types": [
+         "EvaluationFunction"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "best",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * Out of the evaluation results of all the given alternatives, the one that is considered \n\t\t\t * \"best\", in the sense that it is the value the selectedAlternative should have. This \n\t\t\t * value must be computed in any concrete specialization of TradeStudyObjective.\n\t\t\t */"
+         }
+        ],
+        "kind": "attribute",
+        "types": [
+         "ScalarValue"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "kind": "constraint",
+        "result": {
+         "@expr": "Binary",
+         "op": "==",
+         "left": {
+          "@expr": "Invocation",
+          "target": "eval",
+          "args": [
+           {
+            "@expr": "FeatureRef",
+            "parts": "selectedAlternative",
+            "text": "selectedAlternative"
+           }
+          ],
+          "named": [],
+          "text": "eval(selectedAlternative)"
+         },
+         "right": {
+          "@expr": "FeatureRef",
+          "parts": "best",
+          "text": "best"
+         },
+         "text": "eval(selectedAlternative) == best"
+        },
+        "constraint_kind": "require"
+       }
+      ],
+      "kind": "requirement",
+      "is_abstract": true
+     },
+     {
+      "@type": "Definition",
+      "name": "MinimizeObjective",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * A MinimizeObjective is a TradeStudyObjective that requires that the \n\t\t * selectedAlternative have the minimum ObjectiveFunction value of all the\n\t\t * given alternatives.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "kind": "attribute",
+        "redefines": [
+         "best"
+        ],
+        "value": {
+         "@type": "FeatureValue",
+         "expr": {
+          "@expr": "ArrowOp",
+          "base": {
+           "@expr": "FeatureRef",
+           "parts": "alternatives",
+           "text": "alternatives"
+          },
+          "name": "minimize",
+          "args": [],
+          "body": {
+           "@expr": "BodyExpr",
+           "params": [
+            {
+             "@expr": "Param",
+             "name": "x",
+             "direction": "in",
+             "text": "in x"
+            }
+           ],
+           "lets": [],
+           "result": {
+            "@expr": "Invocation",
+            "target": "eval",
+            "args": [
+             {
+              "@expr": "FeatureRef",
+              "parts": "x",
+              "text": "x"
+             }
+            ],
+            "named": [],
+            "text": "eval(x)"
+           },
+           "text": "{ in x; eval(x) }"
+          },
+          "func": null,
+          "text": "alternatives->minimize { in x; eval(x) }"
+         }
+        }
+       }
+      ],
+      "kind": "requirement",
+      "supers": [
+       "TradeStudyObjective"
+      ]
+     },
+     {
+      "@type": "Definition",
+      "name": "MaximizeObjective",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * A MaximizeObjective is a TradeStudyObjective that requires that the \n\t\t * selectedAlternative have the maximum ObjectiveFunction value of all the\n\t\t * given alternatives.\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "kind": "attribute",
+        "redefines": [
+         "best"
+        ],
+        "value": {
+         "@type": "FeatureValue",
+         "expr": {
+          "@expr": "ArrowOp",
+          "base": {
+           "@expr": "FeatureRef",
+           "parts": "alternatives",
+           "text": "alternatives"
+          },
+          "name": "maximize",
+          "args": [],
+          "body": {
+           "@expr": "BodyExpr",
+           "params": [
+            {
+             "@expr": "Param",
+             "name": "x",
+             "direction": "in",
+             "text": "in x"
+            }
+           ],
+           "lets": [],
+           "result": {
+            "@expr": "Invocation",
+            "target": "eval",
+            "args": [
+             {
+              "@expr": "FeatureRef",
+              "parts": "x",
+              "text": "x"
+             }
+            ],
+            "named": [],
+            "text": "eval(x)"
+           },
+           "text": "{ in x; eval(x) }"
+          },
+          "func": null,
+          "text": "alternatives->maximize { in x; eval(x) }"
+         }
+        }
+       }
+      ],
+      "kind": "requirement",
+      "supers": [
+       "TradeStudyObjective"
+      ]
+     },
+     {
+      "@type": "Definition",
+      "name": "TradeStudy",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/*\n\t\t * A TradeStudy is an analysis case whose subject is a set of alternatives\n\t\t * (at least one) and whose result is a selection of one of those alternatives.\n\t\t * The alternatives are evaluated based on a given ObjectiveFunction and the\n\t\t * selection is made such that it satisfies the objective of the TradeStudy\n\t\t * (which must be a TradeStudyObjective).\n\t\t */"
+       },
+       {
+        "@type": "Usage",
+        "name": "studyAlternatives",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The set of alternatives being considered in this TradeStudy. \n\t\t\t * \n\t\t\t * In a TradeStudy usage, bind this feature to the actual collection of\n\t\t\t * alternatives to be considered.\n\t\t\t */"
+         }
+        ],
+        "kind": "subject",
+        "types": [
+         "Anything"
+        ],
+        "multiplicity": {
+         "@type": "Multiplicity",
+         "lower": {
+          "@expr": "Literal",
+          "value": 1,
+          "text": "1"
+         },
+         "upper": {
+          "@expr": "Literal",
+          "value": "*",
+          "text": "*"
+         }
+        }
+       },
+       {
+        "@type": "Usage",
+        "name": "evaluationFunction",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The EvaluationFunction to be used to evaluate the alternatives.\n\t\t\t * \n\t\t\t * In a TradeStudy usage, redefine this feature to provide the desired\n\t\t\t * calculation (or bind it to a calculation usage that does so).\n\t\t\t */"
+         }
+        ],
+        "kind": "calc",
+        "is_abstract": true,
+        "types": [
+         "EvaluationFunction"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "tradeStudyObjective",
+        "members": [
+         {
+          "@type": "Documentation",
+          "body": "/*\n\t\t\t * The objective of this TradeStudy.\n\t\t\t * \n\t\t\t * Redefine this feature to give it a definition that is a concrete\n\t\t\t * specialization of TradeStudyObjective. That can either be one of the\n\t\t\t * specializations provided in this package, or a more specific user-\n\t\t\t * defined one.\n\t\t\t */"
+         },
+         {
+          "@type": "Usage",
+          "kind": "subject",
+          "redefines": [
+           "selectedAlternative"
+          ]
+         },
+         {
+          "@type": "Usage",
+          "kind": "ref",
+          "direction": "in",
+          "is_ref": true,
+          "redefines": [
+           "alternatives"
+          ],
+          "value": {
+           "@type": "FeatureValue",
+           "expr": {
+            "@expr": "FeatureRef",
+            "parts": "studyAlternatives",
+            "text": "studyAlternatives"
+           }
+          }
+         },
+         {
+          "@type": "Usage",
+          "kind": "calc",
+          "direction": "in",
+          "redefines": [
+           "eval"
+          ],
+          "value": {
+           "@type": "FeatureValue",
+           "expr": {
+            "@expr": "FeatureRef",
+            "parts": "evaluationFunction",
+            "text": "evaluationFunction"
+           }
+          }
+         }
+        ],
+        "kind": "objective",
+        "types": [
+         "TradeStudyObjective"
+        ]
+       },
+       {
+        "@type": "Usage",
+        "name": "selectedAlternative",
+        "kind": "feature",
+        "direction": "return",
+        "types": [
+         "Anything"
+        ],
+        "value": {
+         "@type": "FeatureValue",
+         "expr": {
+          "@expr": "ArrowOp",
+          "base": {
+           "@expr": "FeatureRef",
+           "parts": "studyAlternatives",
+           "text": "studyAlternatives"
+          },
+          "name": "selectOne",
+          "args": [],
+          "body": {
+           "@expr": "BodyExpr",
+           "params": [
+            {
+             "@expr": "Param",
+             "name": "a",
+             "direction": "in",
+             "text": "in a"
+            }
+           ],
+           "lets": [],
+           "result": {
+            "@expr": "Invocation",
+            "target": "tradeStudyObjective",
+            "args": [],
+            "named": [
+             [
+              "selectedAlternative",
+              {
+               "@expr": "FeatureRef",
+               "parts": "a",
+               "text": "a"
+              }
+             ]
+            ],
+            "text": "tradeStudyObjective(selectedAlternative = a)"
+           },
+           "text": "{ in a; tradeStudyObjective(selectedAlternative = a) }"
+          },
+          "func": null,
+          "text": "studyAlternatives->selectOne { in a; tradeStudyObjective(selectedAlternative = a) }"
+         }
+        }
+       }
+      ],
+      "kind": "analysis",
+      "is_abstract": true
+     }
+    ],
+    "is_library": true,
+    "is_standard": true
+   },
+   {
+    "@type": "Package",
+    "name": "LongeronSurfaces",
+    "members": [
+     {
+      "@type": "Documentation",
+      "body": "/* Longeron extension: renderings naming the house widgets.  Each\n           rendering usage names one longeron.widgets catalog entry (or an\n           engine-built panel) through the surface engine's registry;\n           the library is longeron-authored and deliberately not labeled\n           standard. */"
+     },
+     {
+      "@type": "Import",
+      "visibility": "private",
+      "target": "Views",
+      "is_namespace": true
+     },
+     {
+      "@type": "Definition",
+      "name": "PanelRendering",
+      "members": [
+       {
+        "@type": "Documentation",
+        "body": "/* The base definition of every longeron panel rendering. */"
+       }
+      ],
+      "kind": "rendering",
+      "supers": [
+       "GraphicalRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asStructureDiagram",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asStateDiagram",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asActionDiagram",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asMeshViewer",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asScoreboard",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asWhatIfCard",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asSizingCards",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asVerdictCards",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asMissionGlobe",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     },
+     {
+      "@type": "Usage",
+      "name": "asReplayPlayer",
+      "kind": "rendering",
+      "types": [
+       "PanelRendering"
+      ]
+     }
+    ],
+    "is_library": true
    },
    {
     "@type": "Package",

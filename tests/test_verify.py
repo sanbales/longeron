@@ -59,6 +59,23 @@ package Modes {
 }
 """
 
+CASE_BOUNDS_MODEL = """
+package Cases {
+    analysis def Sweep {
+        subject probe : Anything;
+        in attribute elevation : Real = 0.0;
+        in attribute azimuth : Real = 0.0;
+        objective {
+            assume constraint elevationRange {
+                elevation >= -90.0 and elevation <= 90.0 }
+            assume constraint azimuthRange {
+                azimuth >= -180.0 and azimuth <= 180.0 }
+        }
+        return quality : Real;
+    }
+}
+"""
+
 
 # ---------------------------------------------------------------------------
 # the domain ladder (no extras needed below the Z3 rung)
@@ -86,6 +103,37 @@ class TestDomains:
             interp, interp.resolve("ScoutSizing::IsrPrime"), ("loiterSpeed",)
         )
         assert (domains["loiterSpeed"].lo, domains["loiterSpeed"].hi) == (11.0, 24.0)
+
+    def test_objective_nested_assume_bounds_mined(self):
+        # the spec's home for a case's assumptions: constraints inside the
+        # objective are rung 2 material (surfaces design, miner gap 1)
+        model = longeron.loads(CASE_BOUNDS_MODEL)
+        interp = longeron.Interpreter(model)
+        domains = verify.attribute_domains(
+            interp, interp.resolve("Cases::Sweep"), ("elevation", "azimuth")
+        )
+        assert (domains["elevation"].lo, domains["elevation"].hi) == (-90.0, 90.0)
+        assert (domains["azimuth"].lo, domains["azimuth"].hi) == (-180.0, 180.0)
+        # provenance cites the constraint's qualified name
+        assert any(
+            "Cases::Sweep::elevationRange" in note for note in domains["elevation"].mined_from
+        )
+
+    def test_negative_literal_bounds_folded(self):
+        # a unary-minus literal is a bound too (surfaces design, miner gap 2)
+        model = longeron.loads(
+            """
+            package Depths {
+                part def Probe {
+                    attribute depth : Real = -1.0;
+                    assert constraint band { depth >= -5.0 and depth <= -0.5 }
+                }
+            }
+            """
+        )
+        interp = longeron.Interpreter(model)
+        domains = verify.attribute_domains(interp, interp.resolve("Depths::Probe"), ("depth",))
+        assert (domains["depth"].lo, domains["depth"].hi) == (-5.0, -0.5)
 
     def test_unit_annotation_recorded_informationally(self, drone):
         interp = longeron.Interpreter(drone)

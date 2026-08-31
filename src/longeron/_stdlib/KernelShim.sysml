@@ -63,3 +63,15 @@ standard library package Transfers {
     abstract occurrence def Transfer;
     abstract occurrence transfers : Transfer [0..*];
 }
+
+standard library package ScalarFunctions {
+    doc /* Kernel scalar functions (abs, max, ...) are interpreter builtins in
+           longeron; the package name exists so imports of it resolve
+           (TradeStudies imports it). */
+}
+
+standard library package ControlFunctions {
+    doc /* Kernel control functions (collection -> operators) are interpreter
+           builtins in longeron; the package name exists so imports of it
+           resolve (TradeStudies imports it). */
+}

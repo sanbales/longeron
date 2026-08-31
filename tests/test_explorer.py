@@ -467,7 +467,8 @@ def test_drone_tree_shows_its_relationships(drone_model):
     assert badges["flow"] == 1  # dcBus: battery.voltage -> esc.busVoltage
     assert badges["allocation"] == 1  # FlightStates -> FlightController
     assert badges["dependency"] == 1  # PlanBattery -> HoverTime
-    assert badges["import"] == 25  # the program's cross-file wiring
+    assert badges["import"] == 31  # the program's cross-file wiring
+    #   (25 + the 6 imports of surfaces.sysml's ScoutSurfaces package)
     labels = {node["label"] for node in rows}
     assert "satisfy mission" in labels  # by the quad; the tri busts it
 

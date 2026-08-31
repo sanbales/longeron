@@ -3,8 +3,12 @@
 A curated subset of the official
 `SysML-v2-Release <https://github.com/Systems-Modeling/SysML-v2-Release>`_
 model library ships with this package (see ``longeron/_stdlib/README.md``):
-the complete Systems Library plus the core Quantities-and-Units files, and a
-small shim for the KerML kernel names (``ScalarValues::Real``, ...).
+the complete Systems Library, the core Quantities-and-Units files, the
+Analysis domain-library files (``AnalysisTooling``, ``TradeStudies``), and
+a small shim for the KerML kernel names (``ScalarValues::Real``, ...).
+Longeron-authored extension libraries (``LongeronSurfaces``) ship beside
+the vendored content in ``_stdlib/extensions/`` -- self-declaring, and
+never labeled standard.
 
 Loading the library cold takes minutes with the ANTLR Python runtime, so a
 prebuilt serialization ships alongside the sources and the content-addressed

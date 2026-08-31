@@ -52,8 +52,8 @@ class TestGraphView:
             for s, o in graph.subject_objects(sysml[predicate])
             if s in typed and o in typed and s != o
         }
-        assert len(view["nodes"]) == len(typed) == 1160
-        assert len(view["edges"]) == len(edges) == 1381
+        assert len(view["nodes"]) == len(typed) == 1202
+        assert len(view["edges"]) == len(edges) == 1434
 
     def test_literals_fold_into_hover_info(self, view):
         mass = node(view, "Rotorcraft::BoxQuad::mass")
@@ -211,7 +211,7 @@ def widget(graph):
 class TestGraphViewer:
     def test_payload_matches_the_default_view(self, widget, view):
         payload = json.loads(widget.payload_json)
-        assert payload["counts"] == {"nodes": 1160, "edges": 1381}
+        assert payload["counts"] == {"nodes": 1202, "edges": 1434}
         assert payload["counts"]["nodes"] == len(view["nodes"])
         assert len(payload["positions"]) == len(payload["nodes"])
         assert payload["notice"] == ""
@@ -359,23 +359,23 @@ class TestFocusMode:
                 expected.add(source)
         ids = {entry["id"] for entry in payload["nodes"]}
         assert ids == {view["nodes"][i]["id"] for i in expected}
-        assert counts["nodes"] == len(expected) < 1160
-        assert payload["focus"] == {"id": "DeepScout::MultiRotor", "k": 1, "of": 1160}
+        assert counts["nodes"] == len(expected) < 1202
+        assert payload["focus"] == {"id": "DeepScout::MultiRotor", "k": 1, "of": 1202}
         assert len(payload["positions"]) == len(payload["positions_dag"]) == counts["nodes"]
 
     def test_deeper_focus_reaches_further(self, widget):
         one = widget.focus("DeepScout::MultiRotor", k=1)
         two = widget.focus("DeepScout::MultiRotor", k=2)
-        assert one["nodes"] < two["nodes"] < 1160
+        assert one["nodes"] < two["nodes"] < 1202
 
     def test_unfocus_restores_the_full_view(self, widget):
         widget.focus("DeepScout::MultiRotor", k=1)
-        assert widget.unfocus() == {"nodes": 1160, "edges": 1381}
+        assert widget.unfocus() == {"nodes": 1202, "edges": 1434}
         assert json.loads(widget.payload_json)["focus"] is None
 
     def test_unknown_target_leaves_the_full_view(self, widget):
         counts = widget.focus("No::Such::Node")
-        assert counts["nodes"] == 1160
+        assert counts["nodes"] == 1202
         assert json.loads(widget.payload_json)["focus"] is None
 
     def test_focus_trait_is_the_browser_seam(self, widget):
@@ -419,4 +419,4 @@ class TestExportHtml:
         widget.focus("DeepScout::MultiRotor", k=1)
         page = widget.export_html(tmp_path / "hub.html").read_text(encoding="utf-8")
         assert json.dumps(widget.payload_json)[1:-1][:80] in page
-        assert widget.counts["nodes"] < 1160
+        assert widget.counts["nodes"] < 1202

@@ -304,6 +304,24 @@ def _architecture_binder(study: TradeStudy, arch: Any) -> Callable[[], Interpret
 _COMPARE_LO = {">": "lo", ">=": "lo", "<": "hi", "<=": "hi"}
 
 
+def _literal_number(expr: A.Expr) -> float | None:
+    """The numeric value of a literal, unary minus folded; ``None`` otherwise."""
+
+    if (
+        isinstance(expr, A.Unary)
+        and expr.op == "-"
+        and (inner := _literal_number(expr.operand)) is not None
+    ):
+        return -inner
+    if (
+        isinstance(expr, A.Literal)
+        and isinstance(expr.value, (int, float))
+        and not isinstance(expr.value, bool)
+    ):
+        return float(expr.value)
+    return None
+
+
 def _mine_comparison(dom: Domain, expr: A.Expr, label: str) -> None:
     """Fold ``attr <op> literal`` (either orientation) into ``dom``."""
 
@@ -314,19 +332,13 @@ def _mine_comparison(dom: Domain, expr: A.Expr, label: str) -> None:
     if not (isinstance(expr, A.Binary) and expr.op in _COMPARE_LO):
         return
     left, right, op = expr.left, expr.right, expr.op
-    if isinstance(right, A.FeatureRef) and isinstance(left, A.Literal):
+    if isinstance(right, A.FeatureRef) and _literal_number(left) is not None:
         # literal <op> attr  ==  attr <flipped-op> literal
         flip: dict[str, str] = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
         left, right, op = right, left, flip[op]  # type: ignore[assignment]
-    if not (
-        isinstance(left, A.FeatureRef)
-        and left.parts == (dom.name,)
-        and isinstance(right, A.Literal)
-        and isinstance(right.value, (int, float))
-        and not isinstance(right.value, bool)
-    ):
+    value = _literal_number(right)
+    if not (isinstance(left, A.FeatureRef) and left.parts == (dom.name,) and value is not None):
         return
-    value = float(right.value)
     side = _COMPARE_LO[op]
     if side == "lo" and (dom.lo is None or value > dom.lo):
         dom.lo = value
@@ -415,6 +427,32 @@ def _z3_window(
         dom.mined_from.append(f"z3 bounds (assumption-derived): {side} = {exact}")
 
 
+def _minable_constraints(
+    interp: Interpreter, defn: M.Definition | M.Usage
+) -> list[tuple[M.Usage, str]]:
+    """The constraints rung 2 mines, with their provenance labels.
+
+    Direct named constraint members (own + inherited), plus constraints
+    nested one level inside ``objective`` members -- the spec's own home
+    for a case's ``assume`` bounds (a case objective is usually anonymous,
+    so the nested walk cannot ride ``named_members`` alone).  Labels are
+    qualified names where the model provides them, so a report (and the
+    surface engine's wiring map) can cite the exact constraint.
+    """
+
+    out = [
+        (con, con.qualified_name or con.name or con.label)
+        for con in named_members(interp, defn, ("constraint",))
+    ]
+    for member in interp.resolver.members_of(defn):
+        if isinstance(member, M.Usage) and member.kind == "objective":
+            out.extend(
+                (con, con.qualified_name or con.name or con.label)
+                for con in named_members(interp, member, ("constraint",))
+            )
+    return out
+
+
 def attribute_domains(
     interp: Interpreter,
     defn: M.Definition | M.Usage,
@@ -429,7 +467,9 @@ def attribute_domains(
     1. attribute types (``Real``/``Integer``/``Natural``/``Boolean``;
        enum types become literal lists; ``Natural`` adds a ``>= 0`` floor);
     2. direct constraint mining -- ``assert constraint`` bodies comparing
-       the attribute against a literal, ``and``-conjunctions folded;
+       the attribute against a literal (unary-minus literals folded),
+       ``and``-conjunctions folded, and constraints nested in a case's
+       ``objective`` included (the spec's home for ``assume`` bounds);
     3. Z3-derived bounds through :mod:`~longeron.analysis.smt`'s
        reachability fixed point, under the assumption set (bounds that
        live only on *derived* attributes are found here);
@@ -477,10 +517,10 @@ def attribute_domains(
         if kind == "Natural":
             dom.lo = 0.0
             dom.mined_from.append("type: Natural >= 0")
-        for con in named_members(interp, defn, ("constraint",)):
+        for con, label in _minable_constraints(interp, defn):
             body = constraint_expr(interp, con)
             if body is not None:
-                _mine_comparison(dom, body, con.name or con.label)
+                _mine_comparison(dom, body, label)
         if dom.kind not in ("Boolean",) and not dom.bounded:
             _z3_window(interp, defn, requirements, dom)
         domains[name] = dom

@@ -1,6 +1,9 @@
 # Model-defined analysis surfaces (design)
 
-> **Status: adopted 2026-08-30.** Nothing below is implemented; this
+> **Status: adopted 2026-08-30; phase 1 shipped 2026-08-30**
+> (`longeron.analysis.surfaces.surface` -- the engine, the rendering
+> vocabulary, and the two-subject proof; phase 2, the grand tour as a
+> declaration, rides 0.13). Nothing below is implemented; this
 > is the contract for the arc. Decisions: a dashboard is a standard
 > VIEW USAGE -- exposes select, renderings present, subviews compose
 > (Q1); renderings bind to the widgets catalog through a Python

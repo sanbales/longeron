@@ -852,6 +852,78 @@ print(json.dumps({
     )
 
 
+def surfaces_notebook() -> dict[str, Any]:
+    """Scenario: the two-subject surfaces proof (surfaces design, phase 1).
+
+    Cell 0 derives ``ScoutSurfaces::scoutSurface`` for its home subject
+    (the QuadCopter); cell 1 derives THE SAME declaration for the
+    HexaCopter.  Cell 2 is the checker: one JSON line with each
+    surface's subject, panels (absence + reasons + verdicts), and the
+    camera slider bounds.  Cell 3 is the driver: it points the quad's
+    camera into the airframe from the kernel and reports the verdict,
+    so the test can watch the rendered card flip to FAIL.  Cell 4
+    restores the declared defaults (run-all leaves the notebook clean,
+    and the tier's idempotent-run convention holds).
+    """
+
+    return _notebook(
+        """
+import longeron
+from longeron.analysis.surfaces import surface
+
+model = longeron.load("examples/deepscout")
+quad = surface(model, "ScoutSurfaces::scoutSurface")
+quad
+""",
+        """
+hexa = surface(model, "ScoutSurfaces::scoutSurface", subject="Rotorcraft::HexaCopter")
+hexa
+""",
+        """
+import json
+
+
+def state(box):
+    return {
+        "subject": box.subject,
+        "panels": {
+            p.name: {
+                "absent": p.absent,
+                "reason": p.reason,
+                "verdict": p.verdict,
+                "sliders": sorted(p.sliders),
+                "ranges": {n: [r.lo, r.hi] for n, r in p.ranges.items()},
+            }
+            for p in box.panels
+        },
+    }
+
+
+print(json.dumps({"quad": state(quad), "hexa": state(hexa)}))
+""",
+        """
+cam = next(p for p in quad.panels if p.name == "cameraPane")
+installation = next(p for p in quad.panels if p.name == "installationPane")
+cam.sliders["azimuth"].value = 180.0
+cam.sliders["elevation"].value = -20.0
+print(
+    json.dumps(
+        {"verdict": installation.verdict, "occluded": cam.results["occludedFraction"]}
+    )
+)
+""",
+        """
+cam.sliders["azimuth"].value = 0.0
+cam.sliders["elevation"].value = -15.0
+print(
+    json.dumps(
+        {"verdict": installation.verdict, "occluded": cam.results["occludedFraction"]}
+    )
+)
+""",
+    )
+
+
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "collapse_scenario.ipynb": collapse_notebook,
@@ -866,4 +938,5 @@ SCENARIO_NOTEBOOKS = {
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
+    "surfaces_scenario.ipynb": surfaces_notebook,
 }

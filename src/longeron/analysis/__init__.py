@@ -43,6 +43,12 @@ third-party dependencies):
   scoreboard, an OpenMDAO sizing strip, Z3 consistency verdicts, and the
   Cesium mission replay on ONE reactive surface (``viz`` extra plus
   ``mdao``/``smt`` for the solver strips).
+* :mod:`longeron.analysis.surfaces` -- model-declared analysis surfaces:
+  a dashboard stated as a standard view usage (exposes select the
+  subject and its cases, renderings name the panels) and derived from
+  the model -- sliders with constraint-mined bounds, interpreter-
+  evaluated verdict panels, explicit-only result couplings, and honest
+  absence for cases the subject does not admit (``viz`` extra).
 * :mod:`longeron.analysis.link` -- linked selection between the
   interactive diagrams and the 3D viewer: diagram clicks highlight the
   matching meshes, mesh picks select the diagram node, and
@@ -68,6 +74,7 @@ __all__ = [
     "scoreboard",
     "smt",
     "structure",
+    "surfaces",
     "trades",
     "verify",
     "viewer3d",
