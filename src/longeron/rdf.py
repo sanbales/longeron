@@ -56,6 +56,7 @@ sub-structure.  Action/state statement bodies are not projected.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -63,8 +64,11 @@ from . import model as M
 from .ast import Literal as LiteralExpr
 from .ast import expr_to_text
 from .ecore import _DEF_CLASSES, _USAGE_CLASSES
+from .edit import _redefined_member
 from .errors import MissingExtraError, SysMLError
 from .interpreter import Interpreter, Resolver
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rdflib import Graph
@@ -182,6 +186,9 @@ class _Projector:
         self.graph.bind("sysml", self.ns)
         self.nodes: dict[int, Any] = {}  # id(element) -> IRI / BNode
         self.anonymous = 0
+        #: subsets/redefines references whose shadowed target could not be
+        #: resolved (external/library featuring types): projected as nothing
+        self.dropped_feature_refs = 0
 
     # -- node minting -------------------------------------------------------
 
@@ -213,6 +220,34 @@ class _Projector:
             return self.node(target)
         return self.rdflib.URIRef(self.base + _iri_path(name))
 
+    def feature_ref_node(self, name: str, usage: M.Usage) -> Any | None:
+        """The node for a ``subsets``/``redefines`` target.
+
+        A same-named redefinition shadows the feature it redefines
+        (``attribute rotorCount :>> rotorCount``), so plain resolution
+        lands on the redefining usage itself; the intended target is the
+        inherited member in the owner's generals -- the house resolver,
+        :func:`longeron.edit._redefined_member` (diagrams resolve the
+        same way).  When that inherited member cannot be resolved either
+        (the featuring type is external or library-provided), returns
+        ``None``: projecting nothing beats projecting a self-loop.  The
+        drops are counted on :attr:`dropped_feature_refs` and reported
+        once as a debug log line.
+        """
+
+        try:
+            target = self.resolver.resolve(name, context=usage)
+        except SysMLError:
+            target = None
+        if target is usage:
+            target = _redefined_member(usage, name, self.resolver, self.model)
+            if target is usage:
+                self.dropped_feature_refs += 1
+                return None
+        if target is not None and target.qualified_name:
+            return self.node(target)
+        return self.rdflib.URIRef(self.base + _iri_path(name))
+
     # -- projection ----------------------------------------------------------
 
     def project(self) -> Graph:
@@ -220,6 +255,11 @@ class _Projector:
             self.element(member)
         if self.evaluated:
             self.evaluate_defaults()
+        if self.dropped_feature_refs:
+            logger.debug(
+                "dropped %d subsets/redefines triples whose shadowed targets could not be resolved",
+                self.dropped_feature_refs,
+            )
         return self.graph
 
     def element(self, element: M.Element) -> Any | None:
@@ -291,9 +331,13 @@ class _Projector:
         for type_name in usage.types:
             add((subject, self.ns.definedBy, self.ref_node(type_name, usage)))
         for subset in usage.subsets:
-            add((subject, self.ns.subsets, self.ref_node(subset, usage)))
+            node = self.feature_ref_node(subset, usage)
+            if node is not None:
+                add((subject, self.ns.subsets, node))
         for redefined in usage.redefines:
-            add((subject, self.ns.redefines, self.ref_node(redefined, usage)))
+            node = self.feature_ref_node(redefined, usage)
+            if node is not None:
+                add((subject, self.ns.redefines, node))
         if usage.references:
             add((subject, self.ns.references, self.ref_node(usage.references, usage)))
         if usage.crosses:

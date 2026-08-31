@@ -58,6 +58,40 @@ def test_specialization_edges_resolve(graph):
     ) in graph
 
 
+def test_redefinition_edges_reach_the_shadowed_inherited_feature(graph):
+    """A same-named redefinition (``:>> rotorCount``) shadows its target,
+    so plain resolution lands on the redefining usage itself; the
+    projection must reach through to the inherited feature on the
+    specialized-from type -- never a self-loop."""
+
+    assert (
+        element("Rotorcraft::QuadCopter::rotorCount"),
+        SYSML.redefines,
+        element("DeepScout::MultiRotor::rotorCount"),
+    ) in graph
+    loops = [(s, p) for s, p, o in graph if s == o and not isinstance(o, rdflib.Literal)]
+    assert loops == []
+
+
+def test_unresolvable_shadowed_redefinition_projects_nothing():
+    """When the shadowed target cannot be resolved (external featuring
+    type), the triple is dropped -- projecting nothing beats projecting
+    a self-loop."""
+
+    model = longeron.loads(
+        """
+        package P {
+            part def V { part engine; }
+            part car : V { part engine :>> engine; }
+            part mystery : External::Vehicle { part engine :>> engine; }
+        }
+        """
+    )
+    graph = rdf.to_graph(model)
+    assert (element("P::car::engine"), SYSML.redefines, element("P::V::engine")) in graph
+    assert list(graph.objects(element("P::mystery::engine"), SYSML.redefines)) == []
+
+
 def test_attribute_values_are_typed_literals(graph):
     mass = element("Rotorcraft::BoxQuad::mass")
     values = list(graph.objects(mass, SYSML.value))

@@ -311,8 +311,8 @@ def graph_view(
                 info.setdefault(subject, []).append(f"{local(predicate)}: {clipped}")
             continue
         family = predicate_family.get(predicate)
-        if family is None or subject == obj:
-            continue
+        if family is None or subject == obj:  # loop skip is defensive only:
+            continue  # the projection resolves shadowed targets (rdf.py)
         if obj not in types and not external:
             continue
         if family == "membership":

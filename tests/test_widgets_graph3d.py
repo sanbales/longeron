@@ -40,7 +40,9 @@ def node(view, node_id):
 class TestGraphView:
     def test_default_view_counts_match_the_projection(self, graph, view):
         """Nodes are the typed subjects; edges the relationship triples
-        (both ends typed, self-loops out) -- computed independently.
+        (both ends typed; the self-loop skip is defensive only -- the
+        projection resolves shadowed redefinition targets) -- computed
+        independently.
         The counts include the deepscout SourceEvidence citations:
         evidence metadata rides the RDF projection like everything else."""
 
@@ -53,7 +55,7 @@ class TestGraphView:
             if s in typed and o in typed and s != o
         }
         assert len(view["nodes"]) == len(typed) == 1252
-        assert len(view["edges"]) == len(edges) == 1491
+        assert len(view["edges"]) == len(edges) == 1544
 
     def test_literals_fold_into_hover_info(self, view):
         mass = node(view, "Rotorcraft::BoxQuad::mass")
@@ -211,7 +213,7 @@ def widget(graph):
 class TestGraphViewer:
     def test_payload_matches_the_default_view(self, widget, view):
         payload = json.loads(widget.payload_json)
-        assert payload["counts"] == {"nodes": 1252, "edges": 1491}
+        assert payload["counts"] == {"nodes": 1252, "edges": 1544}
         assert payload["counts"]["nodes"] == len(view["nodes"])
         assert len(payload["positions"]) == len(payload["nodes"])
         assert payload["notice"] == ""
@@ -370,7 +372,7 @@ class TestFocusMode:
 
     def test_unfocus_restores_the_full_view(self, widget):
         widget.focus("DeepScout::MultiRotor", k=1)
-        assert widget.unfocus() == {"nodes": 1252, "edges": 1491}
+        assert widget.unfocus() == {"nodes": 1252, "edges": 1544}
         assert json.loads(widget.payload_json)["focus"] is None
 
     def test_unknown_target_leaves_the_full_view(self, widget):
