@@ -102,6 +102,166 @@ def _disjoint(box_a, box_b):
     return any(ahi[axis] < blo[axis] or bhi[axis] < alo[axis] for axis in range(3))
 
 
+# --- exact mesh-mesh interference (the prop-disc clearance oracle) ---------
+
+
+def _indexed_mesh(part):
+    """Positionally merged (points, triangles) of one mesh part."""
+
+    vertices, faces = part["vertices"], part["faces"]
+    canonical: dict[tuple[float, float, float], int] = {}
+    points: list[tuple[float, float, float]] = []
+    index_of = []
+    for i in range(0, len(vertices), 3):
+        key = (round(vertices[i], 7), round(vertices[i + 1], 7), round(vertices[i + 2], 7))
+        if key not in canonical:
+            canonical[key] = len(points)
+            points.append(key)
+        index_of.append(canonical[key])
+    tris = []
+    for i in range(0, len(faces), 3):
+        a, b, c = (index_of[faces[i + k]] for k in range(3))
+        if a != b and b != c and a != c:
+            tris.append((a, b, c))
+    return points, tris
+
+
+def _split_tris(points, tris):
+    """Triangle lists of each connected component (shared points join)."""
+
+    parent = list(range(len(points)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a, b, c in tris:
+        ra = find(a)
+        parent[find(b)] = ra
+        parent[find(c)] = ra
+    groups: dict[int, list[tuple[int, int, int]]] = {}
+    for tri in tris:
+        groups.setdefault(find(tri[0]), []).append(tri)
+    return list(groups.values())
+
+
+def _edges_of(tris):
+    edges = set()
+    for a, b, c in tris:
+        for u, v in ((a, b), (b, c), (c, a)):
+            edges.add((u, v) if u < v else (v, u))
+    return sorted(edges)
+
+
+def _bbox(points, indices):
+    xs = [points[i] for i in indices]
+    return (
+        [min(p[axis] for p in xs) for axis in range(3)],
+        [max(p[axis] for p in xs) for axis in range(3)],
+    )
+
+
+def _segment_hits_triangle(p, q, a, b, c, eps=1e-9):
+    """Moller-Trumbore, strict interior: a transversal piercing only
+    (touching faces, shared edges, and coplanar grazes do not count)."""
+
+    d = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
+    e1 = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    e2 = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+    h = (
+        d[1] * e2[2] - d[2] * e2[1],
+        d[2] * e2[0] - d[0] * e2[2],
+        d[0] * e2[1] - d[1] * e2[0],
+    )
+    det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2]
+    if abs(det) < eps:
+        return False
+    inv = 1.0 / det
+    s = (p[0] - a[0], p[1] - a[1], p[2] - a[2])
+    u = (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]) * inv
+    if u < eps or u > 1.0 - eps:
+        return False
+    qv = (
+        s[1] * e1[2] - s[2] * e1[1],
+        s[2] * e1[0] - s[0] * e1[2],
+        s[0] * e1[1] - s[1] * e1[0],
+    )
+    v = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) * inv
+    if v < eps or u + v > 1.0 - eps:
+        return False
+    t = (e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) * inv
+    return eps < t < 1.0 - eps
+
+
+def _point_in_mesh(pt, points, tris):
+    """Ray-parity containment (odd crossings = inside a closed mesh)."""
+
+    reach = 1.0 + max(
+        abs(points[i][axis] - pt[axis]) for a, b, c in tris for i in (a, b, c) for axis in range(3)
+    )
+    # an arbitrary irrational-ish direction dodges edge/vertex grazes
+    far = (pt[0] + 0.5773502 * reach, pt[1] + 0.2113248 * reach, pt[2] + 0.7886751 * reach)
+    hits = sum(_segment_hits_triangle(pt, far, points[a], points[b], points[c]) for a, b, c in tris)
+    return hits % 2 == 1
+
+
+def _solids_intersect(points_a, tris_a, points_b, tris_b):
+    """True iff two closed meshes overlap: a transversal edge piercing
+    either way, or one mesh's first point contained in the other."""
+
+    box_a = _bbox(points_a, {i for tri in tris_a for i in tri})
+    box_b = _bbox(points_b, {i for tri in tris_b for i in tri})
+    if _disjoint(box_a, box_b):
+        return False
+
+    def edges_pierce(points_p, tris_p, points_t, tris_t, box_t):
+        for u, v in _edges_of(tris_p):
+            p, q = points_p[u], points_p[v]
+            if any(
+                max(p[axis], q[axis]) < box_t[0][axis] or min(p[axis], q[axis]) > box_t[1][axis]
+                for axis in range(3)
+            ):
+                continue
+            for a, b, c in tris_t:
+                if _segment_hits_triangle(p, q, points_t[a], points_t[b], points_t[c]):
+                    return True
+        return False
+
+    if edges_pierce(points_a, tris_a, points_b, tris_b, box_b):
+        return True
+    if edges_pierce(points_b, tris_b, points_a, tris_a, box_a):
+        return True
+    return _point_in_mesh(points_a[tris_a[0][0]], points_b, tris_b) or _point_in_mesh(
+        points_b[tris_b[0][0]], points_a, tris_a
+    )
+
+
+def _assert_discs_clear(mesh, context):
+    """Every prop disc keeps clear of every OTHER part of its craft.
+
+    Disc-vs-disc separation has its own tests; the battery sleeve and
+    the pods deliberately intersect the parts they are drawn inside,
+    so only the props are held to the zero-interference bar.
+    """
+
+    discs = []
+    others = []
+    for part in mesh["parts"]:
+        points, tris = _indexed_mesh(part)
+        if part["name"].startswith("prop"):
+            discs += [(points, group) for group in _split_tris(points, tris)]
+        elif tris:
+            others.append((part["name"], points, tris))
+    assert discs, context
+    for index, (disc_points, disc_tris) in enumerate(discs):
+        for name, points, tris in others:
+            assert not _solids_intersect(disc_points, disc_tris, points, tris), (
+                f"{context}: prop disc {index} cuts {name!r}"
+            )
+
+
 class TestPrimitives:
     def test_box_volume_and_bounds(self):
         vertices, faces = geometry._box(2.0, 3.0, 4.0, cx=1.0, cy=1.0, cz=1.0)
@@ -1237,14 +1397,87 @@ class TestFlyingWingPlanform:
         twin = geometry.flying_wing_geometry(
             **{**self.FW, "wing_span": 2.6, "wing_area": 0.85, "motor_count": 2},
             sweep_deg=22.0,
+            pod_length=0.1264,
         )
         motors = next(p for p in twin["parts"] if p["name"] == "motors")
         root = 2.0 * (0.85 / 2.6) / 1.45
-        for lo, hi in _component_boxes(motors):
+        # one nacelle (pod + flush motor can) per station: the nose
+        # fairs into the local TE and the tail sits pod_length aft
+        boxes = _component_boxes(motors)
+        assert len(boxes) == 2
+        assert {round((lo[2] + hi[2]) / 2, 3) for lo, hi in boxes} == {
+            round(z, 3) for z in (-2.6 / 6, 2.6 / 6)
+        }
+        for lo, hi in boxes:
             z = (lo[2] + hi[2]) / 2
             chord = root * (1.0 - 0.55 * abs(z) / 1.3)
             x_te = -tan(radians(22.0)) * abs(z) - 0.75 * chord
-            assert hi[0] == pytest.approx(x_te - 0.002, abs=0.005)
+            assert hi[0] == pytest.approx(x_te, abs=0.005)
+            assert lo[0] == pytest.approx(x_te - 0.1264, abs=0.005)
+
+    def test_pods_carry_the_disc_clear_of_the_swept_wing(self):
+        """THE INTERFERENCE FIX, at the builder level: with no declared
+        pod length the builder derives the clearance locally, so every
+        disc plane sits aft of the local trailing edge across the
+        disc's whole span extent -- for any prop diameter."""
+
+        for prop in (0.2794, 0.381):
+            twin = geometry.flying_wing_geometry(
+                **{
+                    **self.FW,
+                    "wing_span": 2.6,
+                    "wing_area": 0.85,
+                    "motor_count": 2,
+                    "prop_diameter": prop,
+                },
+                sweep_deg=22.0,
+            )
+            props = next(p for p in twin["parts"] if p["name"] == "props")
+            root = 2.0 * (0.85 / 2.6) / 1.45
+            for lo, hi in _component_boxes(props):
+                z_worst = max(abs(lo[2]), abs(hi[2]))  # outboard disc edge
+                chord = root * (1.0 - 0.55 * z_worst / 1.3)
+                te_worst = -tan(radians(22.0)) * z_worst - 0.75 * chord
+                assert hi[0] < te_worst  # the whole disc is aft of the TE
+
+    def test_cranked_center_section_has_a_flat_trailing_edge(self):
+        """The cranked planform: the trailing edge runs level across
+        the declared center section, meets the swept TE at the crank,
+        and the outer panel is exactly the swept trapezoid."""
+
+        mesh = geometry.flying_wing_geometry(
+            **self.FW, sweep_deg=22.0, center_section_span=0.3394, pod_length=0.09
+        )
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        root = 2.0 * (0.704 / 2.2) / 1.45
+        crank_y = 0.1697
+        crank_chord = root * (1.0 - 0.55 * crank_y / 1.1)
+        te_flat = -tan(radians(22.0)) * crank_y - 0.75 * crank_chord
+        # the TE is level at the crank station's TE across the bay
+        # (the loft is linear between rings, so the ring stations pin
+        # the whole flat segment) ...
+        for z in (0.0, crank_y - 0.003, -(crank_y - 0.003)):
+            _le, te = _chord_at(wing, 2, z, tol=0.005)
+            assert te == pytest.approx(te_flat, abs=0.004), z
+        # ... the root chord grew into the flat TE (the crank's whole
+        # point: the disc bay), while the LE stayed on the swept line
+        root_le, root_te = _chord_at(wing, 2, 0.0, tol=0.005)
+        assert root_le == pytest.approx(0.25 * root, abs=0.004)
+        assert root_le - root_te > root  # deeper than the trapezoid chord
+        # ... and the outer panel still tapers to the swept tip
+        tip_le, tip_te = _chord_at(wing, 2, 1.099, tol=0.005)
+        assert tip_le - tip_te == pytest.approx(0.45 * root, rel=0.05)
+        assert tip_le == pytest.approx(-1.1 * tan(radians(22.0)) + 0.25 * 0.45 * root, abs=0.01)
+
+    def test_zero_crank_is_the_straight_trapezoid(self):
+        """center_section_span 0 (every non-cranked caller) keeps the
+        single-panel loft byte for byte."""
+
+        plain = geometry.flying_wing_geometry(**self.FW, sweep_deg=22.0, pod_length=0.09)
+        explicit = geometry.flying_wing_geometry(
+            **self.FW, sweep_deg=22.0, center_section_span=0.0, pod_length=0.09
+        )
+        assert plain == explicit
 
     def test_mission_bridge_feeds_the_declared_planform(self, mission_study):
         arch = mission_study.evaluate(
@@ -1260,6 +1493,9 @@ class TestFlyingWingPlanform:
         assert params["sweep_deg"] == 22.0
         assert params["washout_deg"] == 3.0
         assert params["wing_section"] == "reflexed0015"
+        assert params["center_section_span"] == pytest.approx(0.3394)
+        assert params["pod_length"] == pytest.approx(0.09)
+        assert params["pod_diameter"] == 0.05
         via_bridge = geometry.mission_geometry(mission_study, arch)
         direct = geometry.flying_wing_geometry(
             wing_span=2.2,
@@ -1272,6 +1508,9 @@ class TestFlyingWingPlanform:
             sweep_deg=22.0,
             washout_deg=3.0,
             section="reflexed0015",
+            center_section_span=params["center_section_span"],
+            pod_length=params["pod_length"],
+            pod_diameter=params["pod_diameter"],
         )
         assert via_bridge == direct  # the model's attributes, nothing else
 
@@ -1282,6 +1521,92 @@ def mission_study():
 
     catalog = longeron.load(EXAMPLES / "deepscout", cache=False)
     return trades.TradeStudy(catalog, "ScoutMissions::InterceptUav")
+
+
+@pytest.fixture(scope="module")
+def fleet():
+    from longeron.interpreter import Interpreter
+
+    model = longeron.load(EXAMPLES / "deepscout", cache=False)
+    return model, Interpreter(model)
+
+
+class TestFleetPropDiscClearance:
+    """No propeller disc may cut its own airframe -- fleet-wide.
+
+    The regression this pins: the swept flying wings shipped with
+    their pusher discs slicing the wing.  With the trailing edge raked
+    AFT by the quarter-chord sweep, the local TE at |z| <= prop radius
+    lay aft of a root-mounted disc plane, so the disc plane cut wing
+    skin (the pre-crank shells fail `_assert_discs_clear`; the cranked
+    center section and the clearance-derived pods clear it).  The
+    check is geometry-level and exact on the meshes: no disc may
+    transversally pierce or contain any other part of its own craft,
+    for EVERY airframe builder the fleet dispatches to.
+    """
+
+    FLEET = (
+        "Rotorcraft::BoxQuad",
+        "Rotorcraft::TeardropQuad",
+        "Rotorcraft::OpenTri",
+        "Rotorcraft::HexLifter",
+        "Rotorcraft::CoaxOcto",
+        "Rotorcraft::RingOcto",
+        "WingedVtol::VtolWing",
+        "WingedVtol::DartInterceptor",
+        "FlyingWings::FlyingWingSingle",
+        "FlyingWings::FlyingWingTwin",
+    )
+    BUILDS = (
+        "Rotorcraft::QuadCopter",
+        "Rotorcraft::TriCopter",
+        "Rotorcraft::HexaCopter",
+        "Rotorcraft::OctoCopter",
+        "Rotorcraft::CoaxX8",
+    )
+
+    @pytest.mark.parametrize("qname", FLEET + BUILDS)
+    def test_no_disc_cuts_its_own_airframe(self, fleet, qname):
+        from longeron.analysis.grand import scene_for
+
+        model, interp = fleet
+        mesh, _part_map = scene_for(model, qname, interpreter=interp)
+        _assert_discs_clear(mesh, qname)
+
+    def test_wings_stay_clear_with_the_largest_catalog_prop(self, mission_study):
+        # the mission studies cross the wings with every catalog prop;
+        # the biggest disc (15 in) is the worst case the derived pod
+        # lengths must cover
+        for airframe in ("flyingWingSingle", "flyingWingTwin"):
+            arch = mission_study.evaluate(
+                {
+                    "airframe": airframe,
+                    "motors": "at4120",
+                    "props": "tm15x5",
+                    "battery": "tattu16000",
+                    "material": "aluminum",
+                }
+            )
+            mesh = geometry.mission_geometry(mission_study, arch)
+            _assert_discs_clear(mesh, airframe)
+
+    def test_the_oracle_itself_sees_an_overlap(self):
+        # the checker has teeth: force the legacy disc placement (a
+        # disc plane 30 mm behind the TE, the pre-fix figure at the
+        # display motor) onto the swept twin and the assertion trips
+        mesh = geometry.flying_wing_geometry(
+            wing_span=2.6,
+            wing_area=0.85,
+            taper=0.45,
+            motor_count=2,
+            prop_diameter=0.2794,
+            motor_mass=0.06,
+            battery_mass=0.45,
+            sweep_deg=22.0,
+            pod_length=0.001,  # the disc plane lands back inside the wing
+        )
+        with pytest.raises(AssertionError, match="cuts 'wing'"):
+            _assert_discs_clear(mesh, "forced legacy placement")
 
 
 class TestMissionBridge:

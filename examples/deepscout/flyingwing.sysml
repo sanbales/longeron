@@ -40,7 +40,33 @@ package FlyingWings {
         // thick root section: the payload bay lives inside the wing
         attribute rootThickness : Real = 0.15;   // t/c, root
         attribute wingletArea : Real;            // m^2, each of two
-        attribute podLength : Real = 0.09;       // m, pusher motor pod
+
+        // ----- the pusher pod chain: clearance geometry, not a quote
+        // A trailing-edge pusher's disc must sit AFT of every trailing-
+        // edge point it spans, and on an aft-swept wing the local TE
+        // recedes going outboard (TrailingEdgeAft): a disc of radius r
+        // at spanwise station y sees the TE furthest aft at y + r.  The
+        // pod bridges exactly that rise, plus a declared disc-plane
+        // clearance, on top of the base housing a pusher needs anyway
+        // -- so sweep honestly buys pod length, and the drag buildup
+        // below charges the extra skin.  The rise is derived for the
+        // branch's reference disc (the APC 11x5.5E of the heavy
+        // catalog); every catalog prop the missions cross swings a
+        // rise well inside the clearance cushion.
+        attribute propDiameterRef : Real = 0.2794;  // m, APC 11x5.5E disc
+        attribute podStation : Real = 0.0;       // m, spanwise pusher station
+        attribute podBaseLength : Real = 0.06;   // m, motor + mount housing
+        attribute discClearance : Real = 0.03;   // m, disc plane behind the TE
+        // the swept TE's rise across the disc's span extent (worst at
+        // station + radius); a forward-raked teaching variant clamps to 0
+        attribute podTeRise : Real = max(0.0,
+            TrailingEdgeAft(rootChord = rootChord, taper = taper,
+                span = wingSpan, sweepDeg = sweepDeg,
+                y = podStation + 0.5 * propDiameterRef)
+            - TrailingEdgeAft(rootChord = rootChord, taper = taper,
+                span = wingSpan, sweepDeg = sweepDeg, y = podStation));
+        attribute podLength : Real =
+            podBaseLength + discClearance + podTeRise;   // m, derived
         attribute podDiameter : Real = 0.05;     // m
         attribute dragArea : Real = 1.15 * (     // interference/excrescence
             SkinFrictionDrag(                    // the one lifting surface
@@ -87,16 +113,26 @@ package FlyingWings {
         attribute elevonSpanFrac : Real = 0.5;   // band span / half-span
         attribute elevonChordFrac : Real = 0.25; // elevon chord / local chord
         attribute cgMac : Real;   // CG aft of the root LE, in MAC units
-        // the derived S&C figures the requirement family checks
+        // the derived S&C figures the requirement family checks.  The
+        // stations compose: mac and neutralPointAft are the planform's
+        // own figures (single-panel here; the cranked single redefines
+        // both with the Raymer multi-panel composition), cgAft turns
+        // the declared cgMac into metres aft of the root LE, and the
+        // margin and volume calcs read the composed stations -- so one
+        // CG feeds every check, whichever composition produced it.
         attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);
+        attribute tipChord : Real = taper * rootChord;
         attribute mac : Real =
             MeanAeroChord(rootChord = rootChord, taper = taper);
-        attribute staticMargin : Real = StaticMargin(
+        attribute neutralPointAft : Real = NeutralPointAft(
             rootChord = rootChord, taper = taper, span = wingSpan,
-            sweepDeg = sweepDeg, cgMac = cgMac);
+            sweepDeg = sweepDeg);
+        attribute cgAft : Real = cgMac * mac;    // m aft of the root LE
+        attribute staticMargin : Real = StaticMargin(
+            neutralPointAft = neutralPointAft, mac = mac, cgAft = cgAft);
         attribute elevonPitchVolume : Real = ElevonPitchVolume(
             rootChord = rootChord, taper = taper, span = wingSpan,
-            sweepDeg = sweepDeg, cgMac = cgMac,
+            sweepDeg = sweepDeg, cgAft = cgAft, mac = mac,
             spanFrac = elevonSpanFrac, chordFrac = elevonChordFrac);
         attribute elevonRollVolume : Real = ElevonRollVolume(
             span = wingSpan, spanFrac = elevonSpanFrac,
@@ -104,7 +140,7 @@ package FlyingWings {
         attribute wingletYawVolume : Real = WingletYawVolume(
             wingletArea = wingletArea, rootChord = rootChord,
             taper = taper, span = wingSpan, sweepDeg = sweepDeg,
-            cgMac = cgMac, wingArea = wingArea);
+            cgAft = cgAft, wingArea = wingArea);
     }
 
     part def FlyingWingSingle :> FlyingWing {
@@ -113,6 +149,17 @@ package FlyingWings {
                heavy catalog: a SunnySky X4112S-class pusher swinging
                an APC 11x5.5E (the mission studies cross it with every
                motor/prop/pack mix and let the constraints decide).
+               The planform is CRANKED for that pusher -- the standard
+               flying-wing installation: a flat-TE center section
+               slightly wider than the prop disc (centerSectionSpan,
+               derived from the reference disc plus a declared margin)
+               holds the trailing edge level across the whole disc, so
+               the disc tucks behind it on the base-length pod instead
+               of chasing the swept TE outboard (podTeRise 0).  The
+               outer panels sweep as before; the crank reshapes the
+               DRAWN planform and the S&C composition only -- the
+               declared performance closures (wingArea, wingSpan,
+               oswald) are untouched.
                The price of one propeller: its torque has no twin to
                cancel against, so the elevons carry a standing trim
                deflection -- that ride is in the Oswald factor, a
@@ -124,10 +171,79 @@ package FlyingWings {
         attribute taper : Real = 0.45;    attribute wingArea : Real = 0.704;
         attribute wingletArea : Real = 0.030;
         attribute mass : Real = 1.15;   attribute cost : Real = 520.0;
+
+        // ----- the cranked center section (pusher bay) -------------
+        // flat TE from -crankY to +crankY at the crank station's TE;
+        // the disc (radius 0.1397 m) rides inside it with margin
+        attribute centerMargin : Real = 0.03;    // m, disc tip to crank
+        attribute centerSectionSpan : Real =
+            propDiameterRef + 2.0 * centerMargin;   // 0.3394 m
+        attribute crankY : Real = 0.5 * centerSectionSpan;
+        // the disc spans the flat TE only: any reference disc that
+        // outgrew the center section would price its overhang off the
+        // outer panel's TE here, and today's clamps to exactly 0
+        attribute podTeRise : Real = max(0.0,
+            TrailingEdgeAft(rootChord = rootChord, taper = taper,
+                span = wingSpan, sweepDeg = sweepDeg,
+                y = max(crankY, podStation + 0.5 * propDiameterRef))
+            - TrailingEdgeAft(rootChord = rootChord, taper = taper,
+                span = wingSpan, sweepDeg = sweepDeg, y = crankY));
+
+        // ----- the cranked planform's S&C composition ---------------
+        // Two straight-tapered panels per side (Raymer's multi-panel
+        // method): the center panel runs from the centerline to the
+        // crank -- its TE flat at the crank station's TE, its LE the
+        // planform's own swept leading edge -- and the outer panel is
+        // the swept trapezoid as before.  Each panel contributes its
+        // own MAC and its own quarter-chord-of-MAC station; the
+        // composite is the area-weighted mean of each (one-side areas;
+        // the weights normalize).  The flat-TE center carries chord
+        // (and area) the straight taper did not have, so the composite
+        // MAC grows and the neutral point slides a little forward in
+        // MAC units: 0.892 against the trapezoid's 0.908.
+        attribute crankTeAft : Real = TrailingEdgeAft(
+            rootChord = rootChord, taper = taper, span = wingSpan,
+            sweepDeg = sweepDeg, y = crankY);       // the flat TE station
+        attribute crankChord : Real = LocalChord(rootChord = rootChord,
+            taper = taper, span = wingSpan, y = crankY);
+        // center panel: centerline chord = the flat TE station itself
+        // (the LE passes through 0 at the root), crank chord outboard
+        attribute centerPanelTaper : Real = crankChord / crankTeAft;
+        attribute centerPanelArea : Real =
+            crankY * (crankTeAft + crankChord) / 2.0;    // m^2, one side
+        attribute centerPanelMac : Real = MeanAeroChord(
+            rootChord = crankTeAft, taper = centerPanelTaper);
+        // the center panel's quarter-chord line: 0.25 x the flat TE
+        // plus 0.75 x the (unchanged) leading edge, read at the
+        // panel's own MAC station
+        attribute centerPanelAcAft : Real = 0.25 * crankTeAft
+            + 0.75 * LeadingEdgeAft(rootChord = rootChord, taper = taper,
+                span = wingSpan, sweepDeg = sweepDeg,
+                y = MacSpanStation(span = 2.0 * crankY,
+                    taper = centerPanelTaper));
+        // outer panel: the swept trapezoid from the crank to the tip
+        attribute outerPanelWidth : Real = 0.5 * wingSpan - crankY;
+        attribute outerPanelTaper : Real = tipChord / crankChord;
+        attribute outerPanelArea : Real =
+            outerPanelWidth * (crankChord + tipChord) / 2.0;  // one side
+        attribute outerPanelMac : Real = MeanAeroChord(
+            rootChord = crankChord, taper = outerPanelTaper);
+        attribute outerPanelAcAft : Real = QuarterChordAft(
+            rootChord = rootChord, sweepDeg = sweepDeg,
+            y = crankY + MacSpanStation(span = 2.0 * outerPanelWidth,
+                taper = outerPanelTaper));
+        // the composite figures every inherited check reads
+        attribute mac : Real = AreaWeighted(
+            areaA = centerPanelArea, valueA = centerPanelMac,
+            areaB = outerPanelArea, valueB = outerPanelMac);
+        attribute neutralPointAft : Real = AreaWeighted(
+            areaA = centerPanelArea, valueA = centerPanelAcAft,
+            areaB = outerPanelArea, valueB = outerPanelAcAft);
+
         // the pack rides the aft rail of the root bay: the CG lands at
-        // 0.82 MAC aft of the root leading edge, 0.088 MAC ahead of
-        // this planform's neutral point (0.908 MAC) -- inside the
-        // tailless static-margin band
+        // 0.82 composite MAC aft of the root leading edge, 0.072 MAC
+        // ahead of the cranked planform's neutral point (0.892 MAC) --
+        // inside the tailless static-margin band
         attribute cgMac : Real = 0.82;
         // the standing elevon deflection that trims the single prop's
         // torque rides in the Oswald factor, a notch below the twin's
@@ -162,6 +278,12 @@ package FlyingWings {
         attribute taper : Real = 0.45;    attribute wingArea : Real = 0.85;
         attribute wingletArea : Real = 0.040;
         attribute mass : Real = 1.55;   attribute cost : Real = 780.0;
+        // the pushers ride the swept TE either side of the root bay,
+        // at the same stations the mesh row places them -- and the pod
+        // chain prices what the sweep costs there: the TE recedes
+        // 36 mm across the reference disc, so each pod runs 0.126 m
+        // against the flat-TE single's 0.09
+        attribute podStation : Real = wingSpan / 6.0;   // m, either side
         // the wider bay spreads the pack and parcel further aft: the CG
         // lands at 0.91 MAC aft of the root leading edge, 0.089 MAC
         // ahead of this planform's neutral point (0.998 MAC)

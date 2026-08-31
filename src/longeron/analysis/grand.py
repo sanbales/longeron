@@ -265,11 +265,18 @@ def scene_for(
             knobs = {}  # unvalued or absent knob: not a fleet shell
             break
     if knobs:
-        # the tailless S&C knobs are optional: only the flying wings
-        # declare them, and the zero-sweep defaults keep every other
-        # family's loft exactly as it was
+        # the tailless S&C and pusher-installation knobs are optional:
+        # only the flying wings declare them, and the zero-sweep,
+        # no-crank defaults keep every other family's loft exactly as
+        # it was
         extras: dict[str, Any] = {}
-        for attr_name, kw in (("sweepDeg", "sweep_deg"), ("washoutDeg", "washout_deg")):
+        for attr_name, kw in (
+            ("sweepDeg", "sweep_deg"),
+            ("washoutDeg", "washout_deg"),
+            ("centerSectionSpan", "center_section_span"),
+            ("podLength", "pod_length"),
+            ("podDiameter", "pod_diameter"),
+        ):
             try:
                 extras[kw] = float(interp.evaluate(f"{qname}::{attr_name}"))
             except Exception:

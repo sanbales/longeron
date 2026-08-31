@@ -76,7 +76,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from importlib.util import find_spec
-from math import atan, atan2, ceil, cos, floor, pi, radians, sin, sqrt, tan
+from math import atan, atan2, ceil, cos, degrees, floor, pi, radians, sin, sqrt, tan
 from typing import Any, Literal
 
 from ..errors import MissingExtraError
@@ -135,6 +135,13 @@ _TRI_BOOM_RATIO = 1.3
 #: m: standoff drop of a coax pair's lower motor below its arm (20 mm
 #: standoff posts -- clears the battery brick under the centre plate)
 _COAX_DROP = 0.02
+#: the flying wings' pusher-pod clearance chain, mirrored from the
+#: model's NOMINAL declarations (``examples/deepscout/flyingwing.sysml``
+#: podBaseLength / discClearance) for callers that pass no pod_length:
+#: base motor + mount housing, and the disc plane's clearance behind
+#: the trailing edge that covers it
+_POD_BASE_LENGTH = 0.06
+_POD_DISC_CLEARANCE = 0.03
 
 #: per-part colors: muted categorical set at roughly constant lightness
 COLORS = {
@@ -1769,29 +1776,43 @@ def flying_wing_geometry(
     sweep_deg: float = 0.0,
     washout_deg: float = 0.0,
     section: str = "0015",
+    center_section_span: float = 0.0,
+    pod_length: float | None = None,
+    pod_diameter: float = 0.05,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale tailless flying wing: swept panels, trailing-edge pushers.
 
     The wing IS the airframe (the DeepScout ``FlyingWings`` convention:
-    ``fuselageLength`` 0 marks the family): one straight-tapered panel
-    pair lofted from ``section`` (a NACA 4-digit code or a
-    ``"reflexed"``-prefixed one, see :func:`_lift_surface`), its
-    quarter-chord line raked aft by ``sweep_deg`` and its tips twisted
+    ``fuselageLength`` 0 marks the family): straight-tapered panels
+    lofted from ``section`` (a NACA 4-digit code or a
+    ``"reflexed"``-prefixed one, see :func:`_lift_surface`), the
+    quarter-chord line raked aft by ``sweep_deg`` and the tips twisted
     down by ``washout_deg``; a winglet rides each swept tip, raked with
-    the wing; one pusher motor can per station hangs on the TRUE
-    trailing edge -- carried aft with the local chord -- and the
-    battery is an indigo sleeve bulging through the root bay.  The
-    three planform knobs are the model's own declared attributes
-    (``sweepDeg`` / ``washoutDeg`` / the reflexed 15% bay section of
-    ``examples/deepscout/flyingwing.sysml``), so the drawn planform IS
-    the declared one: in plan view the tips sit aft of the root
-    leading edge by roughly half-span x tan(sweep).  One stand-in
-    remains, named so nobody reads more than the mesh knows: the
-    reflexed camber line is a simple parametric S-camber, not a
-    catalog airfoil, and the panels loft straight -- the blended
-    center body this family really flies is a job for the loft
-    framework's lofted wing body.
+    the wing.  With ``center_section_span`` > 0 the planform is
+    CRANKED -- the standard flying-wing pusher installation: the
+    trailing edge runs FLAT across the center section (level with the
+    crank station's trailing edge) so a root pusher disc tucks behind
+    it, and only the outer panels carry the swept trailing edge (and
+    the washout: a cranked center bay flies untwisted).
+
+    Every motor station hangs a pusher pod on the local trailing edge:
+    a nacelle of ``pod_diameter`` running ``pod_length`` straight aft,
+    the motor can flush at its tail and the prop disc just behind it.
+    ``pod_length`` None derives the clearance length locally -- base
+    housing + disc clearance + the trailing edge's aft rise across the
+    disc's own span extent -- so the disc plane clears the wing for
+    ANY prop; the model-driven callers pass the declared ``podLength``
+    (derived the same way in ``examples/deepscout/flyingwing.sysml``
+    for the branch's reference disc).  The planform knobs are the
+    model's own declared attributes (``sweepDeg`` / ``washoutDeg`` /
+    ``centerSectionSpan`` / the reflexed 15% bay section), so the drawn
+    planform IS the declared one.  One stand-in remains, named so
+    nobody reads more than the mesh knows: the reflexed camber line is
+    a simple parametric S-camber, not a catalog airfoil, and the
+    panels loft straight (C0 at the crank) -- the blended center body
+    this family really flies is a job for the loft framework's lofted
+    wing body.
     """
 
     if min(wing_span, wing_area, taper, prop_diameter) <= 0:
@@ -1802,17 +1823,60 @@ def flying_wing_geometry(
     tip = root * taper
     half = wing_span / 2
     aft_per_span = tan(radians(sweep_deg))  # quarter-chord rake, -X per span
+    # leading/trailing edge stations, metres AFT of the root leading
+    # edge (the StabilityControl convention; mesh x = 0.25 root - aft)
+    le_slope = aft_per_span + 0.25 * (root - tip) / half
+    crank_y = min(max(center_section_span / 2, 0.0), half)
 
-    right = _lift_surface(
-        origin=(0.0, 0.0, 0.0),
-        direction=(0.0, 0.0, 1.0),
-        length=half,
-        root_chord=root,
-        tip_chord=tip,
-        section=section,
-        sweep_deg=sweep_deg,
-        washout_deg=washout_deg,
-    )
+    def te_aft(y: float) -> float:
+        """Trailing edge aft of the root LE at |y|, crank-aware: flat at
+        the crank station's TE across the center section, swept-tapered
+        outboard (the model's TrailingEdgeAft, plus the crank)."""
+
+        y = max(abs(y), crank_y)
+        chord = root + (tip - root) * y / half
+        return 0.25 * root + aft_per_span * y + 0.75 * chord
+
+    if crank_y > 0.0:
+        # cranked: a flat-TE center panel to the crank, the swept outer
+        # panel beyond it.  The center panel is itself a straight taper
+        # (centerline chord = the flat TE station, since the LE passes
+        # through 0 aft at the root) whose quarter-chord line rakes at
+        # 0.75 x the leading-edge slope; washout rides the outer panel
+        # only.  The two closed panels share the crank section: C0.
+        crank_chord = root + (tip - root) * crank_y / half
+        center_root = te_aft(0.0)  # the flat TE = the centerline chord
+        center = _lift_surface(
+            origin=(0.25 * root - 0.25 * center_root, 0.0, 0.0),
+            direction=(0.0, 0.0, 1.0),
+            length=crank_y,
+            root_chord=center_root,
+            tip_chord=crank_chord,
+            section=section,
+            sweep_deg=degrees(atan(0.75 * le_slope)),
+        )
+        outer = _lift_surface(
+            origin=(-aft_per_span * crank_y, 0.0, crank_y),
+            direction=(0.0, 0.0, 1.0),
+            length=half - crank_y,
+            root_chord=crank_chord,
+            tip_chord=tip,
+            section=section,
+            sweep_deg=sweep_deg,
+            washout_deg=washout_deg,
+        )
+        right = _merge(center, outer)
+    else:
+        right = _lift_surface(
+            origin=(0.0, 0.0, 0.0),
+            direction=(0.0, 0.0, 1.0),
+            length=half,
+            root_chord=root,
+            tip_chord=tip,
+            section=section,
+            sweep_deg=sweep_deg,
+            washout_deg=washout_deg,
+        )
     wing = _merge(right, _mirror_z(right))
 
     fin = _lift_surface(
@@ -1831,24 +1895,39 @@ def flying_wing_geometry(
         z_pods = [0.0]
     else:  # a symmetric row across the middle third of the span
         z_pods = [(2.0 * i / (stations - 1) - 1.0) * half / 3.0 for i in range(stations)]
+    pod_r = pod_diameter / 2
     motor_meshes: list[Mesh] = []
     prop_meshes: list[Mesh] = []
     for z in z_pods:
-        chord = root + (tip - root) * abs(z) / half
-        # chords run LE +0.25c .. TE -0.75c about the local quarter-chord,
-        # which the sweep carries aft: the pods hug the TRUE trailing edge
-        x_te = -aft_per_span * abs(z) - 0.75 * chord
-        can = _tube(
-            [(x_te - 0.002, motor_d / 2), (x_te - 0.002 - motor_h, 0.4 * motor_d)], segments
+        # the pod nose fairs into the LOCAL trailing edge (flat across
+        # a cranked center, swept outboard) and runs straight aft; the
+        # disc spins just behind its tail
+        x_te = 0.25 * root - te_aft(z)
+        if pod_length is None:  # derive the clearance length locally
+            rise = te_aft(abs(z) + prop_diameter / 2) - te_aft(z)
+            length = _POD_BASE_LENGTH + _POD_DISC_CLEARANCE + max(0.0, rise)
+        else:
+            length = pod_length
+        x_tail = x_te - length
+        pod = _tube(
+            [
+                (x_te, 0.35 * pod_r),
+                (x_te - 0.30 * length, pod_r),
+                (x_te - 0.80 * length, pod_r),
+                (x_tail, 0.40 * pod_r),
+            ],
+            segments,
         )
+        can = _tube([(x_tail + motor_h, 0.5 * motor_d), (x_tail, 0.42 * motor_d)], segments)
         disk = _tube(
             [
-                (x_te - motor_h - 0.006, prop_diameter / 2),
-                (x_te - motor_h - 0.0085, prop_diameter / 2),
+                (x_tail - 0.006, prop_diameter / 2),
+                (x_tail - 0.0085, prop_diameter / 2),
             ],
             max(segments, 32),
         )
-        motor_meshes.append((_translate(can[0], 0.0, 0.0, z), can[1]))
+        nacelle = _merge(pod, can)
+        motor_meshes.append((_translate(nacelle[0], 0.0, 0.0, z), nacelle[1]))
         prop_meshes.append((_translate(disk[0], 0.0, 0.0, z), disk[1]))
 
     bat_l, bat_w, _bat_h = battery_size(battery_mass)
@@ -2144,6 +2223,11 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
         "sweep_deg": optional("airframe", "sweepDeg", 0.0),
         "washout_deg": optional("airframe", "washoutDeg", 0.0),
         "wing_section": optional("airframe", "wingSection", None),
+        # ... and the pusher-installation knobs: the cranked center
+        # section and the clearance-derived pod (flying wings only)
+        "center_section_span": optional("airframe", "centerSectionSpan", 0.0),
+        "pod_length": optional("airframe", "podLength", None),
+        "pod_diameter": optional("airframe", "podDiameter", 0.05),
     }
 
 
@@ -2164,6 +2248,9 @@ def airframe_geometry(
     sweep_deg: float = 0.0,
     washout_deg: float = 0.0,
     wing_section: str | None = None,
+    center_section_span: float = 0.0,
+    pod_length: float | None = None,
+    pod_diameter: float = 0.05,
 ) -> dict[str, Any]:
     """Family-dispatched geometry from airframe-shell attribute values.
 
@@ -2185,10 +2272,12 @@ def airframe_geometry(
     callers feed this ladder: :func:`mission_geometry` from a
     mission-catalog mix, and :func:`longeron.analysis.grand.scene_for`
     from a fleet airframe definition's own attributes.  The tailless
-    S&C knobs (``sweep_deg``, ``washout_deg``, ``wing_section``) reach
-    :func:`flying_wing_geometry` only -- the flying wings are the one
-    family whose model declares them; every other loft keeps its
-    zero-sweep planform until the loft framework generalizes.
+    S&C and pusher-installation knobs (``sweep_deg``, ``washout_deg``,
+    ``wing_section``, ``center_section_span``, ``pod_length``,
+    ``pod_diameter``) reach :func:`flying_wing_geometry` only -- the
+    flying wings are the one family whose model declares them; every
+    other loft keeps its zero-sweep planform until the loft framework
+    generalizes.
     """
 
     arm_kw: dict[str, Any] = {}
@@ -2227,6 +2316,9 @@ def airframe_geometry(
             washout_deg=washout_deg,
             # None = no declared section: the legacy symmetric bay loft
             section=wing_section if wing_section is not None else "0015",
+            center_section_span=center_section_span,
+            pod_length=pod_length,
+            pod_diameter=pod_diameter,
         )
     if motor_count <= 1:
         return interceptor_geometry(
@@ -2280,6 +2372,9 @@ def mission_geometry(
         sweep_deg=p["sweep_deg"],
         washout_deg=p["washout_deg"],
         wing_section=p["wing_section"],
+        center_section_span=p["center_section_span"],
+        pod_length=p["pod_length"],
+        pod_diameter=p["pod_diameter"],
         **arm_kw,
     )
 

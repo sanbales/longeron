@@ -357,6 +357,59 @@ package DeepScout {
                 + y * tan(sweepDeg * pi / 180.0);
         }
 
+        calc def LeadingEdgeAft {
+            doc /* The leading edge at spanwise station y, aft of the
+                   root-chord leading edge: the quarter-chord line less
+                   a quarter of the local chord.  On a straight-tapered
+                   panel this is a straight line through 0 at the
+                   root. */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in y : Real;
+            return : Real = QuarterChordAft(rootChord = rootChord,
+                    sweepDeg = sweepDeg, y = y)
+                - 0.25 * LocalChord(rootChord = rootChord, taper = taper,
+                    span = span, y = y);
+        }
+
+        calc def TrailingEdgeAft {
+            doc /* The trailing edge at spanwise station y, aft of the
+                   root-chord leading edge: the quarter-chord line plus
+                   three quarters of the local chord.  On an aft-swept
+                   tapered wing this line slopes AFT going outboard
+                   whenever tan(sweep) exceeds the taper's forward pull
+                   -- the slope a trailing-edge pusher installation
+                   must clear (see the FlyingWings pod chain). */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in y : Real;
+            return : Real = QuarterChordAft(rootChord = rootChord,
+                    sweepDeg = sweepDeg, y = y)
+                + 0.75 * LocalChord(rootChord = rootChord, taper = taper,
+                    span = span, y = y);
+        }
+
+        calc def AreaWeighted {
+            doc /* Raymer's multi-panel composition kernel: the
+                   area-weighted mean of one planform figure over two
+                   panels.  Feed it panel MACs for the composite MAC,
+                   or panel aerodynamic-centre stations for the
+                   composite neutral point (Raymer's multi-panel MAC
+                   method).  Panel areas only weight the mean, so
+                   one-side areas compose exactly like full-planform
+                   areas. */
+            in areaA : Real;
+            in valueA : Real;
+            in areaB : Real;
+            in valueB : Real;
+            return : Real = (areaA * valueA + areaB * valueB)
+                / (areaA + areaB);
+        }
+
         calc def NeutralPointAft {
             doc /* Wing-alone neutral point of a swept tapered wing, aft
                    of the root-chord leading edge: the quarter-chord
@@ -368,7 +421,10 @@ package DeepScout {
                    it moves the MAC itself aft of the root bay, and
                    that absolute shift is what a tailless design
                    spends to put its bay-loaded CG AHEAD of the
-                   neutral point (Nickel & Wohlfahrt). */
+                   neutral point (Nickel & Wohlfahrt).  A CRANKED
+                   planform composes this per panel instead:
+                   AreaWeighted over the panels' own quarter-chord-of-
+                   MAC stations (the FlyingWingSingle's composite). */
             in rootChord : Real;
             in taper : Real;
             in span : Real;
@@ -380,40 +436,36 @@ package DeepScout {
 
         calc def StaticMargin {
             doc /* Static margin in MAC units: (x_np - x_cg) / MAC,
-                   both stations aft of the root-chord leading edge,
-                   the CG given in MAC units (cgMac).  Positive means
-                   the CG rides ahead of the neutral point: statically
-                   stable in pitch. */
-            in rootChord : Real;
-            in taper : Real;
-            in span : Real;
-            in sweepDeg : Real;
-            in cgMac : Real;         // CG aft of the root LE, in MACs
-            return : Real = NeutralPointAft(rootChord = rootChord,
-                    taper = taper, span = span, sweepDeg = sweepDeg)
-                / MeanAeroChord(rootChord = rootChord, taper = taper)
-                - cgMac;
+                   both stations in metres aft of the root-chord
+                   leading edge.  Positive means the CG rides ahead of
+                   the neutral point: statically stable in pitch.
+                   Taking the composed stations as inputs (instead of
+                   recomputing them from one trapezoid) lets the same
+                   margin serve the single-panel twin and the cranked
+                   single's multi-panel composition. */
+            in neutralPointAft : Real;   // m aft of the root LE
+            in mac : Real;               // m, the planform's MAC
+            in cgAft : Real;             // m aft of the root LE
+            return : Real = (neutralPointAft - cgAft) / mac;
         }
 
         calc def ControlArm {
             doc /* Pitch moment arm of a trailing-edge surface at
-                   spanwise station y: the local trailing edge (the
-                   quarter-chord line + 0.75 local chord) less the CG
-                   station.  The same sweep that buys the static
+                   spanwise station y: the local trailing edge less the
+                   CG station, both in metres aft of the root-chord
+                   leading edge.  The same sweep that buys the static
                    margin carries the outboard trailing edge aft --
                    sweep pays a tailless elevon's arm too. */
             in rootChord : Real;
             in taper : Real;
             in span : Real;
             in sweepDeg : Real;
-            in cgMac : Real;
+            in cgAft : Real;         // m aft of the root LE
             in y : Real;
-            return : Real = QuarterChordAft(rootChord = rootChord,
-                    sweepDeg = sweepDeg, y = y)
-                + 0.75 * LocalChord(rootChord = rootChord, taper = taper,
-                    span = span, y = y)
-                - cgMac * MeanAeroChord(rootChord = rootChord,
-                    taper = taper);
+            return : Real = TrailingEdgeAft(rootChord = rootChord,
+                    taper = taper, span = span, sweepDeg = sweepDeg,
+                    y = y)
+                - cgAft;
         }
 
         calc def ElevonPitchVolume {
@@ -425,19 +477,23 @@ package DeepScout {
                    at chordFrac x spanFrac x S, so the area ratio
                    cancels S and the coefficient reduces to chordFrac x
                    spanFrac x arm / MAC with the arm taken at the
-                   band's mid station. */
+                   band's mid station.  The CG station and the
+                   normalizing MAC come in composed (cgAft, mac), so a
+                   cranked planform's composite figures price the same
+                   band. */
             in rootChord : Real;
             in taper : Real;
             in span : Real;
             in sweepDeg : Real;
-            in cgMac : Real;
+            in cgAft : Real;         // m aft of the root LE
+            in mac : Real;           // m, the planform's MAC
             in spanFrac : Real;      // band span / half-span, tip-anchored
             in chordFrac : Real;     // elevon chord / local chord
             return : Real = chordFrac * spanFrac
                 * ControlArm(rootChord = rootChord, taper = taper,
-                    span = span, sweepDeg = sweepDeg, cgMac = cgMac,
+                    span = span, sweepDeg = sweepDeg, cgAft = cgAft,
                     y = (1.0 - 0.5 * spanFrac) * 0.5 * span)
-                / MeanAeroChord(rootChord = rootChord, taper = taper);
+                / mac;
         }
 
         calc def ElevonRollVolume {
@@ -458,7 +514,9 @@ package DeepScout {
                    the vertical-tail volume coefficient of conventional
                    practice (Raymer) with S_v both winglets and l_v the
                    arm from the CG to the swept tip's quarter-chord,
-                   where the winglets ride.  Winglet-stabilized
+                   where the winglets ride.  The CG station comes in
+                   composed (cgAft, metres aft of the root LE), the
+                   same convention as ControlArm.  Winglet-stabilized
                    tailless aircraft fly on far smaller volumes than
                    tailed airframes (Nickel & Wohlfahrt): a floor
                    checked against this calc must be a tailless
@@ -468,13 +526,12 @@ package DeepScout {
             in taper : Real;
             in span : Real;
             in sweepDeg : Real;
-            in cgMac : Real;
+            in cgAft : Real;         // m aft of the root LE
             in wingArea : Real;
             return : Real = 2.0 * wingletArea
                 * (QuarterChordAft(rootChord = rootChord,
                        sweepDeg = sweepDeg, y = 0.5 * span)
-                   - cgMac * MeanAeroChord(rootChord = rootChord,
-                       taper = taper))
+                   - cgAft)
                 / (wingArea * span);
         }
     }

@@ -45,6 +45,11 @@ package ScoutMissions {
     private import DeepScout::Propulsion::*;
     private import DeepScout::Structures::*;
     private import DeepScout::Performance::*;
+    // the tailless branch's pod chain reads the trailing-edge closed
+    // forms (TrailingEdgeAft) inside its dragArea buildup, so the
+    // catalog's variant re-evaluation needs the S&C discipline in
+    // scope like the other four
+    private import DeepScout::StabilityControl::*;
 
     // ----- variation points ---------------------------------------------------
 
@@ -468,7 +473,8 @@ package ScoutMissions {
     // values over these defaults through the trade-study bridge.
 
     attribute stationMinutes : Real = 283.3 [SI::min];  // the ISR winner's loiter
-    attribute payloadRangeKgKm : Real = 193.3;          // the logistics winner, kg km
+    attribute payloadRangeKgKm : Real = 192.8;          // the logistics winner, kg km
+                                                        // (the twin pays its derived-pod drag)
     attribute maxTargetSpeed : Real = 72.9;             // the dart's catchable crossing, m/s
     attribute fleetCost : Real = 9666.0;                // USD: the three winners' invoices
     attribute heaviestBirdKg : Real = 6.7;              // kg: the loaded courier at launch
