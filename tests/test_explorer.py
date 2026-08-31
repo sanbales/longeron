@@ -462,13 +462,16 @@ def test_drone_tree_shows_its_relationships(drone_model):
     assert badges["connection"] == 10  # powerHarness, controlLink,
     #   phaseLeads (quad + hexa + octo), frontLeads, tailLead,
     #   tiltLinkage, upperLeads, lowerLeads
-    assert badges["satisfy"] == 13  # FlightEnvelope x5, mission x4,
-    #   installation (quad only), FailSafeHover x3 (hexa + octo + X8)
+    assert badges["satisfy"] == 19  # FlightEnvelope x5, mission x4,
+    #   installation (quad only), FailSafeHover x3 (hexa + octo + X8),
+    #   the tailless S&C family x6 (PitchStability / PitchRollAuthority /
+    #   YawStability, each by both flying wings)
     assert badges["flow"] == 1  # dcBus: battery.voltage -> esc.busVoltage
     assert badges["allocation"] == 1  # FlightStates -> FlightController
     assert badges["dependency"] == 1  # PlanBattery -> HoverTime
-    assert badges["import"] == 34  # the program's cross-file wiring
-    #   (25 + the 6 imports of surfaces.sysml's ScoutSurfaces package)
+    assert badges["import"] == 35  # the program's cross-file wiring
+    #   (25 + the 6 imports of surfaces.sysml's ScoutSurfaces package
+    #   + the flying wings' StabilityControl import)
     labels = {node["label"] for node in rows}
     assert "satisfy mission" in labels  # by the quad; the tri busts it
 

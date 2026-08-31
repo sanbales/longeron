@@ -215,7 +215,11 @@ def drone_scene(
 #: :func:`longeron.analysis.geometry.mission_geometry`), so a def-keyed
 #: render sizes its rotors and battery sleeve at the catalog's 10-inch
 #: small-class figures.
-_FLEET_DISPLAY = {"prop_diameter": 10.0 * geometry.IN, "motor_mass": 0.06, "battery_mass": 0.45}
+_FLEET_DISPLAY: dict[str, Any] = {
+    "prop_diameter": 10.0 * geometry.IN,
+    "motor_mass": 0.06,
+    "battery_mass": 0.45,
+}
 
 #: the DeepScout ``Airframe`` def's geometry knobs -- the attribute set
 #: whose presence marks a fleet airframe shell
@@ -261,6 +265,19 @@ def scene_for(
             knobs = {}  # unvalued or absent knob: not a fleet shell
             break
     if knobs:
+        # the tailless S&C knobs are optional: only the flying wings
+        # declare them, and the zero-sweep defaults keep every other
+        # family's loft exactly as it was
+        extras: dict[str, Any] = {}
+        for attr_name, kw in (("sweepDeg", "sweep_deg"), ("washoutDeg", "washout_deg")):
+            try:
+                extras[kw] = float(interp.evaluate(f"{qname}::{attr_name}"))
+            except Exception:
+                pass
+        try:
+            extras["wing_section"] = str(interp.evaluate(f"{qname}::wingSection"))
+        except Exception:
+            pass
         shell = geometry.airframe_geometry(
             wing_span=knobs["wingSpan"],
             wing_area=knobs["wingArea"],
@@ -268,6 +285,7 @@ def scene_for(
             fuselage_length=knobs["fuselageLength"],
             motor_count=knobs["motorCount"],
             arm_count=int(knobs["armCount"]),
+            **extras,
             **_FLEET_DISPLAY,
         )
         part_map = {part["name"]: qname for part in shell["parts"]}

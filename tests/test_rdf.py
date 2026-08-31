@@ -183,7 +183,13 @@ def test_sparql_requirement_subject_types(graph):
         "ScoutMissions::IsrUav",
     ) in pairs
     assert ("DeepScout::FlightEnvelope", "DeepScout::MultiRotor") in pairs
-    assert len(pairs) == 6
+    # the tailless S&C family subjects the flying-wing branch
+    for req in ("PitchStability", "PitchRollAuthority", "YawStability"):
+        assert (
+            f"ScoutMissions::StabilityRequirements::{req}",
+            "FlyingWings::FlyingWing",
+        ) in pairs
+    assert len(pairs) == 9
 
 
 def test_sparql_variation_points_and_variants(graph):

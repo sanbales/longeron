@@ -70,14 +70,14 @@
     "nb_cell_index": 23,
     "code_cell_index": 11,
     "output_index": 0,
-    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "alt": "longeron.widgets.viewer3d._viewer_class",
     "image": "04_trades_sizing_the_fleet/cell-11.png"
    },
    {
     "nb_cell_index": 24,
     "code_cell_index": 12,
     "output_index": 0,
-    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "alt": "longeron.widgets.viewer3d._viewer_class",
     "image": "04_trades_sizing_the_fleet/cell-12.png"
    },
    {
@@ -91,7 +91,7 @@
     "nb_cell_index": 40,
     "code_cell_index": 20,
     "output_index": 0,
-    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "alt": "longeron.widgets.viewer3d._viewer_class",
     "image": "04_trades_sizing_the_fleet/cell-20.png"
    }
   ],

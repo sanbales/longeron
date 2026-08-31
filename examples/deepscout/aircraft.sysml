@@ -294,6 +294,191 @@ package DeepScout {
         }
     }
 
+    package StabilityControl {
+        doc /* Classical closed-form stability-and-control proxies for
+               wing-borne airframes: the mean aerodynamic chord and its
+               spanwise station, the swept-wing neutral point, the
+               static margin, and the volume coefficients of elevons
+               and winglets.  Every formula is the standard
+               conceptual-design estimate (Raymer, 'Aircraft Design: A
+               Conceptual Approach'; Nickel & Wohlfahrt, 'Tailless
+               Aircraft in Theory and Practice') at NOMINAL teaching
+               fidelity: enough to CHECK a declared planform, and no
+               substitute for computed stability derivatives -- the
+               loft framework's derivative fidelity re-verifies the
+               same requirements later.  Conventions, used by every
+               calc here: chordwise stations are measured AFT of the
+               ROOT-CHORD LEADING EDGE, sweep is the QUARTER-CHORD
+               sweep in degrees, and taper is the tip/root chord
+               ratio. */
+
+        calc def MeanAeroChord {
+            doc /* Mean aerodynamic chord of a linearly tapered panel:
+                   MAC = (2/3) c_root (1 + t + t^2) / (1 + t) with
+                   t = taper (Raymer's planform relation). */
+            in rootChord : Real;
+            in taper : Real;
+            return : Real = 2.0 / 3.0 * rootChord
+                * (1.0 + taper + taper * taper) / (1.0 + taper);
+        }
+
+        calc def MacSpanStation {
+            doc /* Spanwise station of the MAC on a linearly tapered
+                   panel, from the centerline: y = (b/6)(1 + 2t)/(1 + t)
+                   (Raymer). */
+            in span : Real;
+            in taper : Real;
+            return : Real = span / 6.0
+                * (1.0 + 2.0 * taper) / (1.0 + taper);
+        }
+
+        calc def LocalChord {
+            doc /* Chord at spanwise station y of a linearly tapered
+                   panel: c(y) = c_root (1 - (1 - t) y / (b/2)). */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in y : Real;
+            return : Real = rootChord
+                * (1.0 - (1.0 - taper) * 2.0 * y / span);
+        }
+
+        calc def QuarterChordAft {
+            doc /* The quarter-chord line at spanwise station y, aft of
+                   the root-chord leading edge: x = 0.25 c_root +
+                   y tan(sweep).  On a straight-tapered wing every
+                   local quarter-chord point lies on this one straight
+                   line -- the sweep reference line of the whole
+                   package. */
+            in rootChord : Real;
+            in sweepDeg : Real;      // quarter-chord sweep, deg aft
+            in y : Real;
+            return : Real = 0.25 * rootChord
+                + y * tan(sweepDeg * pi / 180.0);
+        }
+
+        calc def NeutralPointAft {
+            doc /* Wing-alone neutral point of a swept tapered wing, aft
+                   of the root-chord leading edge: the quarter-chord
+                   point of the MAC, i.e. the quarter-chord line
+                   evaluated at the MAC's spanwise station -- 0.25
+                   c_root plus the classic y_mac tan(sweep) term
+                   (Raymer).  First order, sweep does NOT move the
+                   neutral point as a fraction of the MAC (~0.25 MAC);
+                   it moves the MAC itself aft of the root bay, and
+                   that absolute shift is what a tailless design
+                   spends to put its bay-loaded CG AHEAD of the
+                   neutral point (Nickel & Wohlfahrt). */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            return : Real = QuarterChordAft(rootChord = rootChord,
+                sweepDeg = sweepDeg,
+                y = MacSpanStation(span = span, taper = taper));
+        }
+
+        calc def StaticMargin {
+            doc /* Static margin in MAC units: (x_np - x_cg) / MAC,
+                   both stations aft of the root-chord leading edge,
+                   the CG given in MAC units (cgMac).  Positive means
+                   the CG rides ahead of the neutral point: statically
+                   stable in pitch. */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in cgMac : Real;         // CG aft of the root LE, in MACs
+            return : Real = NeutralPointAft(rootChord = rootChord,
+                    taper = taper, span = span, sweepDeg = sweepDeg)
+                / MeanAeroChord(rootChord = rootChord, taper = taper)
+                - cgMac;
+        }
+
+        calc def ControlArm {
+            doc /* Pitch moment arm of a trailing-edge surface at
+                   spanwise station y: the local trailing edge (the
+                   quarter-chord line + 0.75 local chord) less the CG
+                   station.  The same sweep that buys the static
+                   margin carries the outboard trailing edge aft --
+                   sweep pays a tailless elevon's arm too. */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in cgMac : Real;
+            in y : Real;
+            return : Real = QuarterChordAft(rootChord = rootChord,
+                    sweepDeg = sweepDeg, y = y)
+                + 0.75 * LocalChord(rootChord = rootChord, taper = taper,
+                    span = span, y = y)
+                - cgMac * MeanAeroChord(rootChord = rootChord,
+                    taper = taper);
+        }
+
+        calc def ElevonPitchVolume {
+            doc /* Elevon pitch-control volume coefficient: S_e l_e /
+                   (S MAC), the tail-volume analog for the elevon band
+                   (Raymer's volume-coefficient sizing).  The band runs
+                   the OUTER spanFrac of each panel at chordFrac of the
+                   local chord; the NOMINAL band proxy prices its area
+                   at chordFrac x spanFrac x S, so the area ratio
+                   cancels S and the coefficient reduces to chordFrac x
+                   spanFrac x arm / MAC with the arm taken at the
+                   band's mid station. */
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in cgMac : Real;
+            in spanFrac : Real;      // band span / half-span, tip-anchored
+            in chordFrac : Real;     // elevon chord / local chord
+            return : Real = chordFrac * spanFrac
+                * ControlArm(rootChord = rootChord, taper = taper,
+                    span = span, sweepDeg = sweepDeg, cgMac = cgMac,
+                    y = (1.0 - 0.5 * spanFrac) * 0.5 * span)
+                / MeanAeroChord(rootChord = rootChord, taper = taper);
+        }
+
+        calc def ElevonRollVolume {
+            doc /* Elevon roll-control volume coefficient: S_e y_e /
+                   (S b), the aileron-volume analog (Raymer).  Under
+                   the same band proxy as ElevonPitchVolume the area
+                   ratio is chordFrac x spanFrac and the arm is the
+                   band's mid station over the span. */
+            in span : Real;
+            in spanFrac : Real;
+            in chordFrac : Real;
+            return : Real = chordFrac * spanFrac
+                * ((1.0 - 0.5 * spanFrac) * 0.5 * span) / span;
+        }
+
+        calc def WingletYawVolume {
+            doc /* Winglet yaw volume coefficient: S_v l_v / (S b) --
+                   the vertical-tail volume coefficient of conventional
+                   practice (Raymer) with S_v both winglets and l_v the
+                   arm from the CG to the swept tip's quarter-chord,
+                   where the winglets ride.  Winglet-stabilized
+                   tailless aircraft fly on far smaller volumes than
+                   tailed airframes (Nickel & Wohlfahrt): a floor
+                   checked against this calc must be a tailless
+                   figure, not a tailed one. */
+            in wingletArea : Real;   // m^2, EACH of the two winglets
+            in rootChord : Real;
+            in taper : Real;
+            in span : Real;
+            in sweepDeg : Real;
+            in cgMac : Real;
+            in wingArea : Real;
+            return : Real = 2.0 * wingletArea
+                * (QuarterChordAft(rootChord = rootChord,
+                       sweepDeg = sweepDeg, y = 0.5 * span)
+                   - cgMac * MeanAeroChord(rootChord = rootChord,
+                       taper = taper))
+                / (wingArea * span);
+        }
+    }
+
     // ----- the bench-calibrated build chain ----------------------------------
     // The MultiRotor family's physics, flat in the program root beside the
     // abstract def whose attributes call them.  The attitude chain: a

@@ -1,6 +1,6 @@
 """Spike tests: parametric mix geometry -- mesh sanity and scaling."""
 
-from math import acos, pi, radians, sqrt, tan
+from math import acos, atan2, degrees, pi, radians, sqrt, tan
 from pathlib import Path
 from typing import ClassVar
 
@@ -1039,6 +1039,241 @@ class TestTeardropQuadGeometry:
     def test_validates_dimensions(self):
         with pytest.raises(AnalysisError):
             geometry.teardrop_quad_geometry(**{**TEARDROP, "fuselage_length": 0.0})
+
+
+class TestReflexedProfile:
+    """The parametric reflexed section: the tailless family's camber
+    stand-in (positive camber forward, NEGATIVE camber aft -- the
+    reflex a flying wing trims with)."""
+
+    def _camber(self, points=24):
+        # profile = reversed(upper) + lower[1:-1]: pair the cosine
+        # stations back up (upper[k] = profile[half - k], lower[k] =
+        # profile[half + k]) and take the surface midpoints
+        profile = geometry._reflexed_profile("0015", points)
+        half = points // 2
+        pairs = [(profile[half - k], profile[half + k]) for k in range(1, half)]
+        return [((xu + xl) / 2, (yu + yl) / 2) for (xu, yu), (xl, yl) in pairs]
+
+    def test_forward_camber_positive_aft_camber_negative(self):
+        camber = self._camber()
+        forward = [y for x, y in camber if 0.1 < x < 0.6]
+        aft = [y for x, y in camber if 0.8 < x < 0.98]
+        assert forward and all(y > 0 for y in forward)
+        assert aft and all(y < 0 for y in aft)  # THE reflex
+        assert max(y for _, y in camber) == pytest.approx(geometry._REFLEX_CAMBER, rel=0.05)
+
+    def test_thickness_matches_the_code_and_the_section_closes(self):
+        profile = geometry._reflexed_profile("0015", 24)
+        assert _thickest(profile) == pytest.approx(0.15, rel=0.03)
+        xs = [x for x, _ in profile]
+        assert max(xs) == pytest.approx(1.0, abs=1e-9)  # trailing edge
+        assert min(xs) == pytest.approx(0.0, abs=0.02)  # leading edge
+
+    def test_section_dispatch(self):
+        assert geometry._section_profile("reflexed0015", 24) == geometry._reflexed_profile(
+            "0015", 24
+        )
+        assert geometry._section_profile("2412", 24) == geometry.naca4_profile("2412", 24)
+
+    def test_validates(self):
+        with pytest.raises(AnalysisError):
+            geometry._reflexed_profile("015")
+        with pytest.raises(AnalysisError):
+            geometry._reflexed_profile("00x5")
+        with pytest.raises(AnalysisError):
+            geometry._reflexed_profile("0015", points=4)
+
+
+def _legacy_lift_surface(*, origin, direction, length, root_chord, tip_chord, section, points=24):
+    """The pre-sweep loft, expression for expression: the byte oracle
+    for :func:`geometry._lift_surface`'s zero-sweep, zero-washout path
+    (every existing caller)."""
+
+    dx, dy, dz = direction
+    norm = (dx * dx + dy * dy + dz * dz) ** 0.5
+    dx, dy, dz = dx / norm, dy / norm, dz / norm
+    nx, ny, nz = (dy * 0.0 - dz * 0.0, dz * 1.0 - dx * 0.0, dx * 0.0 - dy * 1.0)
+    profile = list(reversed(geometry.naca4_profile(section, points)))
+
+    def ring(s):
+        chord = root_chord + (tip_chord - root_chord) * s
+        ox = origin[0] + dx * length * s
+        oy = origin[1] + dy * length * s
+        oz = origin[2] + dz * length * s
+        out = []
+        for xa, ya in profile:
+            along = (0.25 - xa) * chord
+            out.append((ox + along + nx * ya * chord, oy + ny * ya * chord, oz + nz * ya * chord))
+        return out
+
+    return geometry._skin([ring(0.0), ring(1.0)])
+
+
+class TestSweptLoft:
+    """_lift_surface's sweep and washout: the quarter-chord line rakes
+    aft at exactly the declared angle, the tip twists nose-down by
+    exactly the declared washout, and the zero defaults reproduce the
+    legacy loft bit for bit (no visual ripple outside the flying
+    wings)."""
+
+    def _rings(self, mesh, points=24):
+        vertices, _faces = mesh
+        ring = lambda i: [  # noqa: E731 -- tiny local accessor
+            (vertices[j], vertices[j + 1], vertices[j + 2])
+            for j in range(i * points * 3, (i + 1) * points * 3, 3)
+        ]
+        return ring(0), ring(1)
+
+    def test_zero_defaults_are_byte_identical_to_the_legacy_loft(self):
+        for section, direction in (("2412", (0.0, 0.0, 1.0)), ("0009", (0.0, 1.0, 0.0))):
+            kwargs = {
+                "origin": (0.1, 0.2, 0.3),
+                "direction": direction,
+                "length": 1.3,
+                "root_chord": 0.44,
+                "tip_chord": 0.198,
+                "section": section,
+            }
+            assert geometry._lift_surface(**kwargs) == _legacy_lift_surface(**kwargs)
+
+    def test_quarter_chord_slope_matches_the_sweep(self):
+        mesh = geometry._lift_surface(
+            origin=(0.0, 0.0, 0.0),
+            direction=(0.0, 0.0, 1.0),
+            length=1.1,
+            root_chord=0.44,
+            tip_chord=0.198,
+            section="0009",
+            sweep_deg=22.0,
+        )
+        root, tip = self._rings(mesh)
+
+        def quarter_chord(ring):
+            le = max(x for x, _y, _z in ring)
+            te = min(x for x, _y, _z in ring)
+            return le - 0.25 * (le - te)
+
+        slope = (quarter_chord(tip) - quarter_chord(root)) / 1.1
+        assert slope == pytest.approx(-tan(radians(22.0)), abs=1e-6)
+
+    def test_tip_incidence_equals_minus_washout(self):
+        mesh = geometry._lift_surface(
+            origin=(0.0, 0.0, 0.0),
+            direction=(0.0, 0.0, 1.0),
+            length=1.1,
+            root_chord=0.44,
+            tip_chord=0.198,
+            section="0009",
+            washout_deg=3.0,
+        )
+        root, tip = self._rings(mesh)
+
+        def incidence(ring):
+            le = max(ring, key=lambda p: p[0])
+            te = min(ring, key=lambda p: p[0])
+            return degrees(atan2(le[1] - te[1], le[0] - te[0]))
+
+        assert incidence(root) == pytest.approx(0.0, abs=1e-9)  # untwisted root
+        assert incidence(tip) == pytest.approx(-3.0, abs=0.05)  # nose-down tip
+
+    def test_washout_twists_about_the_quarter_chord(self):
+        # the tip's quarter-chord point is the twist centre: sweep off,
+        # washout on, and the tip quarter-chord stays where it was
+        kwargs = {
+            "origin": (0.0, 0.0, 0.0),
+            "direction": (0.0, 0.0, 1.0),
+            "length": 1.1,
+            "root_chord": 0.44,
+            "tip_chord": 0.198,
+            "section": "0009",
+        }
+        _root0, tip0 = self._rings(geometry._lift_surface(**kwargs))
+        _root3, tip3 = self._rings(geometry._lift_surface(**kwargs, washout_deg=3.0))
+
+        def quarter_chord_x(ring):
+            le = max(x for x, _y, _z in ring)
+            te = min(x for x, _y, _z in ring)
+            return le - 0.25 * (le - te)
+
+        assert quarter_chord_x(tip3) == pytest.approx(quarter_chord_x(tip0), abs=2e-4)
+
+
+class TestFlyingWingPlanform:
+    """The drawn planform IS the declared one: tips aft of the root
+    leading edge by roughly half-span x tan(sweep), winglets riding the
+    swept tips, pusher pods on the true (swept) trailing edge."""
+
+    FW: ClassVar[dict[str, float]] = {
+        "wing_span": 2.2,
+        "wing_area": 0.704,
+        "taper": 0.45,
+        "motor_count": 1,
+        "prop_diameter": 0.2794,
+        "motor_mass": 0.155,
+        "battery_mass": 0.912,
+    }
+
+    def test_tips_ride_aft_of_the_root(self):
+        mesh = geometry.flying_wing_geometry(
+            **self.FW, sweep_deg=22.0, washout_deg=3.0, section="reflexed0015"
+        )
+        wing = next(p for p in mesh["parts"] if p["name"] == "wing")
+        root_le, _ = _chord_at(wing, 2, 0.0)
+        tip_le, _ = _chord_at(wing, 2, 1.1)
+        aft = root_le - tip_le
+        assert aft > 1.1 * tan(radians(22.0))  # at least the sweep shift
+        assert aft == pytest.approx(1.1 * tan(radians(22.0)) + 0.25 * (0.4414 - 0.1986), abs=0.02)
+
+    def test_winglets_ride_the_swept_tips(self):
+        swept = geometry.flying_wing_geometry(**self.FW, sweep_deg=22.0)
+        winglets = next(p for p in swept["parts"] if p["name"] == "winglets")
+        xs = winglets["vertices"][0::3]
+        tip_qc = -1.1 * tan(radians(22.0))
+        assert max(xs) < 0.0  # the whole winglet sits aft of the root LE
+        assert (max(xs) + min(xs)) / 2 == pytest.approx(tip_qc, abs=0.15 * 1.1)
+
+    def test_pods_hug_the_swept_trailing_edge(self):
+        twin = geometry.flying_wing_geometry(
+            **{**self.FW, "wing_span": 2.6, "wing_area": 0.85, "motor_count": 2},
+            sweep_deg=22.0,
+        )
+        motors = next(p for p in twin["parts"] if p["name"] == "motors")
+        root = 2.0 * (0.85 / 2.6) / 1.45
+        for lo, hi in _component_boxes(motors):
+            z = (lo[2] + hi[2]) / 2
+            chord = root * (1.0 - 0.55 * abs(z) / 1.3)
+            x_te = -tan(radians(22.0)) * abs(z) - 0.75 * chord
+            assert hi[0] == pytest.approx(x_te - 0.002, abs=0.005)
+
+    def test_mission_bridge_feeds_the_declared_planform(self, mission_study):
+        arch = mission_study.evaluate(
+            {
+                "airframe": "flyingWingSingle",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu10000",
+                "material": "aluminum",
+            }
+        )
+        params = geometry.mission_params(mission_study, arch)
+        assert params["sweep_deg"] == 22.0
+        assert params["washout_deg"] == 3.0
+        assert params["wing_section"] == "reflexed0015"
+        via_bridge = geometry.mission_geometry(mission_study, arch)
+        direct = geometry.flying_wing_geometry(
+            wing_span=2.2,
+            wing_area=0.704,
+            taper=0.45,
+            motor_count=1,
+            prop_diameter=params["prop_diameter"],
+            motor_mass=params["motor_mass"],
+            battery_mass=params["battery_mass"],
+            sweep_deg=22.0,
+            washout_deg=3.0,
+            section="reflexed0015",
+        )
+        assert via_bridge == direct  # the model's attributes, nothing else
 
 
 @pytest.fixture(scope="module")

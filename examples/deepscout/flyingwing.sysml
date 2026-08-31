@@ -22,6 +22,7 @@ package FlyingWings {
 
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
+    private import DeepScout::StabilityControl::*;
 
     abstract part def FlyingWing :> Airframe {
         doc /* What every flying wing in the branch shares: tailless,
@@ -61,6 +62,49 @@ package FlyingWings {
         // draw (the same convention as the dart's dash)
         attribute climbDrawFraction : Real = 1.0;
         attribute armCount : Integer = 0;        // no rotor arms to size
+
+        // ----- stability & control: what the wing carries instead of a tail
+        // A tailless wing has no tail arm, so the planform itself must
+        // buy pitch trim and stability: the quarter-chord sweep carries
+        // the MAC -- and with it the neutral point -- aft of the root
+        // bay, so the bay-loaded CG sits AHEAD of the neutral point
+        // (static margin); washout and the reflexed root section give
+        // the swept wing the nose-up zero-lift moment it trims against.
+        // The margin and the control volumes below are checked by the
+        // tailless requirement family (ScoutMissions::
+        // StabilityRequirements) through the StabilityControl calcs;
+        // the trim moment itself stays declared, not computed -- that
+        // is derivative-fidelity work the closed forms cannot see.
+        attribute sweepDeg : Real = 22.0;   // quarter-chord sweep, deg aft
+        attribute washoutDeg : Real = 3.0;  // tip twist below the root, deg
+        // mesh section spec: the 15% root-bay thickness (rootThickness)
+        // with the parametric reflexed camber line of
+        // longeron.analysis.geometry -- a stand-in for a real reflexed
+        // family, not a catalog airfoil
+        attribute wingSection : String = "reflexed0015";
+        // elevons: one trailing-edge band per side, the outer half of
+        // each panel at a quarter of the local chord
+        attribute elevonSpanFrac : Real = 0.5;   // band span / half-span
+        attribute elevonChordFrac : Real = 0.25; // elevon chord / local chord
+        attribute cgMac : Real;   // CG aft of the root LE, in MAC units
+        // the derived S&C figures the requirement family checks
+        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);
+        attribute mac : Real =
+            MeanAeroChord(rootChord = rootChord, taper = taper);
+        attribute staticMargin : Real = StaticMargin(
+            rootChord = rootChord, taper = taper, span = wingSpan,
+            sweepDeg = sweepDeg, cgMac = cgMac);
+        attribute elevonPitchVolume : Real = ElevonPitchVolume(
+            rootChord = rootChord, taper = taper, span = wingSpan,
+            sweepDeg = sweepDeg, cgMac = cgMac,
+            spanFrac = elevonSpanFrac, chordFrac = elevonChordFrac);
+        attribute elevonRollVolume : Real = ElevonRollVolume(
+            span = wingSpan, spanFrac = elevonSpanFrac,
+            chordFrac = elevonChordFrac);
+        attribute wingletYawVolume : Real = WingletYawVolume(
+            wingletArea = wingletArea, rootChord = rootChord,
+            taper = taper, span = wingSpan, sweepDeg = sweepDeg,
+            cgMac = cgMac, wingArea = wingArea);
     }
 
     part def FlyingWingSingle :> FlyingWing {
@@ -80,8 +124,13 @@ package FlyingWings {
         attribute taper : Real = 0.45;    attribute wingArea : Real = 0.704;
         attribute wingletArea : Real = 0.030;
         attribute mass : Real = 1.15;   attribute cost : Real = 520.0;
-        // sweep + washout for tailless pitch trim, plus the standing
-        // elevon deflection that trims the single prop's torque
+        // the pack rides the aft rail of the root bay: the CG lands at
+        // 0.82 MAC aft of the root leading edge, 0.088 MAC ahead of
+        // this planform's neutral point (0.908 MAC) -- inside the
+        // tailless static-margin band
+        attribute cgMac : Real = 0.82;
+        // the standing elevon deflection that trims the single prop's
+        // torque rides in the Oswald factor, a notch below the twin's
         attribute oswald : Real = 0.78;
         attribute loiterSpeed : Real = 14.0;
         attribute cruiseSpeed : Real = 19.0;
@@ -113,7 +162,11 @@ package FlyingWings {
         attribute taper : Real = 0.45;    attribute wingArea : Real = 0.85;
         attribute wingletArea : Real = 0.040;
         attribute mass : Real = 1.55;   attribute cost : Real = 780.0;
-        // sweep + washout only: counter-rotation cancels the torque trim
+        // the wider bay spreads the pack and parcel further aft: the CG
+        // lands at 0.91 MAC aft of the root leading edge, 0.089 MAC
+        // ahead of this planform's neutral point (0.998 MAC)
+        attribute cgMac : Real = 0.91;
+        // counter-rotation cancels the torque trim the single pays for
         attribute oswald : Real = 0.80;
         attribute loiterSpeed : Real = 15.0;
         attribute cruiseSpeed : Real = 22.0;

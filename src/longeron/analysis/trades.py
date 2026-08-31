@@ -640,7 +640,13 @@ class TradeStudy:
                 # over the typed variant's inherited defaults -- instantiating
                 # the *type* would silently drop the body overrides
                 inst = self.interp.instantiate(var)
-                variants[var.name] = {k: v for k, v in inst.slots.items() if is_scalar(v)}
+                # strings ride along beside the numerics: the geometry
+                # bridge reads declared section specs (wingSection) off
+                # the variant table, and the encoders only channel the
+                # attributes that constraints actually reference
+                variants[var.name] = {
+                    k: v for k, v in inst.slots.items() if is_scalar(v) or isinstance(v, str)
+                }
             count = 1
             if member.multiplicity is not None and member.multiplicity.upper is not None:
                 try:
@@ -761,6 +767,10 @@ class TradeStudy:
         for vname, slots in point.variants.items():
             if attr not in slots:
                 raise AnalysisError(f"variant {pname}.{vname} does not define attribute {attr!r}")
+            if not is_scalar(slots[attr]):
+                raise AnalysisError(
+                    f"variant attribute {pname}.{vname}.{attr} is not numeric ({slots[attr]!r})"
+                )
             values[vname] = _frac(slots[attr])
         scale = lcm(*(v.denominator for v in values.values()))
         lo, hi = min(values.values()), max(values.values())

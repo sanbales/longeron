@@ -1009,6 +1009,8 @@ class _CatalogEngine:
             for v in variants[1:]:
                 shared &= set(point.variants[v])
             for attr in sorted(shared):
+                if not all(is_scalar(point.variants[v][attr]) for v in variants):
+                    continue  # string specs (e.g. wingSection) are not z3 reals
                 const = z3.Real(f"{pname}.{attr}")
                 system.variables[f"{pname}.{attr}"] = const
                 for v in variants:

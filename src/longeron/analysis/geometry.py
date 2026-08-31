@@ -15,7 +15,11 @@ tractor rotor on each of the four wingtips with every thrust axis
 parallel to the chords/body axis; baked nose-up in its hover attitude),
 and the streamlined interceptor
 (:func:`interceptor_geometry` -- slender lathed fuselage, thin unswept
-NACA-0009 wing, cruciform tail, pusher prop).  Every lifting surface is
+NACA-0009 wing, cruciform tail, pusher prop).  The tailless flying wing
+(:func:`flying_wing_geometry`) is the one family drawn with real
+stability-and-control geometry: quarter-chord sweep, tip washout, and a
+parametric reflexed section, straight from its model attributes.  Every
+lifting surface is
 lofted from a real NACA 4-digit section (:func:`naca4_profile`), not a
 rectangular slab.  Motor cylinders come from motor mass
 (solid-cylinder density heuristic), prop disks from diameter, and the
@@ -1339,6 +1343,63 @@ def naca4_profile(code: str = WING_SECTION, points: int = 24) -> list[tuple[floa
     return list(reversed(upper)) + lower[1:-1]
 
 
+#: the parametric reflexed camber line's shape (documented teaching
+#: stand-in, see :func:`_reflexed_profile`): maximum positive camber as a
+#: chord fraction, and the chordwise station where the camber crosses
+#: zero on its way to the negative (reflexed) aft loading
+_REFLEX_CAMBER = 0.02
+_REFLEX_CROSSOVER = 0.75
+
+
+def _reflexed_profile(code: str, points: int = 24) -> list[tuple[float, float]]:
+    """A closed reflexed section: NACA 4-digit thickness on an S-camber.
+
+    The camber line is the cubic ``y_c(x) = k x (1 - x) (x0 - x)`` --
+    positive camber forward, NEGATIVE camber aft of the crossover
+    ``x0 = _REFLEX_CROSSOVER`` (the reflex that gives a tailless wing
+    its nose-up zero-lift moment), with ``k`` scaled so the maximum
+    camber equals ``_REFLEX_CAMBER``.  This is a deliberate parametric
+    stand-in, named as such: a real design lofts a catalog reflexed
+    family (Eppler 33x / Horten practice), which is loft-framework
+    work.  ``code`` contributes its NACA thickness digits only; its
+    camber digits are ignored (spell them ``00``).  Same ordering
+    contract as :func:`naca4_profile`: TE -> upper -> LE -> lower -> TE.
+    """
+
+    if len(code) != 4 or not code.isdigit():
+        raise AnalysisError(f"not a 4-digit thickness code: {code!r}")
+    if points < 8:
+        raise AnalysisError("a reflexed section needs at least 8 points")
+    t = int(code[2:]) / 100
+    x0 = _REFLEX_CROSSOVER
+    x_peak = ((1.0 + x0) - sqrt((1.0 + x0) ** 2 - 3.0 * x0)) / 3.0
+    k = _REFLEX_CAMBER / (x_peak * (1.0 - x_peak) * (x0 - x_peak))
+    half = points // 2
+
+    upper: list[tuple[float, float]] = []
+    lower: list[tuple[float, float]] = []
+    for i in range(half + 1):
+        x = 0.5 * (1.0 - cos(pi * i / half))  # cosine spacing, 0 = LE
+        yt = (
+            5.0
+            * t
+            * (0.2969 * sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x**3 - 0.1036 * x**4)
+        )
+        yc = k * x * (1.0 - x) * (x0 - x)
+        theta = atan(k * (x0 - 2.0 * (1.0 + x0) * x + 3.0 * x * x))
+        upper.append((x - yt * sin(theta), yc + yt * cos(theta)))
+        lower.append((x + yt * sin(theta), yc - yt * cos(theta)))
+    return list(reversed(upper)) + lower[1:-1]
+
+
+def _section_profile(section: str, points: int) -> list[tuple[float, float]]:
+    """Section dispatch: a NACA 4-digit code, or ``"reflexed"`` + code."""
+
+    if section.startswith("reflexed"):
+        return _reflexed_profile(section[len("reflexed") :], points)
+    return naca4_profile(section, points)
+
+
 def _skin(rings: list[list[Vec]]) -> Mesh:
     """A closed skin over ordered cross-section rings (equal counts).
 
@@ -1398,17 +1459,28 @@ def _lift_surface(
     tip_chord: float,
     section: str = WING_SECTION,
     points: int = 24,
+    sweep_deg: float = 0.0,
+    washout_deg: float = 0.0,
 ) -> Mesh:
     """One lofted lifting-surface panel with a real airfoil section.
 
-    The NACA ``section`` is swept from ``origin`` (the *root
+    The ``section`` -- a NACA 4-digit code, or ``"reflexed"`` + a
+    4-digit code for the parametric reflexed camber stand-in
+    (:func:`_reflexed_profile`) -- is swept from ``origin`` (the *root
     quarter-chord point*) along the unit ``direction`` for ``length``,
-    the chord tapering ``root_chord`` -> ``tip_chord`` about a constant
-    quarter-chord -- i.e. the quarter-chord line is exactly parallel to
-    ``direction``: zero sweep by construction.  Chords run along -X
-    (leading edge forward); the section's thickness/camber axis is
-    ``direction x X-hat``, so a horizontal panel swept toward +Z lifts
-    upward.
+    the chord tapering ``root_chord`` -> ``tip_chord`` about the
+    quarter-chord line.  ``sweep_deg`` rakes that line aft: each ring's
+    origin shifts ``tan(sweep) x span distance`` along -X, so the
+    quarter-chord line slopes at exactly the declared sweep; at the
+    default 0 it stays exactly parallel to ``direction`` and the loft
+    is byte-identical to the legacy unswept panel.  ``washout_deg``
+    twists each ring nose-down about its own quarter-chord point,
+    linearly with span position (the tip ring carries the full twist;
+    any future intermediate ring inherits its interpolated share).
+    Chords run along -X (leading edge forward); the section's
+    thickness/camber axis is ``direction x X-hat``, so a horizontal
+    panel swept toward +Z lifts upward and washout drops its tip
+    leading edge.
     """
 
     dx, dy, dz = direction
@@ -1418,17 +1490,30 @@ def _lift_surface(
     dx, dy, dz = dx / norm, dy / norm, dz / norm
     # thickness axis n = direction x X-hat (unit, perpendicular to both)
     nx, ny, nz = (dy * 0.0 - dz * 0.0, dz * 1.0 - dx * 0.0, dx * 0.0 - dy * 1.0)
-    profile = list(reversed(naca4_profile(section, points)))
+    profile = list(reversed(_section_profile(section, points)))
+    aft_per_span = tan(radians(sweep_deg))  # quarter-chord rake, -X per span
 
     def ring(s: float) -> list[Vec]:
         chord = root_chord + (tip_chord - root_chord) * s
-        ox = origin[0] + dx * length * s
+        ox = origin[0] + dx * length * s - aft_per_span * length * s
         oy = origin[1] + dy * length * s
         oz = origin[2] + dz * length * s
         out: list[Vec] = []
+        if washout_deg == 0.0:  # the legacy loft, expression for expression
+            for xa, ya in profile:
+                along = (0.25 - xa) * chord  # x = quarter-chord + offset
+                out.append(
+                    (ox + along + nx * ya * chord, oy + ny * ya * chord, oz + nz * ya * chord)
+                )
+            return out
+        twist = -radians(washout_deg) * s  # nose-down about the ring's qc
+        c_t, s_t = cos(twist), sin(twist)
         for xa, ya in profile:
-            along = (0.25 - xa) * chord  # x = quarter-chord + offset
-            out.append((ox + along + nx * ya * chord, oy + ny * ya * chord, oz + nz * ya * chord))
+            along = (0.25 - xa) * chord
+            rise = ya * chord
+            u = along * c_t - rise * s_t  # chordwise, toward the LE (+X)
+            v = along * s_t + rise * c_t  # thickness axis n
+            out.append((ox + u + nx * v, oy + ny * v, oz + nz * v))
         return out
 
     return _skin([ring(0.0), ring(1.0)])
@@ -1681,21 +1766,32 @@ def flying_wing_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    sweep_deg: float = 0.0,
+    washout_deg: float = 0.0,
+    section: str = "0015",
     segments: int = 24,
 ) -> dict[str, Any]:
-    """A to-scale tailless flying wing: trailing-edge pusher props.
+    """A to-scale tailless flying wing: swept panels, trailing-edge pushers.
 
     The wing IS the airframe (the DeepScout ``FlyingWings`` convention:
     ``fuselageLength`` 0 marks the family): one straight-tapered panel
-    pair lofted from a symmetric 15% section, a winglet on each tip,
-    one pusher motor can per station on the trailing edge (a single at
-    the root, a counter-rotating pair either side of it), each prop a
-    thin aft-facing disk, and the battery as an indigo sleeve bulging
-    through the root bay.  Two honest stand-ins, named here so nobody
-    reads more than the mesh knows: the loft is straight and unswept
-    (:func:`_lift_surface` has no sweep) and the section is symmetric
-    rather than reflexed -- the swept, blended planform this family
-    really flies is a job for the loft framework's lofted wing body.
+    pair lofted from ``section`` (a NACA 4-digit code or a
+    ``"reflexed"``-prefixed one, see :func:`_lift_surface`), its
+    quarter-chord line raked aft by ``sweep_deg`` and its tips twisted
+    down by ``washout_deg``; a winglet rides each swept tip, raked with
+    the wing; one pusher motor can per station hangs on the TRUE
+    trailing edge -- carried aft with the local chord -- and the
+    battery is an indigo sleeve bulging through the root bay.  The
+    three planform knobs are the model's own declared attributes
+    (``sweepDeg`` / ``washoutDeg`` / the reflexed 15% bay section of
+    ``examples/deepscout/flyingwing.sysml``), so the drawn planform IS
+    the declared one: in plan view the tips sit aft of the root
+    leading edge by roughly half-span x tan(sweep).  One stand-in
+    remains, named so nobody reads more than the mesh knows: the
+    reflexed camber line is a simple parametric S-camber, not a
+    catalog airfoil, and the panels loft straight -- the blended
+    center body this family really flies is a job for the loft
+    framework's lofted wing body.
     """
 
     if min(wing_span, wing_area, taper, prop_diameter) <= 0:
@@ -1705,6 +1801,7 @@ def flying_wing_geometry(
     root = 2.0 * mean_chord / (1.0 + taper)
     tip = root * taper
     half = wing_span / 2
+    aft_per_span = tan(radians(sweep_deg))  # quarter-chord rake, -X per span
 
     right = _lift_surface(
         origin=(0.0, 0.0, 0.0),
@@ -1712,17 +1809,20 @@ def flying_wing_geometry(
         length=half,
         root_chord=root,
         tip_chord=tip,
-        section="0015",  # the family's thick-root bay section
+        section=section,
+        sweep_deg=sweep_deg,
+        washout_deg=washout_deg,
     )
     wing = _merge(right, _mirror_z(right))
 
     fin = _lift_surface(
-        origin=(0.0, 0.0, half),  # the tip quarter-chord point
+        origin=(-aft_per_span * half, 0.0, half),  # the SWEPT tip quarter-chord
         direction=(0.0, 1.0, 0.0),
         length=0.16 * half,
         root_chord=0.8 * tip,
         tip_chord=0.5 * tip,
         section=TAIL_SECTION,
+        sweep_deg=sweep_deg,  # the winglet rakes aft with the wing
     )
     winglets = _merge(fin, _mirror_z(fin))
 
@@ -1735,7 +1835,9 @@ def flying_wing_geometry(
     prop_meshes: list[Mesh] = []
     for z in z_pods:
         chord = root + (tip - root) * abs(z) / half
-        x_te = -0.75 * chord  # chords run LE +0.25c .. TE -0.75c
+        # chords run LE +0.25c .. TE -0.75c about the local quarter-chord,
+        # which the sweep carries aft: the pods hug the TRUE trailing edge
+        x_te = -aft_per_span * abs(z) - 0.75 * chord
         can = _tube(
             [(x_te - 0.002, motor_d / 2), (x_te - 0.002 - motor_h, 0.4 * motor_d)], segments
         )
@@ -1996,14 +2098,17 @@ def tag_parts(
     return out
 
 
-def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:
+def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, Any]:
     """Geometry inputs from a mission-catalog mix.
 
     Expects variation points ``airframe`` (attributes ``wingSpan``,
     ``wingArea``, ``taper``, ``fuselageLength``, ``motorCount``,
     ``armCount``), ``motors`` (``mass``), ``props`` (``diameter``), and
     ``battery`` (``mass``) -- the convention of the DeepScout mission
-    catalog (``examples/deepscout/missions.sysml``).
+    catalog (``examples/deepscout/missions.sysml``).  The tailless
+    S&C knobs (``sweepDeg``, ``washoutDeg``, ``wingSection``) ride
+    along when the selected airframe declares them and default to the
+    unswept legacy planform when it does not.
     """
 
     def attr(point: str, name: str) -> float:
@@ -2016,6 +2121,13 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, f
                 f"variation point, variant, or attribute: {err})"
             ) from err
 
+    def optional(point: str, name: str, default: Any) -> Any:
+        try:
+            value = study.points[point].variants[architecture.selection[point]][name]
+        except KeyError:
+            return default
+        return float(value) if isinstance(value, (int, float)) else value
+
     return {
         "wing_span": attr("airframe", "wingSpan"),
         "wing_area": attr("airframe", "wingArea"),
@@ -2026,6 +2138,12 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, f
         "motor_mass": attr("motors", "mass"),
         "prop_diameter": attr("props", "diameter"),
         "battery_mass": attr("battery", "mass"),
+        # the tailless family's S&C planform knobs: optional on purpose
+        # (only the flying wings declare them; every other airframe
+        # keeps the zero-sweep, no-washout, NACA-section defaults)
+        "sweep_deg": optional("airframe", "sweepDeg", 0.0),
+        "washout_deg": optional("airframe", "washoutDeg", 0.0),
+        "wing_section": optional("airframe", "wingSection", None),
     }
 
 
@@ -2043,6 +2161,9 @@ def airframe_geometry(
     esc_mass: float = 0.014,
     arm_thickness: float | None = None,
     arm_width: float | None = None,
+    sweep_deg: float = 0.0,
+    washout_deg: float = 0.0,
+    wing_section: str | None = None,
 ) -> dict[str, Any]:
     """Family-dispatched geometry from airframe-shell attribute values.
 
@@ -2063,7 +2184,11 @@ def airframe_geometry(
     ``esc_mass`` is the drone branch's 30.5 mm stack heuristic.  Two
     callers feed this ladder: :func:`mission_geometry` from a
     mission-catalog mix, and :func:`longeron.analysis.grand.scene_for`
-    from a fleet airframe definition's own attributes.
+    from a fleet airframe definition's own attributes.  The tailless
+    S&C knobs (``sweep_deg``, ``washout_deg``, ``wing_section``) reach
+    :func:`flying_wing_geometry` only -- the flying wings are the one
+    family whose model declares them; every other loft keeps its
+    zero-sweep planform until the loft framework generalizes.
     """
 
     arm_kw: dict[str, Any] = {}
@@ -2098,6 +2223,10 @@ def airframe_geometry(
             prop_diameter=prop_diameter,
             motor_mass=motor_mass,
             battery_mass=battery_mass,
+            sweep_deg=sweep_deg,
+            washout_deg=washout_deg,
+            # None = no declared section: the legacy symmetric bay loft
+            section=wing_section if wing_section is not None else "0015",
         )
     if motor_count <= 1:
         return interceptor_geometry(
@@ -2148,6 +2277,9 @@ def mission_geometry(
         prop_diameter=p["prop_diameter"],
         motor_mass=p["motor_mass"],
         battery_mass=p["battery_mass"],
+        sweep_deg=p["sweep_deg"],
+        washout_deg=p["washout_deg"],
+        wing_section=p["wing_section"],
         **arm_kw,
     )
 

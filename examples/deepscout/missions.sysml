@@ -369,6 +369,96 @@ package ScoutMissions {
         }
     }
 
+    // ----- tailless stability & control (the flying wings' airworthiness) ---
+
+    package StabilityRequirements {
+        doc /* What a flying wing must carry INSTEAD of a tail: one
+               requirement per stability-and-control axis, checked
+               against the subject's own derived S&C figures (the
+               StabilityControl closed forms).  The numeric bands live
+               HERE as requirement attributes -- the same slider-anchor
+               idiom as MissionRequirements -- and every figure is a
+               NOMINAL teaching value with its source named.  Subjects
+               are the tailless shells only: the multirotors hover on
+               their mixers, the dart and the tail-sitter fly on real
+               tail surfaces, so none of them subjects a tailless check
+               (honest absence).  Because each constraint reads a
+               derived attribute of the subject, a higher-fidelity
+               re-derivation of that attribute -- the loft framework's
+               computed derivatives -- re-verifies the SAME
+               requirements: same checks, rising fidelity. */
+
+        requirement def PitchStability {
+            doc /* The CG shall ride ahead of the neutral point by a
+                   static margin inside the tailless band.  Below the
+                   floor the wing is neutrally stable or unstable;
+                   above the ceiling the washout-and-reflex trim must
+                   carry a nose-down moment that spends the cruise
+                   L/D.  0.05..0.15 MAC is a NOMINAL teaching band
+                   (Nickel & Wohlfahrt, 'Tailless Aircraft in Theory
+                   and Practice'; Raymer).  An UNSWEPT variant of
+                   either shell busts the floor: with the quarter-chord
+                   sweep zeroed, the neutral point stays at the root
+                   quarter-chord, roughly half a MAC AHEAD of the
+                   bay-loaded CG -- sweep is the trim mechanism, not
+                   styling. */
+            subject wing : FlyingWing;
+            attribute marginFloor : Real = 0.05;
+            attribute marginCeiling : Real = 0.15;
+            assume constraint { wing.wingSpan > 0.0 }
+            require constraint stableMargin {
+                wing.staticMargin >= marginFloor and
+                wing.staticMargin <= marginCeiling }
+        }
+
+        requirement def PitchRollAuthority {
+            doc /* The elevons shall carry both axes they serve: the
+                   pitch volume coefficient (S_e l_e / S MAC) and the
+                   roll volume coefficient (S_e y_e / S b) each clear a
+                   NOMINAL floor (Raymer's volume-coefficient sizing;
+                   Nickel & Wohlfahrt on elevon practice).  Tailed
+                   aircraft size tails near 0.5; an elevon band rides
+                   the wing itself on a fraction of the arm, so its
+                   honest scale is a tenth of that. */
+            subject wing : FlyingWing;
+            attribute pitchVolumeFloor : Real = 0.05;
+            attribute rollVolumeFloor : Real = 0.02;
+            assume constraint { wing.wingSpan > 0.0 }
+            require constraint pitchAuthority {
+                wing.elevonPitchVolume >= pitchVolumeFloor }
+            require constraint rollAuthority {
+                wing.elevonRollVolume >= rollVolumeFloor }
+        }
+
+        requirement def YawStability {
+            doc /* The winglets shall provide the weathercock stability
+                   the wing has no fin for: the winglet volume
+                   coefficient (S_v l_v / S b, both winglets riding the
+                   swept tips) clears a NOMINAL tailless floor.
+                   Conventional tails fly near 0.02..0.04; winglet-
+                   stabilized flying wings fly far lower (Nickel &
+                   Wohlfahrt), so 0.008 is a tailless figure, not a
+                   tailed one. */
+            subject wing : FlyingWing;
+            attribute yawVolumeFloor : Real = 0.008;
+            assume constraint { wing.wingSpan > 0.0 }
+            require constraint yawAuthority {
+                wing.wingletYawVolume >= yawVolumeFloor }
+        }
+
+        // who satisfies what: both tailless shells clear all three
+        // checks at their declared geometry (22 deg quarter-chord
+        // sweep, bay-tuned CG); the interpreter's verdicts back every
+        // edge, and the unswept counterexample that would earn NO
+        // PitchStability edge is pinned by the branch tests
+        satisfy PitchStability by FlyingWingSingle;
+        satisfy PitchStability by FlyingWingTwin;
+        satisfy PitchRollAuthority by FlyingWingSingle;
+        satisfy PitchRollAuthority by FlyingWingTwin;
+        satisfy YawStability by FlyingWingSingle;
+        satisfy YawStability by FlyingWingTwin;
+    }
+
     // ----- the program scoreboard (MAUT) -------------------------------------
     // How good is the fleet, really?  The weights, utility shapes, and
     // ramps live IN THE MODEL, so the scoreboard widget and the trade
