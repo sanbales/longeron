@@ -201,7 +201,9 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_lineup_justification.png"))
 
     toggle.click()
-    state = _poll_checker(lab, lambda s: s["toggle"] is False)
+    # the toggle flag flips before the pool recount lands (a starved CI
+    # runner exposed the gap): poll to the POSTCONDITION, not the flag
+    state = _poll_checker(lab, lambda s: s["toggle"] is False and s["pool"] == 1600)
     assert state["pool"] == 1600
 
     # -- (2d) toggle OFF: gray returns, but ONLY on truly dominated

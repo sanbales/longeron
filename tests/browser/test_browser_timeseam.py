@@ -296,7 +296,14 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
     time.sleep(0.6)
     state = dict(lab.page.evaluate(_STATE_JS))
     assert state["playerButton"] == "\u25b6", state  # the kernel seek stopped it
+    # the seek rides scrub -> clock -> player traits; on a starved runner
+    # the ripple outlives the 0.6s pause that proved the stop, so poll the
+    # kernel to the POSTCONDITION instead of reading mid-ripple
+    deadline = time.monotonic() + 10.0
     checker = lab.run_cell_json(index=-1)
+    while abs(checker["player_time"] - 20.0) > 0.5 and time.monotonic() < deadline:
+        time.sleep(0.5)
+        checker = lab.run_cell_json(index=-1)
     assert checker["player_time"] == pytest.approx(20.0, abs=0.5)  # slider step quantum
     assert checker["clock_t"] == pytest.approx(checker["player_time"], abs=1e-3)
 
