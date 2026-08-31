@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import scroll_into_view
+
 pytestmark = pytest.mark.browser
 
 NOTEBOOK = "explorer_scenario.ipynb"
@@ -221,7 +223,7 @@ def test_relationship_rows_toggle_and_edge_selection(lab):
     )
     # evidence BEFORE the checker runs (running a cell scrolls the widget
     # out of the viewport); the pane is the screenshot's subject
-    page.locator(".lgx-diagram-box").first.scroll_into_view_if_needed()
+    scroll_into_view(page.locator(".lgx-diagram-box").first)
     page.screenshot(path=str(EVIDENCE / "explorer-relationships-2-edge-selected.png"))
     checker = lab.run_cell_json(index=-1)
     assert checker["element_type"] == "SatisfyUsage", checker

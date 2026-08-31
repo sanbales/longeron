@@ -51,7 +51,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import REPO, _lab_page
+from .conftest import REPO, _lab_page, scroll_into_view
 
 EVIDENCE = REPO / "build" / "evidence"
 
@@ -178,7 +178,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     # saying the state out loud (legend swatches carry .legend and are
     # excluded from the point counts)
     scatter_el = lab.page.locator(".longeron-moefront").first
-    scatter_el.scroll_into_view_if_needed()
+    scroll_into_view(scatter_el)
     n_front = state["front"]
     _poll_count(lab, ".longeron-moefront-dot:not(.legend)", n_front)
     assert lab.page.locator(".longeron-moefront-dot.front:not(.legend)").count() == n_front
@@ -195,7 +195,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     scatter_el.screenshot(path=str(EVIDENCE / "t4_dashboard_front_ink_pareto_on.png"))
 
     card = lab.page.locator(".longeron-lineup-card", has_text="tops every pick").first
-    card.scroll_into_view_if_needed()
+    scroll_into_view(card)
     card.hover()
     lab.page.wait_for_selector(".longeron-pc-line.hover", timeout=15_000)
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_lineup_justification.png"))
@@ -216,7 +216,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
         == 1
     )
     assert lab.page.locator("text=all shown are non-dominated").count() == 0
-    scatter_el.scroll_into_view_if_needed()
+    scroll_into_view(scatter_el)
     scatter_el.screenshot(path=str(EVIDENCE / "t4_dashboard_front_ink_pareto_off.png"))
 
     # -- (3) the mission tabs switch: ISR shows its floors and card ---------
@@ -244,7 +244,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     # re-bakes, so a scroll on it races DOM detachment (seen twice at
     # landing); the container div survives every re-render
     holder = lab.page.locator(".longeron-parcoords").first
-    holder.scroll_into_view_if_needed()
+    scroll_into_view(holder)
     lab.page.wait_for_timeout(400)
     plot = lab.page.locator(".longeron-parcoords svg").first.bounding_box()
     assert plot is not None
@@ -255,7 +255,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.mouse.up()
     state = _poll_checker(lab, lambda s: "MOE" in s["brushes"])
     card = lab.page.locator(".longeron-lineup-card").first
-    card.scroll_into_view_if_needed()
+    scroll_into_view(card)
     card.click()
     state = _poll_checker(lab, lambda s: s["selected"] is not None)
     pinned = lab.page.locator(".longeron-lineup-card.pinned").first
@@ -275,7 +275,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     # -- (6) the reverse direction: clicking a 3D model selects its card,
     # a background click clears (finding 5)
     canvas = lab.page.locator(".longeron-viewer3d canvas").first
-    canvas.scroll_into_view_if_needed()
+    scroll_into_view(canvas)
     stage = canvas.bounding_box()
     assert stage is not None
     lab.page.mouse.click(stage["x"] + 8, stage["y"] + 8)  # sky: clears

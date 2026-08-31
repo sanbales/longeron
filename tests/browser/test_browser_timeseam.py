@@ -215,11 +215,42 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
     # ---- the Cesium-dial drive: the scrubber follows, no fighting ----
     before = dict(lab.page.evaluate(_STATE_JS))
     lab.page.evaluate(_DIAL_JS, True)
-    samples = [dict(s) for s in lab.page.evaluate(_SAMPLE_JS, 3200)]
+    # a starved 2-core runner integrates Cesium's own clock well below
+    # wall rate (the 770117c CI run: ~0.6x, only ~1.46s of sim time in a
+    # 3200ms window -- while the scrubber tracked it faithfully), so the
+    # contract below is stated against CESIUM'S OBSERVED advance, never
+    # wall time.  When the dial has not yet advanced enough to measure
+    # against, sample LONGER (bounded) instead of asserting on noise.
+    samples: list[dict] = []
+    wall_offset = 0
+    for _round in range(3):
+        batch = [dict(s) for s in lab.page.evaluate(_SAMPLE_JS, 3200)]
+        for sample in batch:
+            sample["wall"] += wall_offset
+        samples.extend(batch)
+        wall_offset = samples[-1]["wall"] + 200
+        if samples[-1]["cesium"] - before["seconds"] >= 1.5:
+            break
     lab.page.evaluate(_DIAL_JS, False)
     assert samples, "no drift samples collected"
-    # the scrubber engaged and advanced with the dial (rate 1.0)
-    assert samples[-1]["scrub"] > before["scrub"] + 1.5, samples
+    cesium_delta = samples[-1]["cesium"] - before["seconds"]
+    scrub_delta = samples[-1]["scrub"] - before["scrub"]
+    # below this floor the dial drive itself never took (or the runner is
+    # too starved to measure anything): that IS a failure, not noise
+    assert cesium_delta >= 0.5, (
+        f"the Cesium clock itself barely advanced ({cesium_delta:.2f}s over "
+        f"{samples[-1]['wall']}ms of sampling): the dial drive never engaged "
+        f"the clock; samples: {samples}"
+    )
+    # the scrubber engaged and TRACKED the dial-driven clock: its advance
+    # is proportional to Cesium's observed advance.  On a fast box
+    # cesium_delta ~= wall time (rate 1.0), so this is exactly as strong
+    # as the old wall-clock check; on a starved runner it asserts the
+    # seam's contract (tracking) instead of the runner's speed.
+    assert scrub_delta >= 0.7 * cesium_delta, (
+        f"the scrubber did not track the dial-driven clock: scrub advanced "
+        f"{scrub_delta:.2f}s against cesium's {cesium_delta:.2f}s; samples: {samples}"
+    )
     # no oscillation: the scrubber never snaps backwards (readout shows
     # 2-decimal truth; 0.05 absorbs its rounding)
     backward = [(a, b) for a, b in pairwise(samples) if b["scrub"] < a["scrub"] - 0.05]

@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import REPO
+from .conftest import REPO, scroll_into_view
 
 pytestmark = pytest.mark.browser
 
@@ -43,7 +43,7 @@ def _click_node(lab: Any, label: str) -> None:
     """Click the diagram node named ``label`` (via its name label)."""
 
     target = lab.page.locator(f'.sprotty text.elklabel:text-is("{label}")').first
-    target.scroll_into_view_if_needed()
+    scroll_into_view(target)
     target.click()
 
 

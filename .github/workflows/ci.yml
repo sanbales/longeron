@@ -79,9 +79,18 @@ jobs:
       - name: Install chromium (no-op on cache hit)
         run: pixi run -e browser playwright install --with-deps chromium
 
-      - run: pixi run test-browser
+      - name: Run the browser tier (log tee'd into the artifact)
+        # pipefail so tee cannot launder pytest's nonzero exit; the log
+        # lands inside build/test-artifacts/ so the existing upload step
+        # carries it (before this, failures shipped only screenshots +
+        # console/server logs and the pytest output had to be hand-copied
+        # from the run page)
+        run: |
+          set -o pipefail
+          mkdir -p build/test-artifacts
+          pixi run test-browser 2>&1 | tee build/test-artifacts/pytest-browser.log
 
-      - name: Upload artifacts (screenshots, console + server logs)
+      - name: Upload artifacts (screenshots, console + server + pytest logs)
         # always(): a timeout/cancel must still leave evidence behind
         if: always()
         uses: actions/upload-artifact@v4

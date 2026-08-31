@@ -430,6 +430,20 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     (docmanager / "plugin.jupyterlab-settings").write_text(
         json.dumps({"autosave": False}), encoding="utf-8"
     )
+    # news prompt OFF: the announcements plugin emits 'Would you like to
+    # get notified about official Jupyter news?' whenever the notification
+    # setting `fetchNews` composites to its default 'none' (= never asked)
+    # -- on CI's pristine runners that toast overlays the bottom-right
+    # viewport mid-test (all four failure screenshots of the 770117c run
+    # wear it; dev machines answered it once, long ago, in ~/.jupyter).
+    # 'false' is the supported never-fetch answer, settled at the config
+    # level so no dismissal race exists; checkForUpdates off too -- the
+    # update toast rides the same pipe and depends on network truth.
+    notification = settings / "@jupyterlab" / "apputils-extension"
+    notification.mkdir(parents=True)
+    (notification / "notification.jupyterlab-settings").write_text(
+        json.dumps({"fetchNews": "false", "checkForUpdates": False}), encoding="utf-8"
+    )
     env = dict(
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
@@ -568,6 +582,34 @@ def _warm_lab(browser: Browser, lab_server: LabServer) -> None:
 # ---------------------------------------------------------------------------
 # the page driver
 # ---------------------------------------------------------------------------
+
+
+def scroll_into_view(locator: Any, *, attempts: int = 3, timeout_ms: int = 10_000) -> None:
+    """Stale-safe ``scroll_into_view_if_needed`` for re-rendering widgets.
+
+    Playwright resolves the locator to ONE element, then waits for it to
+    be stable -- but a widget re-render (a re-bake swapping an svg, a
+    layout pass moving a card) detaches that element mid-wait and the
+    call dies with 'Element is not attached to the DOM ... element is
+    not stable' (the 770117c CI dashboard failure).  Locators re-resolve
+    on every call, so a bounded retry rides out the re-render; any other
+    error (or a persistently detaching element) still raises.
+    """
+
+    for attempt in range(1, attempts + 1):
+        try:
+            locator.scroll_into_view_if_needed(timeout=timeout_ms)
+            return
+        except Exception as err:
+            stale = "not attached" in str(err) or "not stable" in str(err)
+            if attempt == attempts or not stale:
+                raise
+            sys.stderr.write(
+                f"scroll_into_view: attempt {attempt} crossed a re-render "
+                f"({str(err).splitlines()[0]}); re-resolving and retrying\n"
+            )
+            time.sleep(1.0)
+
 
 #: one DOM snapshot for settle-polling: rendered diagram cells, busy
 #: prompts, visible progress bars, auto-fitted viewports (transform moved
