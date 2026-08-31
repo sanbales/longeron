@@ -932,6 +932,105 @@ print(
     )
 
 
+def lossy_seam_notebook() -> dict[str, Any]:
+    """Scenario: the time seam under injected comm-message loss.
+
+    Cell 0 links the replay player and the scrubber to one ``Clock``
+    (the state-split pair; no globe, so no CDN dependence) and defines
+    two kernel-side loss injectors: ``_lossy_send`` swallows the next N
+    kernel->front-end state updates of a widget (a dropped seek push),
+    ``_lossy_receive`` swallows the next N front-end->kernel updates (a
+    dropped report).  Cells 1/2 arm one injector each; they stay
+    DORMANT during run-all (the arming cell runs last, the collapse
+    scenario's idiom).  Cell 4 is the checker: one JSON line of
+    kernel-side seam state plus each injector's drop count, so the test
+    can prove the loss actually happened AND healed.
+    """
+
+    return _notebook(
+        """
+import ipywidgets as W
+
+import longeron
+from longeron import replay
+from longeron.widgets import Clock, Timebase, link_time, replay_widget, time_scrubber
+
+model = longeron.load("examples/deepscout")
+interp = longeron.Interpreter(model)
+EVENTS = ["launch", 45.0, "goAround", 45.0, "goAround", 45.0, "goAround", 30.0, "land", 5.0]
+timeline = replay.record_timeline(interp, "DeepScout::SortieStates", EVENTS)
+player = replay_widget(interp, "DeepScout::SortieStates", timeline=timeline, width_px=620)
+timebase = Timebase(timeline)
+clock = Clock(span=timebase.span)
+scrubber = time_scrubber(timebase, width_px=620)
+unlink = link_time(clock, player, scrubber)
+drops = {}
+
+
+def _lossy_send(widget, budget):
+    real = widget.comm.send
+
+    def lossy(*args, **kwargs):
+        data = kwargs.get("data", args[0] if args else None)
+        if budget["left"] > 0 and isinstance(data, dict) and data.get("method") == "update":
+            budget["left"] -= 1
+            budget["dropped"] += 1
+            return None
+        return real(*args, **kwargs)
+
+    widget.comm.send = lossy
+
+
+def _lossy_receive(widget, budget):
+    real = widget._handle_msg
+
+    def lossy(msg):
+        data = msg["content"]["data"]
+        if budget["left"] > 0 and data.get("method") == "update":
+            budget["left"] -= 1
+            budget["dropped"] += 1
+            return None
+        return real(msg)
+
+    widget.comm.on_msg(lossy)
+
+
+W.VBox([player, scrubber])
+""",
+        """
+if "_armed" in globals():
+    drops["push"] = {"left": 3, "dropped": 0}
+    _lossy_send(player, drops["push"])
+print("push-drop ready")
+""",
+        """
+if "_armed" in globals():
+    drops["report"] = {"left": 1, "dropped": 0}
+    _lossy_receive(player, drops["report"])
+print("report-drop ready")
+""",
+        """
+_armed = True  # run-all leaves the injectors dormant; the test arms them
+print("armed")
+""",
+        """
+import json
+
+print(
+    json.dumps(
+        {
+            "clock_t": round(clock.t, 3),
+            "playing": clock.playing,
+            "player_time": round(player.time, 3),
+            "scrub_time": round(scrubber.time, 3),
+            "drops": {name: dict(budget) for name, budget in drops.items()},
+        }
+    )
+)
+""",
+    )
+
+
 SCENARIO_NOTEBOOKS = {
     "replay_scenario.ipynb": replay_notebook,
     "collapse_scenario.ipynb": collapse_notebook,
@@ -946,5 +1045,6 @@ SCENARIO_NOTEBOOKS = {
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
+    "lossy_seam_scenario.ipynb": lossy_seam_notebook,
     "surfaces_scenario.ipynb": surfaces_notebook,
 }

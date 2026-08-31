@@ -14,6 +14,32 @@ homes that guard at call time) raises
 :class:`~longeron.errors.MissingExtraError` with the exact install
 command.
 
+**Loss tolerance (the sync discipline every widget follows).**  Comm
+messages are fire-and-forget: under load the channel drops them
+(jupyter-server's iopub rate limiter, websocket reconnects mid-burst),
+and trait sync only sends CHANGES, so a dropped update stays wrong
+forever unless the widget's protocol heals it.  The kernel is the
+source of truth; front-ends reconcile.  Three tiers, matched to the
+state a widget mirrors:
+
+* **Baked idempotent payloads** (every widget): kernel -> front-end
+  state rides absolute JSON traitlets (``spec_json``, ``czml_json``,
+  ``timeline_json``...), never deltas, so any later push heals any
+  earlier drop.  This is the house convention already -- keep it.
+* **Single-shot interaction traits** (picks, selections, splitter
+  ratios, tool toggles): a drop loses one gesture and the user's retry
+  is the retransmit; the kernel-side handler must therefore be
+  idempotent and order-independent.  No extra machinery.
+* **Live bidirectional seams** (the time seam's ``time`` / ``playing``
+  / ``rate``: high-rate reports racing kernel seeks): generation
+  stamps + acknowledged reports + full-state re-pushes + a
+  trailing-edge verify, via :mod:`longeron.widgets._seam` (kernel
+  mixin :class:`~longeron.widgets._seam.SeamHost`, front-end
+  ``lgnSeam``).  A new widget with kernel-mirrored state that either
+  side can write while the other is also writing MUST ride this seam
+  client; see the module's docstring for the protocol and the CI
+  anatomy that mandated it.
+
 The entries (tutorial numbers refer to :doc:`/tutorials/index`):
 
 * ``explore`` -- the model explorer: a tree navigator beside a diagram

@@ -85,6 +85,7 @@ jobs:
             files: >-
               tests/browser/test_browser_views_tutorial.py
               tests/browser/test_browser_timeseam.py
+              tests/browser/test_browser_lossy_seam.py
               tests/browser/test_browser_replay.py
     runs-on: ubuntu-latest
     # cold runners pay env-solve + chromium download before the ~8 min of

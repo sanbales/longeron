@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from ..analysis._expr import AnalysisError
 from ..errors import MissingExtraError
+from ._seam import SEAM_ESM, SeamHost
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -98,9 +99,11 @@ CESIUM_CSS_URL = CESIUM_BASE_URL + "Widgets/widgets.css"
 # only plays it.  Cesium ships no single-file ESM build, so the pinned IIFE
 # bundle is injected as a classic <script> (plus its widgets.css) with the
 # load promise cached on `window` -- many viewers share one ~6 MB load, and
-# a failed load clears the cache so a later render can retry.
+# a failed load clears the cache so a later render can retry.  Playhead and
+# dial reports ride the loss-tolerance seam client (widgets/_seam.py).
 _ESM = (
-    r"""
+    SEAM_ESM
+    + r"""
 async function loadCesium() {
   if (window.Cesium) return window.Cesium;
   if (!window._longeronCesiumLoad) {
@@ -129,6 +132,7 @@ async function loadCesium() {
 }
 
 async function render({ model, el }) {
+  const seam = lgnSeam(model);
   el.classList.add("longeron-mission3d");
   el.innerHTML = "";
   let Cesium;
@@ -249,8 +253,7 @@ async function render({ model, el }) {
     lastSync = now;
     const s = seconds();
     if (Math.abs(s - model.get("time")) > 1e-3) {
-      model.set("time", s);
-      model.save_changes();
+      seam.report({ time: s });
     }
   });
   model.on("change:time", () => {
@@ -279,17 +282,17 @@ async function render({ model, el }) {
   const watchDial = setInterval(() => {
     if (viewer.clock.shouldAnimate !== lastAnimate) {
       lastAnimate = viewer.clock.shouldAnimate;
-      model.set("playing", lastAnimate);
       // the pauser owns the final t: report it with the flip, so every
       // follower converges exactly (the throttled onTick may not fire
-      // again once the dial stops)
-      if (!lastAnimate) model.set("time", seconds());
-      model.save_changes();
+      // again once the dial stops).  Dial presses are user actions:
+      // intent outranks a raced push.
+      const fields = { playing: lastAnimate };
+      if (!lastAnimate) fields.time = seconds();
+      seam.intent(fields);
     }
     if (viewer.clock.multiplier !== lastMultiplier) {
       lastMultiplier = viewer.clock.multiplier;
-      model.set("rate", lastMultiplier);
-      model.save_changes();
+      seam.intent({ rate: lastMultiplier });
     }
   }, 250);
   function applyPlaying() {
@@ -334,6 +337,7 @@ async function render({ model, el }) {
   await load();
   return () => {
     clearInterval(watchDial);
+    seam.dispose();
     unTick();
     handler.destroy();
     viewer.destroy();
@@ -386,7 +390,7 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise MissingExtraError("the mission viewer", "anywidget", "viz") from err
 
-    class MissionViewer(_anywidget.AnyWidget):
+    class MissionViewer(SeamHost, _anywidget.AnyWidget):
         """CesiumJS playback of a MissionTrack's CZML document."""
 
         _esm = _ESM
@@ -418,6 +422,12 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         #: bounded-drift reconciliation tolerance while animating, in
         #: track seconds (``link_time`` scales it for step-mode bindings)
         drift_s = traitlets.Float(0.25).tag(sync=True)
+        #: the loss-tolerance stamps (widgets/_seam.py): the kernel's
+        #: push generation, the front-end's last-applied acknowledgement,
+        #: and the front-end's user-action counter
+        _seam_gen = traitlets.Int(0).tag(sync=True)
+        _seam_ack = traitlets.Int(0).tag(sync=True)
+        _seam_intent = traitlets.Int(0).tag(sync=True)
 
     _VIEWER_CLS = MissionViewer
     return MissionViewer

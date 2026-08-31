@@ -651,3 +651,175 @@ class TestCesiumBridgeKernelSide:
         assert "drift_s" in esm
         assert "stage.longeronViewer = viewer" in esm
         assert "setInterval" in esm and "clearInterval" in esm
+
+
+# ---------------------------------------------------------------------------
+# the loss-tolerance seam (widgets/_seam.py)
+# ---------------------------------------------------------------------------
+
+
+def _tap(widget):
+    """Capture every kernel->front-end state update on ``widget``."""
+
+    sent: list[dict] = []
+
+    def capture(data=None, buffers=None, **_kwargs):
+        if isinstance(data, dict) and data.get("method") == "update":
+            sent.append(data["state"])
+
+    widget.comm.send = capture
+    return sent
+
+
+def _report(widget, **fields):
+    """A HEALTHY front-end report: rides the real receive path
+    (``set_state``: property lock + notification hold) and acknowledges
+    the latest generation stamp, as the seam client does."""
+
+    widget.set_state({**fields, "_seam_ack": widget._seam_gen})
+
+
+class TestSeamReconciliation:
+    """Dropped comm messages heal; the kernel clock is the truth.
+
+    The scenario throughout is the browser CI's state split (twice
+    observed): a scrub lands while the player's front-end is playing,
+    and the player's last in-flight ~4 Hz report arrives AFTER the
+    kernel's seek.  Without the stamps that stale report re-seeks the
+    clock to 74.7 and no future message ever corrects either side.
+    """
+
+    def test_stale_inflight_report_cannot_reseek_the_clock(self, seam):
+        clock, player, scrubber, _globe, _unlink = seam
+        _report(player, time=74.45)
+        _report(player, time=74.7)  # the last beat before the scrub
+        _report(scrubber, time=20.0)  # the user's scrub, accepted
+        assert clock.t == 20.0
+        # the player's in-flight report predates the seek push: rejected
+        player.set_state({"time": 74.7, "_seam_ack": player._seam_gen - 1})
+        assert clock.t == 20.0
+        assert player.time == 20.0  # the poisoned mirror was realigned
+
+    def test_rejection_answers_with_a_full_state_repush(self, seam):
+        clock, player, _scrubber, _globe, _unlink = seam
+        clock.seek(20.0)
+        sent = _tap(player)
+        player.set_state({"time": 74.7, "_seam_ack": player._seam_gen - 1})
+        # the answer restates the FULL seam state (send_state re-sends
+        # unchanged values -- the healing property trait sync lacks)
+        assert sent, "a rejected report must be answered"
+        full = sent[-1]
+        assert full["time"] == 20.0
+        assert full["_seam_gen"] == player._seam_gen
+
+    def test_dropped_push_heals_while_reports_keep_arriving(self, seam):
+        """A dropped kernel push cannot be resent by trait sync (the
+        value did not change) -- but every stale report it causes is
+        answered with a full re-push until one lands."""
+
+        clock, player, _scrubber, _globe, _unlink = seam
+        clock.seek(20.0)  # the push carrying this is 'dropped'
+        stale_ack = player._seam_gen - 1  # the front-end never saw it
+        sent = _tap(player)
+        for beat in (74.7, 74.95, 75.2):  # the front-end plays on
+            player.set_state({"time": beat, "_seam_ack": stale_ack})
+        assert clock.t == 20.0  # the seek held against every stale beat
+        assert len(sent) >= 3  # each rejection re-asserted the truth
+        assert all(state["time"] == 20.0 for state in sent)
+
+    def test_fresh_reports_drive_the_clock_with_no_echo(self, seam):
+        clock, player, scrubber, globe, _unlink = seam
+        origin = _tap(player)
+        followers = _tap(scrubber)
+        _report(player, time=60.0)
+        assert clock.t == 60.0
+        assert origin == []  # accepted reports are not echoed back
+        assert followers and followers[-1]["time"] == 60.0
+        assert followers[-1]["_seam_gen"] == scrubber._seam_gen
+        assert globe.time == 60.0
+
+    def test_resync_request_answers_with_full_state(self, seam):
+        clock, _player, scrubber, _globe, _unlink = seam
+        clock.seek(33.0)
+        clock.set_rate(4.0)
+        sent = _tap(scrubber)
+        scrubber._handle_msg(
+            {
+                "content": {"data": {"method": "custom", "content": {"lgn_seam": "resync"}}},
+                "buffers": [],
+            }
+        )
+        assert sent, "a resync request must be answered"
+        full = sent[-1]
+        assert full["time"] == 33.0
+        assert full["playing"] is False
+        assert full["rate"] == 4.0
+        assert full["_seam_gen"] == scrubber._seam_gen
+
+    def test_kernel_pushes_always_carry_a_fresh_stamp(self, seam):
+        """The stamp always changes, so every push is a real message and
+        any NEXT push heals the LAST dropped one (idempotent absolute
+        state, never deltas)."""
+
+        _clock, player, scrubber, globe, _unlink = seam
+        before = (player._seam_gen, scrubber._seam_gen, globe._seam_gen)
+        _clock.seek(10.0)
+        _clock.play()
+        _clock.pause()
+        after = (player._seam_gen, scrubber._seam_gen, globe._seam_gen)
+        assert all(b > a for a, b in zip(before, after, strict=True))
+
+    def test_foreign_views_keep_the_plain_transport(self, timed_timeline):
+        import traitlets
+
+        class ForeignView(traitlets.HasTraits):
+            time = traitlets.Float(0.0)
+
+        view = ForeignView()
+        clock = Clock(span=(0.0, 170.0))
+        unlink = link_time(clock, view)
+        clock.seek(42.0)
+        assert view.time == 42.0
+        view.time = 60.0  # no stamps: every write counts, as before
+        assert clock.t == 60.0
+        unlink()
+
+    def test_unlink_detaches_the_resync_channel(self, seam):
+        _clock, player, _scrubber, _globe, unlink = seam
+        unlink()
+        sent = _tap(player)
+        player._handle_msg(
+            {
+                "content": {"data": {"method": "custom", "content": {"lgn_seam": "resync"}}},
+                "buffers": [],
+            }
+        )
+        assert sent == []  # nobody answers after unlink
+
+    def test_user_intent_outranks_a_raced_push(self, seam):
+        """A scrub racing an unseen push is NEW truth, not an echo: the
+        bumped ``_seam_intent`` in the same message lifts the guard."""
+
+        clock, _player, scrubber, _globe, _unlink = seam
+        clock.seek(75.0)  # the push the scrub races (not yet applied)
+        scrubber.set_state(
+            {
+                "time": 20.0,
+                "_seam_ack": scrubber._seam_gen - 1,  # one push behind
+                "_seam_intent": 1,
+            }
+        )
+        assert clock.t == 20.0  # accepted despite the stale ack
+
+    def test_frontends_carry_the_seam_client(self):
+        """The front-end contracts the kernel relies on, as structure."""
+
+        from longeron.widgets import _seam
+        from longeron.widgets import replay as replay_home
+        from longeron.widgets import time as time_home
+
+        assert "_seam_ack" in _seam.SEAM_ESM and "lgn_seam" in _seam.SEAM_ESM
+        for esm in (replay_home._ESM, time_home._SCRUBBER_ESM, mission3d_widget._ESM):
+            assert "lgnSeam(model)" in esm
+            assert "seam.report(" in esm
+            assert "seam.intent(" in esm

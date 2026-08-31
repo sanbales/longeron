@@ -47,6 +47,14 @@ snaps only when its local time drifts past a bounded tolerance
 converges exactly.  The scrubber's front-end and the mission viewer's
 Cesium bridge (:mod:`longeron.widgets.mission3d`) both implement it.
 
+The seam is LOSS-TOLERANT (:mod:`longeron.widgets._seam`): comm
+messages get dropped under load and in-flight reports race kernel
+seeks, so every kernel push carries a generation stamp, front-end
+reports acknowledge the last stamp they saw, and the link REJECTS a
+stale report (answering with an idempotent full-state re-push) instead
+of letting it re-seek the clock.  The kernel clock is the source of
+truth; front-ends reconcile to it.
+
 Everything but the scrubber's front-end is pure kernel code: headless
 tests drive ``clock.seek`` / ``clock.play`` and assert trait fan-out,
 mirroring how the selection seam is tested without a browser.  The
@@ -69,6 +77,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..errors import MissingExtraError
 from ._chrome import CONTROL_CSS
+from ._seam import SEAM_ESM, SeamHost
 
 if TYPE_CHECKING:
     import anywidget
@@ -502,6 +511,13 @@ class _TimeLink:
     coalescing tolerance; views that also carry ``playing``/``rate``
     traits (the scrubber, the mission viewer's Cesium bridge) get those
     wired the same way.
+
+    Views that opt into the loss-tolerance seam (the house widgets; see
+    :mod:`longeron.widgets._seam`) additionally get generation-stamped
+    idempotent full-state pushes, stale-report rejection with full
+    re-pushes, and resync answers -- dropped comm messages heal, and
+    the clock (kernel truth) cannot be re-seeked by a report that
+    predates its latest push.  Foreign views keep the plain transport.
     """
 
     def __init__(
@@ -537,21 +553,39 @@ class _TimeLink:
             steps = clock.span[1] - clock.span[0]
             self._scale = self._seconds[-1] / steps if steps > 0 else _DEFAULT_STEP_S
         view._lgn_time_link = self
-        self._unobserve_clock = clock.observe(self._on_clock)
-        view.observe(self._on_view_time, names="time")
         self._wire_playing = bool(view.has_trait("playing"))
         self._wire_rate = bool(view.has_trait("rate"))
+        # the loss-tolerance seam (widgets/_seam.py): views carrying the
+        # stamp traits get generation-stamped idempotent pushes, stale-
+        # report rejection, and resync answers; foreign views keep the
+        # plain trait transport unchanged
+        self._reconciles = bool(view.has_trait("_seam_gen")) and isinstance(view, SeamHost)
+        self._seam_keys = (
+            "_seam_gen",
+            "time",
+            *(("playing",) if self._wire_playing else ()),
+            *(("rate",) if self._wire_rate else ()),
+        )
+        self._suppress = False  # an accepted report needs no echo push
+        self._healing = False  # a re-push must not observe itself
+        self._unobserve_clock = clock.observe(self._on_clock)
+        view.observe(self._on_view_time, names="time")
         if self._wire_playing:
             view.observe(self._on_view_playing, names="playing")
         if self._wire_rate:
             view.observe(self._on_view_rate, names="rate")
+        if self._reconciles:
+            view.on_msg(self._on_view_msg)
         # first fan-out: the clock is the state, the view follows it now
         # (swapping a view preserves the playhead, per the contract)
-        self._write_time(clock.t)
-        if self._wire_playing:
-            view.playing = clock.playing
-        if self._wire_rate:
-            view.rate = clock.rate * self._scale
+        if self._reconciles:
+            self._push()
+        else:
+            self._write_time(clock.t)
+            if self._wire_playing:
+                view.playing = clock.playing
+            if self._wire_rate:
+                view.rate = clock.rate * self._scale
         if view.has_trait("drift_s"):
             # the bounded-drift reconciliation tolerance, in view units
             view.drift_s = _DRIFT * self._scale
@@ -573,32 +607,87 @@ class _TimeLink:
         if abs(float(self._view.time) - mapped) > 1e-9:
             self._view.time = mapped
 
+    # -- the loss-tolerance guard (see widgets/_seam.py) --------------------
+
+    def _is_report(self, name: str) -> bool:
+        """True when ``name``'s change arrived FROM the front-end."""
+
+        return name in getattr(self._view, "_lgn_from_frontend", frozenset())
+
+    def _is_stale(self) -> bool:
+        """True when the front-end's report predates the latest push.
+
+        Only MACHINE reports (playback integration) are guarded: a
+        report carrying a bumped ``_seam_intent`` in the same message
+        is a user action -- new truth, not an echo of old state -- and
+        outranks any push it may have raced.
+        """
+
+        view = self._view
+        if not self._reconciles or "_seam_intent" in view._lgn_from_frontend:
+            return False
+        return int(view._seam_ack) != int(view._seam_gen)
+
     # -- view -> clock -----------------------------------------------------
 
     def _on_view_time(self, change: Any) -> None:
-        if self._active:
+        if not self._active or self._healing:
+            return
+        report = self._is_report("time")
+        if report and self._is_stale():
+            self._repush()  # the report predates the seek: truth wins
+            return
+        self._suppress = report
+        try:
             self._clock.seek(self._to_clock(change["new"]))
+        finally:
+            self._suppress = False
 
     def _on_view_playing(self, change: Any) -> None:
-        if not self._active:
+        if not self._active or self._healing:
             return
-        if change["new"]:
-            self._clock.play()
-        else:
-            self._clock.pause()
+        report = self._is_report("playing")
+        if report and self._is_stale():
+            self._repush()
+            return
+        self._suppress = report
+        try:
+            if change["new"]:
+                self._clock.play()
+            else:
+                self._clock.pause()
+        finally:
+            self._suppress = False
 
     def _on_view_rate(self, change: Any) -> None:
-        if not self._active:
+        if not self._active or self._healing:
             return
         rate = float(change["new"])
         if rate == 0.0:
             return  # the mission viewer's 0 means "no stated rate"
-        self._clock.set_rate(rate / self._scale)
+        report = self._is_report("rate")
+        if report and self._is_stale():
+            self._repush()
+            return
+        self._suppress = report
+        try:
+            self._clock.set_rate(rate / self._scale)
+        finally:
+            self._suppress = False
+
+    def _on_view_msg(self, _view: Any, content: Any, _buffers: Any) -> None:
+        """The front-end's resync request: answer with full truth."""
+
+        if self._active and isinstance(content, dict) and content.get("lgn_seam") == "resync":
+            self._repush()
 
     # -- clock -> view -----------------------------------------------------
 
     def _on_clock(self, change: dict[str, Any]) -> None:
-        if not self._active:
+        if not self._active or self._suppress:
+            return
+        if self._reconciles:
+            self._push()
             return
         name = change["name"]
         if name == "t":
@@ -607,6 +696,42 @@ class _TimeLink:
             self._view.playing = change["new"]
         elif name == "rate" and self._wire_rate:
             self._view.rate = change["new"] * self._scale
+
+    def _push(self) -> None:
+        """One stamped, idempotent push of the full clock state.
+
+        The stamp always changes, so a message always goes out even
+        when every mirrored value coalesces -- any NEXT push heals the
+        LAST dropped one.  ``hold_sync`` folds the stamp and the
+        mirrors into one comm message.
+        """
+
+        view = self._view
+        with view.hold_sync():
+            view._seam_gen = int(view._seam_gen) + 1
+            self._write_time(self._clock.t)
+            if self._wire_playing and bool(view.playing) is not self._clock.playing:
+                view.playing = self._clock.playing
+            if self._wire_rate:
+                rate = self._clock.rate * self._scale
+                if abs(float(view.rate) - rate) > 1e-12:
+                    view.rate = rate
+
+    def _repush(self) -> None:
+        """Reassert clock truth unconditionally.
+
+        A stale report was rejected (its arrival already poisoned the
+        kernel-side mirrors, so realign them first), or the front-end
+        asked for a resync.  ``send_state`` re-sends UNCHANGED values
+        too -- the healing property plain trait sync lacks.
+        """
+
+        self._healing = True
+        try:
+            self._push()
+        finally:
+            self._healing = False
+        self._view.send_state(self._seam_keys)
 
     def unbind(self) -> None:
         """Detach the adapter (idempotent); the view keeps its playhead."""
@@ -620,6 +745,8 @@ class _TimeLink:
             self._view.unobserve(self._on_view_playing, names="playing")
         if self._wire_rate:
             self._view.unobserve(self._on_view_rate, names="rate")
+        if self._reconciles:
+            self._view.on_msg(self._on_view_msg, remove=True)
         if getattr(self._view, "_lgn_time_link", None) is self:
             self._view._lgn_time_link = None
 
@@ -671,9 +798,13 @@ def link_time(
 # (spec_json) and the front-end only plays it.  The playback loop is the
 # replay widget's requestAnimationFrame pattern with the same ~4 Hz trait
 # throttle; the drift-tolerant `change:time` handler implements the
-# non-fighting rule (see the module docstring).
-_SCRUBBER_ESM = r"""
+# non-fighting rule (see the module docstring).  Reports ride the
+# loss-tolerance seam client (widgets/_seam.py).
+_SCRUBBER_ESM = (
+    SEAM_ESM
+    + r"""
 function render({ model, el }) {
+  const seam = lgnSeam(model);
   el.classList.add("lgw", "lgn-scrub");
   el.innerHTML = "";
 
@@ -802,8 +933,7 @@ function render({ model, el }) {
     const now = performance.now();
     if (!force && now - lastSync < 250) return;  // ~4 Hz, like the peers
     lastSync = now;
-    model.set("time", t);
-    model.save_changes();
+    seam.report({ time: t });
   }
 
   function setPlaying(value, write) {
@@ -818,8 +948,7 @@ function render({ model, el }) {
     }
     button.textContent = playing ? "\u275a\u275a" : "\u25b6";
     if (write) {
-      model.set("playing", playing);
-      model.save_changes();
+      seam.report({ playing });
     }
   }
 
@@ -844,26 +973,31 @@ function render({ model, el }) {
 
   button.addEventListener("click", () => {
     if (playing) {
-      // the pauser owns the final t: write it BEFORE the playing flip,
-      // so the pause handler's convergence snap is a no-op locally
-      syncTime(true);
-      setPlaying(false, true);
+      // the pauser owns the final t: one INTENT report carries the
+      // settled time with the flip, so the pause cannot be split from
+      // its playhead by a drop
+      setPlaying(false, false);
+      seam.intent({ time: t, playing: false });
     } else {
       if (span() <= 0) return;
       if (rate > 0 && t >= spec.span[1]) t = spec.span[0];
-      setPlaying(true, true);
+      setPlaying(true, false);
+      seam.intent({ playing: true });
     }
   });
   scrub.addEventListener("input", () => {
-    if (playing) setPlaying(false, true);
-    t = parseFloat(scrub.value);
+    const fields = { time: parseFloat(scrub.value) };
+    if (playing) {
+      setPlaying(false, false);
+      fields.playing = false;
+    }
+    t = fields.time;
     draw();
-    syncTime(true);
+    seam.intent(fields);
   });
   select.addEventListener("change", () => {
     rate = parseFloat(select.value);
-    model.set("rate", rate);
-    model.save_changes();
+    seam.intent({ rate });
   });
 
   model.on("change:time", () => {
@@ -959,6 +1093,7 @@ function render({ model, el }) {
 }
 export default { render };
 """
+)
 
 # The scrubber's own chrome rides the shared lgw tokens: neutral
 # surface, the one JupyterLab accent, tabular numerals for the clock --
@@ -1058,7 +1193,7 @@ def _scrubber_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise MissingExtraError("the time scrubber", "anywidget", "replay") from err
 
-    class TimeScrubber(_anywidget.AnyWidget):
+    class TimeScrubber(SeamHost, _anywidget.AnyWidget):
         """The transport bar for one linked clock group."""
 
         _esm = _SCRUBBER_ESM
@@ -1073,6 +1208,12 @@ def _scrubber_class() -> type[anywidget.AnyWidget]:
         playing = traitlets.Bool(False).tag(sync=True)
         #: bidirectional playback rate, axis units per wall second
         rate = traitlets.Float(1.0).tag(sync=True)
+        #: the loss-tolerance stamps (widgets/_seam.py): the kernel's
+        #: push generation, the front-end's last-applied acknowledgement,
+        #: and the front-end's user-action counter
+        _seam_gen = traitlets.Int(0).tag(sync=True)
+        _seam_ack = traitlets.Int(0).tag(sync=True)
+        _seam_intent = traitlets.Int(0).tag(sync=True)
 
     _SCRUBBER_CLS = TimeScrubber
     return TimeScrubber

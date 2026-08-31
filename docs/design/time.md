@@ -378,6 +378,42 @@ For a timed trace `rate = 1.0` is real time, and the Cesium multiplier
 equals `rate` exactly. The replay widget's speed select maps to the
 same number (its step mode already defines 1x as one step per second).
 
+### Loss tolerance: the reconciliation protocol
+
+The widget protocol is fire-and-forget: a congested channel drops comm
+messages (jupyter-server's iopub rate limiter, websocket reconnects
+mid-burst), trait sync only sends *changes*, and a stale in-flight
+report can race a kernel seek even with zero drops. Twice in browser
+CI that combination split the seam permanently: a scrub-to-20 during
+playback stopped the player's front-end, but a stale ~4 Hz report
+re-seeked the kernel clock to ~74.7 and no future message corrected
+either side. The seam therefore carries a small reconciliation
+protocol (`longeron.widgets._seam`, its docstring holds the full
+anatomy); the kernel clock is the source of truth and front-ends
+reconcile to it:
+
+- **Generation stamps.** Every kernel push bumps `_seam_gen`, so
+  every push is a real message and a front-end can *see* a missed one
+  (a stamp gap) and ask for full state.
+- **Acknowledged reports.** Reports echo the last applied stamp
+  (`_seam_ack`). A machine report (the ~4 Hz playback integration)
+  carrying an old stamp is REJECTED and answered with an unconditional
+  full-state re-push -- which also heals dropped pushes, because the
+  stale reports keep arriving until a re-push lands. User actions
+  (`_seam_intent` bumped in the same message) outrank a raced push:
+  intent is new truth, not an echo of old state.
+- **Trailing-edge verify.** ~1.5 s after seam traffic quiesces the
+  front-end asks the kernel to re-state truth (one shot, re-armed by
+  traffic -- never a hot timer). A dropped *report* thus heals by
+  visible REVERSION to kernel truth; the user retries, and no silent
+  split survives.
+
+The protocol adds no steady-state traffic: while a view plays, its
+reports are accepted without echoes exactly as before, and the
+reconciliation acts only on rejection, on a stamp gap, or at a burst's
+trailing edge. `tests/browser/test_browser_lossy_seam.py` proves the
+contract by injecting counted message loss in each direction.
+
 ### The scrubber widget
 
 A small anywidget: a play/pause button, a rate select, a range slider

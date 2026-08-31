@@ -24,6 +24,7 @@ from .. import model as M
 from ..errors import ExecutionError, MissingExtraError
 from ..render import _FIRED_STROKE, _NODE_STYLES, _arrow_id
 from ..replay import record_action_timeline, record_timeline
+from ._seam import SEAM_ESM, SeamHost
 
 if TYPE_CHECKING:
     import anywidget
@@ -43,9 +44,13 @@ ReplayKind = Literal["state", "action"]
 # once and nodes/edges are indexed by data-qname/data-edge; per frame only
 # classes toggle.  Keyframe lookup is a binary search with left-keyframe
 # (step) semantics, matching how Timeline.tracks records changes.  Strokes
-# use vector-effect: non-scaling-stroke with pixel widths.
-_ESM = r"""
+# use vector-effect: non-scaling-stroke with pixel widths.  Playhead
+# reports ride the loss-tolerance seam client (widgets/_seam.py).
+_ESM = (
+    SEAM_ESM
+    + r"""
 function render({ model, el }) {
+  const seam = lgnSeam(model);
   const timeline = JSON.parse(model.get("timeline_json"));
   const stepMode = timeline.step_mode;
   // parent relation recorded by replay.py (child qname -> parent qname);
@@ -218,8 +223,7 @@ function render({ model, el }) {
     const now = performance.now();
     if (!force && now - lastSync < 250) return;  // ~4 Hz
     lastSync = now;
-    model.set("time", t);
-    model.save_changes();
+    seam.report({ time: t });
   }
   function stop() {
     playing = false;
@@ -254,7 +258,7 @@ function render({ model, el }) {
     if (playing) stop();
     t = parseFloat(scrub.value);
     draw(t);
-    syncModel(true);
+    seam.intent({ time: t });  // user intent outranks a raced push
   });
   model.on("change:time", () => {  // Python-side seek
     const value = model.get("time");
@@ -277,6 +281,7 @@ function render({ model, el }) {
 }
 export default { render };
 """
+)
 
 # Highlight colors track the shared palette in longeron.render (V3): active
 # states use the usage green family, fired transitions pulse the replay
@@ -354,7 +359,7 @@ def _widget_class() -> type[anywidget.AnyWidget]:
     except ImportError as err:
         raise MissingExtraError("the replay widget", "anywidget", "replay") from err
 
-    class ReplayWidget(_anywidget.AnyWidget):
+    class ReplayWidget(SeamHost, _anywidget.AnyWidget):
         """Animated replay of a recorded Timeline over the state SVG."""
 
         _esm = _ESM
@@ -364,6 +369,12 @@ def _widget_class() -> type[anywidget.AnyWidget]:
         width_px = traitlets.Int(760).tag(sync=True)
         #: bidirectional playhead (sim time, or step index in step mode)
         time = traitlets.Float(0.0).tag(sync=True)
+        #: the loss-tolerance stamps (widgets/_seam.py): the kernel's
+        #: push generation, the front-end's last-applied acknowledgement,
+        #: and the front-end's user-action counter
+        _seam_gen = traitlets.Int(0).tag(sync=True)
+        _seam_ack = traitlets.Int(0).tag(sync=True)
+        _seam_intent = traitlets.Int(0).tag(sync=True)
 
     _WIDGET_CLS = ReplayWidget
     return ReplayWidget

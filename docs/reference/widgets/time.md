@@ -20,6 +20,18 @@ widget needs the `replay` extra (`pip install "longeron[replay]"`).
 - `time_scrubber` builds the transport bar: play/pause, rate, the time
   axis with event ticks and phase bands, and a telemetry readout.
 
+## Loss tolerance
+
+Comm messages can be dropped under load, and the protocol has no
+retransmit. The seam heals: kernel pushes carry generation stamps,
+front-end reports acknowledge them (stale machine reports are rejected
+and answered with a full re-push; user actions outrank a raced push),
+and a trailing-edge verify re-states kernel truth after each traffic
+burst. The kernel clock is the source of truth; a dropped report heals
+by visible reversion, never a silent split. The
+[time-seam design](../../design/time.md#loss-tolerance-the-reconciliation-protocol)
+states the protocol; `longeron.widgets._seam` implements it.
+
 ## Step-only traces
 
 A pure event cascade records in step mode, and steps are not seconds.
