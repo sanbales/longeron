@@ -72,6 +72,41 @@ followed by a bare assert.
 CI kernel start); it must never be the fix for a test that flakes on its
 own logic.
 
+**Hang discipline:** every wait in the harness is bounded, including
+`page.evaluate` (via `LabPage.evaluate`, which playwright itself gives
+no timeout). A page whose renderer main thread wedges (the proven class:
+a microtask/busy loop -- see the 6aa1f76 landing) parks timeout-less
+playwright calls forever; the conftest page watchdog unsticks it by
+SIGKILLing this run's renderers (ancestry-scoped), turning the hang into
+a labeled test failure that reruns on a fresh page. `--timeout 700
+--timeout-method thread` stays as the backstop of last resort only: when
+it fires it dumps every stack and then kills the WHOLE run (`os._exit`),
+so a firing backstop means the watchdog itself failed.
+
+**Dropped-comm recovery:** widget state sync has no retransmit, so ONE
+widget comm message lost during a run-all burst leaves a diagram
+pipeline parked forever (progress bars frozen at 37.5%/87.5%, kernel
+idle -- the ad27a8b class; reproduced isolated at a clean base with
+every harness net disabled, so it is a product/timing marginality, not
+a harness artifact). Waiting never heals it, and neither does a plain
+rerun policy (masking). `wait_settled` heals it IN-TEST instead: the
+stall detector in `wait_until` treats frozen bars (30s) like the
+proven dead-run signature (cells at `[*]`, kernel idle, 12s) and
+re-fires run-all -- reconnecting the kernel websocket first (a re-fire
+down a dead shared connection just pins every cell at `[*]`;
+live-observed), and interrupting the kernel from the second re-fire on
+(a kernel blocked in a handler awaiting a browser reply that a dropped
+message means will never come answers NO connection, fresh clones
+included; the interrupt rides the control channel and unblocks it).
+Every heal writes a stderr breadcrumb, so flakes stay countable in the
+`-v` log instead of being silently absorbed.
+
+**Triage knobs:** `LONGERON_HARNESS_TRACE=1` prints per-wait poll
+stats (and slow evaluates) to stderr; `LONGERON_HARNESS_DISABLE=`
+`evalnet,loopnet,testnet,probe` switches individual hang-net components
+off to A/B a suspected harness/product interaction (that A/B is how the
+parked-pipeline class was exonerated from the watchdog patch).
+
 **Quarantine convention:** a test that flakes twice in a week despite
 the rerun gets `@pytest.mark.skip(reason="QUARANTINED: <issue link>")` on
 the spot, an issue with the failure artifacts attached, and an owner.

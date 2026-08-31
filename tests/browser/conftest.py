@@ -21,19 +21,22 @@ On failure, a full-page screenshot plus the console/page-error log land in
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,6 +70,20 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.browser)
 
 
+#: opt-in harness tracing (LONGERON_HARNESS_TRACE=1): per-wait poll stats
+#: and slow-evaluate lines on stderr -- the flake-triage view of a run
+_TRACE = os.environ.get("LONGERON_HARNESS_TRACE", "") not in ("", "0")
+
+#: flake-triage bisect knob (LONGERON_HARNESS_DISABLE=evalnet,loopnet,
+#: testnet,probe): switch individual hang-net components off to A/B a
+#: suspected harness/product interaction without editing this file
+_DISABLED = {
+    part.strip()
+    for part in os.environ.get("LONGERON_HARNESS_DISABLE", "").split(",")
+    if part.strip()
+}
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
     """Stash phase reports so fixtures can react to test outcome."""
@@ -74,6 +91,110 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
     report = yield
     item.stash.setdefault(_PHASE_REPORTS, {})[report.when] = report
     return report
+
+
+# ---------------------------------------------------------------------------
+# the page watchdog: a hang must become a visible failure
+# ---------------------------------------------------------------------------
+#
+# The one wedge this tier has actually produced (three landings' gates)
+# was NOT fixture poisoning: a renderer-main-thread freeze (the LATENT
+# SelectAction microtask oscillation defused in 6aa1f76) parks every
+# timeout-less playwright call FOREVER -- ``page.evaluate`` and
+# ``locator.count()`` carry no driver-side deadline, so the sync greenlet
+# waits in ``run_until_complete`` until pytest-timeout's thread method
+# dumps the stacks and ``os._exit(1)``s the WHOLE run: no rerun, no
+# artifacts, no summary, every later test unrun (and the session-scoped
+# lab server orphaned).  The watchdog inverts that: when a bounded block
+# overruns its budget, the renderers belonging to THIS pytest process are
+# SIGKILLed, the parked call raises (Target crashed -- verified live
+# against an injected renderer freeze), and the block reports a loud,
+# labeled test failure.  The browser process and the JupyterLab server
+# survive; the rerun gets a fresh renderer and a fresh kernel session.
+
+
+def _our_renderer_pids() -> list[int]:
+    """Chromium renderer PIDs that are DESCENDANTS of this process.
+
+    Ancestry-scoped on purpose: this box runs other sessions' browsers
+    and kernels; only processes under our own pid (python -> playwright
+    node driver -> chromium -> renderers) are ever candidates.
+    """
+
+    out = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, check=False
+    ).stdout
+    children: dict[int, list[int]] = {}
+    commands: dict[int, str] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append(pid)
+        commands[pid] = parts[2]
+    found: list[int] = []
+    stack = [os.getpid()]
+    while stack:
+        for kid in children.get(stack.pop(), []):
+            stack.append(kid)
+            if "--type=renderer" in commands.get(kid, ""):
+                found.append(kid)
+    return found
+
+
+def _kill_wedged_renderers() -> list[int]:
+    """SIGKILL this run's renderers; return the pids actually signalled."""
+
+    killed: list[int] = []
+    for pid in _our_renderer_pids():
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError as err:  # already gone: the goal state
+            sys.stderr.write(f"watchdog: kill({pid}) failed (non-fatal): {err}\n")
+    return killed
+
+
+@contextlib.contextmanager
+def _page_watchdog(budget_s: float, label: str) -> Iterator[None]:
+    """Bound a block of playwright work: overrun -> renderer kill -> loud fail.
+
+    Budgets sit ABOVE every legitimate deadline inside the block, so a
+    healthy-but-slow page always fails through its own labeled timeout
+    first; the watchdog only ever fires on a page that can no longer
+    answer anything (at which point killing its renderer is the only way
+    to unstick the parked greenlet -- no Python-side timeout can).
+    """
+
+    fired = threading.Event()
+
+    def _fire() -> None:
+        fired.set()
+        sys.stderr.write(
+            f"PAGE WATCHDOG [{label}]: no progress within {budget_s:.0f}s; "
+            "presuming a wedged renderer and SIGKILLing this run's "
+            f"chromium renderers: {_kill_wedged_renderers()}\n"
+        )
+
+    timer = threading.Timer(budget_s, _fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    except Exception as err:
+        if fired.is_set():
+            raise AssertionError(
+                f"page unresponsive: {label!r} overran its {budget_s:.0f}s watchdog "
+                "budget; the wedged renderer was killed so this failure could "
+                f"surface (the unstuck call raised {err!r})"
+            ) from err
+        raise
+    finally:
+        timer.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +279,41 @@ def _wait_http_ready(server: LabServer, timeout: float = 120.0) -> None:
             last_error = err
         time.sleep(0.5)
     pytest.fail(f"jupyter lab not ready after {timeout}s ({last_error}); see {server.log_path}")
+
+
+def _interrupt_kernels(server: LabServer) -> None:
+    """Interrupt every live kernel (best effort): the stuck-kernel unstick.
+
+    A kernel that stops answering execute probes on EVERY connection --
+    fresh cloned ones included, websocket reconnected, status stale at
+    'idle' (live-observed; the server-side view showed a restored, live
+    connection) -- is blocked inside a handler, waiting on a browser
+    reply that a dropped comm message means will never come.  No
+    browser-side action can heal that; interrupt_request rides the
+    kernel's CONTROL channel (its own thread), raises KeyboardInterrupt
+    in the blocked handler, and the loop resumes.  Widget comms survive
+    an interrupt (unlike a restart, which orphans every saved output
+    into 'Error displaying widget').
+    """
+
+    try:
+        with urllib.request.urlopen(
+            f"{server.base_url}/api/sessions?token={server.token}", timeout=10
+        ) as response:
+            sessions = json.loads(response.read().decode("utf-8"))
+        for session in sessions:
+            kernel_id = (session.get("kernel") or {}).get("id")
+            if not kernel_id:
+                continue
+            request = urllib.request.Request(
+                f"{server.base_url}/api/kernels/{kernel_id}/interrupt?token={server.token}",
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=10):
+                pass
+            sys.stderr.write(f"interrupted kernel {kernel_id}\n")
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        sys.stderr.write(f"kernel interrupt failed (non-fatal): {err}\n")
 
 
 def _shutdown_sessions(server: LabServer) -> None:
@@ -437,13 +593,15 @@ _SNAPSHOT_JS = """() => {
         return t && t !== 'scale(1) translate(0,0)' && t !== 'translate(0, 0) scale(1)';
     }).length;
     const elknodes = document.querySelectorAll('.sprotty svg .elknode').length;
+    const empty = [...document.querySelectorAll('.sprotty svg')].filter(
+        (svg) => svg.querySelectorAll('.elknode').length === 0).length;
     const loading = [...document.querySelectorAll('.jp-OutputArea-output')].filter(
         (el) => el.textContent.trim() === 'Loading widget...').length;
     const werrors = [...document.querySelectorAll('.jp-OutputArea-output')].filter(
         (el) => (el.textContent || '').includes('Error displaying widget')).length;
     const kernel = document.querySelector('.jp-Notebook-ExecutionIndicator')
         ?.getAttribute('data-status') || 'missing';
-    return {rendered, busy, bars, fitted, elknodes, loading, werrors, kernel};
+    return {rendered, busy, bars, fitted, elknodes, empty, loading, werrors, kernel};
 }"""
 
 _CELL_STATE_JS = """(index) => {
@@ -590,7 +748,13 @@ class LabPage:
         self.server = server
         self.console: list[str] = []
         self.page_errors: list[str] = []
+        #: set when chromium reports the renderer gone (spontaneous crash
+        #: or a watchdog kill); read by error messages, never re-raised
+        #: here -- raising inside a playwright event listener poisons the
+        #: dispatcher (observed: a Failed-in-listener plus a teardown ERROR)
+        self.crashed: str | None = None
         page.on("console", lambda message: self.console.append(f"[{message.type}] {message.text}"))
+        page.on("crash", self._on_crash)
         # page errors KEEP their JS stack: a bare 'Host is not attached.'
         # is unactionable, while the throwing frame named the vendored
         # overlay-attach race outright (QA-3); allowance matching is
@@ -601,6 +765,45 @@ class LabPage:
                 str(error) + " | STACK: " + str(getattr(error, "stack", ""))
             ),
         )
+
+    def _on_crash(self, _page: Page) -> None:
+        self.crashed = "chromium renderer crashed (or was killed by the page watchdog)"
+        sys.stderr.write(
+            "page crash event: renderer gone (spontaneous chromium crash -- see "
+            "the /dev/shm note on the browser fixture -- or a watchdog kill); "
+            "pending calls on this page will now raise\n"
+        )
+
+    # -- bounded evaluate ------------------------------------------------------
+
+    def evaluate(
+        self,
+        expression: str,
+        arg: Any = None,
+        *,
+        timeout: float = 45.0,
+        label: str = "page.evaluate",
+    ) -> Any:
+        """``page.evaluate`` with a REAL deadline.
+
+        Playwright gives evaluate no timeout at all: on a renderer whose
+        main thread is pegged (the proven wedge class) it parks the sync
+        greenlet forever.  Every harness evaluate goes through here so a
+        frozen page becomes a labeled failure within ``timeout`` seconds
+        instead of an eternal park that only pytest-timeout's run-killing
+        os._exit can end.
+        """
+
+        start = time.monotonic()
+        if "evalnet" in _DISABLED:  # bisect knob: raw, timeout-less evaluate
+            result = self.page.evaluate(expression, arg)
+        else:
+            with _page_watchdog(timeout, label):
+                result = self.page.evaluate(expression, arg)
+        elapsed = time.monotonic() - start
+        if _TRACE and elapsed > 1.0:
+            sys.stderr.write(f"trace: evaluate[{label}] took {elapsed:.2f}s\n")
+        return result
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -620,7 +823,11 @@ class LabPage:
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.page.evaluate("() => !!(window.jupyterapp || window.jupyterlab)"):
+            if self.evaluate(
+                "() => !!(window.jupyterapp || window.jupyterlab)",
+                timeout=30.0,
+                label=f"open_notebook({name}): app handle poll",
+            ):
                 return
             time.sleep(1)
         raise TimeoutError(f"JupyterLab app handle never appeared for {name}")
@@ -658,6 +865,9 @@ class LabPage:
         reconnect flushes a stuck send queue; it cannot unwedge the
         incoming chain -- ``_clearKernelState`` only runs on restart --
         but then the LOUD failure below names exactly what is broken).
+        After three, the KERNEL is interrupted: probes that die on a
+        reconnected socket AND on fresh cloned connections mean the
+        kernel itself is blocked in a handler (see _interrupt_kernels).
         """
 
         deadline = time.monotonic() + timeout
@@ -666,7 +876,14 @@ class LabPage:
         while time.monotonic() < deadline:
             attempt += 1
             budget_ms = int(max(min(15.0, deadline - time.monotonic()), 3.0) * 1000)
-            last = dict(self.page.evaluate(_CHANNEL_PROBE_JS, {"timeoutMs": budget_ms}))
+            last = dict(
+                self.evaluate(
+                    _CHANNEL_PROBE_JS,
+                    {"timeoutMs": budget_ms},
+                    timeout=budget_ms / 1000 + 25.0,
+                    label="execute-channel probe",
+                )
+            )
             if last.get("ok"):
                 if attempt > 1:
                     sys.stderr.write(f"execute channel proven alive on probe attempt {attempt}\n")
@@ -676,11 +893,14 @@ class LabPage:
             )
             if attempt == 2:
                 sys.stderr.write("escalating: reconnecting the notebook kernel's websocket\n")
-                self.page.evaluate(_RECONNECT_JS)
+                self.evaluate(_RECONNECT_JS, timeout=30.0, label="kernel websocket reconnect")
+            elif attempt == 3:
+                sys.stderr.write("escalating: interrupting the stuck kernel\n")
+                _interrupt_kernels(self.server)
             time.sleep(1.0)
         raise TimeoutError(
             f"the notebook kernel never answered an execute probe within {timeout}s "
-            f"(even after a websocket reconnect); last probe: {last}"
+            f"(even after a websocket reconnect and a kernel interrupt); last probe: {last}"
         )
 
     def run_all(self, attempts: int = 5) -> None:
@@ -701,20 +921,24 @@ class LabPage:
         # runner's half-wired session costs one bounded probe instead of a
         # swallowed run + re-fire cycle
         self.wait_execute_channel_ready()
-        before = list(self.page.evaluate(_PROMPTS_JS))
+        before = list(self.evaluate(_PROMPTS_JS, timeout=30.0, label="run_all: prompts snapshot"))
         for _attempt in range(attempts):
             # fire-and-forget: commands.execute returns a promise that only
             # resolves when the WHOLE run finishes, and page.evaluate awaits
             # returned promises -- an unbounded hang if any cell stalls (the
             # CI eaten-clock signature). The bounded wait_settled below owns
             # the waiting and reports last-known state on timeout.
-            self.page.evaluate(
+            self.evaluate(
                 "() => { void (window.jupyterapp || window.jupyterlab)"
-                ".commands.execute('notebook:run-all-cells'); return true; }"
+                ".commands.execute('notebook:run-all-cells'); return true; }",
+                timeout=30.0,
+                label="run_all: fire notebook:run-all-cells",
             )
             deadline = time.monotonic() + 6.0
             while time.monotonic() < deadline:
-                prompts = list(self.page.evaluate(_PROMPTS_JS))
+                prompts = list(
+                    self.evaluate(_PROMPTS_JS, timeout=30.0, label="run_all: prompts poll")
+                )
                 if any("*" in prompt for prompt in prompts) or prompts != before:
                     return
                 time.sleep(0.25)
@@ -723,7 +947,7 @@ class LabPage:
     # -- settle polling ------------------------------------------------------
 
     def snapshot(self) -> dict[str, Any]:
-        return dict(self.page.evaluate(_SNAPSHOT_JS))
+        return dict(self.evaluate(_SNAPSHOT_JS, timeout=45.0, label="settle snapshot"))
 
     def wait_until(
         self,
@@ -748,50 +972,135 @@ class LabPage:
         after ~12s of that state run-all is re-fired (bounded) -- safe
         because every scenario notebook in this tier is idempotent by
         convention (the docking test refires on the same contract).
+
+        The same flag recovers PARKED PIPES: progress bars frozen at the
+        same widths (37.5%/87.5% -- the text-size/layout stages) with no
+        busy cell and an idle kernel means one widget comm message was
+        lost mid-burst and the layout pipeline will wait forever (the
+        ad27a8b class; mechanism proven by dropping comm_msg locally.
+        Reproduced isolated at 2bc9b4d BASE with every harness net
+        disabled, so it is a product/timing marginality, not a harness
+        artifact -- the kernel-side stale re-sync loop visibly churns in
+        the server log without healing it).  A parked pipeline never
+        heals by waiting either: after ~30s frozen, run-all is re-fired
+        on the same bounded budget, rebuilding the widgets on fresh
+        comms in-test instead of burning the wait and a whole rerun.
         """
 
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
         streak = 0
         state: dict[str, Any] = {}
         stalled_since: float | None = None
+        parked_bars: Any = None
+        parked_since: float | None = None
         refires = 0
-        while time.monotonic() < deadline:
-            state = self.snapshot()
-            # a widget output rendering as 'Error displaying widget' NEVER
-            # self-heals -- the frontend widget manager has no model for it
-            # (a lost comm_open, or a dead kernel's saved output).  Waiting
-            # out the full timeout on it burned 3 minutes per CI attempt;
-            # fail fast and NAME it so --reruns 1 retries on fresh state.
-            if state.get("werrors"):
-                raise AssertionError(
-                    f"{label}: {state['werrors']} widget output(s) render as "
-                    "'Error displaying widget' (frontend widget manager has no "
-                    "model: lost comm_open or a dead kernel's saved output); "
-                    f"this never self-heals, failing fast. Last state: {state}"
-                )
-            if refire_run_on_stall:
-                now = time.monotonic()
-                if not (state["busy"] > 0 and state["kernel"] == "idle"):
-                    stalled_since = None
-                elif stalled_since is None:
-                    stalled_since = now
-                elif now - stalled_since >= 12.0 and refires < 3:
-                    refires += 1
-                    stalled_since = None
-                    sys.stderr.write(
-                        f"{label}: dead run detected ({state['busy']} cell(s) pinned "
-                        f"at [*] with an idle kernel); re-firing run-all "
-                        f"({refires}/3)\n"
+        polls = 0
+        snap_total = 0.0
+        snap_max = 0.0
+        # the loop's own deadline raises a labeled TimeoutError on a SLOW
+        # page; the watchdog (deadline + slack) only fires on a WEDGED one
+        # -- it also nets the caller-supplied predicate, whose locator
+        # calls (count(), input_value()) can park forever on a frozen page
+        with (
+            contextlib.nullcontext()
+            if "loopnet" in _DISABLED
+            else _page_watchdog(timeout + 60.0, f"wait_until({label})")
+        ):
+            while time.monotonic() < deadline:
+                snap_start = time.monotonic()
+                state = self.snapshot()
+                snap_elapsed = time.monotonic() - snap_start
+                polls += 1
+                snap_total += snap_elapsed
+                snap_max = max(snap_max, snap_elapsed)
+                # a widget output rendering as 'Error displaying widget' NEVER
+                # self-heals -- the frontend widget manager has no model for it
+                # (a lost comm_open, or a dead kernel's saved output).  Waiting
+                # out the full timeout on it burned 3 minutes per CI attempt;
+                # fail fast and NAME it so --reruns 1 retries on fresh state.
+                if state.get("werrors"):
+                    raise AssertionError(
+                        f"{label}: {state['werrors']} widget output(s) render as "
+                        "'Error displaying widget' (frontend widget manager has no "
+                        "model: lost comm_open or a dead kernel's saved output); "
+                        f"this never self-heals, failing fast. Last state: {state}"
                     )
-                    self.page.evaluate(
-                        "() => { void (window.jupyterapp || window.jupyterlab)"
-                        ".commands.execute('notebook:run-all-cells'); return true; }"
-                    )
-            streak = streak + 1 if predicate(state) else 0
-            if streak >= stable_polls:
-                return state
-            time.sleep(poll_s)
-        raise TimeoutError(f"{label} not reached within {timeout}s; last state: {state}")
+                if refire_run_on_stall:
+                    now = time.monotonic()
+                    refire_why: str | None = None
+                    if not (state["busy"] > 0 and state["kernel"] == "idle"):
+                        stalled_since = None
+                    elif stalled_since is None:
+                        stalled_since = now
+                    elif now - stalled_since >= 12.0:
+                        refire_why = (
+                            f"dead run ({state['busy']} cell(s) pinned at [*] with an idle kernel)"
+                        )
+                    if not (
+                        state["busy"] == 0
+                        and state["kernel"] == "idle"
+                        and state["bars"]
+                        and state["bars"] == parked_bars
+                    ):
+                        parked_bars = state["bars"] if state["busy"] == 0 else None
+                        parked_since = now
+                    elif parked_since is not None and now - parked_since >= 30.0:
+                        refire_why = (
+                            f"parked pipelines ({len(state['bars'])} progress bar(s) "
+                            "frozen with an idle kernel: a widget comm message was "
+                            "lost mid-burst)"
+                        )
+                    if refire_why and refires < 3:
+                        refires += 1
+                        stalled_since = None
+                        parked_bars = None
+                        parked_since = None
+                        sys.stderr.write(
+                            f"{label}: {refire_why}; re-firing run-all ({refires}/3)\n"
+                        )
+                        # cells pinned at [*] with an idle kernel (and a
+                        # parked pipeline alike) mean messages are being
+                        # swallowed somewhere between the notebook's SHARED
+                        # kernel connection and the kernel (the post-restart
+                        # session class; live-observed: a re-fire down the
+                        # same dead pipe just pinned 16 cells at [*]) -- so
+                        # escalate exactly like wait_execute_channel_ready
+                        # and run_cell: reconnect the websocket, then re-fire
+                        if refires >= 2:
+                            # a refire that didn't take means the kernel
+                            # itself may be blocked (see _interrupt_kernels)
+                            sys.stderr.write(f"{label}: escalating -- interrupting the kernel\n")
+                            _interrupt_kernels(self.server)
+                            time.sleep(1.0)
+                        self.evaluate(
+                            _RECONNECT_JS,
+                            timeout=30.0,
+                            label=f"{label}: kernel websocket reconnect",
+                        )
+                        time.sleep(1.0)  # let the socket re-establish
+                        self.evaluate(
+                            "() => { void (window.jupyterapp || window.jupyterlab)"
+                            ".commands.execute('notebook:run-all-cells'); return true; }",
+                            timeout=30.0,
+                            label=f"{label}: run-all re-fire",
+                        )
+                streak = streak + 1 if predicate(state) else 0
+                if streak >= stable_polls:
+                    if _TRACE:
+                        sys.stderr.write(
+                            f"trace: wait_until({label}): ok in "
+                            f"{time.monotonic() - started:.1f}s, {polls} polls "
+                            f"(snapshot avg {snap_total / polls:.2f}s, max {snap_max:.2f}s); "
+                            f"state: {state}\n"
+                        )
+                    return state
+                time.sleep(poll_s)
+        raise TimeoutError(
+            f"{label} not reached within {timeout}s ({polls} polls, snapshot "
+            f"avg {snap_total / max(polls, 1):.2f}s, max {snap_max:.2f}s, "
+            f"{refires} refires); last state: {state}"
+        )
 
     def wait_settled(
         self,
@@ -822,7 +1131,7 @@ class LabPage:
     def cell_output(self, index: int = -1) -> str:
         """The current output text of a cell (no re-run)."""
 
-        state = self.page.evaluate(_CELL_STATE_JS, index)
+        state = self.evaluate(_CELL_STATE_JS, index, timeout=30.0, label=f"cell_output({index})")
         assert state is not None, f"no cell at index {index}"
         return str(state["out"])
 
@@ -867,7 +1176,12 @@ class LabPage:
             attempt += 1
             budget_ms = int(max(min(20.0, deadline - time.monotonic()), 3.0) * 1000)
             result = dict(
-                self.page.evaluate(_DIRECT_EXECUTE_JS, {"index": index, "timeoutMs": budget_ms})
+                self.evaluate(
+                    _DIRECT_EXECUTE_JS,
+                    {"index": index, "timeoutMs": budget_ms},
+                    timeout=budget_ms / 1000 + 25.0,
+                    label=f"run_cell({index}): direct kernel execute",
+                )
             )
             if result.get("ok"):
                 if result.get("status") != "ok":
@@ -886,7 +1200,11 @@ class LabPage:
                     f"run_cell({index}): escalating -- reconnecting the notebook "
                     "kernel's shared websocket\n"
                 )
-                self.page.evaluate(_RECONNECT_JS)
+                self.evaluate(
+                    _RECONNECT_JS,
+                    timeout=30.0,
+                    label=f"run_cell({index}): kernel websocket reconnect",
+                )
             time.sleep(1.0)
         raise TimeoutError(
             f"cell {index} did not finish re-running within {timeout}s: every direct "
@@ -942,11 +1260,44 @@ class LabPage:
         )
 
 
-@pytest.fixture()
-def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest) -> Any:
-    """A fresh page (and console/error collectors) per test."""
+def _lab_page(
+    browser: Browser,
+    lab_server: LabServer,
+    request: pytest.FixtureRequest,
+    viewport: dict[str, int],
+) -> Any:
+    """The shared body of every page fixture (lab, lab1080, labtall).
 
-    page = browser.new_page(viewport={"width": 1500, "height": 1100})
+    Rerun-safe by construction: pytest-rerunfailures re-executes this
+    function-scoped generator on every attempt, so each attempt gets a
+    page PROVEN responsive before the test starts (a mid-test abort or a
+    watchdog renderer-kill in the previous attempt cannot leak a poisoned
+    page forward -- the one unresponsive-page retry recycles it), a
+    per-test hang net around the body, and a server with no live kernel
+    sessions left behind by teardown.
+    """
+
+    page: Page | None = None
+    for attempt in (1, 2):
+        if "probe" in _DISABLED:  # bisect knob: pre-patch fixture setup
+            page = browser.new_page(viewport=viewport)
+            break
+        with _page_watchdog(60.0, "fixture setup: browser.new_page"):
+            page = browser.new_page(viewport=viewport)
+        try:
+            # the page must PROVABLY answer an evaluate before the test
+            # starts -- a wedged/half-dead renderer here would otherwise
+            # spend the whole test budget masquerading as a slow app
+            with _page_watchdog(30.0, "fixture setup: fresh-page responsiveness probe"):
+                assert page.evaluate("() => 1 + 1") == 2
+            break
+        except Exception:
+            with contextlib.suppress(Exception):
+                page.close()
+            if attempt == 2:
+                raise
+            sys.stderr.write("fresh page unresponsive; recycling it once\n")
+    assert page is not None
     # repro aid for slow-CI timing bugs: LONGERON_BROWSER_CPU_THROTTLE=<rate>
     # slows the RENDERER by that factor via CDP (e.g. 8 approximates a
     # loaded 2-core runner on a fast dev machine). Off by default.
@@ -954,22 +1305,34 @@ def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest)
     if throttle > 1:
         cdp = page.context.new_cdp_session(page)
         cdp.send("Emulation.setCPUThrottlingRate", {"rate": throttle})
-    # a crashed renderer must fail fast, never masquerade as a hang: a
-    # pending page.evaluate on a crashed page waits forever (the CI
-    # eaten-clock failure mode; small /dev/shm kills renderers silently)
-    page.on(
-        "crash",
-        lambda _page: pytest.fail("chromium renderer crashed (see the /dev/shm note in conftest)"),
-    )
     driver = LabPage(page, lab_server)
-    yield driver
+    # the per-test net: ANY timeout-less playwright call a test makes
+    # (raw evaluates, locator.count()) parks forever on a frozen page;
+    # this net unsticks it minutes BEFORE pytest-timeout's thread method
+    # would os._exit the whole run (700s), so the test fails, artifacts
+    # save, teardown runs, and --reruns retries on a fresh page
+    with (
+        contextlib.nullcontext()
+        if "testnet" in _DISABLED
+        else _page_watchdog(600.0, f"test net: {request.node.name}")
+    ):
+        yield driver
     try:
         reports = request.node.stash.get(_PHASE_REPORTS, {})
         if any(report.failed for report in reports.values()):
-            driver.save_artifacts(ARTIFACTS, request.node.name)
+            with _page_watchdog(90.0, "fixture teardown: failure artifacts"):
+                driver.save_artifacts(ARTIFACTS, request.node.name)
     finally:
-        page.close()
+        with contextlib.suppress(Exception):  # a crashed page may refuse the close
+            page.close()
         # hermetic teardown: every test (and every rerun attempt) hands the
         # next one a server with NO live kernel sessions -- see
         # _shutdown_sessions for the CI evidence this encodes
         _shutdown_sessions(lab_server)
+
+
+@pytest.fixture()
+def lab(browser: Browser, lab_server: LabServer, request: pytest.FixtureRequest) -> Any:
+    """A fresh, probed-responsive page (and console/error collectors) per test."""
+
+    yield from _lab_page(browser, lab_server, request, {"width": 1500, "height": 1100})

@@ -51,7 +51,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import _PHASE_REPORTS, ARTIFACTS, REPO, LabPage, _shutdown_sessions
+from .conftest import REPO, _lab_page
 
 EVIDENCE = REPO / "build" / "evidence"
 
@@ -60,32 +60,14 @@ EVIDENCE = REPO / "build" / "evidence"
 def lab1080(browser: Any, lab_server: Any, request: pytest.FixtureRequest) -> Any:
     """A 1920x1080 page: the fit contract is stated at 1080p exactly."""
 
-    page = browser.new_page(viewport={"width": 1920, "height": 1080})
-    driver = LabPage(page, lab_server)
-    yield driver
-    try:
-        reports = request.node.stash.get(_PHASE_REPORTS, {})
-        if any(report.failed for report in reports.values()):
-            driver.save_artifacts(ARTIFACTS, request.node.name)
-    finally:
-        page.close()
-        _shutdown_sessions(lab_server)
+    yield from _lab_page(browser, lab_server, request, {"width": 1920, "height": 1080})
 
 
 @pytest.fixture()
 def labtall(browser: Any, lab_server: Any, request: pytest.FixtureRequest) -> Any:
     """A 1200x1900 portrait-ish page: the tall-host fill contract."""
 
-    page = browser.new_page(viewport={"width": 1200, "height": 1900})
-    driver = LabPage(page, lab_server)
-    yield driver
-    try:
-        reports = request.node.stash.get(_PHASE_REPORTS, {})
-        if any(report.failed for report in reports.values()):
-            driver.save_artifacts(ARTIFACTS, request.node.name)
-    finally:
-        page.close()
-        _shutdown_sessions(lab_server)
+    yield from _lab_page(browser, lab_server, request, {"width": 1200, "height": 1900})
 
 
 def _drag_slider(lab: Any, description: str, fraction: float) -> None:

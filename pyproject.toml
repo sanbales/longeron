@@ -363,9 +363,12 @@ check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
 # env's COPY of the vendored jupyter-elk bundle, and testing a stale copy
 # proves nothing (browser binary: `pixi run -e browser playwright install
 # chromium`, once per machine). --reruns 1 is the retry-once flake policy
-# (see tests/browser/README.md). Per-test timeout (thread method dumps every
-# stack) turns a runner-side hang into a diagnosable failure instead of an
-# eaten job clock; -v streams per-test progress to the CI log live.
+# (see tests/browser/README.md). Hang layering: conftest's page watchdog
+# unsticks a frozen page (renderer kill -> labeled TEST failure -> rerun)
+# well inside the 700s budget, so pytest-timeout is the backstop of last
+# resort -- its thread method dumps every stack then os._exit(1)s the WHOLE
+# run (no rerun, no summary); if it ever fires, the watchdog itself failed.
+# -v streams per-test progress to the CI log live.
 cmd = "pytest -v -m browser --reruns 1 --timeout 700 --timeout-method thread tests/browser"
 env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
