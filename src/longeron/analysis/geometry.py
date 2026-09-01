@@ -525,7 +525,7 @@ def drone_geometry(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
-    fc_mass: float = 0.039,
+    fc_mass: float | None = None,
     arm_count: int = 4,
     coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
@@ -611,7 +611,6 @@ def drone_geometry(
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
-    fc_t = board_thickness(fc_mass)
 
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
     motor_y = arm_thickness / 2 + motor_h / 2
@@ -650,7 +649,15 @@ def drone_geometry(
     )
     battery = _box(bat_l, bat_w, bat_h, cy=-(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2))
     esc = _box(_BOARD_SIDE, esc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t / 2)
-    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2)
+    # the flight controller is drawn ONLY when the caller declares one
+    # (the camera pattern): the model provides fc_mass, never a default
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:
+        fc_t = board_thickness(fc_mass)
+        fc = _box(
+            _BOARD_SIDE, fc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2
+        )
+        fc_part = [("fc", fc, 1.0)]
 
     bay_part: list[tuple[str, Mesh, float]] = []
     if bay_length is not None and bay_width is not None and bay_height is not None:
@@ -682,7 +689,7 @@ def drone_geometry(
             *((f"prop{i + 1}", prop, 0.55) for i, prop in enumerate(props)),
             ("battery", battery, 1.0),
             ("esc", esc, 1.0),
-            ("fc", fc, 1.0),
+            *fc_part,
             *bay_part,
             *camera_part,
         ]
@@ -727,7 +734,7 @@ def drone_geometry(
         ("props", _merge(*props), 0.55),
         ("battery", battery, 1.0),
         ("esc", esc, 1.0),
-        ("fc", fc, 1.0),
+        *fc_part,
         *bay_part,
         *camera_part,
     ]
@@ -1648,6 +1655,7 @@ def winged_vtol_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    fc_mass: float | None = None,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale cruciform tail-sitter VTOL, baked in its hover attitude.
@@ -1763,13 +1771,16 @@ def winged_vtol_geometry(
         ],
         segments,
     )
-    fc_t = board_thickness(0.039)
-    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.08 * fuselage_length)
     cam = _box(0.020, 0.016, 0.016, cx=half - 0.10 * fuselage_length, cy=0.30 * body_r)
 
     def stand(mesh: Mesh) -> Mesh:  # hover attitude: nose up
         return _rotate_z(mesh[0], pi / 2), mesh[1]
 
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:  # drawn only when the model declares one
+        fc_t = board_thickness(fc_mass)
+        fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.08 * fuselage_length)
+        fc_part = [("fc", stand(fc), 1.0)]
     return _pack(
         [
             ("frame", stand(fuselage), 1.0),
@@ -1779,7 +1790,7 @@ def winged_vtol_geometry(
             ("props", stand(_merge(*props)), 0.55),
             ("bay", stand(bay), 1.0),
             ("battery", stand(battery), 1.0),
-            ("fc", stand(fc), 1.0),
+            *fc_part,
             ("camera", stand(cam), 1.0),
         ]
     )
@@ -1794,6 +1805,7 @@ def interceptor_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    fc_mass: float | None = None,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale streamlined interceptor: slender body, pusher prop.
@@ -1879,8 +1891,11 @@ def interceptor_geometry(
         ],
         segments,
     )
-    fc_t = board_thickness(0.039)
-    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.05 * body_length)
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:  # drawn only when the model declares one
+        fc_t = board_thickness(fc_mass)
+        fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.05 * body_length)
+        fc_part = [("fc", fc, 1.0)]
     cam = _box(0.020, 0.016, 0.016, cx=half - 0.15 * body_length)
 
     return _pack(
@@ -1892,7 +1907,7 @@ def interceptor_geometry(
             ("props", prop, 0.55),
             ("bay", bay, 1.0),
             ("battery", battery, 1.0),
-            ("fc", fc, 1.0),
+            *fc_part,
             ("camera", cam, 1.0),
         ]
     )
@@ -1907,6 +1922,7 @@ def flying_wing_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    fc_mass: float | None = None,
     sweep_deg: float = 0.0,
     washout_deg: float = 0.0,
     section: str = "0015",
@@ -2101,10 +2117,13 @@ def flying_wing_geometry(
 
     # the internals, drawn at their true stations inside the pod
     battery = _box(bat_l, bat_h, bat_w, cx=x_bay_nose - 0.62 * bay_len, cy=y_bay - 0.1 * bay_r)
-    fc_t = board_thickness(0.039)
-    fc = _box(
-        _BOARD_SIDE, fc_t, _BOARD_SIDE, cx=x_bay_nose - 0.30 * bay_len, cy=y_bay + 0.3 * bay_r
-    )
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:  # drawn only when the model declares one
+        fc_t = board_thickness(fc_mass)
+        fc = _box(
+            _BOARD_SIDE, fc_t, _BOARD_SIDE, cx=x_bay_nose - 0.30 * bay_len, cy=y_bay + 0.3 * bay_r
+        )
+        fc_part = [("fc", fc, 1.0)]
     cam = _box(0.020, 0.016, 0.016, cx=x_bay_nose - 0.07 * bay_len, cy=y_bay - 0.25 * bay_r)
 
     return _pack(
@@ -2115,7 +2134,7 @@ def flying_wing_geometry(
             ("props", _merge(*prop_meshes), 0.55),
             ("bay", bay, 1.0),
             ("battery", battery, 1.0),
-            ("fc", fc, 1.0),
+            *fc_part,
             ("camera", cam, 1.0),
         ],
         colors={"winglets": COLORS["tail"]},
@@ -2128,6 +2147,7 @@ def teardrop_quad_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    fc_mass: float | None = None,
     arm_thickness: float = _ARM_THICKNESS,
     arm_width: float = _ARM_WIDTH,
     segments: int = 24,
@@ -2202,8 +2222,11 @@ def teardrop_quad_geometry(
         segments,
     )
     bay = (_rotate_z(bay_tube[0], pi / 2), bay_tube[1])
-    fc_t = board_thickness(0.039)
-    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cy=y_widest - 0.10 * fuselage_length)
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:  # drawn only when the model declares one
+        fc_t = board_thickness(fc_mass)
+        fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cy=y_widest - 0.10 * fuselage_length)
+        fc_part = [("fc", fc, 1.0)]
     cam = _box(0.020, 0.016, 0.016, cx=body_r + 0.004, cy=y_widest)
 
     return _pack(
@@ -2213,7 +2236,7 @@ def teardrop_quad_geometry(
             ("props", _merge(*props), 0.55),
             ("bay", bay, 1.0),
             ("battery", battery, 1.0),
-            ("fc", fc, 1.0),
+            *fc_part,
             ("camera", cam, 1.0),
         ]
     )
@@ -2427,7 +2450,23 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
         "bay_length": optional("airframe", "bayLength", None),
         "bay_width": optional("airframe", "bayWidth", None),
         "bay_height": optional("airframe", "bayHeight", None),
+        # the drawn flight controller: every fleet shell declares the one
+        # catalog part, so its DECLARED mass sizes the board -- read from
+        # the model, absent when the catalog does not declare it
+        "fc_mass": _catalog_fc_mass(study),
     }
+
+
+def _catalog_fc_mass(study: TradeStudy) -> float | None:
+    """The catalog FlightController's declared mass, from the model.
+
+    ``None`` when the study's model declares no such part (honest
+    absence: no board is drawn) -- the geometry never invents one.
+    """
+    try:
+        return float(study.interp.evaluate("ScoutParts::F450Kit::FlightController::mass"))
+    except Exception:
+        return None
 
 
 def airframe_geometry(
@@ -2441,6 +2480,7 @@ def airframe_geometry(
     prop_diameter: float,
     motor_mass: float,
     battery_mass: float,
+    fc_mass: float | None = None,
     esc_mass: float = 0.014,
     arm_thickness: float | None = None,
     arm_width: float | None = None,
@@ -2504,6 +2544,7 @@ def airframe_geometry(
                 prop_diameter=prop_diameter,
                 motor_mass=motor_mass,
                 battery_mass=battery_mass,
+                fc_mass=fc_mass,
                 **arm_kw,
             )
         box_kw: dict[str, Any] = {}
@@ -2518,6 +2559,7 @@ def airframe_geometry(
             motor_mass=motor_mass,
             battery_mass=battery_mass,
             esc_mass=esc_mass,
+            fc_mass=fc_mass,
             arm_count=arm_count if arm_count > 0 else 4,
             coaxial=arm_count > 0 and motor_count == 2 * arm_count,
             camera=camera,
@@ -2533,6 +2575,7 @@ def airframe_geometry(
             prop_diameter=prop_diameter,
             motor_mass=motor_mass,
             battery_mass=battery_mass,
+            fc_mass=fc_mass,
             sweep_deg=sweep_deg,
             washout_deg=washout_deg,
             # None = no declared section: the legacy symmetric bay loft
@@ -2552,6 +2595,7 @@ def airframe_geometry(
             prop_diameter=prop_diameter,
             motor_mass=motor_mass,
             battery_mass=battery_mass,
+            fc_mass=fc_mass,
         )
     return winged_vtol_geometry(
         wing_span=wing_span,
@@ -2561,6 +2605,7 @@ def airframe_geometry(
         prop_diameter=prop_diameter,
         motor_mass=motor_mass,
         battery_mass=battery_mass,
+        fc_mass=fc_mass,
     )
 
 
@@ -2602,11 +2647,12 @@ def mission_geometry(
         bay_length=p["bay_length"],
         bay_width=p["bay_width"],
         bay_height=p["bay_height"],
+        fc_mass=p["fc_mass"],
         **arm_kw,
     )
 
 
-def architecture_params(study: TradeStudy, architecture: Architecture) -> dict[str, float]:
+def architecture_params(study: TradeStudy, architecture: Architecture) -> dict[str, float | None]:
     """Geometry inputs from a drone-catalog mix.
 
     Expects the ``TradeQuad``-style variation points ``motors`` (attribute
@@ -2630,6 +2676,9 @@ def architecture_params(study: TradeStudy, architecture: Architecture) -> dict[s
         "prop_diameter_in": attr("props", "diameterIn"),
         "battery_mass": attr("battery", "mass"),
         "esc_mass": attr("esc", "mass"),
+        # the sized assembly inherits MultiRotor's declared flight
+        # controller: its catalog mass sizes the drawn board
+        "fc_mass": _catalog_fc_mass(study),
     }
 
 
@@ -2652,7 +2701,7 @@ def to_cadquery(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
-    fc_mass: float = 0.039,
+    fc_mass: float | None = None,
     arm_count: int = 4,
     coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
@@ -2694,7 +2743,6 @@ def to_cadquery(
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
-    fc_t = board_thickness(fc_mass)
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
 
     frame = cq.Workplane("XZ").box(plate_side, plate_side, _PLATE_THICKNESS)
@@ -2774,12 +2822,16 @@ def to_cadquery(
     esc = cq.Workplane("XZ", origin=(0, _PLATE_THICKNESS / 2 + esc_t / 2, 0)).box(
         _BOARD_SIDE, _BOARD_SIDE, esc_t
     )
-    fc = cq.Workplane("XZ", origin=(0, _PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2, 0)).box(
-        _BOARD_SIDE, _BOARD_SIDE, fc_t
-    )
     assembly.add(battery, name="battery", color=color("battery"))
     assembly.add(esc, name="esc", color=color("esc"))
-    assembly.add(fc, name="fc", color=color("fc"))
+    # the flight controller mirrors the mesh path's contract: drawn ONLY
+    # when the caller declares one (fc_mass from the model, never a default)
+    if fc_mass is not None:
+        fc_t = board_thickness(fc_mass)
+        fc = cq.Workplane("XZ", origin=(0, _PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2, 0)).box(
+            _BOARD_SIDE, _BOARD_SIDE, fc_t
+        )
+        assembly.add(fc, name="fc", color=color("fc"))
     if bay_length is not None and bay_width is not None and bay_height is not None:
         if min(bay_length, bay_width, bay_height) <= 0:
             raise AnalysisError("bay dimensions must be positive")

@@ -11,8 +11,20 @@ from longeron.analysis import AnalysisError, geometry
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
-RACER = {"prop_diameter_in": 5.0, "motor_mass": 0.033, "battery_mass": 0.19, "esc_mass": 0.012}
-CRUISER = {"prop_diameter_in": 10.0, "motor_mass": 0.056, "battery_mass": 0.18, "esc_mass": 0.009}
+RACER = {
+    "prop_diameter_in": 5.0,
+    "motor_mass": 0.033,
+    "battery_mass": 0.19,
+    "esc_mass": 0.012,
+    "fc_mass": 0.039,  # the modeled craft declares the catalog FC: the test asks explicitly
+}
+CRUISER = {
+    "prop_diameter_in": 10.0,
+    "motor_mass": 0.056,
+    "battery_mass": 0.18,
+    "esc_mass": 0.009,
+    "fc_mass": 0.039,
+}
 
 QUAD_MAP = {
     "frame": "Rotorcraft::QuadCopter::chassis",
@@ -403,7 +415,6 @@ class TestSplitInstances:
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         assert mesh["cad"] == {
             **RACER,
-            "fc_mass": 0.039,
             "arm_count": 4,
             "coaxial": False,
             "arm_thickness": geometry._ARM_THICKNESS,
@@ -847,6 +858,7 @@ WINGED = {
     "prop_diameter": 0.2794,
     "motor_mass": 0.183,
     "battery_mass": 1.92,
+    "fc_mass": 0.039,
 }
 DART = {
     "body_length": 1.25,
@@ -856,12 +868,14 @@ DART = {
     "prop_diameter": 0.2794,
     "motor_mass": 0.32,
     "battery_mass": 0.78,
+    "fc_mass": 0.039,
 }
 TEARDROP = {
     "fuselage_length": 0.62,
     "prop_diameter": 0.2794,
     "motor_mass": 0.183,
     "battery_mass": 1.32,
+    "fc_mass": 0.039,
 }
 
 
@@ -1398,6 +1412,7 @@ class TestFlyingWingPlanform:
         "prop_diameter": 0.2794,
         "motor_mass": 0.155,
         "battery_mass": 0.912,
+        "fc_mass": 0.039,
     }
 
     def test_tips_ride_aft_of_the_root(self):
@@ -1559,6 +1574,7 @@ class TestFlyingWingPlanform:
             prop_diameter=params["prop_diameter"],
             motor_mass=params["motor_mass"],
             battery_mass=params["battery_mass"],
+            fc_mass=params["fc_mass"],  # the catalog FC, mined from the model
             sweep_deg=22.0,
             washout_deg=3.0,
             section="reflexed0015",
@@ -1932,6 +1948,7 @@ class TestArchitectureBridge:
             "prop_diameter_in": 10.0,
             "battery_mass": 0.18,
             "esc_mass": 0.009,
+            "fc_mass": 0.039,  # MultiRotor's declared FC, read from the model
         }
         mesh = geometry.architecture_geometry(study, arch)
         assert len(mesh["parts"]) == 6
@@ -1962,7 +1979,19 @@ class TestCadqueryBridge:
             "prop4",
             "battery",
             "esc",
+            "fc",
         }
+
+    def test_undeclared_fc_is_not_drawn(self):
+        # the API never invents parts: no fc_mass means no board, in BOTH
+        # engines (the CI matrix caught a hardcoded default inventing one
+        # for crafts whose model declares no flight controller)
+        pytest.importorskip("cadquery")
+        bare = {k: v for k, v in RACER.items() if k != "fc_mass"}
+        mesh_names = [p["name"] for p in geometry.drone_geometry(**bare)["parts"]]
+        assert "fc" not in mesh_names
+        cad_names = {child.name for child in geometry.to_cadquery(**bare).children}
+        assert "fc" not in cad_names
 
     def test_camera_mounts_as_a_child(self):
         pytest.importorskip("cadquery")

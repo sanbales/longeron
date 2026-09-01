@@ -189,11 +189,18 @@ def drone_scene(
         )
     props = list(slots["propellers"])
     camera = dict(slots["camera"].slots) if "camera" in slots else None
+    # the flight controller rides the model: MultiRotor declares the part
+    # (the F450 kit's board), so its declared mass sizes the drawn stack --
+    # absent from the model means absent from the scene (honest absence)
+    fc_mass = (
+        float(slots["flightController"].slots["mass"]) if "flightController" in slots else None
+    )
     mesh = geometry.drone_geometry(
         prop_diameter_in=float(props[0].slots["diameter"]) / geometry.IN,
         motor_mass=float(motors[0].slots["mass"]),
         battery_mass=float(slots["battery"].slots["mass"]),
         esc_mass=_ESC_MASS,
+        fc_mass=fc_mass,
         arm_count=arm_count,
         coaxial=coaxial,
         split_instances=True,
@@ -202,7 +209,7 @@ def drone_scene(
     part_map = {
         "frame": slots["chassis"].id,
         "battery": slots["battery"].id,
-        "fc": slots["flightController"].id,
+        **({"fc": slots["flightController"].id} if fc_mass is not None else {}),
         **({"camera": slots["camera"].id} if camera is not None else {}),
         **{f"motor{i + 1}": motor.id for i, motor in enumerate(motors)},
         **{f"prop{i + 1}": prop.id for i, prop in enumerate(props)},
@@ -302,6 +309,12 @@ def scene_for(
                 extras["camera"] = {
                     k: float(v) for k, v in slots.items() if isinstance(v, (int, float))
                 }
+        except Exception:
+            pass
+        try:  # the declared flight controller sizes the drawn board
+            fc_usage = interp.resolve(f"{qname}::flightController")
+            if isinstance(fc_usage, (M.Definition, M.Usage)):
+                extras["fc_mass"] = float(interp.instantiate(fc_usage).slots["mass"])
         except Exception:
             pass
         shell = geometry.airframe_geometry(

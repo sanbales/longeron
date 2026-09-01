@@ -10,7 +10,7 @@ from longeron.analysis import geometry
 from longeron.widgets import viewer3d
 
 MESH = geometry.drone_geometry(
-    prop_diameter_in=5.0, motor_mass=0.033, battery_mass=0.19, esc_mass=0.012
+    prop_diameter_in=5.0, motor_mass=0.033, battery_mass=0.19, esc_mass=0.012, fc_mass=0.039
 )
 
 

@@ -40,7 +40,7 @@ def drone_model():
 
 def _quad_mesh():
     return geometry.drone_geometry(
-        prop_diameter_in=9.0, motor_mass=0.06, battery_mass=0.38, esc_mass=0.012
+        prop_diameter_in=9.0, motor_mass=0.06, battery_mass=0.38, esc_mass=0.012, fc_mass=0.039
     )
 
 
@@ -71,6 +71,7 @@ def _split_mesh():
         motor_mass=0.06,
         battery_mass=0.38,
         esc_mass=0.012,
+        fc_mass=0.039,
         split_instances=True,
     )
 
