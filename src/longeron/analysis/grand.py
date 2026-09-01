@@ -289,6 +289,7 @@ def scene_for(
             ("centerSectionSpan", "center_section_span"),
             ("podLength", "pod_length"),
             ("podDiameter", "pod_diameter"),
+            ("podStation", "pod_station"),
             ("bayLength", "bay_length"),
             ("bayWidth", "bay_width"),
             ("bayHeight", "bay_height"),

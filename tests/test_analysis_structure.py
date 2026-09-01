@@ -183,8 +183,10 @@ class TestConstraintNetworkPayload:
     def test_participation_is_transitive(self, study):
         """propFit touches only props+motors directly; canCatch reaches
         the drag/power/energy points THROUGH the derived maxTargetSpeed
-        build-up (but not the material -- dash physics is massless);
-        launchLift reaches the material through the sized structure."""
+        build-up -- and since the dash placard reads the wing loading at
+        mission mass, it now reaches the material through the sized
+        structure too (a placard rewards the grams dash physics alone
+        never priced); launchLift reaches the material the same way."""
 
         payload = structure.constraint_network_payload(study)
         names = [v["name"] for v in payload["variables"]]
@@ -195,7 +197,7 @@ class TestConstraintNetworkPayload:
 
         assert touched("propFit") == {"props", "motors"}
         assert touched("cellMatch") == {"battery", "motors"}  # the class axis
-        assert touched("canCatch") == {"airframe", "motors", "props", "battery"}
+        assert touched("canCatch") == {"airframe", "motors", "props", "battery", "material"}
         assert "material" in touched("launchLift")
 
     def test_violation_tinting(self, study):

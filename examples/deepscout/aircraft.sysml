@@ -72,6 +72,13 @@ package DeepScout {
         attribute motorCount : Integer;     // populated motor stations
         attribute diskAreaFactor : Real;    // total disk area / one prop disk
         attribute hoverThrustFactor : Real; // req. thrust/weight (0 = rail)
+        // the commanded-tilt translation cap of the bench family
+        // (MultiRotor.maxOperationalTilt), stated on the fleet shells the
+        // missions dash: rotor-borne craft translate by tilting, so their
+        // dash may never outrun MaxCruiseSpeed at this tilt.  Only the
+        // rotor-borne shells value it; the wing-borne dash rides the gust
+        // placard instead and never reads it.
+        attribute maxTiltDeg : Real;        // deg, rotor-borne dash tilt cap
         attribute climbDrawFraction : Real; // sustained climb-out draw / full power
         attribute payloadCapacity : Real;   // kg
         attribute hoverOpsSec : Real;       // hover budget per sortie, s
@@ -265,6 +272,25 @@ package DeepScout {
             in dragCoeff : Real = 1.1;
             return : Real = frontalArea * dragCoeff;
         }
+
+        calc def TipPropRecovery {
+            doc /* Span-efficiency uplift of a wingtip-mounted propeller:
+                   a disc turning against the tip vortex recovers part of
+                   the induced loss, and the recovered share grows with
+                   the disc-to-span ratio (Snyder & Zumwalt, J. Aircraft
+                   6(5) 1969; Miranda & Brennan, AIAA-86-1802; the NASA
+                   wingtip pusher test, Patterson & Bartlett).  The
+                   linear slope is a NOMINAL teaching value: at the
+                   catalog's reference disc it puts the uplift near 1.21,
+                   inside the 1.1..1.28 family conceptual practice
+                   quotes.  Multiplies the Oswald factor (spanEff in
+                   CruisePower); root- and mid-span stations earn no
+                   uplift. */
+            in diskDiameter : Real;     // m, the tip station's disc
+            in span : Real;             // m
+            in recoveryPerDiskSpan : Real = 2.0;   // NOMINAL slope
+            return : Real = 1.0 + recoveryPerDiskSpan * diskDiameter / span;
+        }
     }
 
     package Structures {
@@ -345,6 +371,29 @@ package DeepScout {
             in sensorPowerW : Real;
             return : Real = usableEnergyJ
                 / (loiterPowerW + sensorPowerW) / 60.0;
+        }
+
+        calc def GustPlacardSpeed {
+            doc /* FAR 23.341-style alleviated sharp-edged gust placard:
+                   the speed at which the gust load reaches the DESIGN
+                   load factor.  n(V) = 1 + Kg rho U V a / (2 W/S),
+                   solved for n = nDesign (Raymer ch. 14; FAR 23.341;
+                   Pratt alleviation Kg = 0.88 mu / (5.3 + mu) with
+                   mu = 2 (W/S) / (rho c a g)).  nDesign = 2.5 is the
+                   same design point the spar chain cites, ON PURPOSE
+                   material-independent: carbon bending headroom must
+                   not buy past a placard flutter would never honor.
+                   gustU = 2.0 m/s is a light-turbulence dash gust
+                   (MIL-HDBK-1797 light class; NOMINAL -- at the 7.6 m/s
+                   FAR-23 rough-air figure nothing in the catalog
+                   catches the crossing target). */
+            in wingLoading : Real;          // N/m^2 at mission mass
+            in liftSlope : Real;            // 2 pi AR / (AR + 2), per rad
+            in gustAlleviation : Real;      // Kg, Pratt
+            in nDesign : Real = 2.5;        // the spar chain's design point
+            in gustU : Real = 2.0;          // m/s, light-gust dash placard
+            return : Real = (nDesign - 1.0) * 2.0 * wingLoading
+                / (gustAlleviation * 1.225 * gustU * liftSlope);
         }
     }
 

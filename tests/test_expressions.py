@@ -89,6 +89,11 @@ def interp():
         ("abs(-3)", 3),
         ("max(1, 5, 2)", 5),
         ("min((4, 2, 8))", 2),
+        # empty extrema degrade to the missing value instead of raising:
+        # the M0 population's phantom-feature convention (an unpopulated
+        # chain evaluates to None, and downstream guards absorb it)
+        ("min(())", None),
+        ("max(())", None),
         ("sum(1..10)", 55),
         ("floor(2.9)", 2),
         ("10 [si]", 10),  # measurement references evaluate to the magnitude

@@ -16,6 +16,7 @@ package WingedVtol {
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
     private import DeepScout::Packaging::*;
+    private import DeepScout::Structures::*;
 
     part def VtolWing :> Airframe {
         // fuselage + BOTH cruciform wing pairs + four wingtip pods: the
@@ -44,8 +45,18 @@ package WingedVtol {
             + 4.0 * SkinFrictionDrag(    // wingtip motor pods
                 wettedArea = BodyWettedArea(length = 0.12, diameter = 0.045),
                 formFactor = BodyFormFactor(length = 0.12, diameter = 0.045)));
-        attribute mass : Real = 1.90;   attribute cost : Real = 950.0;
-        attribute oswald : Real = 0.82;   attribute tipPropBonus : Real = 1.28;
+        attribute mass : Real = 1.90 + tipStructMass;
+        attribute cost : Real = 950.0;   // the tip doublers' tube stock is invoice noise
+        attribute oswald : Real = 0.82;
+        // the wingtip stations earn their induced-drag recovery the same
+        // way they cost structure: DERIVED, not quoted.  The reference
+        // disc follows the flying-wing branch's convention (the heavy
+        // catalog's APC 11x5.5E); the uplift applies to the MAIN pair's
+        // span, the one the cruise chain reads -- the secondary pair's
+        // own recovery is inside the same nominal slope.
+        attribute propDiameterRef : Real = 0.2794;   // m, APC 11x5.5E disc
+        attribute tipPropBonus : Real = TipPropRecovery(
+            diskDiameter = propDiameterRef, span = wingSpan);
         attribute loiterSpeed : Real = 15.0;
         attribute cruiseSpeed : Real = 21.0;
         attribute motorCount : Integer = 4;
@@ -57,6 +68,52 @@ package WingedVtol {
         attribute armCount : Integer = 0;      // rotors ride the wingtips
         attribute sparRadius : Real = 0.012;   // fits the 12% root section
         attribute designGrossKg : Real = 6.0;  // big pack + heavy payload
+
+        // ----- tip structure: the spars carry the four stations --------
+        // A motor pod at a wingtip is a point load the spar must carry:
+        // the arm-sizing pattern (stress AND stiffness walls) prices a
+        // doubler over each half-span for the tip unit's inertial load at
+        // the spar chain's design load factor.  The doubler bonds into
+        // the molded shell, so it rides the SHELL mass at the nominal
+        // 6061 tube figures of the materials catalog -- not the material
+        // trade axis.
+        attribute tipUnitKg : Real = 0.24;      // reference X4112S-class motor + pod + mount
+        attribute tipLoadN : Real = 2.5 * tipUnitKg * 9.81;
+        attribute secondarySpan : Real = 0.62 * wingSpan;   // the declared 0.62-span pair
+        attribute mainTipWall : Real = max(
+            TubeWallForStress(momentNm = tipLoadN * 0.5 * wingSpan,
+                              radius = sparRadius, yieldPa = 2.4e8),
+            TubeWallForStiffness(tipLoadN = tipLoadN, length = 0.5 * wingSpan,
+                                 radius = sparRadius, modulusPa = 6.9e10));
+        attribute secondaryTipWall : Real = max(
+            TubeWallForStress(momentNm = tipLoadN * 0.5 * secondarySpan,
+                              radius = sparRadius, yieldPa = 2.4e8),
+            TubeWallForStiffness(tipLoadN = tipLoadN, length = 0.5 * secondarySpan,
+                                 radius = sparRadius, modulusPa = 6.9e10));
+        attribute tipStructMass : Real =
+            2.0 * TubeMass(radius = sparRadius, wall = mainTipWall,
+                           length = 0.5 * wingSpan, density = 2700.0)
+            + 2.0 * TubeMass(radius = sparRadius, wall = secondaryTipWall,
+                             length = 0.5 * secondarySpan, density = 2700.0);
+
+        // ----- engine-out: the price of the tip stations ---------------
+        // One main-tip motor dead at the wing-borne climb-out is the
+        // engine-out fin-sizing case of conventional practice (Raymer):
+        // the live mirror station's full static thrust at the half-span
+        // arm, as a yawing-moment coefficient at the slowest wing-borne
+        // point, against what the yaw surfaces hold.  The cruciform has
+        // no tail boom -- the vertical pair shares the wing's own
+        // quarter-chord station -- so its rudder authority rides only
+        // the trailing-edge band's short chordwise arm.  Checked by
+        // ScoutMissions::StabilityRequirements::EngineOutYaw.
+        attribute engineOutThrustN : Real = 33.0;   // reference X4112S station, full throttle
+        attribute rudderArm : Real = 0.75 * wingChord;   // m, TE band aft of the shared quarter-chord
+        attribute sideForceCeiling : Real = 0.8;    // fin CLmax with full deflection (Raymer)
+        attribute finYawVolume : Real =
+            secondaryWingArea * rudderArm / (wingArea * wingSpan);
+        attribute engineOutYawCn : Real = engineOutThrustN * 0.5 * wingSpan
+            / (0.5 * 1.225 * loiterSpeed * loiterSpeed * wingArea * wingSpan);
+        attribute engineOutAuthorityCn : Real = sideForceCeiling * finYawVolume;
 
         // the payload bay IS the fuselage interior: the skin is already
         // priced in the buildup above, and the full mid-body (the lathed

@@ -112,7 +112,7 @@ class TestExternalAnalysisBinding:
         build = mdao.build_problem(missions, "ScoutSizing::IsrPrime")
         build.problem.run_model()
         # first-order body: buildup CdA parasite + induced at 15 m/s
-        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(75.913, abs=0.01)
+        assert build.problem.get_val("loiterPowerW")[0] == pytest.approx(79.050, abs=0.01)
         assert build.externals == {}
 
     def test_external_fidelity_swaps_the_component(self, missions):
@@ -122,7 +122,7 @@ class TestExternalAnalysisBinding:
         build.problem.run_model()
         power = build.problem.get_val("loiterPowerW")[0]
         assert build.externals == {"loiterPowerW": "uav_aero:CruisePowerPolar"}
-        assert power == pytest.approx(81.04, abs=0.5)  # Re + stall terms
+        assert power == pytest.approx(84.38, abs=0.5)  # Re + stall terms
         # the external output composes with interpreter-backed components
         station = build.problem.get_val("stationMinutes")[0]
         energy = build.problem.get_val("usableEnergyJ")[0]
@@ -329,9 +329,9 @@ class TestDisciplineGrouping:
 
     def test_flat_promoted_names_keep_working(self, grouped):
         p = grouped.problem
-        assert p.get_val("stationMinutes")[0] == pytest.approx(208.736, abs=0.01)
+        assert p.get_val("stationMinutes")[0] == pytest.approx(200.352, abs=0.01)
         assert p.get_val("dragArea")[0] == pytest.approx(0.019574, abs=1e-6)
-        assert p.get_val("massKg")[0] == pytest.approx(5.1468, abs=1e-3)
+        assert p.get_val("massKg")[0] == pytest.approx(5.4368, abs=1e-3)
 
     def test_external_component_joins_its_discipline(self, missions):
         from openmdao.core.component import Component

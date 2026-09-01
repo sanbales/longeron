@@ -297,7 +297,7 @@ class TestSizingStrip:
         dash.optimize.click()
         assert dash.loiter.value == pytest.approx(11.0)  # the stall floor binds
         station = float(dash.problem.problem.get_val("stationMinutes")[0])
-        assert station == pytest.approx(300.4, abs=0.5)
+        assert station == pytest.approx(279.7, abs=0.5)
         dash.loiter.value = 15.0
 
     def test_margin_rows_render(self, dash):
@@ -307,7 +307,7 @@ class TestSizingStrip:
 class TestVerdictStrip:
     def test_design_point_is_sat_with_witness(self, dash):
         assert dash.smt_sat.status == "sat"
-        assert dash.smt_sat.witness["stationMinutes"] == pytest.approx(208.7, abs=0.1)
+        assert dash.smt_sat.witness["stationMinutes"] == pytest.approx(200.4, abs=0.1)
         assert "SAT" in dash.verdicts.value
 
     def test_what_if_is_unsat_and_names_the_blockers(self, dash):

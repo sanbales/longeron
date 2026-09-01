@@ -24,6 +24,7 @@ package FlyingWings {
     private import DeepScout::Aerodynamics::*;
     private import DeepScout::Packaging::*;
     private import DeepScout::StabilityControl::*;
+    private import DeepScout::Structures::*;
 
     abstract part def FlyingWing :> Airframe {
         doc /* What every flying wing in the branch shares: tailless,
@@ -55,6 +56,10 @@ package FlyingWings {
         // catalog); every catalog prop the missions cross swings a
         // rise well inside the clearance cushion.
         attribute propDiameterRef : Real = 0.2794;  // m, APC 11x5.5E disc
+        // where the pushers ride: the installation vocabulary of the
+        // branch -- "root" stations flank the root bay, "tip" stations
+        // ride the wingtips (the twin's trade axis; see FlyingWingTwinTip)
+        attribute propStation : String = "root";    // root | tip
         attribute podStation : Real = 0.0;       // m, spanwise pusher station
         attribute podBaseLength : Real = 0.06;   // m, motor + mount housing
         attribute discClearance : Real = 0.03;   // m, disc plane behind the TE
@@ -353,5 +358,78 @@ package FlyingWings {
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
         part camera : ScoutParts::F450Kit::Camera;
+    }
+
+    part def FlyingWingTwinTip :> FlyingWingTwin {
+        doc /* The twin courier with its pushers moved to the wingtips:
+               the SAME shell, planform, bay, and counter-rotation --
+               only the installation station moves, so the mission
+               catalog crosses root against tip as a real trade axis.
+               What the tip buys: each disc turns against its tip
+               vortex and recovers part of the induced loss
+               (tipPropBonus, DERIVED below -- the root stations earn
+               no bonus).  What the tip costs, each priced here: the
+               spar carries a motor pod at the tip (tipStructMass), and
+               the dead-engine yaw arm becomes the whole half-span (the
+               EngineOutYaw check).  The arrangement is the wingtip
+               PUSHER of the NASA tip-prop tests (Patterson & Bartlett;
+               Miranda & Brennan, AIAA-86-1802): the branch's whole
+               installation chain -- mounts, clearance geometry, drag
+               ledger -- is a pusher chain, and the vortex is recovered
+               BEHIND the tip.  A tractor at the tip would hang its
+               motor ahead of the swept tip's leading edge: a different
+               installation family with no chain in this branch.  The
+               pack slides forward on the bay rail to hold the declared
+               CG against the aft-moved motor mass, so cgMac stays at
+               the inherited 0.91 and every S&C check reads the same
+               stations. */
+        attribute propStation : String = "tip";
+        // the disc rides centered on the tip, where the vortex it
+        // recovers rolls up.  The inherited pod chain prices the
+        // clearance at this station: past the tip the trailing-edge law
+        // keeps rising up the WINGLET (the winglet rakes aft with the
+        // wing), so the extrapolated rise is the honest clearance the
+        // disc must still bridge -- tip pods pay pod length too.
+        attribute podStation : Real = 0.5 * wingSpan;
+        // the derived recovery, from the same reference disc the pod
+        // chain already carries (NOMINAL; see TipPropRecovery)
+        attribute tipPropBonus : Real = TipPropRecovery(
+            diskDiameter = propDiameterRef, span = wingSpan);
+
+        // ----- tip structure: the spar carries the stations ------------
+        // A motor pod at a wingtip is a point load the spar must carry:
+        // the arm-sizing pattern (stress AND stiffness walls) prices a
+        // doubler over each half-span for the tip unit's inertial load
+        // at the spar chain's design load factor.  The doubler bonds
+        // into the molded shell, so it rides the SHELL mass at the
+        // nominal 6061 tube figures of the materials catalog -- not the
+        // material trade axis.  Its tube stock is invoice noise, so the
+        // shell quote stays the twin's.
+        attribute tipUnitKg : Real = 0.24;      // reference X4112S-class motor + pod + mount
+        attribute tipLoadN : Real = 2.5 * tipUnitKg * 9.81;
+        attribute tipReinforceWall : Real = max(
+            TubeWallForStress(momentNm = tipLoadN * 0.5 * wingSpan,
+                              radius = sparRadius, yieldPa = 2.4e8),
+            TubeWallForStiffness(tipLoadN = tipLoadN,
+                                 length = 0.5 * wingSpan,
+                                 radius = sparRadius, modulusPa = 6.9e10));
+        attribute tipStructMass : Real = 2.0 * TubeMass(
+            radius = sparRadius, wall = tipReinforceWall,
+            length = 0.5 * wingSpan, density = 2700.0);
+        attribute mass : Real = 1.55 + tipStructMass;
+
+        // ----- engine-out: the price of the tip arm --------------------
+        // One pusher dead at the wing-borne climb-out is the engine-out
+        // fin-sizing case of conventional practice (Raymer): the live
+        // station's full static thrust at the half-span arm, as a
+        // yawing-moment coefficient at the slowest wing-borne point,
+        // against what the winglets hold.  Checked by ScoutMissions::
+        // StabilityRequirements::EngineOutYaw.
+        attribute engineOutThrustN : Real = 33.0;   // reference X4112S station, full throttle
+        attribute sideForceCeiling : Real = 0.8;    // winglet CLmax with full deflection (Raymer)
+        attribute engineOutYawCn : Real = engineOutThrustN * podStation
+            / (0.5 * 1.225 * loiterSpeed * loiterSpeed * wingArea * wingSpan);
+        attribute engineOutAuthorityCn : Real =
+            sideForceCeiling * wingletYawVolume;
     }
 }

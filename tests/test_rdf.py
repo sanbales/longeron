@@ -189,11 +189,17 @@ def test_sparql_requirement_subject_types(graph):
             f"ScoutMissions::StabilityRequirements::{req}",
             "FlyingWings::FlyingWing",
         ) in pairs
+    # ... and the engine-out check subjects the program root: its
+    # tip-station subjects live in BOTH winged branches
+    assert (
+        "ScoutMissions::StabilityRequirements::EngineOutYaw",
+        "DeepScout::Aircraft",
+    ) in pairs
     assert (
         "ScoutMissions::MissionRequirements::PayloadBayFit",
         "ScoutMissions::MissionUAV",
     ) in pairs
-    assert len(pairs) == 10
+    assert len(pairs) == 11
 
 
 def test_sparql_variation_points_and_variants(graph):
@@ -209,7 +215,7 @@ def test_sparql_variation_points_and_variants(graph):
             """,
         )
     )
-    assert len(rows) == 42  # the crossed catalog (10+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
+    assert len(rows) == 43  # the crossed catalog (11+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
     assert (str(rows[0].point), str(rows[0].variant), str(rows[0].target)) == (
         "AirframeChoice",
         "boxQuad",

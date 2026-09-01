@@ -24,8 +24,9 @@ MISSIONS = {
     "intercept": ("ScoutMissions::InterceptUav", "maxTargetSpeed"),
 }
 
-#: the catapult-launched branch of 0.12 (never hover-capable)
-FLYING_WINGS = {"flyingWingSingle", "flyingWingTwin"}
+#: the catapult-launched branch of 0.12 (never hover-capable); the tip-prop
+#: twin of 0.13 crosses the courier's pusher stations root-against-tip
+FLYING_WINGS = {"flyingWingSingle", "flyingWingTwin", "flyingWingTwinTip"}
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +83,7 @@ class TestModelShape:
             "dartInterceptor",
             "flyingWingSingle",
             "flyingWingTwin",
+            "flyingWingTwinTip",
         }
         assert set(studies["intercept"].points["battery"].variants) == {
             "tattu3s",
@@ -102,13 +104,14 @@ class TestModelShape:
         }
 
     def test_candidate_space_sizes(self, spaces):
-        # the architecture x part-class crossing: 10 airframes x 4 motors
+        # the architecture x part-class crossing: 11 airframes x 4 motors
         # x 4 props x 5 packs x 2 materials (the legacy fleet space was
         # 4 x 3 x 3 x 4 x 2 = 288 shared mixes; the flying wings of 0.12
-        # grew the 8-airframe crossing to 10)
-        assert len(spaces["isr"]) == 10 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["logistics"]) == 10 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["intercept"]) == 10 * 4 * 4 * 5 * 2
+        # grew the 8-airframe crossing to 10, and the twin's tip-prop
+        # variant makes it 11)
+        assert len(spaces["isr"]) == 11 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["logistics"]) == 11 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["intercept"]) == 11 * 4 * 4 * 5 * 2
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -164,29 +167,31 @@ class TestFronts:
 
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
-        # the crossed catalog: the multirotor shells earn honest seats
-        # (the S1000-class hexa loiters, the coax octo dashes), the
-        # small class populates the cheap corners, and the flying wings
-        # of 0.12 add the catapult-launched seats (145/125/372 before
-        # they joined; 377/275/526 before the volume ledger -- the
-        # bayFit axis retires the mixes that carried the mass but never
-        # had the room, and the bay pods' skin drag prices out a few
-        # razor-margin station/radius seats)
-        assert counts == {"isr": 252, "logistics": 257, "intercept": 526}
+        # the crossed catalog after the dash-envelope honesty of 0.13:
+        # ISR and logistics grow by exactly the tip twin's seats (the
+        # gust placard and the tilt cap live in the intercept chain
+        # only; the tail-sitter's tip-structure mass retires a few of
+        # its courier margins), while intercept collapses from 526 --
+        # the placard caps every wing at its wing loading, the tilt cap
+        # retires five of the six rotor families outright, and only the
+        # teardrop keeps a rotor-borne catcher's seat
+        assert counts == {"isr": 328, "logistics": 397, "intercept": 316}
 
     def test_crossing_is_purely_additive(self, spaces):
         # every pre-crossing mix keeps its verdict axes: restricted to
-        # the legacy variants, the feasible counts are the historical
-        # 92 / 76 / 166 less the volume ledger's honest retirements
-        # (the survey kit and the mid-size cradle never had the room
-        # they were flying on paper)
+        # the legacy variants, the ISR count is still the historical 54,
+        # and the two missions the 0.13 physics touches move for stated
+        # reasons -- the dash envelope retires the legacy catchers that
+        # only ever caught on paper speed (166 -> 120), and the
+        # tail-sitter's tip-structure mass costs it six courier margins
+        # (64 -> 58)
         def legacy(arch):
             return all(arch.selection[k] in v for k, v in self.LEGACY.items())
 
         counts = {
             name: sum(a.verified for a in archs if legacy(a)) for name, archs in spaces.items()
         }
-        assert counts == {"isr": 54, "logistics": 64, "intercept": 166}
+        assert counts == {"isr": 54, "logistics": 58, "intercept": 120}
 
     def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
         """The design-space answer to "are wings necessary?": both the
@@ -229,13 +234,17 @@ class TestFamilyWinners:
     def test_flying_wing_twin_wins_logistics(self, spaces):
         """The twin's gentle Antigravity pushers stay inside the li-ion
         discharge ceiling (no hover climb to feed), so the ENERGY pack
-        wins the delivery trade the winged VTOL had to fly on LiPo."""
+        wins the delivery trade the winged VTOL had to fly on LiPo --
+        and the TIP-STATION variant takes the crown from the root: at
+        courier speed the derived vortex recovery buys more radius than
+        its tip-structure mass costs (the engine-out price it pays
+        instead is pinned by the stability tests)."""
 
         best = max(
             (a for a in spaces["logistics"] if a.verified),
             key=lambda a: a.metrics["payloadRangeKgKm"],
         )
-        assert best.selection["airframe"] == "flyingWingTwin"
+        assert best.selection["airframe"] == "flyingWingTwinTip"
         assert best.selection["motors"] == "mn4006"
         assert best.selection["battery"] == "liion6s6p"
         assert best.metrics["payloadRangeKgKm"] > 180.0
@@ -313,15 +322,18 @@ class TestFamilyWinners:
         """Before the flying wings joined, one winged-VTOL base mix sat
         on both the ISR and logistics fronts -- the buy-once bird.  The
         specialists ended that: the single wing owns the whole ISR
-        front, the twin takes the logistics top, and no base mix sits
-        on two fronts anymore, let alone three."""
+        front, the tip-station twin takes the logistics top (its root
+        sibling is dominated seat for seat: same invoice, less radius),
+        and no base mix sits on two fronts anymore, let alone three."""
 
         fronts = {
             name: {base_mix(a) for a in front_2d(spaces[name], MISSIONS[name][1])}
             for name in MISSIONS
         }
         assert {dict(mix)["airframe"] for mix in fronts["isr"]} == {"flyingWingSingle"}
-        assert "flyingWingTwin" in {dict(mix)["airframe"] for mix in fronts["logistics"]}
+        log_airframes = {dict(mix)["airframe"] for mix in fronts["logistics"]}
+        assert "flyingWingTwinTip" in log_airframes
+        assert "flyingWingTwin" not in log_airframes  # dominated by its tip variant
         assert not (fronts["isr"] & fronts["logistics"])
         assert not (fronts["isr"] & fronts["logistics"] & fronts["intercept"])
 
@@ -442,7 +454,7 @@ class TestVolumeLedger:
         assert isr.metrics["bayDemandVolume"] == pytest.approx(0.00276 + 0.00108 + 0.0003)
         log = studies["logistics"].evaluate(
             {
-                "airframe": "flyingWingTwin",
+                "airframe": "flyingWingTwinTip",
                 "motors": "mn4006",
                 "props": "apc11x55",
                 "battery": "liion6s6p",
@@ -610,7 +622,7 @@ class TestExplainableInfeasibility:
             }
         )
         assert arch.verified and arch.violations == []
-        assert arch.metrics["stationMinutes"] == pytest.approx(208.736, abs=0.01)
+        assert arch.metrics["stationMinutes"] == pytest.approx(200.351, abs=0.01)
 
 
 class TestPhysicsSanity:
@@ -652,7 +664,12 @@ class TestPhysicsSanity:
                 "material": "aluminum",
             }
         )
-        vd = arch.metrics["dashSpeed"]
+        # the triangle reads the USABLE dash speed: on the small pack
+        # the dart is light, its wing loading drops, and the gust
+        # placard caps a 73 m/s drag balance at ~49 m/s
+        vd = arch.metrics["usableDashSpeed"]
+        assert arch.metrics["dashPlacard"] < arch.metrics["dashSpeed"]
+        assert vd == arch.metrics["dashPlacard"]
         vt = 25.0
         d0 = 3000.0
         assert arch.metrics["interceptSeconds"] == pytest.approx(
@@ -685,10 +702,12 @@ class TestPhysicsSanity:
         """The model answers "are wings necessary?" from physics, not
         from a hardcoded verdict: with identical components the teardrop
         shell out-dashes the box quad purely on its BUILT-UP CdA (the
-        skinned lathe earns ~0.0125 m^2 vs the open frame's 0.055), and
-        each airframe's best feasible mix ranks dart > teardrop > box
-        quad -- the dart's ~0.006 buildup plus its 2 kW pusher pulls
-        clear of the teardrop's four 700 W lifters."""
+        skinned lathe earns ~0.0125 m^2 vs the open frame's 0.055).  The
+        dash ENVELOPE then decides who keeps a seat: the box quad's
+        tilt-capped translation never reaches the crossing floor (no
+        feasible seat at all), the teardrop's slick shell tilt-caps near
+        49 m/s, and the dart placards near 67 -- wings, watts, and wing
+        loading win the top end."""
 
         def dash(airframe):
             return (
@@ -706,14 +725,182 @@ class TestPhysicsSanity:
             )
 
         assert dash("teardropQuad") > 1.3 * dash("boxQuad")
+        feasible = [a for a in spaces["intercept"] if a.verified]
+        assert not any(a.selection["airframe"] == "boxQuad" for a in feasible)
         best = {
-            af: max(
-                a.metrics["maxTargetSpeed"]
-                for a in spaces["intercept"]
-                if a.verified and a.selection["airframe"] == af
-            )
-            for af in ("boxQuad", "teardropQuad", "dartInterceptor")
+            af: max(a.metrics["maxTargetSpeed"] for a in feasible if a.selection["airframe"] == af)
+            for af in ("teardropQuad", "dartInterceptor")
         }
-        assert best["teardropQuad"] > best["boxQuad"] + 5.0
         gap = best["dartInterceptor"] - best["teardropQuad"]
-        assert 0.0 < gap < 15.0  # wings and watts win the top end
+        assert 10.0 < gap < 25.0  # the placard-vs-tilt-cap gap at the top
+
+
+class TestDashEnvelope:
+    """The intercept dash envelope: gust placard + tilt cap.
+
+    The drag balance says what the watts buy; the envelope says what the
+    airframe survives using.  These tests pin the FAR 23.341-style
+    placard against an independent hand derivation, prove it BINDS for
+    the mission winner, and pin the teaching beat: the courier wing
+    would out-dash its own placard by better than two to one, and the
+    placard demotes it for exactly the wing-loading reason a real
+    interceptor is stubby and dense.
+    """
+
+    DART: typing.ClassVar[dict[str, str]] = {
+        "airframe": "dartInterceptor",
+        "motors": "at4120",
+        "props": "apc11x55",
+        "battery": "tattu16000",
+        "material": "aluminum",
+    }
+    TWIN: typing.ClassVar[dict[str, str]] = {**DART, "airframe": "flyingWingTwin"}
+
+    def test_placard_matches_the_closed_form(self, studies):
+        # hand derivation of FAR 23.341 + Pratt, kept independent of the
+        # model text: n(V) = 1 + Kg rho U V a / (2 W/S) solved for the
+        # spar chain's design point n = 2.5 at gustU = 2.0
+        arch = studies["intercept"].evaluate(self.DART)
+        m = arch.metrics
+        ws = m["missionMass"] * 9.81 / 0.179  # the dart's declared wingArea
+        ar = 1.05 * 1.05 / 0.179
+        a = 2.0 * 3.141592653589793 * ar / (ar + 2.0)
+        mu = 2.0 * ws / (1.225 * 0.17 * a * 9.81)  # mean chord 0.17
+        kg = 0.88 * mu / (5.3 + mu)
+        placard = (2.5 - 1.0) * 2.0 * ws / (kg * 1.225 * 2.0 * a)
+        assert m["dashWingLoading"] == pytest.approx(ws)
+        assert m["dashPlacard"] == pytest.approx(placard)
+        assert m["usableDashSpeed"] == pytest.approx(min(m["dashSpeed"], placard))
+
+    def test_placard_binds_for_the_winner(self, spaces):
+        # the placard is live for the crown, not decoration: the winning
+        # dart rides its own placard (the 73 m/s drag balance is capped
+        # near 67), and every dart seat keeps the crown anyway
+        best = max(
+            (a for a in spaces["intercept"] if a.verified),
+            key=lambda a: a.metrics["maxTargetSpeed"],
+        )
+        assert best.selection["airframe"] == "dartInterceptor"
+        assert best.metrics["dashPlacard"] < best.metrics["dashSpeed"]
+        assert best.metrics["usableDashSpeed"] == best.metrics["dashPlacard"]
+        assert best.metrics["maxTargetSpeed"] == pytest.approx(66.80, abs=0.05)
+
+    def test_placard_has_teeth_for_the_wing(self, studies):
+        """THE TEACHING BEAT: unplacarded, the 55 N/m^2 courier wing
+        "dashes" at 63 m/s -- more than twice the speed at which a
+        2 m/s gust already loads its spar to the 2.5 g design point.
+        The placard caps it near 30 m/s, and the REASON is wing
+        loading: the dart carries 3.6x the twin's W/S and placards
+        2.2x higher on the same formula."""
+
+        twin = studies["intercept"].evaluate(self.TWIN).metrics
+        dart = studies["intercept"].evaluate(self.DART).metrics
+        assert twin["dashSpeed"] > 2.0 * twin["dashPlacard"]  # would out-dash it
+        assert twin["usableDashSpeed"] == twin["dashPlacard"]  # ... and may not
+        assert twin["maxTargetSpeed"] == pytest.approx(27.54, abs=0.05)
+        # the wing-loading reason, stated as numbers
+        assert twin["dashWingLoading"] < 0.3 * dart["dashWingLoading"]
+        assert twin["dashPlacard"] < 0.5 * dart["dashPlacard"]
+        # demoted, NOT infeasible: the teaching story survives
+        assert studies["intercept"].evaluate(self.TWIN).verified
+
+    def test_tilt_cap_reuses_the_bench_idiom(self, studies):
+        # the rotor-borne dash cap IS MaxCruiseSpeed at the shell's
+        # 25-deg commanded tilt: the teardrop's 65.8 m/s paper dash
+        # lands at the 48.6 the bench idiom sustains
+        from math import radians, tan
+
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "teardropQuad",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu16000",
+                "material": "aluminum",
+            }
+        )
+        m = arch.metrics
+        cda = studies["intercept"].points["airframe"].variants["teardropQuad"]["dragArea"]
+        cap = (m["missionMass"] * 9.81 * tan(radians(25.0)) / (0.5 * 1.225 * cda)) ** 0.5
+        assert m["tiltDashCap"] == pytest.approx(cap)
+        assert m["usableDashSpeed"] == m["tiltDashCap"] < m["dashSpeed"]
+        assert arch.verified  # the teardrop keeps its rotor-borne seat
+
+    def test_tilt_cap_retires_the_paper_catchers(self, spaces):
+        # the open frames only ever caught on paper speed: tilt-capped,
+        # five of the six rotor families lose every intercept seat, and
+        # the slick teardrop is the one rotor-borne catcher left
+        rotor = {"boxQuad", "teardropQuad", "openTri", "hexLifter", "coaxOcto", "ringOcto"}
+        seated = {
+            a.selection["airframe"]
+            for a in spaces["intercept"]
+            if a.verified and a.selection["airframe"] in rotor
+        }
+        assert seated == {"teardropQuad"}
+
+
+class TestTipPropTrade:
+    """The twin's root-against-tip pusher-station axis.
+
+    The tip station is a real trade, not a free bonus: the derived
+    vortex recovery (TipPropRecovery) buys cruise efficiency, the spar
+    doubler (tipStructMass) and the engine-out yaw case price it.  The
+    stability tests pin the engine-out bust; here the MISSION ledger
+    shows where the tip wins.
+    """
+
+    def test_tip_bonus_is_derived_not_free(self, studies):
+        frames = studies["logistics"].points["airframe"].variants
+        # root stations earn no recovery; the tip and the tail-sitter
+        # derive theirs from the same reference disc and span
+        assert frames["flyingWingTwin"]["tipPropBonus"] == 1.0
+        derived = 1.0 + 2.0 * 0.2794 / 2.6
+        assert frames["flyingWingTwinTip"]["tipPropBonus"] == pytest.approx(derived)
+        # the retrofit: the tail-sitter's old free 1.28 is gone
+        assert frames["vtolWing"]["tipPropBonus"] == pytest.approx(derived)
+
+    def test_tip_station_pays_structure(self, studies):
+        frames = studies["logistics"].points["airframe"].variants
+        tip, root = frames["flyingWingTwinTip"], frames["flyingWingTwin"]
+        assert tip["tipStructMass"] > 0.15
+        assert tip["mass"] == pytest.approx(root["mass"] + tip["tipStructMass"])
+        # the tail-sitter pays for all FOUR tips (two spans)
+        assert frames["vtolWing"]["tipStructMass"] > tip["tipStructMass"]
+        # and the pod chain prices the tip station's clearance too
+        assert tip["podLength"] == pytest.approx(root["podLength"])
+        assert tip["podStation"] == pytest.approx(1.3)
+
+    def test_tip_wins_the_courier_trade(self, studies, spaces):
+        """Where the numbers say the tip wins: at 22 m/s courier speed
+        the induced-drag recovery outbuys the doubler's mass, so the
+        tip variant beats the root mix for mix on delivery work -- and
+        the fleet crown moves to the tip twin.  What the mission ledger
+        cannot see (and the stability ledger pins): the winning courier
+        cannot hold a dead engine at the tip arm."""
+
+        pairs = 0
+        for a in spaces["logistics"]:
+            if not (a.verified and a.selection["airframe"] == "flyingWingTwinTip"):
+                continue
+            root_mix = {**a.selection, "airframe": "flyingWingTwin"}
+            root = studies["logistics"].evaluate(root_mix)
+            if root.verified:
+                assert a.metrics["payloadRangeKgKm"] > root.metrics["payloadRangeKgKm"]
+                pairs += 1
+        assert pairs >= 100  # the dominance is space-wide, not a lucky mix
+
+    def test_intercept_does_not_reward_the_bonus(self, studies):
+        # the dash chain is parasite-drag physics: the recovery buys
+        # nothing there, and the placard governs both stations alike --
+        # the tip variant's hair of extra metric is its doubler RAISING
+        # the wing loading, not the bonus
+        mix = {
+            "motors": "at4120",
+            "props": "apc11x55",
+            "battery": "tattu16000",
+            "material": "aluminum",
+        }
+        tip = studies["intercept"].evaluate({**mix, "airframe": "flyingWingTwinTip"}).metrics
+        root = studies["intercept"].evaluate({**mix, "airframe": "flyingWingTwin"}).metrics
+        assert tip["dashSpeed"] == pytest.approx(root["dashSpeed"])  # same CdA, same watts
+        assert tip["dashPlacard"] > root["dashPlacard"]  # grams buy placard

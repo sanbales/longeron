@@ -540,15 +540,16 @@ class TestCover:
 
     def test_nonlinear_catalog_recall_still_measured(self, uav):
         # the 4800-mix space outgrew the default 4096 census cap when
-        # the flying wings joined; the explicit cap keeps ground truth
-        # measured (and the default-cap behavior -- recall honestly
-        # unmeasured -- is pinned just below)
-        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2, exhaustive_cap=4800)
-        assert report.coverage.exhaustive == 4800
+        # the flying wings joined, and the tip-prop variant grew it to
+        # 5280; the explicit cap keeps ground truth measured (and the
+        # default-cap behavior -- recall honestly unmeasured -- is
+        # pinned just below)
+        report = verify.cover(uav, "ScoutMissions::IsrUav", t=2, exhaustive_cap=5280)
+        assert report.coverage.exhaustive == 5280
         # the crossed catalog makes every violation class pairwise-
         # visible (a small motor on a heavy shell trips isrLift in one
         # pair), so the measured recall reports full coverage -- against
-        # the 4800-mix exhaustive census, from a ~50-row array
+        # the 5280-mix exhaustive census, from a ~50-row array
         assert report.coverage.recall == 1.0
         assert "isrLift" in report.violations
         assert "cellMatch" in report.violations  # the class axis, caught

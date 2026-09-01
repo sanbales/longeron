@@ -8,8 +8,10 @@
 //   LogisticsUav -- carry a parcel out, return empty (max payload x radius)
 //   InterceptUav -- one-way dash to catch a crossing target (max target speed)
 //
-// The catalog CROSSES architecture with part class: ten airframes
-// (six rotor-borne, two winged VTOL, two flying wings) against four
+// The catalog CROSSES architecture with part class: eleven airframes
+// (six rotor-borne, two winged VTOL, three flying wings -- the twin
+// courier crosses its root pusher stations against a wingtip variant)
+// against four
 // motors, four props, and five packs spanning the small F450 class and
 // the heavy 6S class.
 // Dishonest mixes stay in the space and fail honestly -- propFit keeps
@@ -27,7 +29,7 @@
 // the Cartesian candidate space and let the interpreter score every mix
 // exactly (see tutorial T4).
 package ScoutMissions {
-    doc /* The DeepScout trade space: ten airframe families across three
+    doc /* The DeepScout trade space: eleven airframe entries across three
            branches, real COTS propulsion and payload options in two
            part classes, a battery-chemistry trade, a structural-material
            trade, and three mission contexts with executable physics.
@@ -74,6 +76,7 @@ package ScoutMissions {
             variant part dartInterceptor : DartInterceptor;
             variant part flyingWingSingle : FlyingWingSingle;
             variant part flyingWingTwin : FlyingWingTwin;
+            variant part flyingWingTwinTip : FlyingWingTwinTip;
         }
         variation part def MotorChoice :> Motor {
             variant part mt2213 : EmaxMt2213;
@@ -347,10 +350,20 @@ package ScoutMissions {
         doc /* One-way dash against a target crossing the line of sight at
                targetSpeed, first seen at targetDistance.  Lead-collision
                triangle: intercept time D0 / sqrt(Vd^2 - Vt^2), feasible
-               while the dash speed exceeds the target's AND the battery
-               sustains full power that long.  maxTargetSpeed inverts the
-               triangle at the battery-limited dash duration.  No return
-               leg is required. */
+               while the USABLE dash speed exceeds the target's AND the
+               battery sustains full power that long.  What is usable is
+               less than what the drag balance gives: a wing-borne dash
+               is placarded by the alleviated gust load at the spar
+               chain's design point (GustPlacardSpeed), and a rotor-borne
+               dash never outruns the commanded-tilt cap (MaxCruiseSpeed
+               at maxTiltDeg).  maxTargetSpeed inverts the triangle at
+               the battery-limited dash duration.  No return leg is
+               required.  DECLARED FIDELITY LIMIT: props.cruiseEff is a
+               constant, so no advance-ratio ceiling exists -- the
+               catalog's whole 40-73 m/s dash band is propeller-
+               impossible on these fixed-pitch props (pitch speeds run
+               13-25 m/s).  The limit is symmetric across every family:
+               nominal teaching physics above ~25 m/s. */
 
         attribute seekerMass : Real = 0.12;
         attribute seekerCost : Real = 260.0;
@@ -367,13 +380,58 @@ package ScoutMissions {
                           * props.cruiseEff,
                       dragArea = airframe.dragArea);
         attribute dashSeconds : Real = usableEnergyJ / dashDrawW;
+
+        // ----- the dash envelope: what the airframe may USE ------------
+        // The drag balance says what the watts buy; the envelope says
+        // what the airframe survives using.  Wing-borne: the FAR
+        // 23.341-style gust placard at the spar chain's design load
+        // factor -- linear in wing loading, so the dense dart placards
+        // high and the limber couriers placard low (the axis where a
+        // real interceptor is stubby).  Rotor-borne: the bench family's
+        // commanded-tilt idiom, MaxCruiseSpeed at the shell's maxTiltDeg.
+        // Each cap reads dashSpeed where it does not apply, so min()
+        // composes them without a special case.
+        attribute dashAspectRatio : Real = if airframe.wingSpan > 0.0
+            ? airframe.wingSpan * airframe.wingSpan / airframe.wingArea
+            else 0.0;
+        attribute dashWingLoading : Real = if airframe.wingSpan > 0.0
+            ? missionMass * 9.81 / airframe.wingArea
+            else 0.0;                       // N/m^2 at mission mass
+        attribute dashLiftSlope : Real =    // 2 pi AR / (AR + 2), per rad
+            2.0 * pi * dashAspectRatio / (dashAspectRatio + 2.0);
+        attribute gustMassRatio : Real = if airframe.wingSpan > 0.0
+            ? 2.0 * dashWingLoading
+              / (1.225 * airframe.wingChord * dashLiftSlope * 9.81)
+            else 0.0;                       // mu (Pratt)
+        attribute gustAlleviation : Real =  // Kg (Pratt)
+            0.88 * gustMassRatio / (5.3 + gustMassRatio);
+        attribute dashPlacard : Real = if airframe.wingSpan > 0.0
+            ? GustPlacardSpeed(wingLoading = dashWingLoading,
+                               liftSlope = dashLiftSlope,
+                               gustAlleviation = gustAlleviation)
+            else dashSpeed;                 // no wing: no gust placard
+        attribute tiltDashCap : Real = if airframe.wingSpan > 0.0
+            ? dashSpeed                     // wing-borne: the placard governs
+            else MaxCruiseSpeed(tiltDeg = airframe.maxTiltDeg,
+                                massKg = missionMass,
+                                dragArea = airframe.dragArea);
+        attribute usableDashSpeed : Real =
+            min(dashSpeed, min(dashPlacard, tiltDashCap));
+
         attribute maxTargetSpeed : Real = sqrt(max(0.0,
-            dashSpeed * dashSpeed
+            usableDashSpeed * usableDashSpeed
             - (targetDistance / dashSeconds)
               * (targetDistance / dashSeconds)));
         attribute interceptSeconds : Real = targetDistance
             / sqrt(max(0.01,
-                       dashSpeed * dashSpeed - targetSpeed * targetSpeed));
+                       usableDashSpeed * usableDashSpeed
+                       - targetSpeed * targetSpeed));
+        // DO NOT "fix" this mission with a turn-rate/corner-speed floor
+        // or by scoring interceptSeconds: at a shared structural load
+        // factor both reward LOW wing loading, so both PROMOTE the
+        // courier wings (the intercept audit's key negative result).
+        // The gust placard above is the one maneuver-adjacent axis that
+        // demotes them for the honest reason.
 
         assert constraint launchLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
@@ -412,7 +470,10 @@ package ScoutMissions {
 
         requirement def InterceptTasking {
             doc /* Catch a target crossing at targetSpeed, first seen at
-                   targetDistance. */
+                   targetDistance.  HONEST ABSENCE: readiness time (rail
+                   rigging, spin-up, launch clearance) exists nowhere in
+                   the model, for any family -- the tasking starts every
+                   candidate already airborne at detection. */
             subject uav : InterceptUav;
             assume constraint { uav.dashSpeed > uav.targetSpeed }
             require constraint catchFloor {
@@ -449,10 +510,15 @@ package ScoutMissions {
                HERE as requirement attributes -- the same slider-anchor
                idiom as MissionRequirements -- and every figure is a
                NOMINAL teaching value with its source named.  Subjects
-               are the tailless shells only: the multirotors hover on
-               their mixers, the dart and the tail-sitter fly on real
-               tail surfaces, so none of them subjects a tailless check
-               (honest absence).  Because each constraint reads a
+               of the three tailless checks are the tailless shells
+               only: the multirotors hover on their mixers, the dart
+               and the tail-sitter fly on real tail surfaces, so none
+               of them subjects a tailless check (honest absence).
+               EngineOutYaw is the family's fourth axis and reaches
+               wider: its subjects are the tip-station configurations
+               of BOTH winged branches, because the dead-engine yaw arm
+               is what the tip stations buy their bonus with.  Because
+               each constraint reads a
                derived attribute of the subject, a higher-fidelity
                re-derivation of that attribute -- the loft framework's
                computed derivatives -- re-verifies the SAME
@@ -516,17 +582,51 @@ package ScoutMissions {
                 wing.wingletYawVolume >= yawVolumeFloor }
         }
 
-        // who satisfies what: both tailless shells clear all three
-        // checks at their declared geometry (22 deg quarter-chord
-        // sweep, bay-tuned CG); the interpreter's verdicts back every
-        // edge, and the unswept counterexample that would earn NO
-        // PitchStability edge is pinned by the branch tests
+        requirement def EngineOutYaw {
+            doc /* A multi-station craft shall hold the dead-engine
+                   asymmetric-thrust yaw moment at the climb condition
+                   with its yaw surfaces: the live station's full static
+                   thrust at its spanwise arm, as a yawing-moment
+                   coefficient, within the yaw volume's authority (the
+                   volume coefficient times a nominal side-force
+                   ceiling -- Raymer's engine-out fin-sizing case).
+                   Subjects are the TIP-STATION configurations, where
+                   the asymmetric arm is the half-span itself: the check
+                   is the honest price of the tip-prop bonus.  The
+                   root-station twin keeps its inboard arms inside the
+                   differential-elevon-and-throttle story its own doc
+                   tells, and the single-pusher shells have no
+                   asymmetric case at all (honest absences).  NO
+                   satisfy edge exists: at full climb-out thrust
+                   neither the tip twin's winglets nor the tail-
+                   sitter's co-located cruciform rudders hold the
+                   moment -- the verdicts pin the busts, and the
+                   fleet's only honest engine-out recovery stays the
+                   multirotor one (shut the mirror station: the
+                   four-station tail-sitter keeps a balanced pair, the
+                   twin keeps nothing). */
+            subject craft : Aircraft;
+            assume constraint { craft.engineOutYawCn > 0.0 }
+            require constraint yawHold {
+                craft.engineOutYawCn <= craft.engineOutAuthorityCn }
+        }
+
+        // who satisfies what: all three tailless shells clear the three
+        // tailless checks at their declared geometry (22 deg quarter-
+        // chord sweep, bay-tuned CG -- the tip twin shares the twin's
+        // planform and CG); the interpreter's verdicts back every edge,
+        // and the unswept counterexample that would earn NO
+        // PitchStability edge is pinned by the branch tests.  EngineOutYaw
+        // earns no edge anywhere: both tip-station subjects bust it.
         satisfy PitchStability by FlyingWingSingle;
         satisfy PitchStability by FlyingWingTwin;
+        satisfy PitchStability by FlyingWingTwinTip;
         satisfy PitchRollAuthority by FlyingWingSingle;
         satisfy PitchRollAuthority by FlyingWingTwin;
+        satisfy PitchRollAuthority by FlyingWingTwinTip;
         satisfy YawStability by FlyingWingSingle;
         satisfy YawStability by FlyingWingTwin;
+        satisfy YawStability by FlyingWingTwinTip;
     }
 
     // ----- the program scoreboard (MAUT) -------------------------------------
@@ -539,11 +639,13 @@ package ScoutMissions {
 
     attribute stationMinutes : Real = 274.6 [SI::min];  // the ISR winner's loiter
                                                         // (the wings pay their ogive-bay skin)
-    attribute payloadRangeKgKm : Real = 184.7;          // the logistics winner, kg km
+    attribute payloadRangeKgKm : Real = 187.0;          // the logistics winner, kg km
+                                                        // (the tip twin's recovered span, engine-out honestly busted)
                                                         // (the twin pays its derived-pod drag)
-    attribute maxTargetSpeed : Real = 72.9;             // the dart's catchable crossing, m/s
-    attribute fleetCost : Real = 9666.0;                // USD: the three winners' invoices
-    attribute heaviestBirdKg : Real = 6.7;              // kg: the loaded courier at launch
+    attribute maxTargetSpeed : Real = 66.8;             // the dart's catchable crossing, m/s
+                                                        // (riding its own gust placard)
+    attribute fleetCost : Real = 9706.5;                // USD: the three winners' invoices
+    attribute heaviestBirdKg : Real = 6.89;             // kg: the loaded courier at launch
 
     requirement scoring {
         doc /* The fleet-level MAUT hierarchy: mission effectiveness

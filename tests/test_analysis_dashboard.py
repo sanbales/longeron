@@ -200,7 +200,7 @@ class TestFrontJustifications:
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
-        assert len(data["candidates"]) == 10 * 4 * 4 * 5 * 2
+        assert len(data["candidates"]) == 11 * 4 * 4 * 5 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_thresholds_anchored_in_the_model(self, data):
@@ -401,17 +401,25 @@ class TestFrontJustificationsLive:
     def test_the_looks_dominated_picks_name_their_hidden_wins(self, dash):
         self._pareto_n8(dash)
         cards = {dash.pool[c["line"]]: c for c in json.loads(dash.lineup.cards_json)}
-        # the winged-VTOL haulers look dominated under the twins and must
-        # name the hidden metrics they still win on (freight and dash --
-        # their loiter no longer beats a flying wing's)
+        payload = json.loads(dash.scatter.payload_json)["points"]
+        whys = {index: payload[j]["why"] for j, index in enumerate(dash.pool)}
+        # the winged-VTOL haulers look dominated under the twins yet keep
+        # 4-D front seats -- and their alibi is now the DASH: the
+        # cruciform's higher wing loading placards above every courier
+        # wing that beats it in the cost-MOE plane
         for index in (1056, 1057):
-            assert index in dash.picks
-            why = cards[index]["why"]
-            assert why.startswith("front: every pick that beats it in this plane trails it on ")
-            assert "payloadRangeKgKm" in why
-        # ... and the sprint twin's alibi is a single named metric
-        assert 1566 in dash.picks
-        why = cards[1566]["why"]
+            assert dash.front[index]
+            why = whys[index]
+            assert why.startswith("front: maxTargetSpeed ")
+            assert why.endswith("tops every pick that beats it in this plane")
+        # the gust placard took the sprint twin's alibi with it: the root
+        # twin's 63 m/s paper dash is a 30 m/s usable one, so the seat
+        # its maxTargetSpeed once justified is gone
+        assert not dash.front[1566]
+        # ... and among the top picks, the tip twins that trade a hair of
+        # invoice for a hair of placard margin carry the same dash alibi
+        assert 1668 in dash.picks
+        why = cards[1668]["why"]
         assert why.startswith("front: maxTargetSpeed ")
         assert why.endswith("tops every pick that beats it in this plane")
 

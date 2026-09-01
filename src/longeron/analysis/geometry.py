@@ -1929,6 +1929,7 @@ def flying_wing_geometry(
     center_section_span: float = 0.0,
     pod_length: float | None = None,
     pod_diameter: float = 0.05,
+    pod_station: float | None = None,
     bay_length: float | None = None,
     bay_diameter: float | None = None,
     segments: int = 24,
@@ -1951,6 +1952,12 @@ def flying_wing_geometry(
     Every motor station hangs a pusher pod on the local trailing edge:
     a nacelle of ``pod_diameter`` running ``pod_length`` straight aft,
     the motor can flush at its tail and the prop disc just behind it.
+    ``pod_station`` places the stations: the model's declared
+    ``podStation`` (metres from the centerline, mirrored per side) --
+    the tip-prop twin flows its wingtip stations through here exactly
+    the way sweep flows.  ``None`` keeps the display default, a
+    symmetric row across the middle third of the span (which is the
+    root twin's declared station).
     ``pod_length`` None derives the clearance length locally -- base
     housing + disc clearance + the trailing edge's aft rise across the
     disc's own span extent -- so the disc plane clears the wing for
@@ -2055,8 +2062,9 @@ def flying_wing_geometry(
     motor_d, motor_h = motor_size(motor_mass)
     if stations == 1:
         z_pods = [0.0]
-    else:  # a symmetric row across the middle third of the span
-        z_pods = [(2.0 * i / (stations - 1) - 1.0) * half / 3.0 for i in range(stations)]
+    else:  # a symmetric row: the declared station, or the middle-third default
+        row_half = pod_station if pod_station is not None else half / 3.0
+        z_pods = [(2.0 * i / (stations - 1) - 1.0) * row_half for i in range(stations)]
     pod_r = pod_diameter / 2
     motor_meshes: list[Mesh] = []
     prop_meshes: list[Mesh] = []
@@ -2443,6 +2451,7 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
         "center_section_span": optional("airframe", "centerSectionSpan", 0.0),
         "pod_length": optional("airframe", "podLength", None),
         "pod_diameter": optional("airframe", "podDiameter", 0.05),
+        "pod_station": optional("airframe", "podStation", None),
         # ... and the declared payload bay (every fleet airframe): the
         # box the rotor families sling, the pod the wings blend, the
         # hull section the lathed bodies keep inside
@@ -2490,6 +2499,7 @@ def airframe_geometry(
     center_section_span: float = 0.0,
     pod_length: float | None = None,
     pod_diameter: float = 0.05,
+    pod_station: float | None = None,
     bay_shape: str | None = None,
     bay_length: float | None = None,
     bay_width: float | None = None,
@@ -2518,7 +2528,8 @@ def airframe_geometry(
     from a fleet airframe definition's own attributes.  The tailless
     S&C and pusher-installation knobs (``sweep_deg``, ``washout_deg``,
     ``wing_section``, ``center_section_span``, ``pod_length``,
-    ``pod_diameter``) reach :func:`flying_wing_geometry` only -- the
+    ``pod_diameter``, ``pod_station``) reach
+    :func:`flying_wing_geometry` only -- the
     flying wings are the one family whose model declares them; every
     other loft keeps its zero-sweep planform until the loft framework
     generalizes.  The declared payload bay rides along per family
@@ -2583,6 +2594,7 @@ def airframe_geometry(
             center_section_span=center_section_span,
             pod_length=pod_length,
             pod_diameter=pod_diameter,
+            pod_station=pod_station,
             bay_length=bay_length,
             bay_diameter=bay_width,
         )

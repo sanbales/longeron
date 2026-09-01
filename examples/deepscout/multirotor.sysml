@@ -343,6 +343,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 4;
         attribute diskAreaFactor : Real = 4.0;
         attribute hoverThrustFactor : Real = 1.6;
+        attribute maxTiltDeg : Real = 25.0;    // the bench comfort cap
         attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 6.0;
         attribute hoverOpsSec : Real = 90.0;
@@ -395,6 +396,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 4;
         attribute diskAreaFactor : Real = 4.0;
         attribute hoverThrustFactor : Real = 1.5;
+        attribute maxTiltDeg : Real = 25.0;    // the bench comfort cap
         attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 1.0;
         attribute hoverOpsSec : Real = 60.0;
@@ -446,6 +448,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 3;
         attribute diskAreaFactor : Real = 2.8;    // 3 discs less the tail-tilt loss
         attribute hoverThrustFactor : Real = 1.7; // tail-vector control reserve
+        attribute maxTiltDeg : Real = 11.0;       // the yaw-servo authority cap
         attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 1.2;
         attribute hoverOpsSec : Real = 60.0;
@@ -493,6 +496,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 6;
         attribute diskAreaFactor : Real = 6.0;
         attribute hoverThrustFactor : Real = 1.5;
+        attribute maxTiltDeg : Real = 25.0;    // the bench comfort cap
         attribute climbDrawFraction : Real = 0.5;  // camera platform: gentle climbs
         attribute payloadCapacity : Real = 9.0;
         attribute hoverOpsSec : Real = 120.0;
@@ -537,6 +541,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 8;
         attribute diskAreaFactor : Real = 5.0;    // 4 shared discs x kappa penalty
         attribute hoverThrustFactor : Real = 1.6;
+        attribute maxTiltDeg : Real = 25.0;    // the bench comfort cap
         attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 5.0;
         attribute hoverOpsSec : Real = 90.0;
@@ -580,6 +585,7 @@ package Rotorcraft {
         attribute motorCount : Integer = 8;
         attribute diskAreaFactor : Real = 8.0;
         attribute hoverThrustFactor : Real = 1.5;
+        attribute maxTiltDeg : Real = 25.0;    // the bench comfort cap
         attribute climbDrawFraction : Real = 0.7;
         attribute payloadCapacity : Real = 6.0;
         attribute hoverOpsSec : Real = 90.0;

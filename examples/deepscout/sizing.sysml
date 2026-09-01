@@ -229,13 +229,14 @@ package ScoutSizing {
         attribute loiterSpeed : Real = 15.0;    // m/s -- the design variable
 
         // frozen winner configuration (catalog values of the mix above)
-        attribute emptyMassKg : Real = 4.99;    // shell+avionics+pack+motors/props+sensor
+        attribute emptyMassKg : Real = 5.28;    // shell+avionics+pack+motors/props+sensor
+                                                // (+0.29 kg: the tip-prop spar doublers)
         attribute fuselageLength : Real = 0.95;
         attribute fuselageDiameter : Real = 0.12;
         attribute span : Real = 2.6;
         attribute wingArea : Real = 0.624;
         attribute secondaryWingArea : Real = 0.387;
-        attribute spanEff : Real = 1.0496;      // 0.82 Oswald x 1.28 tip props
+        attribute spanEff : Real = 0.9962;      // 0.82 Oswald x 1.2149 derived tip recovery
         attribute propEff : Real = 0.697;       // APC 11x5.5E x Antigravity motor
         attribute sensorPowerW : Real = 18.0;   // Zenmuse H20
         attribute batteryWh : Real = 447.0;     // liion6s6p

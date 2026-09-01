@@ -558,17 +558,18 @@ class TestUavMissionCoverage:
     def test_cpsat_agrees_with_the_interpreter_on_the_platform(self, platform):
         """The fixed-point tolerance contract: after the interpreter
         re-verification, CP-SAT's feasible set is EXACTLY the
-        interpreter's (no false admits survive, none of the 1600 mixes
+        interpreter's (no false admits survive, none of the 1760 mixes
         of the crossed catalog is lost to rounding).  The pre-crossing
         platform was 288 mixes / 166 feasible; the 0.11 crossing made
-        it 1280 / 434, and the flying wings of 0.12 grew it again."""
+        it 1280 / 434, the flying wings of 0.12 grew it to 1600, and
+        the twin's tip-prop variant makes it 1760."""
 
         got = {tuple(sorted(a.selection.items())) for a in platform.enumerate()}
         exact = platform.all_architectures()
         want = {tuple(sorted(a.selection.items())) for a in exact if a.verified}
-        assert len(exact) == 10 * 4 * 4 * 5 * 2 == 1600
+        assert len(exact) == 11 * 4 * 4 * 5 * 2 == 1760
         assert got == want
-        assert len(got) == 592
+        assert len(got) == 668
 
     def test_optimization_agrees_with_the_interpreter(self, platform):
         best = platform.minimize("baseCost")
@@ -584,7 +585,7 @@ class TestUavMissionCoverage:
         ("assembly", "attribute", "operation"),
         [
             ("IsrUav", "hoverPowerW", "pow(massKg * 9.81, 1.5)"),
-            ("InterceptUav", "dashSpeed", "pow"),
+            ("InterceptUav", "dashAspectRatio", "conditional"),
             ("LogisticsUav", "outboundPowerW", "conditional"),
         ],
     )

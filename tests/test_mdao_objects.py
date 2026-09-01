@@ -731,7 +731,7 @@ class TestUavIntegration:
             "sensor",
         ]
         station_std = float(prob.get_val("stationMinutes")[0])
-        assert station_std == pytest.approx(208.74, abs=0.05)  # IsrPrime's freeze
+        assert station_std == pytest.approx(200.35, abs=0.05)  # IsrPrime's freeze
         mdao.bind_entity(build, "motors", "ScoutParts::SunnySkyX4112s")
         prob.run_model()
         station_eco = float(prob.get_val("stationMinutes")[0])

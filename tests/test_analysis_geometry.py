@@ -1456,6 +1456,30 @@ class TestFlyingWingPlanform:
             assert hi[0] == pytest.approx(x_te, abs=0.005)
             assert lo[0] == pytest.approx(x_te - 0.1264, abs=0.005)
 
+    def test_pod_station_flows_like_sweep(self):
+        """The mesh follows the model: the declared podStation places the
+        pusher stations, so the tip-prop twin's nacelles and discs ride
+        the wingtips.  The root twin's declared station (span/6) IS the
+        legacy display row -- passing it changes nothing."""
+
+        kw = {
+            **self.FW,
+            "wing_span": 2.6,
+            "wing_area": 0.85,
+            "motor_count": 2,
+            "sweep_deg": 22.0,
+            "pod_length": 0.1264,
+        }
+        legacy = geometry.flying_wing_geometry(**kw)
+        root = geometry.flying_wing_geometry(**kw, pod_station=2.6 / 6.0)
+        assert root == legacy  # the declared root station is the default row
+        tip = geometry.flying_wing_geometry(**kw, pod_station=1.3)
+        for part in ("motors", "props"):
+            mesh = next(p for p in tip["parts"] if p["name"] == part)
+            boxes = _component_boxes(mesh)
+            assert {round((lo[2] + hi[2]) / 2, 3) for lo, hi in boxes} == {-1.3, 1.3}, part
+        _assert_discs_clear(tip, "tip stations vs the winglets")
+
     def test_pods_carry_the_disc_clear_of_the_swept_wing(self):
         """THE INTERFERENCE FIX, at the builder level: with no declared
         pod length the builder derives the clearance locally, so every
@@ -1628,6 +1652,7 @@ class TestFleetPropDiscClearance:
         "WingedVtol::DartInterceptor",
         "FlyingWings::FlyingWingSingle",
         "FlyingWings::FlyingWingTwin",
+        "FlyingWings::FlyingWingTwinTip",
     )
     BUILDS = (
         "Rotorcraft::QuadCopter",
@@ -1648,8 +1673,9 @@ class TestFleetPropDiscClearance:
     def test_wings_stay_clear_with_the_largest_catalog_prop(self, mission_study):
         # the mission studies cross the wings with every catalog prop;
         # the biggest disc (15 in) is the worst case the derived pod
-        # lengths must cover
-        for airframe in ("flyingWingSingle", "flyingWingTwin"):
+        # lengths must cover -- and the tip-station twin's discs must
+        # clear the WINGLETS they share the tip with
+        for airframe in ("flyingWingSingle", "flyingWingTwin", "flyingWingTwinTip"):
             arch = mission_study.evaluate(
                 {
                     "airframe": airframe,

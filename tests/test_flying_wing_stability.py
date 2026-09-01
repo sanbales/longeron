@@ -185,6 +185,14 @@ class TestRequirementVerdicts:
                 result = interp.check_requirement(req(name), subject=inst)
                 assert result.satisfied, (shell, name)
 
+    def test_tip_twin_passes_the_same_three_checks(self, interp):
+        # the tip variant shares the twin's planform and declared CG (the
+        # pack slides forward on the bay rail to hold 0.91 MAC against
+        # the aft-moved motor mass), so all three tailless checks hold
+        inst = interp.instantiate("FlyingWings::FlyingWingTwinTip")
+        for name in REQUIREMENTS:
+            assert interp.check_requirement(req(name), subject=inst).satisfied, name
+
     def test_unswept_variant_busts_pitch_stability(self, interp):
         """THE TEACHING BEAT: zero the quarter-chord sweep and the
         neutral point falls back to the root quarter-chord, roughly
@@ -217,14 +225,18 @@ class TestArchitectureWiring:
     def test_satisfy_edges_name_the_tailless_shells_only(self, model):
         # honest absence: the multirotors hover on their mixers and the
         # dart flies on a real tail -- none of them subjects a tailless
-        # check, so the ONLY edges are the two flying wings' six
+        # check, so the ONLY edges are the three tailless shells' nine.
+        # EngineOutYaw earns no edge anywhere: both tip-station subjects
+        # bust it (TestEngineOutYaw pins the busts).
         edges = {
             (e.subsets[0], e.by)
             for e in model.find("ScoutMissions::StabilityRequirements").members
             if isinstance(e, M.SatisfyUsage)
         }
         assert edges == {
-            (r, shell) for r in REQUIREMENTS for shell in ("FlyingWingSingle", "FlyingWingTwin")
+            (r, shell)
+            for r in REQUIREMENTS
+            for shell in ("FlyingWingSingle", "FlyingWingTwin", "FlyingWingTwinTip")
         }
 
     def test_the_bands_live_in_the_model(self, interp):
@@ -241,6 +253,123 @@ class TestArchitectureWiring:
         # the S&C arc must not touch the mission story: the scoreboard's
         # reference design point stays exactly the T4 winners
         assert interp.evaluate("ScoutMissions::stationMinutes") == 274.6
-        assert interp.evaluate("ScoutMissions::payloadRangeKgKm") == 184.7
-        assert interp.evaluate("ScoutMissions::maxTargetSpeed") == 72.9
-        assert interp.evaluate("ScoutMissions::fleetCost") == 9666.0
+        assert interp.evaluate("ScoutMissions::payloadRangeKgKm") == 187.0
+        assert interp.evaluate("ScoutMissions::maxTargetSpeed") == 66.8
+        assert interp.evaluate("ScoutMissions::fleetCost") == 9706.5
+
+
+class TestTipInstallation:
+    """The tip-prop twin's installation chain, interpreter-exact.
+
+    The variant moves ONLY the station: same planform, same declared CG,
+    same shell quote.  The chain prices what moves -- the pod clearance
+    at the tip, the derived vortex recovery, and the spar doubler --
+    and the closed installation vocabulary (root | tip) names it.
+    """
+
+    def test_prop_station_vocabulary(self, interp, instances):
+        assert instances["FlyingWingSingle"].slots["propStation"] == "root"
+        assert instances["FlyingWingTwin"].slots["propStation"] == "root"
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip")
+        assert tip.slots["propStation"] == "tip"
+
+    def test_tip_pod_chain(self, interp, instances):
+        # the disc rides centered on the tip; the TE law's slope is
+        # constant on the straight taper, so the tip station pays the
+        # same 36 mm rise the root station does -- the extrapolation
+        # past the tip is the winglet's aft-raked trailing edge
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip").slots
+        root = instances["FlyingWingTwin"].slots
+        assert tip["podStation"] == pytest.approx(1.3)
+        assert tip["podTeRise"] == pytest.approx(root["podTeRise"])
+        assert tip["podLength"] == pytest.approx(root["podLength"])
+        # same skin, same pod count: the drag ledger is unchanged --
+        # the tip's aerodynamic win rides in spanEff, not in CdA
+        assert tip["dragArea"] == pytest.approx(root["dragArea"])
+
+    def test_derived_bonus_and_doubler(self, interp, instances):
+        from math import pi as PI
+
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip").slots
+        assert tip["tipPropBonus"] == pytest.approx(1.0 + 2.0 * 0.2794 / 2.6)
+        # hand derivation of the doubler: the arm-sizing pattern at the
+        # tip unit's inertial load, stiffness-governed on this spar
+        load = 2.5 * 0.24 * 9.81
+        wall_stress = load * 1.3 * 2.0 / (PI * 0.014**2 * 2.4e8)
+        wall_stiff = load * 1.3**2 / (3.0 * 6.9e10 * PI * 0.014**3 * 0.02)
+        wall = max(wall_stress, wall_stiff)
+        assert wall == wall_stiff  # stiffness governs
+        doubler = 2.0 * (2.0 * PI * 0.014 * wall * 1.3 * 2700.0)
+        assert tip["tipStructMass"] == pytest.approx(doubler)
+        assert tip["mass"] == pytest.approx(1.55 + doubler)
+        assert tip["cost"] == instances["FlyingWingTwin"].slots["cost"]
+
+    def test_static_margin_and_volumes_are_the_twins(self, interp, instances):
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip").slots
+        root = instances["FlyingWingTwin"].slots
+        for figure in (
+            "staticMargin",
+            "elevonPitchVolume",
+            "elevonRollVolume",
+            "wingletYawVolume",
+            "cgMac",
+        ):
+            assert tip[figure] == pytest.approx(root[figure]), figure
+
+
+class TestEngineOutYaw:
+    """The engine-out check the tip stations pay for (FailSafeHover
+    idiom: the requirement exists, the verdicts say who holds it, and
+    the missing satisfy edges ARE the story).
+
+    At full climb-out thrust neither tip-station subject holds the
+    dead-engine moment: the tip twin's winglets carry a fifteenth of
+    the required coefficient, the tail-sitter's co-located cruciform
+    rudders a fifth.  The fleet's honest engine-out recovery stays the
+    multirotor one -- shut the mirror station -- which the four-station
+    tail-sitter survives and the twin, by definition, cannot.
+    """
+
+    REQ = "ScoutMissions::StabilityRequirements::EngineOutYaw"
+
+    def test_tip_twin_busts_by_an_order_of_magnitude(self, interp):
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip")
+        s = tip.slots
+        # hand derivation: Cn = T y / (q S b) at the slowest wing-borne
+        # point, vs the winglet volume times the side-force ceiling
+        q = 0.5 * 1.225 * 15.0**2
+        required = 33.0 * 1.3 / (q * 0.85 * 2.6)
+        assert s["engineOutYawCn"] == pytest.approx(required)
+        assert s["engineOutAuthorityCn"] == pytest.approx(0.8 * s["wingletYawVolume"])
+        assert s["engineOutYawCn"] > 10.0 * s["engineOutAuthorityCn"]
+        assert not interp.check_requirement(self.REQ, subject=tip).satisfied
+
+    def test_tail_sitter_busts_its_rudder_proxy_too(self, interp):
+        vtol = interp.instantiate("WingedVtol::VtolWing")
+        s = vtol.slots
+        q = 0.5 * 1.225 * 15.0**2
+        required = 33.0 * 1.3 / (q * 0.624 * 2.6)
+        assert s["engineOutYawCn"] == pytest.approx(required)
+        assert s["finYawVolume"] == pytest.approx(0.387 * 0.75 * 0.24 / (0.624 * 2.6))
+        assert s["engineOutYawCn"] > 5.0 * s["engineOutAuthorityCn"]
+        assert not interp.check_requirement(self.REQ, subject=vtol).satisfied
+
+    def test_root_stations_state_no_case(self, instances):
+        # honest absence, not a hidden pass: the root twin and the single
+        # declare no engine-out chain at all -- the root twin's story is
+        # differential elevon + throttle (its own doc), the single glides
+        for shell in ("FlyingWingSingle", "FlyingWingTwin"):
+            slots = instances[shell].slots
+            assert "engineOutYawCn" not in slots, shell
+            assert "engineOutAuthorityCn" not in slots, shell
+
+    def test_no_winglet_buys_it_back(self, interp):
+        # the teaching dead end: holding the moment would take a winglet
+        # family more than an order of magnitude larger -- there is no
+        # "size the winglet up" exit, the honest exits are the root
+        # station or a real fin
+        tip = interp.instantiate(
+            "FlyingWings::FlyingWingTwinTip", wingletArea=0.40
+        )  # a preposterous 10x winglet
+        s = tip.slots
+        assert s["engineOutYawCn"] > s["engineOutAuthorityCn"]
