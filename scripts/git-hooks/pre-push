@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# pre-push: the full local gate battery runs before anything reaches the
+# remote (CI confirms, never discovers).
+#
+# What runs, in order (fail-fast):
+#   1. ruff format --check + ruff check     (the lint gate)
+#   2. mypy                                 (the typecheck gate)
+#   3. the full non-browser suite in the PIXI DEFAULT env -- the
+#      CI-equivalent lane: it carries the extras (cadquery among them)
+#      that CI's matrix installs and .venv does not.  An invented-part
+#      defect once shipped through the .venv lane's silent skips.
+#
+# Browser files, the notebook harness, and docs stay procedural (they
+# are change-scoped; see the handoff ledger's pre-push protocol) -- this
+# hook is the floor, not the whole battery.
+#
+# Escape hatch, for genuine emergencies only (documented, greppable):
+#   LONGERON_PUSH_UNGATED=1 git push ...
+# Every use should be explainable in the next commit or conversation.
+#
+# Enabled per clone via:  git config core.hooksPath scripts/git-hooks
+# (the pyproject `hooks` task does this).
+
+set -euo pipefail
+
+if [ "${LONGERON_PUSH_UNGATED:-0}" = "1" ]; then
+    echo "pre-push: UNGATED push (LONGERON_PUSH_UNGATED=1) -- you own the CI board" >&2
+    exit 0
+fi
+
+REPO="$(git rev-parse --show-toplevel)"
+cd "$REPO"
+
+PIXI_PY="$REPO/.pixi/envs/default/bin/python"
+RUFF="$REPO/.pixi/envs/default/bin/ruff"
+MYPY="$REPO/.pixi/envs/default/bin/mypy"
+
+for tool in "$PIXI_PY" "$RUFF" "$MYPY"; do
+    if [ ! -x "$tool" ]; then
+        echo "pre-push: missing $tool (run 'pixi install' first)" >&2
+        exit 1
+    fi
+done
+
+echo "pre-push: lint..." >&2
+"$RUFF" format --check src tests examples scripts notebooks docs
+"$RUFF" check src tests examples scripts notebooks docs
+
+echo "pre-push: typecheck..." >&2
+"$MYPY" --config-file pyproject.toml src/longeron tests/typing
+
+echo "pre-push: full non-browser suite (pixi lane, the CI-equivalent)..." >&2
+WITH_CORES="$HOME/.pi/agent/bin/with-cores"
+if [ -x "$WITH_CORES" ]; then
+    "$WITH_CORES" -n 8 --min 4 -- "$PIXI_PY" -m pytest tests/ -q --ignore=tests/browser
+else
+    "$PIXI_PY" -m pytest tests/ -q --ignore=tests/browser
+fi
+
+echo "pre-push: battery green -- pushing" >&2
