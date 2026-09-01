@@ -80,18 +80,23 @@ BUILD_DISCS = {
 }
 #: ... and the fleet airframe shells (distinct part sets prove the
 #: right family builder fired)
+ROTOR_SHELL = ["frame", "motors", "props", "battery", "esc", "fc", "bay", "camera"]
+HULL_SHELL = ["frame", "wing", "tail", "motors", "props", "bay", "battery", "fc", "camera"]
+WING_SHELL = ["wing", "winglets", "motors", "props", "bay", "battery", "fc", "camera"]
 FLEET_PARTS = {
-    "Rotorcraft::BoxQuad": ["frame", "motors", "props", "battery", "esc"],
-    "Rotorcraft::TeardropQuad": ["frame", "motors", "props", "battery"],
-    "Rotorcraft::OpenTri": ["frame", "motors", "props", "battery", "esc"],
-    "Rotorcraft::HexLifter": ["frame", "motors", "props", "battery", "esc"],
-    "Rotorcraft::CoaxOcto": ["frame", "motors", "props", "battery", "esc"],
-    "Rotorcraft::RingOcto": ["frame", "motors", "props", "battery", "esc"],
-    "WingedVtol::VtolWing": ["frame", "wing", "tail", "motors", "props", "battery"],
-    "WingedVtol::DartInterceptor": ["frame", "wing", "tail", "motors", "props", "battery"],
-    "FlyingWings::FlyingWingSingle": ["wing", "winglets", "motors", "props", "battery"],
-    "FlyingWings::FlyingWingTwin": ["wing", "winglets", "motors", "props", "battery"],
+    "Rotorcraft::BoxQuad": ROTOR_SHELL,
+    "Rotorcraft::TeardropQuad": ["frame", "motors", "props", "bay", "battery", "fc", "camera"],
+    "Rotorcraft::OpenTri": ROTOR_SHELL,
+    "Rotorcraft::HexLifter": ROTOR_SHELL,
+    "Rotorcraft::CoaxOcto": ROTOR_SHELL,
+    "Rotorcraft::RingOcto": ROTOR_SHELL,
+    "WingedVtol::VtolWing": HULL_SHELL,
+    "WingedVtol::DartInterceptor": HULL_SHELL,
+    "FlyingWings::FlyingWingSingle": WING_SHELL,
+    "FlyingWings::FlyingWingTwin": WING_SHELL,
 }
+#: the clickable internals: rendered part -> the shell's own part usage
+INTERNAL_USAGES = {"battery": "battery", "fc": "flightController", "camera": "camera"}
 
 
 class TestSceneFor:
@@ -108,9 +113,14 @@ class TestSceneFor:
     def test_fleet_shell_bakes_from_its_attributes(self, drone, qname, parts):
         mesh, part_map = scene_for(drone, qname)
         assert [part["name"] for part in mesh["parts"]] == parts
-        # whole-craft identity: every part carries the def's qname
-        assert all(part["key"] == qname for part in mesh["parts"])
-        assert part_map == dict.fromkeys(parts, qname)
+        # whole-craft identity for the shell, per-usage identity for the
+        # clickable internals (battery / flightController / camera)
+        expected = {
+            name: f"{qname}::{INTERNAL_USAGES[name]}" if name in INTERNAL_USAGES else qname
+            for name in parts
+        }
+        assert part_map == expected
+        assert all(part["key"] == expected[part["name"]] for part in mesh["parts"])
 
     def test_definition_object_and_qname_agree(self, drone):
         by_name, _ = scene_for(drone, "Rotorcraft::TeardropQuad")
@@ -194,7 +204,12 @@ class TestSelectionWiring:
         assert len(json.loads(dash.viewer.mesh_json)["discs"]) == 6
         dash.diagram.view.selection.ids = ["Rotorcraft::TeardropQuad"]  # a fleet shell
         parts = json.loads(dash.viewer.mesh_json)["parts"]
-        assert all(part["key"] == "Rotorcraft::TeardropQuad" for part in parts)
+        # the shell carries the craft identity; the clickable internals
+        # carry their own part-usage identities
+        assert all(part["key"].startswith("Rotorcraft::TeardropQuad") for part in parts)
+        assert {p["key"] for p in parts if p["name"] == "fc"} == {
+            "Rotorcraft::TeardropQuad::flightController"
+        }
         # home again: the quad returns WITH its view cone, in one write
         dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
         assert dash.config_view.current == "Rotorcraft::QuadCopter"

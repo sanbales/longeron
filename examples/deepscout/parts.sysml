@@ -51,6 +51,12 @@ package ScoutParts {
             attribute voltage : Real = 11.1 [SI::V]; // 3S LiPo nominal
             attribute mass : Real = 0.39 [SI::kg];
             attribute cost : Real = 45.0;            // USD, nominal street price
+            // label-sheet brick dimensions (NOMINAL): the volume the
+            // equipment bay must find for the pack
+            attribute length : Real = 0.155 [SI::m];
+            attribute width : Real = 0.047 [SI::m];
+            attribute height : Real = 0.026 [SI::m];
+            attribute volumeM3 : Real = length * width * height;   // ~0.19 L
         }
 
         part def Motor {
@@ -190,10 +196,16 @@ package ScoutParts {
         part def FlightController {
             doc /* Holybro Pixhawk 6C Mini running ArduPilot: the attitude
                    loops and the FlightStates protocol.  loopRate is the
-                   ArduPilot main-loop default. */
+                   ArduPilot main-loop default.  The case dimensions are
+                   NOMINAL catalog-class figures: the electronics volume
+                   every bay ledger accounts for. */
             attribute loopRate : Real = 400.0 [SI::Hz];
             attribute mass : Real = 0.039 [SI::kg];
             attribute cost : Real = 210.0;   // USD, nominal street price
+            attribute length : Real = 0.052 [SI::m];
+            attribute width : Real = 0.040 [SI::m];
+            attribute height : Real = 0.023 [SI::m];
+            attribute volumeM3 : Real = length * width * height;   // ~0.05 L
         }
 
         part def GpsModule {
@@ -271,6 +283,7 @@ package ScoutParts {
         attribute energyWh : Real;
         attribute maxPowerW : Real;         // continuous discharge
         attribute cells : Integer;          // series cell count (voltage class)
+        attribute volumeM3 : Real;          // m^3, pack brick (label dims, nominal)
     }
 
     part def SensorPackage {
@@ -278,12 +291,17 @@ package ScoutParts {
         attribute cost : Real;
         attribute powerW : Real;
         attribute grade : Integer;          // 1 fixed EO .. 3 long-range
+        attribute volumeM3 : Real;          // m^3, stowed envelope (nominal)
     }
 
     part def CargoBay {
         attribute bayMass : Real;           // kg, bay/box structure
         attribute bayCost : Real;
         attribute payloadKg : Real;         // parcel delivered
+        // m^3 the drop hardware and its parcel demand FROM the airframe's
+        // payload bay (nominal): a cradle stows frame + parcel envelope; the
+        // winch stows only its mechanism -- the parcel hangs on the line
+        attribute stowedVolume : Real;
     }
 
     // ----- heavy-class motors ----------------------------------------------
@@ -350,6 +368,7 @@ package ScoutParts {
         attribute energyWh : Real = 57.7;
         attribute maxPowerW : Real = 2020.0;
         attribute cells : Integer = 3;
+        attribute volumeM3 : Real = 0.00019;   // 155 x 47 x 26 mm label brick
     }
 
     // ----- heavy-class props -----------------------------------------------
@@ -387,6 +406,7 @@ package ScoutParts {
         attribute energyWh : Real = 115.0;
         attribute maxPowerW : Real = 4000.0;
         attribute cells : Integer = 6;
+        attribute volumeM3 : Real = 0.00048;   // 158 x 65 x 47 mm label brick
     }
     part def Tattu6s10000 :> Battery {
         doc /* Tattu 10 Ah 6S 25C LiPo (nominal). */
@@ -394,6 +414,7 @@ package ScoutParts {
         attribute energyWh : Real = 222.0;
         attribute maxPowerW : Real = 5550.0;
         attribute cells : Integer = 6;
+        attribute volumeM3 : Real = 0.00072;   // 170 x 69 x 61 mm label brick
     }
     part def Tattu6s16000 :> Battery {
         doc /* Tattu 16 Ah 6S 15C LiPo (nominal). */
@@ -401,6 +422,7 @@ package ScoutParts {
         attribute energyWh : Real = 355.0;
         attribute maxPowerW : Real = 5300.0;
         attribute cells : Integer = 6;
+        attribute volumeM3 : Real = 0.00104;   // 193 x 77 x 70 mm label brick
     }
     part def LiIon6s6p :> Battery {
         doc /* 6S6P li-ion pack of NCR18650GA-class energy cells
@@ -410,6 +432,9 @@ package ScoutParts {
         attribute energyWh : Real = 447.0;
         attribute maxPowerW : Real = 1300.0;
         attribute cells : Integer = 6;
+        // 36 cells in holders plus the BMS board: a boxier brick than
+        // the LiPos at the same class of mass (nominal)
+        attribute volumeM3 : Real = 0.00108;   // ~134 x 112 x 72 mm pack
     }
 
     // ----- payloads ----------------------------------------------------------
@@ -420,36 +445,51 @@ package ScoutParts {
                (nominal). */
         attribute mass : Real = 0.10;   attribute cost : Real = 85.0;
         attribute powerW : Real = 4.0;  attribute grade : Integer = 1;
+        attribute volumeM3 : Real = 0.00006;   // board camera + DVR + mount
     }
     part def ZenmuseH20 :> SensorPackage {
         doc /* DJI Zenmuse H20 stabilized EO zoom gimbal (nominal). */
         attribute mass : Real = 0.68;   attribute cost : Real = 4600.0;
         attribute powerW : Real = 18.0; attribute grade : Integer = 2;
+        attribute volumeM3 : Real = 0.00276;   // 150 x 115 x 160 mm gimbal ball + yoke
     }
     part def GremsyT3A7r :> SensorPackage {
         doc /* Gremsy T3V3 gimbal + Sony a7R survey camera kit
-               (nominal). */
+               (nominal).  The stowed envelope is the assembled gimbal
+               with the camera hung: the volume figure that keeps this
+               kit off every bay but the widest. */
         attribute mass : Real = 1.90;   attribute cost : Real = 6800.0;
         attribute powerW : Real = 30.0; attribute grade : Integer = 3;
+        attribute volumeM3 : Real = 0.0088;    // 220 x 200 x 200 mm assembled kit
     }
 
     // ----- cargo bays ----------------------------------------------------------
     // Real drop hardware -- servo release cradles in two sizes and a
     // powered winch bay for the big parcels.
     part def ParcelBayS :> CargoBay {
-        doc /* Gannet-style servo release + 1 kg cradle (nominal). */
+        doc /* Gannet-style servo release + 1 kg cradle (nominal).  The
+               stowed volume is the release frame plus the parcel
+               envelope the cradle admits (~160 x 120 x 100 mm). */
         attribute bayMass : Real = 0.12;  attribute bayCost : Real = 90.0;
         attribute payloadKg : Real = 1.0;
+        attribute stowedVolume : Real = 0.0022;
     }
     part def ParcelBayM :> CargoBay {
-        doc /* Dual-servo release frame + 2.5 kg cradle (nominal). */
+        doc /* Dual-servo release frame + 2.5 kg cradle (nominal).  The
+               stowed volume is the frame plus the parcel envelope the
+               cradle admits (~240 x 160 x 130 mm). */
         attribute bayMass : Real = 0.25;  attribute bayCost : Real = 180.0;
         attribute payloadKg : Real = 2.5;
+        attribute stowedVolume : Real = 0.0055;
     }
     part def ParcelBayL :> CargoBay {
-        doc /* Powered winch bay, 4 kg line rating (nominal). */
+        doc /* Powered winch bay, 4 kg line rating (nominal).  Only the
+               winch mechanism stows: the parcel rides the LINE beneath
+               the airframe, so the heaviest lift makes the smallest
+               bay demand -- the honest shape of slung cargo. */
         attribute bayMass : Real = 0.45;  attribute bayCost : Real = 320.0;
         attribute payloadKg : Real = 4.0;
+        attribute stowedVolume : Real = 0.0020;
     }
 
     // ----- structural tube stock -------------------------------------------------

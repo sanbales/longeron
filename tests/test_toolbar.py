@@ -1011,7 +1011,9 @@ class TestSearchMatching:
             "DeepScout::PlanBattery",  # title 'PlanBattery' contains 'battery'
             "DeepScout::MultiRotor::battery",  # the shared pack, on the base
         } <= search.hit_ids
-        assert search.match_count == 17
+        # 27: the fleet shells' clickable battery part usages joined the
+        # program-wide answer (one per airframe shell)
+        assert search.match_count == 27
 
     def test_qualified_name_match(self, widget):
         search = _search(widget)

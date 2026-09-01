@@ -22,6 +22,7 @@ package FlyingWings {
 
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
+    private import DeepScout::Packaging::*;
     private import DeepScout::StabilityControl::*;
 
     abstract part def FlyingWing :> Airframe {
@@ -68,6 +69,29 @@ package FlyingWings {
         attribute podLength : Real =
             podBaseLength + discClearance + podTeRise;   // m, derived
         attribute podDiameter : Real = 0.05;     // m
+
+        // ----- the payload bay: a blended ogive pod on the root bay
+        // The thick root section is the bay's heart, but a wing 15%
+        // thick swallows only so much: a blended OGIVE pod rides the
+        // root's belly (an ogive of revolution, half-buried -- its
+        // crown lives inside the wing) and opens into the root bay, so
+        // the declared envelope is the pod's lathe PLUS the root cell
+        // between the spars.  Only the pod's exposed skin pays drag:
+        // bayExposedFraction is the wetted share outside the wing, and
+        // the buildup below charges it like every other body.  The
+        // pack rides the bay's aft rail (the CG story above), so the
+        // equipment shares the bay with the payload.
+        attribute bayShape : String = "ogive";
+        attribute bayLength : Real;              // m, pod lathe length
+        attribute bayWidth : Real;               // m, pod diameter
+        attribute bayHeight : Real = bayWidth;   // a lathe: height = diameter
+        attribute rootBayVolume : Real;          // m^3, the in-wing root cell
+        attribute bayExposedFraction : Real = 0.7;   // pod skin outside the wing
+        attribute grossVolume : Real = RevolvedVolume(
+            length = bayLength, diameter = bayWidth) + rootBayVolume;
+        attribute usableVolumeFraction : Real = 0.70;
+        attribute equipmentBayFactor : Real = 1.0;
+
         attribute dragArea : Real = 1.15 * (     // interference/excrescence
             SkinFrictionDrag(                    // the one lifting surface
                 wettedArea = WingWettedArea(planformArea = wingArea),
@@ -79,7 +103,12 @@ package FlyingWings {
                 wettedArea = BodyWettedArea(length = podLength,
                                             diameter = podDiameter),
                 formFactor = BodyFormFactor(length = podLength,
-                                            diameter = podDiameter)));
+                                            diameter = podDiameter))
+            + bayExposedFraction * SkinFrictionDrag(   // the blended bay pod
+                wettedArea = BodyWettedArea(length = bayLength,
+                                            diameter = bayWidth),
+                formFactor = BodyFormFactor(length = bayLength,
+                                            diameter = bayWidth)));
         attribute tipPropBonus : Real = 1.0;     // pushers ride the TE, not the tips
         attribute hoverThrustFactor : Real = 0.0;   // catapult-launched: no hover
         attribute hoverOpsSec : Real = 0.0;         // ... and no hover budget
@@ -255,6 +284,19 @@ package FlyingWings {
         attribute payloadCapacity : Real = 1.0;
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 4.6;  // shell + big pack + gimbal
+
+        // the ISR bay: a sensor-pod ogive under the root, sized so the
+        // Zenmuse-class gimbal, the endurance pack, and the avionics
+        // stow together; the root cell is the cranked center section's
+        // mid-chord bay (0.34 m of flat-TE span at the 15% root)
+        attribute bayLength : Real = 0.48;
+        attribute bayWidth : Real = 0.15;
+        attribute rootBayVolume : Real = 0.0036;
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : ScoutParts::F450Kit::FlightController;
+        part camera : ScoutParts::F450Kit::Camera;
     }
 
     part def FlyingWingTwin :> FlyingWing {
@@ -297,5 +339,19 @@ package FlyingWings {
         attribute payloadCapacity : Real = 2.8;
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 7.0;  // parcel + the heavy pack
+
+        // the courier bay: the root cell does the carrying (0.72 m of
+        // root span between the pushers, the mid-chord cell of the 15%
+        // section), and a slimmer ogive pod fairs the doors and the
+        // pack -- the mid-size parcel cradle stows with margin, the
+        // survey kit's assembled envelope honestly does not
+        attribute bayLength : Real = 0.44;
+        attribute bayWidth : Real = 0.14;
+        attribute rootBayVolume : Real = 0.0080;
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : ScoutParts::F450Kit::FlightController;
+        part camera : ScoutParts::F450Kit::Camera;
     }
 }

@@ -171,6 +171,7 @@ class TestConstraintNetworkPayload:
             "propFit",
             "packPower",
             "cellMatch",
+            "bayFit",
             "launchLift",
             "canCatch",
         }

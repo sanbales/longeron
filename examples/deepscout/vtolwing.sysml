@@ -15,6 +15,7 @@ package WingedVtol {
 
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
+    private import DeepScout::Packaging::*;
 
     part def VtolWing :> Airframe {
         // fuselage + BOTH cruciform wing pairs + four wingtip pods: the
@@ -56,6 +57,28 @@ package WingedVtol {
         attribute armCount : Integer = 0;      // rotors ride the wingtips
         attribute sparRadius : Real = 0.012;   // fits the 12% root section
         attribute designGrossKg : Real = 6.0;  // big pack + heavy payload
+
+        // the payload bay IS the fuselage interior: the skin is already
+        // priced in the buildup above, and the full mid-body (the lathed
+        // profile holds its diameter over most of the length) earns a
+        // prismatic coefficient above the slender-body default.  Pack,
+        // avionics, and payload all share the hull -- the mid-size
+        // parcel cradle honestly does NOT fit a 0.12 m fuselage, and
+        // the winch bay (whose parcel rides the line) honestly does.
+        attribute bayShape : String = "hull";
+        attribute bayLength : Real = fuselageLength;
+        attribute bayWidth : Real = fuselageDiameter;
+        attribute bayHeight : Real = fuselageDiameter;
+        attribute grossVolume : Real = RevolvedVolume(
+            length = fuselageLength, diameter = fuselageDiameter,
+            prismaticCoeff = 0.72);                         // 7.7 L
+        attribute usableVolumeFraction : Real = 0.65;
+        attribute equipmentBayFactor : Real = 1.0;
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : ScoutParts::F450Kit::FlightController;
+        part camera : ScoutParts::F450Kit::Camera;
     }
 
     part def DartInterceptor :> Airframe {
@@ -92,5 +115,23 @@ package WingedVtol {
         attribute armCount : Integer = 0;      // no rotor arms
         attribute sparRadius : Real = 0.008;   // thin 9% section
         attribute designGrossKg : Real = 2.2;  // launch mass + margin
+
+        // the payload bay is the slender hull's nose section: the skin
+        // is already priced, the seeker and the pack share what the
+        // lathe encloses, and the boat tail and motor mount impede the
+        // rest -- a dash bird's bay, not a courier's
+        attribute bayShape : String = "hull";
+        attribute bayLength : Real = fuselageLength;
+        attribute bayWidth : Real = fuselageDiameter;
+        attribute bayHeight : Real = fuselageDiameter;
+        attribute grossVolume : Real = RevolvedVolume(
+            length = fuselageLength, diameter = fuselageDiameter);  // 6.5 L
+        attribute usableVolumeFraction : Real = 0.60;
+        attribute equipmentBayFactor : Real = 1.0;
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : ScoutParts::F450Kit::FlightController;
+        part camera : ScoutParts::F450Kit::Camera;
     }
 }

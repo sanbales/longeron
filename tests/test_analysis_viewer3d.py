@@ -25,6 +25,7 @@ class TestMeshViewer:
             "props",
             "battery",
             "esc",
+            "fc",
         ]
         assert widget.mesh_b_json == ""  # single mode
         assert widget.label == "racer" and widget.width_px == 500

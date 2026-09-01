@@ -168,20 +168,25 @@ class TestFronts:
         # (the S1000-class hexa loiters, the coax octo dashes), the
         # small class populates the cheap corners, and the flying wings
         # of 0.12 add the catapult-launched seats (145/125/372 before
-        # they joined)
-        assert counts == {"isr": 377, "logistics": 275, "intercept": 526}
+        # they joined; 377/275/526 before the volume ledger -- the
+        # bayFit axis retires the mixes that carried the mass but never
+        # had the room, and the bay pods' skin drag prices out a few
+        # razor-margin station/radius seats)
+        assert counts == {"isr": 252, "logistics": 257, "intercept": 526}
 
     def test_crossing_is_purely_additive(self, spaces):
-        # every pre-crossing mix keeps its exact verdict: restricted to
+        # every pre-crossing mix keeps its verdict axes: restricted to
         # the legacy variants, the feasible counts are the historical
-        # 92 / 76 / 166
+        # 92 / 76 / 166 less the volume ledger's honest retirements
+        # (the survey kit and the mid-size cradle never had the room
+        # they were flying on paper)
         def legacy(arch):
             return all(arch.selection[k] in v for k, v in self.LEGACY.items())
 
         counts = {
             name: sum(a.verified for a in archs if legacy(a)) for name, archs in spaces.items()
         }
-        assert counts == {"isr": 92, "logistics": 76, "intercept": 166}
+        assert counts == {"isr": 54, "logistics": 64, "intercept": 166}
 
     def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
         """The design-space answer to "are wings necessary?": both the
@@ -335,6 +340,171 @@ class TestFamilyWinners:
         assert mats["intercept"] == {"aluminum"}
 
 
+class TestVolumeLedger:
+    """The bayFit axis: payloads need ROOM, not just lift."""
+
+    def test_catalog_declares_the_volumes(self, studies):
+        sensors = studies["isr"].points["sensor"].variants
+        assert sensors["runcamSplit"]["volumeM3"] == pytest.approx(0.00006)
+        assert sensors["zenmuseH20"]["volumeM3"] == pytest.approx(0.00276)
+        assert sensors["gremsyT3"]["volumeM3"] == pytest.approx(0.0088)
+        cargo = studies["logistics"].points["cargo"].variants
+        # the winch stows only its mechanism (the parcel rides the line):
+        # the heaviest lift makes the smallest bay demand
+        assert cargo["parcelBayL"]["stowedVolume"] < cargo["parcelBayS"]["stowedVolume"]
+        assert cargo["parcelBayM"]["stowedVolume"] > cargo["parcelBayS"]["stowedVolume"]
+        packs = studies["isr"].points["battery"].variants
+        assert all(slots["volumeM3"] > 0 for slots in packs.values())
+        # the li-ion holders make a boxier brick than the biggest LiPo
+        assert packs["liion6s6p"]["volumeM3"] > packs["tattu16000"]["volumeM3"]
+
+    def test_every_airframe_declares_a_usable_bay(self, studies):
+        frames = studies["isr"].points["airframe"].variants
+        for name, slots in frames.items():
+            assert slots["grossVolume"] > 0, name
+            assert 0.5 <= slots["usableVolumeFraction"] <= 0.8, name
+            assert slots["usableVolume"] == pytest.approx(
+                slots["grossVolume"] * slots["usableVolumeFraction"]
+            ), name
+            assert slots["bayShape"] in {"box", "hull", "ogive"}, name
+            assert slots["equipmentBayFactor"] in (0.0, 1.0), name
+        # shapes per family: boxes under the open rotor hubs, hull bays
+        # inside the lathed bodies, blended ogive pods on the wings
+        for name in ("boxQuad", "openTri", "hexLifter", "coaxOcto", "ringOcto"):
+            assert frames[name]["bayShape"] == "box"
+            assert frames[name]["equipmentBayFactor"] == 0.0  # pack on the hub stack
+        for name in ("teardropQuad", "vtolWing", "dartInterceptor"):
+            assert frames[name]["bayShape"] == "hull"
+            assert frames[name]["equipmentBayFactor"] == 1.0
+        for name in ("flyingWingSingle", "flyingWingTwin"):
+            assert frames[name]["bayShape"] == "ogive"
+            assert frames[name]["equipmentBayFactor"] == 1.0
+
+    def test_gimbal_no_longer_fits_the_teardrop(self, studies):
+        # the teardrop carries the H20's 0.68 kg with ease -- but the
+        # hull that earns its drag advantage has no ROOM for a gimbal
+        # plus the pack plus the avionics: the mass ledger admits what
+        # the volume ledger refuses
+        mix = {
+            "airframe": "teardropQuad",
+            "motors": "mt2213",
+            "props": "apc1045",
+            "battery": "tattu3s",
+            "sensor": "zenmuseH20",
+            "material": "carbonFiber",
+        }
+        arch = studies["isr"].evaluate(mix)
+        assert "bayFit" in arch.violations
+        margins = studies["isr"].margins(mix)
+        assert margins["bayFit"]["margin"] < 0.0
+        assert margins["sensorFits"]["ok"]  # the mass ledger still admits it
+
+    def test_survey_kit_needs_the_wide_ring(self, spaces):
+        # the assembled Gremsy + a7R envelope outgrows every bay but the
+        # flat octo's wide box: the survey kit's only feasible perch
+        perches = {
+            a.selection["airframe"]
+            for a in spaces["isr"]
+            if a.verified and a.selection["sensor"] == "gremsyT3"
+        }
+        assert perches == {"ringOcto"}
+
+    def test_winch_hangs_where_the_cradle_cannot_stow(self, studies):
+        # the tail-sitter's 0.12 m fuselage refuses the mid-size cradle's
+        # parcel envelope, but the winch bay stows only its mechanism --
+        # the 4 kg slung load keeps flying
+        base = {
+            "airframe": "vtolWing",
+            "motors": "x4112s",
+            "props": "apc11x55",
+            "battery": "tattu16000",
+            "material": "carbonFiber",
+        }
+        cradle = studies["logistics"].evaluate({**base, "cargo": "parcelBayM"})
+        assert cradle.violations == ["bayFit"]
+        winch = studies["logistics"].evaluate({**base, "cargo": "parcelBayL"})
+        assert winch.verified
+
+    def test_winner_bays_close_with_margin(self, studies):
+        # the mission winners keep flying because their bays genuinely
+        # hold their stowage -- demand strictly inside the usable volume
+        isr = studies["isr"].evaluate(
+            {
+                "airframe": "flyingWingSingle",
+                "motors": "mn4006",
+                "props": "apc11x55",
+                "battery": "liion6s6p",
+                "sensor": "zenmuseH20",
+                "material": "carbonFiber",
+            }
+        )
+        assert isr.verified
+        assert isr.metrics["bayDemandVolume"] == pytest.approx(0.00276 + 0.00108 + 0.0003)
+        log = studies["logistics"].evaluate(
+            {
+                "airframe": "flyingWingTwin",
+                "motors": "mn4006",
+                "props": "apc11x55",
+                "battery": "liion6s6p",
+                "cargo": "parcelBayM",
+                "material": "carbonFiber",
+            }
+        )
+        assert log.verified
+        assert log.metrics["bayDemandVolume"] == pytest.approx(0.0055 + 0.00108 + 0.0003)
+
+    def test_open_frames_stack_their_equipment(self, studies):
+        # equipmentBayFactor 0: the box quad's pack and avionics ride the
+        # hub stack, so only the payload draws on the slung box
+        arch = studies["logistics"].evaluate(
+            {
+                "airframe": "boxQuad",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu16000",
+                "cargo": "parcelBayS",
+                "material": "aluminum",
+            }
+        )
+        assert arch.metrics["equipmentBayVolume"] == 0.0
+        assert arch.metrics["bayDemandVolume"] == pytest.approx(0.0022)
+
+
+class TestStructureStory:
+    """The arm-root gussets: hub structure out of the main body."""
+
+    def test_gussets_carry_their_mass(self, studies):
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "boxQuad",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu10000",
+                "material": "aluminum",
+            }
+        )
+        m = arch.metrics
+        assert m["gussetMass"] > 0.0
+        assert m["armRootMomentNm"] == pytest.approx(33.0 * m["armLength"])
+        assert m["structureMass"] == pytest.approx(
+            m["armStructMass"] + m["gussetMass"] + m["sparStructMass"]
+        )
+        # the doubler sleeve is a root detail, not a second arm
+        assert m["gussetMass"] < 0.5 * m["armStructMass"]
+
+    def test_wings_grow_no_gussets(self, studies):
+        arch = studies["intercept"].evaluate(
+            {
+                "airframe": "flyingWingSingle",
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu10000",
+                "material": "carbonFiber",
+            }
+        )
+        assert arch.metrics["gussetMass"] == 0.0  # no rotor arms to root
+
+
 class TestExplainableInfeasibility:
     def test_interceptor_cannot_do_logistics(self, spaces):
         darts = [a for a in spaces["logistics"] if a.selection["airframe"] == "dartInterceptor"]
@@ -407,7 +577,10 @@ class TestExplainableInfeasibility:
                 }
             )
             assert not arch.verified
-            assert arch.violations == ["isrLift"]
+            # two honest refusals at once: the Antigravity motors cannot
+            # lift the kit, and the assembled gimbal cannot stow in a
+            # 0.12 m fuselage either
+            assert arch.violations == ["isrLift", "bayFit"]
 
     def test_liion_cannot_feed_the_lifter_motors(self, studies):
         # the chemistry cliff: 447 Wh of 18650s, but 10 A cells -- the

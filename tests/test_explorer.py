@@ -469,7 +469,8 @@ def test_drone_tree_shows_its_relationships(drone_model):
     assert badges["flow"] == 1  # dcBus: battery.voltage -> esc.busVoltage
     assert badges["allocation"] == 1  # FlightStates -> FlightController
     assert badges["dependency"] == 1  # PlanBattery -> HoverTime
-    assert badges["import"] == 36  # the program's cross-file wiring
+    assert badges["import"] == 40  # the program's cross-file wiring
+    #   (+4: the Packaging volume kernels reach every bay-declaring file)
     #   (25 + the 6 imports of surfaces.sysml's ScoutSurfaces package
     #   + the flying wings' StabilityControl import)
     labels = {node["label"] for node in rows}

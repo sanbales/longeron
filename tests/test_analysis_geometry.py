@@ -286,10 +286,17 @@ class TestPrimitives:
 class TestDroneGeometry:
     def test_parts_and_schema(self):
         mesh = geometry.drone_geometry(**RACER)
-        assert [p["name"] for p in mesh["parts"]] == ["frame", "motors", "props", "battery", "esc"]
+        assert [p["name"] for p in mesh["parts"]] == [
+            "frame",
+            "motors",
+            "props",
+            "battery",
+            "esc",
+            "fc",
+        ]
         assert mesh["unit"] == "m"
         colors = {p["color"] for p in mesh["parts"]}
-        assert len(colors) == 5  # per-part colors are distinct
+        assert len(colors) == 6  # per-part colors are distinct
         for part in mesh["parts"]:
             assert len(part["vertices"]) % 3 == 0
             assert len(part["faces"]) % 3 == 0
@@ -337,6 +344,7 @@ class TestSplitInstances:
         *[f"prop{i}" for i in (1, 2, 3, 4)],
         "battery",
         "esc",
+        "fc",
     ]
 
     def test_default_is_byte_identical(self):
@@ -378,7 +386,7 @@ class TestSplitInstances:
                 faces += [f + offset for f in part["faces"]]
             assert vertices == merged_by_name[f"{kind}s"]["vertices"]
             assert faces == merged_by_name[f"{kind}s"]["faces"]
-        for name in ("frame", "battery", "esc"):
+        for name in ("frame", "battery", "esc", "fc"):
             assert split_by_name[name] == merged_by_name[name]
         assert split["bounds"] == merged["bounds"] and split["unit"] == merged["unit"]
 
@@ -395,11 +403,15 @@ class TestSplitInstances:
         mesh = geometry.drone_geometry(**RACER, split_instances=True)
         assert mesh["cad"] == {
             **RACER,
+            "fc_mass": 0.039,
             "arm_count": 4,
             "coaxial": False,
             "arm_thickness": geometry._ARM_THICKNESS,
             "arm_width": geometry._ARM_WIDTH,
             "motor_spacing": None,
+            "bay_length": None,
+            "bay_width": None,
+            "bay_height": None,
         }
         assert all(disc["thickness"] == 0.0025 for disc in mesh["discs"])
         assert "cad" not in geometry.drone_geometry(**RACER)  # merged mode: no recipe
@@ -915,9 +927,12 @@ class TestWingedVtolGeometry:
             "tail",
             "motors",
             "props",
+            "bay",
             "battery",
+            "fc",
+            "camera",
         ]
-        assert len({p["color"] for p in mesh["parts"]}) == 6
+        assert len({p["color"] for p in mesh["parts"]}) == 9
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
 
@@ -1066,7 +1081,10 @@ class TestInterceptorGeometry:
             "tail",
             "motors",
             "props",
+            "bay",
             "battery",
+            "fc",
+            "camera",
         ]
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
@@ -1112,7 +1130,15 @@ class TestInterceptorGeometry:
 class TestTeardropQuadGeometry:
     def test_parts_and_solidity(self):
         mesh = geometry.teardrop_quad_geometry(**TEARDROP)
-        assert [p["name"] for p in mesh["parts"]] == ["frame", "motors", "props", "battery"]
+        assert [p["name"] for p in mesh["parts"]] == [
+            "frame",
+            "motors",
+            "props",
+            "bay",
+            "battery",
+            "fc",
+            "camera",
+        ]
         for part in mesh["parts"]:
             assert _volume(part["vertices"], part["faces"]) > 0
 
@@ -1479,6 +1505,31 @@ class TestFlyingWingPlanform:
         )
         assert plain == explicit
 
+    def test_bay_pod_replaces_the_naked_battery_cylinder(self):
+        """The payload bay is a blended ogive pod: a lathe whose crown
+        rides INSIDE the root section (no cylinder poking through the
+        skin), holding the battery, the FC board, and the camera at
+        stations inside its own envelope."""
+
+        mesh = geometry.flying_wing_geometry(
+            **self.FW, sweep_deg=22.0, pod_length=0.09, bay_length=0.48, bay_diameter=0.15
+        )
+        by_name = {p["name"]: p for p in mesh["parts"]}
+        (bx0, by0, bz0), (bx1, by1, bz1) = geometry._part_aabb(by_name["bay"])
+        assert bx0 - bx1 != 0 and bx1 - bx0 == pytest.approx(0.48, abs=1e-3)
+        assert bz1 - bz0 == pytest.approx(0.15, abs=1e-3)
+        # the crown stays inside the 15% root section's upper skin
+        root = 2.0 * (self.FW["wing_area"] / self.FW["wing_span"]) / (1.0 + 0.45)
+        assert by1 <= 0.5 * 0.15 * root + 1e-6
+        # ... and the belly hangs proud below the wing: a visible pod
+        assert by0 < -0.5 * 0.15 * root
+        # the internals stow inside the pod envelope
+        for internal in ("battery", "fc", "camera"):
+            (ix0, iy0, iz0), (ix1, iy1, iz1) = geometry._part_aabb(by_name[internal])
+            assert bx0 <= ix0 and ix1 <= bx1, internal
+            assert by0 <= iy0 and iy1 <= by1, internal
+            assert bz0 <= iz0 and iz1 <= bz1, internal
+
     def test_mission_bridge_feeds_the_declared_planform(self, mission_study):
         arch = mission_study.evaluate(
             {
@@ -1496,6 +1547,9 @@ class TestFlyingWingPlanform:
         assert params["center_section_span"] == pytest.approx(0.3394)
         assert params["pod_length"] == pytest.approx(0.09)
         assert params["pod_diameter"] == 0.05
+        assert params["bay_shape"] == "ogive"
+        assert params["bay_length"] == pytest.approx(0.48)
+        assert params["bay_width"] == pytest.approx(0.15)
         via_bridge = geometry.mission_geometry(mission_study, arch)
         direct = geometry.flying_wing_geometry(
             wing_span=2.2,
@@ -1511,6 +1565,8 @@ class TestFlyingWingPlanform:
             center_section_span=params["center_section_span"],
             pod_length=params["pod_length"],
             pod_diameter=params["pod_diameter"],
+            bay_length=params["bay_length"],
+            bay_diameter=params["bay_width"],
         )
         assert via_bridge == direct  # the model's attributes, nothing else
 
@@ -1623,9 +1679,25 @@ class TestMissionBridge:
             )
 
         quad = geometry.mission_geometry(mission_study, mix("boxQuad"))
-        assert [p["name"] for p in quad["parts"]] == ["frame", "motors", "props", "battery", "esc"]
+        assert [p["name"] for p in quad["parts"]] == [
+            "frame",
+            "motors",
+            "props",
+            "battery",
+            "esc",
+            "fc",
+            "bay",
+        ]
         teardrop = geometry.mission_geometry(mission_study, mix("teardropQuad"))
-        assert [p["name"] for p in teardrop["parts"]] == ["frame", "motors", "props", "battery"]
+        assert [p["name"] for p in teardrop["parts"]] == [
+            "frame",
+            "motors",
+            "props",
+            "bay",
+            "battery",
+            "fc",
+            "camera",
+        ]
         winged = geometry.mission_geometry(mission_study, mix("vtolWing"))
         assert any(p["name"] == "wing" for p in winged["parts"])
         dart = geometry.mission_geometry(mission_study, mix("dartInterceptor"))
@@ -1636,7 +1708,16 @@ class TestMissionBridge:
         for airframe, span, pods in (("flyingWingSingle", 2.2, 1), ("flyingWingTwin", 2.6, 2)):
             wing = geometry.mission_geometry(mission_study, mix(airframe))
             names = [p["name"] for p in wing["parts"]]
-            assert names == ["wing", "winglets", "motors", "props", "battery"]
+            assert names == [
+                "wing",
+                "winglets",
+                "motors",
+                "props",
+                "bay",
+                "battery",
+                "fc",
+                "camera",
+            ]
             props = next(p for p in wing["parts"] if p["name"] == "props")
             assert len(_component_boxes(props)) == pods
             span_z = wing["bounds"][1][2] - wing["bounds"][0][2]
@@ -1667,7 +1748,10 @@ class TestMissionBridge:
         (top_al, d_al), (top_cf, d_cf) = arm_thickness("aluminum"), arm_thickness("carbonFiber")
         assert d_al > d_cf  # aluminum needs more wall for the same load
         assert top_al > top_cf  # ... and the mesh genuinely shows it
-        assert top_al == pytest.approx(d_al / 2, abs=1e-4)
+        # the frame's crown is the arm-root gusset: one plate thickness
+        # proud of the sized arm's top face
+        assert top_al == pytest.approx(d_al / 2 + geometry._PLATE_THICKNESS, abs=1e-4)
+        assert top_cf == pytest.approx(d_cf / 2 + geometry._PLATE_THICKNESS, abs=1e-4)
 
     def test_params_read_the_selected_variants(self, mission_study):
         arch = mission_study.evaluate(
@@ -1706,7 +1790,7 @@ class TestLineup:
         winged = geometry.winged_vtol_geometry(**WINGED)
         dart = geometry.interceptor_geometry(**DART)
         scene = geometry.lineup([winged, dart], labels=["isr", "dash"])
-        assert len(scene["parts"]) == 12
+        assert len(scene["parts"]) == 18
         assert {p["name"].split(":")[0] for p in scene["parts"]} == {"isr", "dash"}
         # widths are preserved, meshes do not overlap, ground is shared
         width = sum(m["bounds"][1][0] - m["bounds"][0][0] for m in (winged, dart)) + 0.25
@@ -1810,6 +1894,7 @@ class TestTagParts:
             "Rotorcraft::QuadCopter::propellers",
             "Rotorcraft::QuadCopter::battery",
             None,  # esc has no model part: identity stays its name
+            None,  # ... and neither does the fc board here
         ]
         # the input mesh is untouched; vertex arrays are shared, not copied
         assert all("key" not in p for p in mesh["parts"])
@@ -1849,7 +1934,7 @@ class TestArchitectureBridge:
             "esc_mass": 0.009,
         }
         mesh = geometry.architecture_geometry(study, arch)
-        assert len(mesh["parts"]) == 5
+        assert len(mesh["parts"]) == 6
 
     def test_missing_point_is_loud(self, study):
         arch = study.evaluate(

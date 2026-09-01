@@ -27,6 +27,7 @@ package Rotorcraft {
     private import ScoutParts::F450Kit::*;
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
+    private import DeepScout::Packaging::*;
     private import DeepScout::Propulsion::*;
     private import DeepScout::Performance::*;
 
@@ -324,10 +325,15 @@ package Rotorcraft {
 
     part def BoxQuad :> Airframe {
         // open 450-class frame: no skin to speak of -- the whole CdA is
-        // bluff (tilted plates, battery brick, motor cans in the wind)
-        attribute frameFrontalArea : Real = 0.050;  // m^2, forward flight
+        // bluff (tilted plates, battery brick, motor cans in the wind).
+        // The payload box slung under the hub owns its share of the
+        // bluff frontal area explicitly (the plates and the pack shadow
+        // the rest of its face at cruise tilt); the buildup total is
+        // the same open-frame figure as ever.
+        attribute frameFrontalArea : Real = 0.036;  // m^2, plates/pack/cans
+        attribute bayFrontalArea : Real = 0.014;    // m^2, the box's exposed share
         attribute dragArea : Real =
-            BluffFrameDrag(frontalArea = frameFrontalArea);
+            BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.78;   attribute cost : Real = 120.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
@@ -344,6 +350,23 @@ package Rotorcraft {
         attribute armCount : Integer = 4;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the payload bay: an open box slung under the hub plates --
+        // cheap volume, but its face pays bluff drag above and the
+        // battery rides the hub stack, not the box
+        attribute bayShape : String = "box";
+        attribute bayLength : Real = 0.26;
+        attribute bayWidth : Real = 0.20;
+        attribute bayHeight : Real = 0.14;
+        attribute grossVolume : Real = BoxVolume(length = bayLength,
+            width = bayWidth, height = bayHeight);          // 7.3 L
+        attribute usableVolumeFraction : Real = 0.75;   // straps + rails
+        attribute equipmentBayFactor : Real = 0.0;      // pack on the hub stack
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 
     part def TeardropQuad :> Airframe {
@@ -378,6 +401,25 @@ package Rotorcraft {
         attribute armCount : Integer = 4;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the payload bay rides INSIDE the lathed hull -- the drag
+        // ledger already prices the shell's skin, so the bay adds no
+        // drag of its own, but the hull's displacement is ALL there is:
+        // pack, avionics, and payload share it, and the frames, arm
+        // carry-throughs, and taper ends impede the fluid volume hard
+        attribute bayShape : String = "hull";
+        attribute bayLength : Real = fuselageLength;
+        attribute bayWidth : Real = fuselageDiameter;
+        attribute bayHeight : Real = fuselageDiameter;
+        attribute grossVolume : Real = RevolvedVolume(
+            length = fuselageLength, diameter = fuselageDiameter);  // 4.5 L
+        attribute usableVolumeFraction : Real = 0.60;
+        attribute equipmentBayFactor : Real = 1.0;      // everything shares the hull
+
+        // the clickable internals: the equipment every variant carries
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 
     part def OpenTri :> Airframe {
@@ -389,10 +431,12 @@ package Rotorcraft {
         // build family's TriCopter tells the same story at bench
         // fidelity), and the tilted tail rotor wastes lift: the
         // diskAreaFactor carries the vectoring loss as a nominal
-        // 0.2-disc haircut.
-        attribute frameFrontalArea : Real = 0.042;  // m^2, forward flight
+        // 0.2-disc haircut.  The narrow plate pair takes a narrow box:
+        // its exposed face owns its share of the bluff buildup below.
+        attribute frameFrontalArea : Real = 0.032;  // m^2, plates/boom/tilt gear
+        attribute bayFrontalArea : Real = 0.010;    // m^2, the box's exposed share
         attribute dragArea : Real =
-            BluffFrameDrag(frontalArea = frameFrontalArea);
+            BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.62;   attribute cost : Real = 260.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
@@ -409,6 +453,19 @@ package Rotorcraft {
         attribute armCount : Integer = 3;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        attribute bayShape : String = "box";
+        attribute bayLength : Real = 0.20;
+        attribute bayWidth : Real = 0.16;
+        attribute bayHeight : Real = 0.13;
+        attribute grossVolume : Real = BoxVolume(length = bayLength,
+            width = bayWidth, height = bayHeight);          // 4.2 L
+        attribute usableVolumeFraction : Real = 0.75;
+        attribute equipmentBayFactor : Real = 0.0;      // pack on the hub stack
+
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 
     part def HexLifter :> Airframe {
@@ -419,10 +476,14 @@ package Rotorcraft {
         // AT4120s want more watts than any pack feeds (packPower).  A
         // camera platform climbs gently, so the sustained climb-out
         // fraction is lower than the sport frames': that is what lets
-        // the li-ion endurance pack feed six Antigravity motors.
-        attribute frameFrontalArea : Real = 0.13;   // m^2: plates, six arms, gear
+        // the li-ion endurance pack feed six Antigravity motors.  The
+        // gimbal bay under the hub is the widest box of the rotor
+        // fleet -- the survey kit needs it -- and its exposed face owns
+        // its share of the bluff buildup.
+        attribute frameFrontalArea : Real = 0.108;  // m^2: plates, six arms, gear
+        attribute bayFrontalArea : Real = 0.022;    // m^2, the box's exposed share
         attribute dragArea : Real =
-            BluffFrameDrag(frontalArea = frameFrontalArea);
+            BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 3.1;    attribute cost : Real = 1450.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
@@ -439,6 +500,19 @@ package Rotorcraft {
         attribute armCount : Integer = 6;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        attribute bayShape : String = "box";
+        attribute bayLength : Real = 0.30;
+        attribute bayWidth : Real = 0.24;
+        attribute bayHeight : Real = 0.18;
+        attribute grossVolume : Real = BoxVolume(length = bayLength,
+            width = bayWidth, height = bayHeight);          // 13.0 L
+        attribute usableVolumeFraction : Real = 0.75;
+        attribute equipmentBayFactor : Real = 0.0;      // pack on the hub stack
+
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 
     part def CoaxOcto :> Airframe {
@@ -448,10 +522,12 @@ package Rotorcraft {
         // counts ~1.26 isolated discs for hover power (the kappa ~ 1.26
         // interference rule of thumb), so eight rotors buy five discs'
         // worth of hover efficiency.  Dense power in a small frame --
-        // the dash studies notice.
-        attribute frameFrontalArea : Real = 0.055;  // m^2: quad footprint + lower cans
+        // the dash studies notice -- and the dense frame keeps the bay
+        // honest: the box between the booms is quad-sized, no bigger.
+        attribute frameFrontalArea : Real = 0.041;  // m^2: quad footprint + lower cans
+        attribute bayFrontalArea : Real = 0.014;    // m^2, the box's exposed share
         attribute dragArea : Real =
-            BluffFrameDrag(frontalArea = frameFrontalArea);
+            BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.05;   attribute cost : Real = 380.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
@@ -468,6 +544,19 @@ package Rotorcraft {
         attribute armCount : Integer = 4;      // four booms, two stations each
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        attribute bayShape : String = "box";
+        attribute bayLength : Real = 0.26;
+        attribute bayWidth : Real = 0.20;
+        attribute bayHeight : Real = 0.15;
+        attribute grossVolume : Real = BoxVolume(length = bayLength,
+            width = bayWidth, height = bayHeight);          // 7.8 L
+        attribute usableVolumeFraction : Real = 0.75;
+        attribute equipmentBayFactor : Real = 0.0;      // pack on the hub stack
+
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 
     part def RingOcto :> Airframe {
@@ -476,9 +565,12 @@ package Rotorcraft {
         // to the fleet convention.  Motor-out tolerance is why anyone
         // builds one; the mission studies price what eight stations cost
         // in frame, drag, and invoice against what the hexa's six buy.
-        attribute frameFrontalArea : Real = 0.085;  // m^2: the wide ring in the wind
+        // The wide ring hangs the second-widest box of the rotor fleet:
+        // its exposed face owns its share of the bluff buildup.
+        attribute frameFrontalArea : Real = 0.065;  // m^2: the wide ring in the wind
+        attribute bayFrontalArea : Real = 0.020;    // m^2, the box's exposed share
         attribute dragArea : Real =
-            BluffFrameDrag(frontalArea = frameFrontalArea);
+            BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.5;    attribute cost : Real = 520.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
         attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
@@ -495,5 +587,18 @@ package Rotorcraft {
         attribute armCount : Integer = 8;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        attribute bayShape : String = "box";
+        attribute bayLength : Real = 0.30;
+        attribute bayWidth : Real = 0.24;
+        attribute bayHeight : Real = 0.17;
+        attribute grossVolume : Real = BoxVolume(length = bayLength,
+            width = bayWidth, height = bayHeight);          // 12.2 L
+        attribute usableVolumeFraction : Real = 0.75;
+        attribute equipmentBayFactor : Real = 0.0;      // pack on the hub stack
+
+        part battery : ScoutParts::Battery;
+        part flightController : FlightController;
+        part camera : Camera;
     }
 }

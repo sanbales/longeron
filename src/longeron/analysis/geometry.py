@@ -84,6 +84,7 @@ from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy
 
 __all__ = [
+    "BayShape",
     "GeometryEngine",
     "airframe_geometry",
     "architecture_geometry",
@@ -115,6 +116,12 @@ Mesh = tuple[list[float], list[int]]  # flat vertices, flat triangle indices
 #: (cad when importable, mesh otherwise -- the honest default)
 GeometryEngine = Literal["auto", "cad", "mesh"]
 
+#: the payload-bay shape vocabulary of the DeepScout ``Airframe`` def
+#: (``examples/deepscout/aircraft.sysml`` -- the ``bayShape`` attribute):
+#: a ``"box"`` slung under a rotor hub, a ``"hull"`` bay inside a lathed
+#: fuselage, or an ``"ogive"`` pod blended at a flying wing's root
+BayShape = Literal["box", "hull", "ogive"]
+
 IN = 0.0254  # metres per inch
 
 # --- documented sizing heuristics (SI) -------------------------------------
@@ -142,6 +149,12 @@ _COAX_DROP = 0.02
 #: the trailing edge that covers it
 _POD_BASE_LENGTH = 0.06
 _POD_DISC_CLEARANCE = 0.03
+#: arm-root gusset proportions (documented heuristics, mirrored by the
+#: sizing story of ``examples/deepscout/missions.sysml``): the gusset
+#: runs this fraction of the arm's hub reach out of the plate stack,
+#: and its root cross-section is this many arm widths wide
+_GUSSET_REACH = 0.25
+_GUSSET_ROOT_WIDTHS = 2.6
 
 #: per-part colors: muted categorical set at roughly constant lightness
 COLORS = {
@@ -150,6 +163,8 @@ COLORS = {
     "props": "#58939b",  # teal (drawn translucent: a spinning disk)
     "battery": "#7181b8",  # indigo
     "esc": "#a58a4d",  # ochre
+    "fc": "#5d7a8c",  # slate blue (the flight-controller board)
+    "bay": "#7d6b54",  # warm brown (the payload bay)
     "wing": "#6f8f6a",  # sage
     "tail": "#8a8f98",  # light gray (stabilizers)
     "camera": "#7a5d8c",  # violet (the mission camera body)
@@ -427,6 +442,44 @@ def _rotor_stations(arm_count: int, spacing: float) -> list[tuple[float, float, 
     return stations
 
 
+def _hub_gussets(
+    arm_stations: list[tuple[float, float, float, float]],
+    plate_side: float,
+    arm_thickness: float,
+    arm_width: float,
+) -> list[Mesh]:
+    """One arm-root gusset per station: hub structure grown out of the
+    plates to meet the arm.
+
+    Each gusset is a lofted frustum (:func:`_loft`) running from just
+    inside the plate edge out along its arm for ``_GUSSET_REACH`` of the
+    hub reach: a root cross-section spanning the whole plate stack and
+    ``_GUSSET_ROOT_WIDTHS`` arm widths, tapering to just over the arm's
+    own section -- the fairing that carries the arm-root bending moment
+    into the centre plates (the ``gussetMass`` story of the DeepScout
+    mission sizing).
+    """
+
+    gussets: list[Mesh] = []
+    root = 0.46 * plate_side
+    h0 = arm_thickness / 2 + _PLATE_THICKNESS  # half-height at the root
+    h1 = arm_thickness / 2 * 1.02
+    w0 = _GUSSET_ROOT_WIDTHS * arm_width / 2
+    w1 = 1.1 * arm_width / 2
+    for angle, _x, _z, reach in arm_stations:
+        tip = root + max(0.025, _GUSSET_REACH * reach)
+        frustum = _loft(
+            (root, 0.0, 0.0),
+            (0.0, 0.0, -w0),
+            (0.0, h0, 0.0),
+            (tip, 0.0, 0.0),
+            (0.0, 0.0, -w1),
+            (0.0, h1, 0.0),
+        )
+        gussets.append((_rotate_y(frustum[0], -angle), frustum[1]))
+    return gussets
+
+
 # ---------------------------------------------------------------------------
 # the drone assembly
 # ---------------------------------------------------------------------------
@@ -472,6 +525,7 @@ def drone_geometry(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
+    fc_mass: float = 0.039,
     arm_count: int = 4,
     coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
@@ -480,6 +534,9 @@ def drone_geometry(
     split_instances: bool = False,
     motor_spacing: float | None = None,
     camera: Mapping[str, float] | None = None,
+    bay_length: float | None = None,
+    bay_width: float | None = None,
+    bay_height: float | None = None,
 ) -> dict[str, Any]:
     """A to-scale multirotor mesh dict from catalog attribute values.
 
@@ -532,6 +589,18 @@ def drone_geometry(
     a violet ``camera`` body part (a small box, yawed to the azimuth)
     and stamps the parameters on ``mesh["camera"]`` for
     :func:`camera_occlusion`'s view cone.
+
+    The hub owns its structure: a bottom plate closes the plate stack
+    (the battery straps to it at its unchanged station) and one
+    arm-root gusset per arm grows out of the plates
+    (:func:`_hub_gussets`) -- the drawn twin of the mission sizing's
+    ``gussetMass``.  ``fc_mass`` stacks the flight-controller board
+    above the ESC on the 30.5 mm pattern (its own slate ``fc`` part,
+    so the FC is selectable).  ``bay_length``/``bay_width``/
+    ``bay_height`` sling the declared payload-bay box under the
+    battery (a fleet airframe's ``bayShape "box"`` -- see
+    :func:`airframe_geometry`); a coaxial build drops the box below
+    its lower disc plane.  All three default to ``None``: no bay part.
     """
 
     prop_d = prop_diameter_in * IN
@@ -542,6 +611,7 @@ def drone_geometry(
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
+    fc_t = board_thickness(fc_mass)
 
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
     motor_y = arm_thickness / 2 + motor_h / 2
@@ -566,9 +636,31 @@ def drone_geometry(
             motors.append(_cylinder(motor_d / 2, motor_h, x, low_motor_y, z, segments))
             props.append(_cylinder(prop_d / 2, 0.0025, x, low_prop_y, z, max(segments, 32)))
 
-    frame = _merge(_box(plate_side, _PLATE_THICKNESS, plate_side), *arms, *posts)
+    frame = _merge(
+        _box(plate_side, _PLATE_THICKNESS, plate_side),
+        _box(  # the bottom plate: closes the stack; the battery straps to it
+            plate_side,
+            _PLATE_THICKNESS,
+            plate_side,
+            cy=-(arm_thickness / 2 + _PLATE_THICKNESS / 2),
+        ),
+        *_hub_gussets(arm_stations, plate_side, arm_thickness, arm_width),
+        *arms,
+        *posts,
+    )
     battery = _box(bat_l, bat_w, bat_h, cy=-(_PLATE_THICKNESS / 2 + 0.004 + bat_h / 2))
     esc = _box(_BOARD_SIDE, esc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t / 2)
+    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cy=_PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2)
+
+    bay_part: list[tuple[str, Mesh, float]] = []
+    if bay_length is not None and bay_width is not None and bay_height is not None:
+        if min(bay_length, bay_width, bay_height) <= 0:
+            raise AnalysisError("bay dimensions must be positive")
+        bay_top = -(_PLATE_THICKNESS / 2 + 0.004 + bat_h) - 0.004
+        if coaxial:  # the box must clear the lower disc plane
+            bay_top = min(bay_top, low_prop_y - 0.00125 - 0.004)
+        bay = _box(bay_length, bay_height, bay_width, cy=bay_top - bay_height / 2)
+        bay_part.append(("bay", bay, 1.0))
 
     camera_part: list[tuple[str, Mesh, float]] = []
     if camera is not None:
@@ -590,6 +682,8 @@ def drone_geometry(
             *((f"prop{i + 1}", prop, 0.55) for i, prop in enumerate(props)),
             ("battery", battery, 1.0),
             ("esc", esc, 1.0),
+            ("fc", fc, 1.0),
+            *bay_part,
             *camera_part,
         ]
         instance_colors = {
@@ -614,11 +708,15 @@ def drone_geometry(
             "motor_mass": motor_mass,
             "battery_mass": battery_mass,
             "esc_mass": esc_mass,
+            "fc_mass": fc_mass,
             "arm_count": arm_count,
             "coaxial": coaxial,
             "arm_thickness": arm_thickness,
             "arm_width": arm_width,
             "motor_spacing": motor_spacing,
+            "bay_length": bay_length,
+            "bay_width": bay_width,
+            "bay_height": bay_height,
         }
         if camera is not None:
             mesh["camera"] = _camera_params(camera)
@@ -629,6 +727,8 @@ def drone_geometry(
         ("props", _merge(*props), 0.55),
         ("battery", battery, 1.0),
         ("esc", esc, 1.0),
+        ("fc", fc, 1.0),
+        *bay_part,
         *camera_part,
     ]
     mesh = _pack(parts)
@@ -1653,6 +1753,20 @@ def winged_vtol_geometry(
         [(x_bay + bat_l / 2, body_r + 0.002), (x_bay - bat_l / 2, body_r + 0.002)], segments
     )
 
+    # the bay IS the fuselage interior (the model's "hull" bayShape):
+    # the straight barrel between the nose and tail tapers, plus the FC
+    # board and the nose camera at their true stations -- all selectable
+    bay = _tube(
+        [
+            (-half + 0.30 * fuselage_length + 0.01, 0.85 * body_r),
+            (half - 0.30 * fuselage_length - 0.01, 0.85 * body_r),
+        ],
+        segments,
+    )
+    fc_t = board_thickness(0.039)
+    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.08 * fuselage_length)
+    cam = _box(0.020, 0.016, 0.016, cx=half - 0.10 * fuselage_length, cy=0.30 * body_r)
+
     def stand(mesh: Mesh) -> Mesh:  # hover attitude: nose up
         return _rotate_z(mesh[0], pi / 2), mesh[1]
 
@@ -1663,7 +1777,10 @@ def winged_vtol_geometry(
             ("tail", stand(tail), 1.0),
             ("motors", stand(_merge(*pods, *motors)), 1.0),
             ("props", stand(_merge(*props)), 0.55),
+            ("bay", stand(bay), 1.0),
             ("battery", stand(battery), 1.0),
+            ("fc", stand(fc), 1.0),
+            ("camera", stand(cam), 1.0),
         ]
     )
 
@@ -1752,6 +1869,20 @@ def interceptor_geometry(
         [(x_bay + bat_l / 2, body_r + 0.002), (x_bay - bat_l / 2, body_r + 0.002)], segments
     )
 
+    # the bay is the slender hull's interior (the model's "hull"
+    # bayShape): the barrel between the nose and boat-tail tapers, plus
+    # the FC board and the nose seeker camera -- all selectable
+    bay = _tube(
+        [
+            (-half + 0.22 * body_length + 0.01, 0.85 * body_r),
+            (half - 0.28 * body_length - 0.01, 0.85 * body_r),
+        ],
+        segments,
+    )
+    fc_t = board_thickness(0.039)
+    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.05 * body_length)
+    cam = _box(0.020, 0.016, 0.016, cx=half - 0.15 * body_length)
+
     return _pack(
         [
             ("frame", fuselage, 1.0),
@@ -1759,7 +1890,10 @@ def interceptor_geometry(
             ("tail", tail, 1.0),
             ("motors", motor, 1.0),
             ("props", prop, 0.55),
+            ("bay", bay, 1.0),
             ("battery", battery, 1.0),
+            ("fc", fc, 1.0),
+            ("camera", cam, 1.0),
         ]
     )
 
@@ -1779,6 +1913,8 @@ def flying_wing_geometry(
     center_section_span: float = 0.0,
     pod_length: float | None = None,
     pod_diameter: float = 0.05,
+    bay_length: float | None = None,
+    bay_diameter: float | None = None,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale tailless flying wing: swept panels, trailing-edge pushers.
@@ -1807,12 +1943,22 @@ def flying_wing_geometry(
     for the branch's reference disc).  The planform knobs are the
     model's own declared attributes (``sweepDeg`` / ``washoutDeg`` /
     ``centerSectionSpan`` / the reflexed 15% bay section), so the drawn
-    planform IS the declared one.  One stand-in remains, named so
-    nobody reads more than the mesh knows: the reflexed camber line is
-    a simple parametric S-camber, not a catalog airfoil, and the
-    panels loft straight (C0 at the crank) -- the blended center body
-    this family really flies is a job for the loft framework's lofted
-    wing body.
+    planform IS the declared one.
+
+    The payload bay is a blended OGIVE pod on the root's belly
+    (``bay_length`` x ``bay_diameter``, the model's ``bayLength`` /
+    ``bayWidth``; None sizes a display pod from the battery brick): a
+    body of revolution whose crown rides up inside the root section,
+    round nose just ahead of the leading edge, fine tail well clear of
+    the pusher discs.  The battery brick, the flight-controller board,
+    and the mission camera ride INSIDE it at their true stations --
+    their own selectable parts -- replacing the naked battery sleeve
+    this family used to poke through its own skin.  One stand-in
+    remains, named so nobody reads more than the mesh knows: the
+    reflexed camber line is a simple parametric S-camber, not a
+    catalog airfoil, and the panels loft straight (C0 at the crank) --
+    the blended center body this family really flies is a job for the
+    loft framework's lofted wing body.
     """
 
     if min(wing_span, wing_area, taper, prop_diameter) <= 0:
@@ -1930,11 +2076,36 @@ def flying_wing_geometry(
         motor_meshes.append((_translate(nacelle[0], 0.0, 0.0, z), nacelle[1]))
         prop_meshes.append((_translate(disk[0], 0.0, 0.0, z), disk[1]))
 
-    bat_l, bat_w, _bat_h = battery_size(battery_mass)
-    battery = _tube(
-        [(min(bat_l / 2, 0.24 * root), bat_w / 2 + 0.002), (-bat_l / 2, bat_w / 2 + 0.002)],
-        segments,
+    bat_l, bat_w, bat_h = battery_size(battery_mass)
+    # the blended ogive bay pod: crown buried in the root section, the
+    # rest a proud belly gondola (display defaults follow the brick)
+    bay_len = bay_length if bay_length is not None else max(0.40, 3.5 * bat_l)
+    bay_d = bay_diameter if bay_diameter is not None else max(0.12, bat_w + 0.05)
+    if min(bay_len, bay_d) <= 0:
+        raise AnalysisError("bay dimensions must be positive")
+    bay_r = bay_d / 2
+    try:
+        thickness_frac = int(section[-2:]) / 100.0
+    except ValueError:
+        thickness_frac = 0.15
+    x_bay_nose = 0.25 * root + 0.03  # round nose just ahead of the LE
+    y_bay = 0.85 * (thickness_frac * root / 2.0) - bay_r  # crown inside the skin
+    curve = [(x, y) for x, y in naca4_profile("0025", 28) if y > -1e-9]
+    peak = max(y for _, y in curve)
+    bay_rings = sorted(
+        ((x_bay_nose - x * bay_len, bay_r * max(y, 0.02 * peak) / peak) for x, y in curve),
+        key=lambda r: r[0],
     )
+    bay_tube = _tube(bay_rings, segments)
+    bay = (_translate(bay_tube[0], 0.0, y_bay, 0.0), bay_tube[1])
+
+    # the internals, drawn at their true stations inside the pod
+    battery = _box(bat_l, bat_h, bat_w, cx=x_bay_nose - 0.62 * bay_len, cy=y_bay - 0.1 * bay_r)
+    fc_t = board_thickness(0.039)
+    fc = _box(
+        _BOARD_SIDE, fc_t, _BOARD_SIDE, cx=x_bay_nose - 0.30 * bay_len, cy=y_bay + 0.3 * bay_r
+    )
+    cam = _box(0.020, 0.016, 0.016, cx=x_bay_nose - 0.07 * bay_len, cy=y_bay - 0.25 * bay_r)
 
     return _pack(
         [
@@ -1942,7 +2113,10 @@ def flying_wing_geometry(
             ("winglets", winglets, 1.0),
             ("motors", _merge(*motor_meshes), 1.0),
             ("props", _merge(*prop_meshes), 0.55),
+            ("bay", bay, 1.0),
             ("battery", battery, 1.0),
+            ("fc", fc, 1.0),
+            ("camera", cam, 1.0),
         ],
         colors={"winglets": COLORS["tail"]},
     )
@@ -2014,15 +2188,33 @@ def teardrop_quad_geometry(
 
     y_bay = half - 0.32 * fuselage_length
     bay_r = body_r * 0.96 + 0.003
-    bay = _tube([(y_bay + bat_l / 2, bay_r), (y_bay - bat_l / 2, bay_r)], segments)
-    battery = (_rotate_z(bay[0], pi / 2), bay[1])
+    sleeve = _tube([(y_bay + bat_l / 2, bay_r), (y_bay - bat_l / 2, bay_r)], segments)
+    battery = (_rotate_z(sleeve[0], pi / 2), sleeve[1])
+
+    # the bay INSIDE the hull (the model's "hull" bayShape): the usable
+    # barrel between the nose gear and the tail taper, plus the FC board
+    # and the chin camera at their true stations -- all selectable
+    bay_tube = _tube(
+        [
+            (-half + 0.18 * fuselage_length, 0.60 * body_r),
+            (half - 0.24 * fuselage_length, 0.60 * body_r),
+        ],
+        segments,
+    )
+    bay = (_rotate_z(bay_tube[0], pi / 2), bay_tube[1])
+    fc_t = board_thickness(0.039)
+    fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cy=y_widest - 0.10 * fuselage_length)
+    cam = _box(0.020, 0.016, 0.016, cx=body_r + 0.004, cy=y_widest)
 
     return _pack(
         [
             ("frame", _merge(shell, *arms), 1.0),
             ("motors", _merge(*motors), 1.0),
             ("props", _merge(*props), 0.55),
+            ("bay", bay, 1.0),
             ("battery", battery, 1.0),
+            ("fc", fc, 1.0),
+            ("camera", cam, 1.0),
         ]
     )
 
@@ -2228,6 +2420,13 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
         "center_section_span": optional("airframe", "centerSectionSpan", 0.0),
         "pod_length": optional("airframe", "podLength", None),
         "pod_diameter": optional("airframe", "podDiameter", 0.05),
+        # ... and the declared payload bay (every fleet airframe): the
+        # box the rotor families sling, the pod the wings blend, the
+        # hull section the lathed bodies keep inside
+        "bay_shape": optional("airframe", "bayShape", None),
+        "bay_length": optional("airframe", "bayLength", None),
+        "bay_width": optional("airframe", "bayWidth", None),
+        "bay_height": optional("airframe", "bayHeight", None),
     }
 
 
@@ -2251,6 +2450,11 @@ def airframe_geometry(
     center_section_span: float = 0.0,
     pod_length: float | None = None,
     pod_diameter: float = 0.05,
+    bay_shape: str | None = None,
+    bay_length: float | None = None,
+    bay_width: float | None = None,
+    bay_height: float | None = None,
+    camera: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Family-dispatched geometry from airframe-shell attribute values.
 
@@ -2277,7 +2481,15 @@ def airframe_geometry(
     ``pod_diameter``) reach :func:`flying_wing_geometry` only -- the
     flying wings are the one family whose model declares them; every
     other loft keeps its zero-sweep planform until the loft framework
-    generalizes.
+    generalizes.  The declared payload bay rides along per family
+    (``bay_shape`` and dimensions, the ``Airframe`` def's ``bayShape``
+    vocabulary -- :data:`BayShape`): a ``"box"`` reaches the multirotor
+    builder as the slung box, an ``"ogive"`` reaches the flying wings
+    as the blended pod, and a ``"hull"`` bay needs no knobs -- the
+    lathed builders draw their hull bays from the fuselage they
+    already have.  ``camera`` mounts the mission camera on the
+    multirotor builder (the other builders draw their own camera
+    bodies at fixed stations).
     """
 
     arm_kw: dict[str, Any] = {}
@@ -2294,6 +2506,13 @@ def airframe_geometry(
                 battery_mass=battery_mass,
                 **arm_kw,
             )
+        box_kw: dict[str, Any] = {}
+        if bay_shape == "box":
+            box_kw = {
+                "bay_length": bay_length,
+                "bay_width": bay_width,
+                "bay_height": bay_height,
+            }
         return drone_geometry(
             prop_diameter_in=prop_diameter / IN,
             motor_mass=motor_mass,
@@ -2301,6 +2520,8 @@ def airframe_geometry(
             esc_mass=esc_mass,
             arm_count=arm_count if arm_count > 0 else 4,
             coaxial=arm_count > 0 and motor_count == 2 * arm_count,
+            camera=camera,
+            **box_kw,
             **arm_kw,
         )
     if fuselage_length <= 0:  # tailless: the wing IS the fuselage
@@ -2319,6 +2540,8 @@ def airframe_geometry(
             center_section_span=center_section_span,
             pod_length=pod_length,
             pod_diameter=pod_diameter,
+            bay_length=bay_length,
+            bay_diameter=bay_width,
         )
     if motor_count <= 1:
         return interceptor_geometry(
@@ -2375,6 +2598,10 @@ def mission_geometry(
         center_section_span=p["center_section_span"],
         pod_length=p["pod_length"],
         pod_diameter=p["pod_diameter"],
+        bay_shape=p["bay_shape"],
+        bay_length=p["bay_length"],
+        bay_width=p["bay_width"],
+        bay_height=p["bay_height"],
         **arm_kw,
     )
 
@@ -2425,12 +2652,16 @@ def to_cadquery(
     motor_mass: float,
     battery_mass: float,
     esc_mass: float,
+    fc_mass: float = 0.039,
     arm_count: int = 4,
     coaxial: bool = False,
     arm_thickness: float = _ARM_THICKNESS,
     arm_width: float = _ARM_WIDTH,
     motor_spacing: float | None = None,
     camera: Mapping[str, float] | None = None,
+    bay_length: float | None = None,
+    bay_width: float | None = None,
+    bay_height: float | None = None,
 ) -> Any:
     """The same parametric assembly as cadquery solids (``cad`` extra).
 
@@ -2463,9 +2694,32 @@ def to_cadquery(
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, bat_h = battery_size(battery_mass)
     esc_t = board_thickness(esc_mass)
+    fc_t = board_thickness(fc_mass)
     plate_side = max(0.075, bat_w + 0.014, _BOARD_SIDE + 0.024)
 
     frame = cq.Workplane("XZ").box(plate_side, plate_side, _PLATE_THICKNESS)
+    frame = frame.union(  # the bottom plate: closes the stack
+        cq.Workplane("XZ", origin=(0, -(arm_thickness / 2 + _PLATE_THICKNESS / 2), 0)).box(
+            plate_side, plate_side, _PLATE_THICKNESS
+        )
+    )
+    # the arm-root gussets: the same lofted frusta as _hub_gussets
+    g_root = 0.46 * plate_side
+    g_h0 = arm_thickness / 2 + _PLATE_THICKNESS
+    g_h1 = arm_thickness / 2 * 1.02
+    g_w0 = _GUSSET_ROOT_WIDTHS * arm_width / 2
+    g_w1 = 1.1 * arm_width / 2
+    for angle, _x, _z, reach in arm_stations:
+        g_tip = g_root + max(0.025, _GUSSET_REACH * reach)
+        gusset = (
+            cq.Workplane(cq.Plane(origin=(g_root, 0, 0), xDir=(0, 1, 0), normal=(1, 0, 0)))
+            .rect(2 * g_h0, 2 * g_w0)
+            .workplane(offset=g_tip - g_root)
+            .rect(2 * g_h1, 2 * g_w1)
+            .loft()
+            .rotate((0, 0, 0), (0, 1, 0), -angle * 180.0 / pi)
+        )
+        frame = frame.union(gusset)
     for angle, x, z, reach in arm_stations:
         length = reach + motor_d / 2
         arm = (
@@ -2520,8 +2774,23 @@ def to_cadquery(
     esc = cq.Workplane("XZ", origin=(0, _PLATE_THICKNESS / 2 + esc_t / 2, 0)).box(
         _BOARD_SIDE, _BOARD_SIDE, esc_t
     )
+    fc = cq.Workplane("XZ", origin=(0, _PLATE_THICKNESS / 2 + esc_t + 0.003 + fc_t / 2, 0)).box(
+        _BOARD_SIDE, _BOARD_SIDE, fc_t
+    )
     assembly.add(battery, name="battery", color=color("battery"))
     assembly.add(esc, name="esc", color=color("esc"))
+    assembly.add(fc, name="fc", color=color("fc"))
+    if bay_length is not None and bay_width is not None and bay_height is not None:
+        if min(bay_length, bay_width, bay_height) <= 0:
+            raise AnalysisError("bay dimensions must be positive")
+        bay_top = -(_PLATE_THICKNESS / 2 + 0.004 + bat_h) - 0.004
+        if coaxial:  # the box must clear the lower disc plane (as the mesh does)
+            low_prop_y = -(arm_thickness / 2 + _COAX_DROP + motor_h + 0.002 + 0.00125)
+            bay_top = min(bay_top, low_prop_y - 0.00125 - 0.004)
+        bay = cq.Workplane("XZ", origin=(0, bay_top - bay_height / 2, 0)).box(
+            bay_length, bay_width, bay_height
+        )
+        assembly.add(bay, name="bay", color=color("bay"))
     if camera is not None:
         params = _camera_params(camera)
         body = (

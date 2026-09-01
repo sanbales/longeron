@@ -169,12 +169,13 @@ class TestPodClearance:
             assert plank.slots["podLength"] == pytest.approx(0.09)
 
     def test_sweep_costs_twin_drag_and_the_single_keeps_its_buildup(self, instances):
-        # the derived pod prices the sweep in the drag ledger: the
-        # twin's CdA carries the longer pods (+0.33% over the fixed
-        # 0.09 m pods), while the cranked single's buildup is exactly
-        # its pre-crank figure
-        assert instances["FlyingWingSingle"].slots["dragArea"] == pytest.approx(0.014363, abs=2e-6)
-        assert instances["FlyingWingTwin"].slots["dragArea"] == pytest.approx(0.017604, abs=2e-6)
+        # the derived pod prices the sweep in the drag ledger (the
+        # twin's CdA carries the longer pods, +0.33% over the fixed
+        # 0.09 m pods), and both shells now carry their blended bay
+        # pod's exposed skin on top of the pre-bay buildup (single
+        # 0.014363, twin 0.017604)
+        assert instances["FlyingWingSingle"].slots["dragArea"] == pytest.approx(0.015363, abs=2e-6)
+        assert instances["FlyingWingTwin"].slots["dragArea"] == pytest.approx(0.018463, abs=2e-6)
 
 
 class TestRequirementVerdicts:
@@ -239,7 +240,7 @@ class TestArchitectureWiring:
     def test_mission_reference_numbers_did_not_move(self, interp):
         # the S&C arc must not touch the mission story: the scoreboard's
         # reference design point stays exactly the T4 winners
-        assert interp.evaluate("ScoutMissions::stationMinutes") == 283.3
-        assert interp.evaluate("ScoutMissions::payloadRangeKgKm") == 192.8
+        assert interp.evaluate("ScoutMissions::stationMinutes") == 274.6
+        assert interp.evaluate("ScoutMissions::payloadRangeKgKm") == 184.7
         assert interp.evaluate("ScoutMissions::maxTargetSpeed") == 72.9
         assert interp.evaluate("ScoutMissions::fleetCost") == 9666.0

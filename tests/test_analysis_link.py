@@ -129,7 +129,7 @@ class TestLinkSelection:
     def test_part_map_tags_the_viewer_mesh_in_place(self, linked):
         _structure, viewer, _unlink = linked
         keys = [p.get("key") for p in json.loads(viewer.mesh_json)["parts"]]
-        assert keys == [*QUAD_MAP.values(), None]  # esc stays untagged
+        assert keys == [*QUAD_MAP.values(), None, None]  # esc + fc stay untagged
 
     def test_selection_drives_the_highlight(self, linked):
         structure, viewer, _unlink = linked
@@ -190,7 +190,7 @@ class TestLinkSelection:
         unlink = link.link_selection(structure, viewer, drone_model, part_map=QUAD_MAP)
         for trait in ("mesh_json", "mesh_b_json"):
             parts = json.loads(getattr(viewer, trait))["parts"]
-            assert [p.get("key") for p in parts] == [*QUAD_MAP.values(), None]
+            assert [p.get("key") for p in parts] == [*QUAD_MAP.values(), None, None]
         structure.view.selection.ids = ["DeepScout::MultiRotor::battery"]
         assert json.loads(viewer.highlight_json) == ["DeepScout::MultiRotor::battery"]
         unlink()
@@ -364,9 +364,19 @@ class TestBindConfigView:
         structure.view.selection.ids = ["Rotorcraft::TeardropQuad"]
         assert binding.current == "Rotorcraft::TeardropQuad"
         parts = json.loads(viewer.mesh_json)["parts"]
-        assert parts and all(part["key"] == "Rotorcraft::TeardropQuad" for part in parts)
-        # whole-craft identity: the def selection lights every part
-        assert json.loads(viewer.highlight_json) == ["Rotorcraft::TeardropQuad"]
+        internals = {
+            "battery": "Rotorcraft::TeardropQuad::battery",
+            "fc": "Rotorcraft::TeardropQuad::flightController",
+            "camera": "Rotorcraft::TeardropQuad::camera",
+        }
+        assert parts and all(
+            part["key"] == internals.get(part["name"], "Rotorcraft::TeardropQuad") for part in parts
+        )
+        # the def selection lights every part: the shell AND the
+        # clickable internals nested under it
+        assert json.loads(viewer.highlight_json) == sorted(
+            {"Rotorcraft::TeardropQuad", *internals.values()}
+        )
 
     def test_a_variant_usage_renders_the_definition_that_types_it(self, bound):
         structure, _viewer, binding = bound
@@ -443,7 +453,12 @@ class TestBindConfigView:
         binding = link.bind_config_view(tree, viewer, drone_model, showing="Rotorcraft::QuadCopter")
         tree.fire(["Rotorcraft::HexLifter"])  # a tree row click, by qualified name
         assert binding.current == "Rotorcraft::HexLifter"
-        assert json.loads(viewer.highlight_json) == ["Rotorcraft::HexLifter"]
+        assert json.loads(viewer.highlight_json) == [
+            "Rotorcraft::HexLifter",
+            "Rotorcraft::HexLifter::battery",
+            "Rotorcraft::HexLifter::camera",
+            "Rotorcraft::HexLifter::flightController",
+        ]
         viewer.picked_json = json.dumps(["Rotorcraft::HexLifter"])  # pick flows OUT
         assert tree.selected == ["Rotorcraft::HexLifter"]
         binding.unbind()

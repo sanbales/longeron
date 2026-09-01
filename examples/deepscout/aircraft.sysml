@@ -79,6 +79,29 @@ package DeepScout {
         attribute armCount : Integer;       // cantilever rotor arms to size
         attribute sparRadius : Real;        // m, wing-spar tube radius
         attribute designGrossKg : Real;     // spar design gross mass (0 = no wing)
+
+        // ----- the payload bay -------------------------------------------
+        // Every airframe declares ONE payload bay: a shape (the closed
+        // vocabulary of Packaging -- "box" slung under a rotor hub,
+        // "hull" inside a lathed fuselage, "ogive" blended at a flying
+        // wing's root), its envelope dimensions, and the packaging
+        // honesty knob: internal structure, wiring, and access hardware
+        // impede the fluid volume, so a mission may plan on only
+        // usableVolumeFraction of the gross envelope (a NOMINAL
+        // packaging factor, ~0.6 for a framed hull to ~0.75 for an open
+        // box).  equipmentBayFactor states WHO shares the bay: 1 where
+        // the pack and the avionics stow inside it (every skinned
+        // airframe), 0 where they ride their own hub stack (the open
+        // multirotor frames).  The missions' bayFit constraint reads
+        // usableVolume against each mix's stowage demand.
+        attribute bayShape : String;        // Packaging vocabulary: box | hull | ogive
+        attribute bayLength : Real;         // m, envelope length
+        attribute bayWidth : Real;          // m, envelope width (revolved: diameter)
+        attribute bayHeight : Real;         // m, envelope height (revolved: diameter)
+        attribute grossVolume : Real;       // m^3, from the declared dimensions
+        attribute usableVolumeFraction : Real;   // packaging factor, nominal
+        attribute usableVolume : Real = grossVolume * usableVolumeFraction;
+        attribute equipmentBayFactor : Real;     // 1 = pack + avionics stow in the bay
     }
 
     // ----- discipline packages ----------------------------------------------
@@ -87,6 +110,37 @@ package DeepScout {
     // invocations and groups the generated OpenMDAO components by the
     // owning package, so the N2 diagram shows Aerodynamics / Propulsion /
     // Structures / Performance blocks because the MODEL says so.
+
+    package Packaging {
+        doc /* The volume ledger: how a declared bay envelope becomes
+               cubic metres.  A BOX bay is its rectangular envelope; a
+               revolved bay (a lathed HULL or a blended OGIVE pod) is
+               its enclosing cylinder times a prismatic coefficient --
+               the standard slender-body volume convention (~0.55 for a
+               teardrop/ogive lathe; a fuller mid-body declares its own
+               higher figure).  Gross envelope only: the packaging
+               honesty (internal structure impeding the fluid volume)
+               lives in the airframe's usableVolumeFraction. */
+
+        calc def BoxVolume {
+            doc /* A rectangular bay envelope. */
+            in length : Real;
+            in width : Real;
+            in height : Real;
+            return : Real = length * width * height;
+        }
+
+        calc def RevolvedVolume {
+            doc /* A body-of-revolution bay envelope: enclosing-cylinder
+                   volume times the prismatic coefficient (nose and tail
+                   taper give the volume back). */
+            in length : Real;
+            in diameter : Real;
+            in prismaticCoeff : Real = 0.55;
+            return : Real = prismaticCoeff * pi * diameter * diameter / 4.0
+                * length;
+        }
+    }
 
     package Propulsion {
         doc /* Hover and cruise power, and the energy ledger they draw

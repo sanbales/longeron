@@ -130,14 +130,14 @@
     "nb_cell_index": 8,
     "code_cell_index": 4,
     "output_index": 1,
-    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "alt": "longeron.widgets.viewer3d._viewer_class",
     "image": "07_geometry_and_the_mission/cell-04.png"
    },
    {
     "nb_cell_index": 16,
     "code_cell_index": 8,
     "output_index": 1,
-    "alt": "longeron.analysis.viewer3d._viewer_class",
+    "alt": "longeron.widgets.viewer3d._viewer_class",
     "image": "07_geometry_and_the_mission/cell-08.png"
    },
    {
@@ -151,7 +151,7 @@
     "nb_cell_index": 20,
     "code_cell_index": 10,
     "output_index": 1,
-    "alt": "longeron.analysis.mission3d._viewer_class",
+    "alt": "longeron.widgets.mission3d._viewer_class",
     "image": "07_geometry_and_the_mission/cell-10.png"
    },
    {
@@ -165,7 +165,7 @@
     "nb_cell_index": 24,
     "code_cell_index": 12,
     "output_index": 1,
-    "alt": "longeron.analysis.mission3d._viewer_class",
+    "alt": "longeron.widgets.mission3d._viewer_class",
     "image": "07_geometry_and_the_mission/cell-12.png"
    }
   ],

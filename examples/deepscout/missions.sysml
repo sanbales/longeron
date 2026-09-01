@@ -50,6 +50,8 @@ package ScoutMissions {
     // catalog's variant re-evaluation needs the S&C discipline in
     // scope like the other four
     private import DeepScout::StabilityControl::*;
+    // ... and the bay declarations read the volume kernels
+    private import DeepScout::Packaging::*;
 
     // ----- variation points ---------------------------------------------------
 
@@ -124,10 +126,17 @@ package ScoutMissions {
                spar) in the selected material, so the material choice is
                a real mass-vs-cost trade axis.  Three compatibility
                constraints keep the crossed catalog honest: propFit,
-               packPower, and the voltage-class cellMatch. */
+               packPower, and the voltage-class cellMatch -- and a
+               fourth, bayFit, keeps the VOLUME ledger honest: whatever
+               a mission stows (its payload, plus the pack and avionics
+               where the airframe's bay houses them) must fit the
+               airframe's usable bay volume. */
 
         attribute avionicsMass : Real = 0.16;   // kg: Pixhawk-class FC, GPS, radios
         attribute avionicsCost : Real = 420.0;  // USD, street
+        // the avionics' bay demand (nominal): the FC case, the GPS puck,
+        // both radios, and their wiring service loops
+        attribute avionicsVolume : Real = 0.0003;   // m^3
         attribute armTubeRadius : Real = 0.008; // m, rotor-arm tube
         attribute minWallM : Real = 0.0005;     // manufacturing gauge floor
 
@@ -143,8 +152,12 @@ package ScoutMissions {
         // weight at n = 2.5 on an elliptic-ish distribution
         attribute armLength : Real =
             0.70710678 * (props.diameter + 0.02);
+        // the arm-root bending check: one rotor's full thrust at the
+        // arm length is the root moment the tube wall (and the root
+        // gusset below) must carry
+        attribute armRootMomentNm : Real = motors.maxThrust * armLength;
         attribute armWall : Real = max(minWallM, max(
-            TubeWallForStress(momentNm = motors.maxThrust * armLength,
+            TubeWallForStress(momentNm = armRootMomentNm,
                               radius = armTubeRadius,
                               yieldPa = material.yieldPa),
             TubeWallForStiffness(tipLoadN = motors.maxThrust,
@@ -156,6 +169,16 @@ package ScoutMissions {
         attribute armStructMass : Real = airframe.armCount
             * TubeMass(radius = armTubeRadius, wall = armWall,
                        length = armLength, density = material.density);
+        // the arm-root gussets: hub structure grows OUT of the main
+        // body to meet the arms -- a doubler sleeve over the root 15%
+        // of each arm, one wall thickness proud of the sized tube,
+        // carrying the root moment's shear into the centre plates.
+        // Same thin-wall convention as the arm itself; the plates the
+        // gussets land on ride in the airframe shell mass.
+        attribute gussetLength : Real = 0.15 * armLength;
+        attribute gussetMass : Real = airframe.armCount
+            * TubeMass(radius = armTubeRadius + armWall, wall = armWall,
+                       length = gussetLength, density = material.density);
         attribute sparWall : Real = max(minWallM,
             TubeWallForStress(
                 momentNm = SparRootMoment(grossKg = airframe.designGrossKg,
@@ -166,7 +189,8 @@ package ScoutMissions {
             TubeMass(radius = airframe.sparRadius, wall = sparWall,
                      length = airframe.wingSpan,
                      density = material.density);
-        attribute structureMass : Real = armStructMass + sparStructMass;
+        attribute structureMass : Real =
+            armStructMass + gussetMass + sparStructMass;
         attribute structureCost : Real =
             structureMass * material.costPerKg;
 
@@ -180,6 +204,18 @@ package ScoutMissions {
             * 3.141592653589793 * props.diameter * props.diameter / 4.0;
         attribute maxThrust : Real = airframe.motorCount * motors.maxThrust;
         attribute usableEnergyJ : Real = battery.energyWh * 3600.0 * 0.8;
+
+        // ----- the volume ledger --------------------------------------
+        // What the mission stows in the airframe's payload bay: the
+        // mission's own payload demand (the bare platform stows nothing;
+        // each mission redefines it), plus the pack and the avionics
+        // where the bay houses the equipment (equipmentBayFactor 1 --
+        // every skinned airframe; the open rotor frames stack their
+        // equipment on the hub instead).
+        attribute payloadVolume : Real = 0.0;   // m^3, redefined per mission
+        attribute equipmentBayVolume : Real = airframe.equipmentBayFactor
+            * (battery.volumeM3 + avionicsVolume);
+        attribute bayDemandVolume : Real = payloadVolume + equipmentBayVolume;
 
         // selection compatibility
         assert constraint propFit {
@@ -196,6 +232,12 @@ package ScoutMissions {
         // heavy part classes may not mix inside one power train.
         assert constraint cellMatch {
             battery.cells == motors.cells }
+        // the volume ledger must close: what the mission stows fits the
+        // usable bay volume.  This is the FIT axis of the trade space --
+        // a mix that carries the mass but cannot FIND THE ROOM busts
+        // here instead of flying on paper.
+        assert constraint bayFit {
+            bayDemandVolume <= airframe.usableVolume }
     }
 
     // ----- mission 1: ISR ---------------------------------------------------------
@@ -212,6 +254,7 @@ package ScoutMissions {
         attribute minStationMinutes : Real = 25.0;  // the tasking floor
         attribute missionMass : Real = baseMass + sensor.mass;
         attribute missionCost : Real = baseCost + sensor.cost;
+        attribute payloadVolume : Real :>> payloadVolume = sensor.volumeM3;
         attribute hoverPowerW : Real =
             HoverPower(massKg = missionMass, diskArea = diskArea);
         attribute loiterPowerW : Real = if airframe.wingSpan > 0.0
@@ -248,6 +291,7 @@ package ScoutMissions {
 
         attribute minDeliveryRadiusKm : Real = 8.0;  // the tasking floor
         attribute minPayloadKg : Real = 1.0;         // smallest useful parcel
+        attribute payloadVolume : Real :>> payloadVolume = cargo.stowedVolume;
         attribute outboundMass : Real = baseMass + cargo.bayMass
             + cargo.payloadKg;
         attribute returnMass : Real = baseMass + cargo.bayMass;
@@ -310,11 +354,13 @@ package ScoutMissions {
 
         attribute seekerMass : Real = 0.12;
         attribute seekerCost : Real = 260.0;
+        attribute seekerVolume : Real = 0.00025;  // m^3, nose seeker + processor
         attribute targetSpeed : Real = 25.0;      // m/s
         attribute targetDistance : Real = 3000.0; // m at first detection
 
         attribute missionMass : Real = baseMass + seekerMass;
         attribute missionCost : Real = baseCost + seekerCost;
+        attribute payloadVolume : Real :>> payloadVolume = seekerVolume;
         attribute dashDrawW : Real = airframe.motorCount * motors.maxPowerW;
         attribute dashSpeed : Real =
             DashSpeed(powerW = dashDrawW * motors.efficiency
@@ -371,6 +417,25 @@ package ScoutMissions {
             assume constraint { uav.dashSpeed > uav.targetSpeed }
             require constraint catchFloor {
                 uav.maxTargetSpeed >= uav.targetSpeed }
+        }
+
+        requirement def PayloadBayFit {
+            doc /* The stowage shall fit: the mission's payload demand,
+                   plus the pack and the avionics where the airframe's
+                   bay houses the equipment, shall not exceed the bay's
+                   usable volume (the gross envelope times the packaging
+                   factor -- internal structure impedes the fluid
+                   volume).  The subject is the shared assembly, so one
+                   requirement covers every mission context; no
+                   configuration earns a satisfy edge, because the
+                   verdict belongs to the MIX -- the same shell fits a
+                   seeker and refuses a survey gimbal.  Every mission
+                   asserts it (the bayFit constraint), so a mix that
+                   does not fit busts its study honestly. */
+            subject uav : MissionUAV;
+            assume constraint { uav.airframe.usableVolume > 0.0 }
+            require constraint volumeFit {
+                uav.bayDemandVolume <= uav.airframe.usableVolume }
         }
     }
 
@@ -472,8 +537,9 @@ package ScoutMissions {
     // and their combined invoice.  Tutorial T6 injects per-candidate
     // values over these defaults through the trade-study bridge.
 
-    attribute stationMinutes : Real = 283.3 [SI::min];  // the ISR winner's loiter
-    attribute payloadRangeKgKm : Real = 192.8;          // the logistics winner, kg km
+    attribute stationMinutes : Real = 274.6 [SI::min];  // the ISR winner's loiter
+                                                        // (the wings pay their ogive-bay skin)
+    attribute payloadRangeKgKm : Real = 184.7;          // the logistics winner, kg km
                                                         // (the twin pays its derived-pod drag)
     attribute maxTargetSpeed : Real = 72.9;             // the dart's catchable crossing, m/s
     attribute fleetCost : Real = 9666.0;                // USD: the three winners' invoices

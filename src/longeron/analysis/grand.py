@@ -202,6 +202,7 @@ def drone_scene(
     part_map = {
         "frame": slots["chassis"].id,
         "battery": slots["battery"].id,
+        "fc": slots["flightController"].id,
         **({"camera": slots["camera"].id} if camera is not None else {}),
         **{f"motor{i + 1}": motor.id for i, motor in enumerate(motors)},
         **{f"prop{i + 1}": prop.id for i, prop in enumerate(props)},
@@ -239,10 +240,15 @@ def scene_for(
     the ``Airframe`` geometry knobs (``wingSpan``, ``wingArea``,
     ``taper``, ``fuselageLength``, ``motorCount``, ``armCount``) --
     renders through :func:`longeron.analysis.geometry.airframe_geometry`
-    at nominal display propulsion, and every part carries the
-    definition's qualified name as its identity key (selecting the def
-    lights the whole craft; picking any part names the def).  Anything
-    else goes to :func:`drone_scene`: the MultiRotor build family bakes
+    at nominal display propulsion.  Every part carries the definition's
+    qualified name as its identity key (selecting the def lights the
+    whole craft), EXCEPT the clickable internals: a rendered
+    ``battery``, ``fc``, or ``camera`` part whose shell declares the
+    matching part usage (``battery`` / ``flightController`` /
+    ``camera`` -- every DeepScout fleet shell does) carries THAT
+    usage's qualified name, so picking the battery in the scene
+    selects the battery element, not just the craft.  Anything else
+    goes to :func:`drone_scene`: the MultiRotor build family bakes
     from its own M0 population with per-individual identity keys, and
     non-assembly shapes fail loudly with :class:`AnalysisError`.
 
@@ -276,13 +282,26 @@ def scene_for(
             ("centerSectionSpan", "center_section_span"),
             ("podLength", "pod_length"),
             ("podDiameter", "pod_diameter"),
+            ("bayLength", "bay_length"),
+            ("bayWidth", "bay_width"),
+            ("bayHeight", "bay_height"),
         ):
             try:
                 extras[kw] = float(interp.evaluate(f"{qname}::{attr_name}"))
             except Exception:
                 pass
-        try:
-            extras["wing_section"] = str(interp.evaluate(f"{qname}::wingSection"))
+        for attr_name, kw in (("wingSection", "wing_section"), ("bayShape", "bay_shape")):
+            try:
+                extras[kw] = str(interp.evaluate(f"{qname}::{attr_name}"))
+            except Exception:
+                pass
+        try:  # the declared mission camera: drawn (and occlusion-ready)
+            camera_usage = interp.resolve(f"{qname}::camera")
+            if isinstance(camera_usage, (M.Definition, M.Usage)):
+                slots = interp.instantiate(camera_usage).slots
+                extras["camera"] = {
+                    k: float(v) for k, v in slots.items() if isinstance(v, (int, float))
+                }
         except Exception:
             pass
         shell = geometry.airframe_geometry(
@@ -295,7 +314,21 @@ def scene_for(
             **extras,
             **_FLEET_DISPLAY,
         )
-        part_map = {part["name"]: qname for part in shell["parts"]}
+        # the internals are selectable per element: a rendered battery,
+        # FC, or camera keys to the shell's own part usage when the
+        # shell declares one (every DeepScout fleet shell does)
+        internals = {"battery": "battery", "fc": "flightController", "camera": "camera"}
+        part_map = {}
+        for part in shell["parts"]:
+            key = qname
+            usage = internals.get(part["name"])
+            if usage is not None:
+                try:
+                    interp.resolve(f"{qname}::{usage}")
+                    key = f"{qname}::{usage}"
+                except Exception:
+                    pass
+            part_map[part["name"]] = key
         return geometry.tag_parts(shell, part_map), part_map
     return drone_scene(model, qname)
 

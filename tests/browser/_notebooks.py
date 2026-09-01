@@ -609,7 +609,11 @@ def config_view_notebook() -> dict[str, Any]:
     mesh viewer, bound with ``bind_config_view`` -- clicking any craft
     node must render THAT craft.  Cell 1 is the checker: one JSON line
     naming the shown configuration, its analytic disc count, the scene's
-    identity keys, and the diagram selection.
+    identity keys, and the diagram selection.  Cells 2 and 3 are fit
+    drivers (the fit-tool affordance, kernel-side): the grown Rotorcraft
+    package fits the pane below the label LOD threshold (the sprotty
+    view culls a label when ``zoom * height <= 3``), so a test zooms
+    onto the craft it is about to click, exactly as a human would.
     """
 
     return _notebook(
@@ -650,9 +654,18 @@ print(
             "keys": sorted({part.get("key") or part["name"] for part in shown["parts"]}),
             "label": viewer.label,
             "selection": list(structure.view.selection.ids),
+            "highlight": sorted(json.loads(viewer.highlight_json or "[]")),
         }
     )
 )
+""",
+        """
+structure.view.fit(["Rotorcraft::TeardropQuad"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted Rotorcraft::TeardropQuad")
+""",
+        """
+structure.view.fit(["Rotorcraft::HexaCopter"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted Rotorcraft::HexaCopter")
 """,
     )
 

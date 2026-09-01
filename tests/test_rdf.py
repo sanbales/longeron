@@ -189,7 +189,11 @@ def test_sparql_requirement_subject_types(graph):
             f"ScoutMissions::StabilityRequirements::{req}",
             "FlyingWings::FlyingWing",
         ) in pairs
-    assert len(pairs) == 9
+    assert (
+        "ScoutMissions::MissionRequirements::PayloadBayFit",
+        "ScoutMissions::MissionUAV",
+    ) in pairs
+    assert len(pairs) == 10
 
 
 def test_sparql_variation_points_and_variants(graph):
