@@ -103,6 +103,7 @@ __all__ = [
     "overlap_report",
     "tag_parts",
     "teardrop_quad_geometry",
+    "tilt_tri_geometry",
     "to_cadquery",
     "view_cone",
     "winged_vtol_geometry",
@@ -2149,6 +2150,205 @@ def flying_wing_geometry(
     )
 
 
+def _tilt_about(mesh: Mesh, angle: float, px: float) -> Mesh:
+    """Rotate a mesh about the spanwise (+Z-parallel) axis through
+    ``(px, 0)``: the tilt-rotor family's pivot rotation.  Positive
+    ``angle`` swings a trailing pod's aft end DOWN and a nose tractor's
+    disc UP -- both thrust axes rotate toward vertical together."""
+
+    vertices = _rotate_z(_translate(mesh[0], -px, 0.0, 0.0), angle)
+    return _translate(vertices, px, 0.0, 0.0), mesh[1]
+
+
+def tilt_tri_geometry(
+    *,
+    wing_span: float,
+    wing_area: float,
+    taper: float,
+    fuselage_length: float,
+    prop_diameter: float,
+    motor_mass: float,
+    battery_mass: float,
+    fc_mass: float | None = None,
+    fuselage_diameter: float | None = None,
+    tail_area: float | None = None,
+    sweep_deg: float = 0.0,
+    section: str = WING_SECTION,
+    pod_diameter: float = 0.05,
+    tilt_pivot_setback: float = 0.04,
+    tilt_arm: float = 0.09,
+    nose_arm: float = 0.10,
+    nose_pivot_setback: float = 0.0,
+    tilt_deg: float = 90.0,
+    segments: int = 24,
+) -> dict[str, Any]:
+    """A to-scale tilt-rotor tri-wing at a commanded tilt angle.
+
+    The convertible of the fleet (the DeepScout ``TiltRotors`` branch):
+    a lathed fuselage, one swept tapered wing lofted from ``section``,
+    a conventional tail (tailplane pair + fin, NACA 0009, sized from
+    ``tail_area``), and THREE pivoting motor stations -- a pusher pod on
+    each wingtip trailing edge (Arc B's tip-pusher installation) and a
+    tractor at the nose.  ``tilt_deg`` is the conversion state and a
+    first-class scene parameter: 0 is cruise (tip discs vertical behind
+    the tips, nose disc vertical ahead of the apex), 90 is hover (the
+    tip pods swing DOWN so their discs hang level under the tips, the
+    nose unit swings UP so its disc rides level over the nose), and any
+    angle between renders the conversion mid-arc, so the interference
+    gate can sample the whole sweep.
+
+    The pivots are the model's own declared chain: each tip pivot sits
+    ``tilt_pivot_setback`` aft of the LOCAL trailing edge (inside the
+    pod, never inside the wing) with its disc ``tilt_arm`` further aft;
+    the nose pivot sits ``nose_pivot_setback`` aft of the fuselage apex
+    (0 in the declared geometry) with its disc ``nose_arm`` ahead.
+    Pivot-outside-the-surface is the conversion-clearance guarantee --
+    every disc point stays at least its arm's length from its pivot
+    through the sweep -- and the setback knobs exist precisely so a
+    test can BREAK the guarantee (bury a pivot) and prove the
+    interference oracle catches it.  The battery brick, the
+    flight-controller board, and the mission camera ride the hull at
+    their true stations as selectable parts; ``fuselage_diameter``
+    draws the hull at the model's declared width (``None`` falls back
+    to the battery-brick heuristic the other lathed builders use).
+    """
+
+    if min(wing_span, wing_area, taper, fuselage_length, prop_diameter) <= 0:
+        raise AnalysisError("tilt tri dimensions must be positive")
+    if min(tilt_arm, nose_arm) <= 0:
+        raise AnalysisError("tilt tri pivot arms must be positive")
+    mean_chord = wing_area / wing_span
+    root = 2.0 * mean_chord / (1.0 + taper)
+    tip = root * taper
+    half_span = wing_span / 2
+    aft_per_span = tan(radians(sweep_deg))
+    motor_d, motor_h = motor_size(motor_mass)
+    bat_l, bat_w, _bat_h = battery_size(battery_mass)
+    body_r = fuselage_diameter / 2 if fuselage_diameter else max(0.045, bat_w / 2 + 0.012)
+    half = fuselage_length / 2
+    tilt = radians(tilt_deg)
+
+    fuselage = _tube(
+        [
+            (half, 0.12 * body_r),  # nose apex (the pivot station)
+            (half - 0.28 * fuselage_length, body_r),  # max section
+            (-half + 0.22 * fuselage_length, body_r),
+            (-half, 0.45 * body_r),  # boat tail under the fin
+        ],
+        segments,
+    )
+
+    x_qc = 0.0  # root quarter-chord at mid-body
+    x_root_le = x_qc + 0.25 * root
+    panel = _lift_surface(
+        origin=(x_qc, 0.0, 0.0),
+        direction=(0.0, 0.0, 1.0),
+        length=half_span,
+        root_chord=root,
+        tip_chord=tip,
+        section=section,
+        sweep_deg=sweep_deg,
+    )
+    wing = _merge(panel, _mirror_z(panel))
+
+    # conventional tail: tailplane pair + fin, three equal NACA 0009
+    # panels carrying the declared total tail area between them
+    fin_root = 0.62 * mean_chord
+    panel_area = (tail_area if tail_area is not None else 0.14) / 3.0
+    panel_span = panel_area / (0.5 * fin_root * (1.0 + 0.55))
+    x_tail = -half + 0.30 * fin_root + 0.02
+    tail = _merge(
+        *(
+            _lift_surface(
+                origin=(x_tail, 0.0, 0.0),
+                direction=direction,
+                length=panel_span,
+                root_chord=fin_root,
+                tip_chord=0.55 * fin_root,
+                section=TAIL_SECTION,
+            )
+            for direction in ((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+        )
+    )
+
+    # trailing-edge station aft of the root LE at the tip (the model's
+    # TrailingEdgeAft at y = b/2): where the pod noses fair in
+    te_aft_tip = 0.25 * root + aft_per_span * half_span + 0.75 * tip
+    x_te = x_root_le - te_aft_tip
+    x_pivot = x_te - tilt_pivot_setback
+    x_disc = x_pivot - tilt_arm
+    pod_r = pod_diameter / 2
+    prop_r = prop_diameter / 2
+    x_pod_tail = x_disc + 0.006
+    x_pod_nose = max(x_te, x_pod_tail + 0.03)
+    motor_meshes: list[Mesh] = []
+    prop_meshes: list[Mesh] = []
+    for z_side in (half_span, -half_span):
+        pod = _tube(
+            [
+                (x_pod_nose, 0.35 * pod_r),
+                (x_pod_nose - 0.30 * (x_pod_nose - x_pod_tail), pod_r),
+                (x_pod_nose - 0.80 * (x_pod_nose - x_pod_tail), pod_r),
+                (x_pod_tail, 0.40 * pod_r),
+            ],
+            segments,
+        )
+        can = _tube([(x_pod_tail + motor_h, 0.5 * motor_d), (x_pod_tail, 0.42 * motor_d)], segments)
+        disc = _tube([(x_disc, prop_r), (x_disc - 0.0025, prop_r)], max(segments, 32))
+        nacelle = _tilt_about(_merge(pod, can), tilt, x_pivot)
+        disc = _tilt_about(disc, tilt, x_pivot)
+        motor_meshes.append((_translate(nacelle[0], 0.0, 0.0, z_side), nacelle[1]))
+        prop_meshes.append((_translate(disc[0], 0.0, 0.0, z_side), disc[1]))
+
+    # the nose tractor: spinner housing off the apex, disc nose_arm
+    # ahead of the pivot, both swinging UP together at the tilt angle
+    x_pivot_n = half - nose_pivot_setback
+    x_disc_n = x_pivot_n + nose_arm
+    housing = _tube(
+        [
+            (x_disc_n - 0.004, 0.32 * motor_d),
+            (x_disc_n - 0.004 - motor_h, 0.5 * motor_d),
+            (half - 0.005, 0.5 * motor_d),
+        ],
+        segments,
+    )
+    nose_disc = _tube([(x_disc_n + 0.0025, prop_r), (x_disc_n, prop_r)], max(segments, 32))
+    motor_meshes.append(_tilt_about(housing, tilt, x_pivot_n))
+    prop_meshes.append(_tilt_about(nose_disc, tilt, x_pivot_n))
+
+    # the hull bay barrel (the model's "hull" bayShape) and the
+    # clickable internals at their true stations
+    bay = _tube(
+        [
+            (half - 0.28 * fuselage_length - 0.01, 0.85 * body_r),
+            (-half + 0.22 * fuselage_length + 0.01, 0.85 * body_r),
+        ],
+        segments,
+    )
+    battery = _tube([(bat_l / 2, body_r + 0.002), (-bat_l / 2, body_r + 0.002)], segments)
+    fc_part: list[tuple[str, Mesh, float]] = []
+    if fc_mass is not None:  # drawn only when the model declares one
+        fc_t = board_thickness(fc_mass)
+        fc = _box(_BOARD_SIDE, fc_t, _BOARD_SIDE, cx=-0.08 * fuselage_length)
+        fc_part = [("fc", fc, 1.0)]
+    # the mission camera rides the belly, clear of the nose disc's arc
+    cam = _box(0.020, 0.016, 0.016, cx=half - 0.18 * fuselage_length, cy=-0.30 * body_r)
+
+    return _pack(
+        [
+            ("frame", fuselage, 1.0),
+            ("wing", wing, 1.0),
+            ("tail", tail, 1.0),
+            ("motors", _merge(*motor_meshes), 1.0),
+            ("props", _merge(*prop_meshes), 0.55),
+            ("bay", bay, 1.0),
+            ("battery", battery, 1.0),
+            *fc_part,
+            ("camera", cam, 1.0),
+        ]
+    )
+
+
 def teardrop_quad_geometry(
     *,
     fuselage_length: float,
@@ -2452,6 +2652,14 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
         "pod_length": optional("airframe", "podLength", None),
         "pod_diameter": optional("airframe", "podDiameter", 0.05),
         "pod_station": optional("airframe", "podStation", None),
+        # ... and the tilt-rotor family's pivot chain (tilt-tri only):
+        # the declared pivot stations and arms the conversion swings on,
+        # plus the hull width and tail area the drawn shell must match
+        "fuselage_diameter": optional("airframe", "fuselageDiameter", None),
+        "tail_area": optional("airframe", "tailArea", None),
+        "tilt_pivot_setback": optional("airframe", "tiltPivotSetback", None),
+        "tilt_arm": optional("airframe", "tiltArm", None),
+        "nose_arm": optional("airframe", "noseArm", None),
         # ... and the declared payload bay (every fleet airframe): the
         # box the rotor families sling, the pod the wings blend, the
         # hull section the lathed bodies keep inside
@@ -2500,6 +2708,12 @@ def airframe_geometry(
     pod_length: float | None = None,
     pod_diameter: float = 0.05,
     pod_station: float | None = None,
+    fuselage_diameter: float | None = None,
+    tail_area: float | None = None,
+    tilt_pivot_setback: float | None = None,
+    tilt_arm: float | None = None,
+    nose_arm: float | None = None,
+    tilt_deg: float | None = None,
     bay_shape: str | None = None,
     bay_length: float | None = None,
     bay_width: float | None = None,
@@ -2518,7 +2732,10 @@ def airframe_geometry(
     :func:`teardrop_quad_geometry` (the upended bullet); a wing with no
     fuselage -> :func:`flying_wing_geometry` (the tailless family: the
     wing IS the fuselage); a single motor station ->
-    :func:`interceptor_geometry`; otherwise
+    :func:`interceptor_geometry`; a wing AND a fuselage with a declared
+    tilt-pivot chain (``tilt_arm``) -> :func:`tilt_tri_geometry` (the
+    convertible tilt-rotor tri, rendered at ``tilt_deg`` -- hover
+    attitude by default, the tail-sitter's convention); otherwise
     :func:`winged_vtol_geometry` (the cruciform tail-sitter, rendered
     in hover attitude).  ``arm_thickness``/``arm_width`` draw the quad
     families' arms at a load-sized tube diameter when given;
@@ -2532,7 +2749,11 @@ def airframe_geometry(
     :func:`flying_wing_geometry` only -- the
     flying wings are the one family whose model declares them; every
     other loft keeps its zero-sweep planform until the loft framework
-    generalizes.  The declared payload bay rides along per family
+    generalizes -- and the tilt-pivot knobs (``tilt_pivot_setback``,
+    ``tilt_arm``, ``nose_arm``, ``tilt_deg``, with ``fuselage_diameter``
+    and ``tail_area`` riding along) reach :func:`tilt_tri_geometry`
+    only, the one family whose model declares a pivot chain.
+    The declared payload bay rides along per family
     (``bay_shape`` and dimensions, the ``Airframe`` def's ``bayShape``
     vocabulary -- :data:`BayShape`): a ``"box"`` reaches the multirotor
     builder as the slung box, an ``"ogive"`` reaches the flying wings
@@ -2609,6 +2830,32 @@ def airframe_geometry(
             battery_mass=battery_mass,
             fc_mass=fc_mass,
         )
+    if tilt_arm is not None:  # the declared pivot chain marks the family
+        tilt_kw: dict[str, Any] = {}
+        if tilt_pivot_setback is not None:
+            tilt_kw["tilt_pivot_setback"] = tilt_pivot_setback
+        if nose_arm is not None:
+            tilt_kw["nose_arm"] = nose_arm
+        if tilt_deg is not None:
+            tilt_kw["tilt_deg"] = tilt_deg
+        if wing_section is not None:
+            tilt_kw["section"] = wing_section
+        return tilt_tri_geometry(
+            wing_span=wing_span,
+            wing_area=wing_area,
+            taper=taper,
+            fuselage_length=fuselage_length,
+            prop_diameter=prop_diameter,
+            motor_mass=motor_mass,
+            battery_mass=battery_mass,
+            fc_mass=fc_mass,
+            fuselage_diameter=fuselage_diameter,
+            tail_area=tail_area,
+            sweep_deg=sweep_deg,
+            pod_diameter=pod_diameter,
+            tilt_arm=tilt_arm,
+            **tilt_kw,
+        )
     return winged_vtol_geometry(
         wing_span=wing_span,
         wing_area=wing_area,
@@ -2655,6 +2902,12 @@ def mission_geometry(
         center_section_span=p["center_section_span"],
         pod_length=p["pod_length"],
         pod_diameter=p["pod_diameter"],
+        fuselage_diameter=p["fuselage_diameter"],
+        tail_area=p["tail_area"],
+        tilt_pivot_setback=p["tilt_pivot_setback"],
+        tilt_arm=p["tilt_arm"],
+        nose_arm=p["nose_arm"],
+        tilt_deg=p.get("tilt_deg"),
         bay_shape=p["bay_shape"],
         bay_length=p["bay_length"],
         bay_width=p["bay_width"],

@@ -199,7 +199,7 @@ def test_sparql_requirement_subject_types(graph):
         "ScoutMissions::MissionRequirements::PayloadBayFit",
         "ScoutMissions::MissionUAV",
     ) in pairs
-    assert len(pairs) == 11
+    assert len(pairs) == 12
 
 
 def test_sparql_variation_points_and_variants(graph):
@@ -215,7 +215,7 @@ def test_sparql_variation_points_and_variants(graph):
             """,
         )
     )
-    assert len(rows) == 43  # the crossed catalog (11+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
+    assert len(rows) == 44  # the crossed catalog (12+4+4+5+3+3+2) + the sizing quad (3+3+3+2)
     assert (str(rows[0].point), str(rows[0].variant), str(rows[0].target)) == (
         "AirframeChoice",
         "boxQuad",

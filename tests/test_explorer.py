@@ -462,15 +462,16 @@ def test_drone_tree_shows_its_relationships(drone_model):
     assert badges["connection"] == 10  # powerHarness, controlLink,
     #   phaseLeads (quad + hexa + octo), frontLeads, tailLead,
     #   tiltLinkage, upperLeads, lowerLeads
-    assert badges["satisfy"] == 22  # FlightEnvelope x5, mission x4,
+    assert badges["satisfy"] == 23  # FlightEnvelope x5, mission x4,
     #   installation (quad only), FailSafeHover x3 (hexa + octo + X8),
     #   the tailless S&C family x9 (PitchStability / PitchRollAuthority /
     #   YawStability, each by all three flying wings; EngineOutYaw earns
-    #   no edge -- both tip-station subjects bust it)
+    #   no edge -- both tip-station subjects bust it), and the tilt-tri's
+    #   CruiseEngineOut
     assert badges["flow"] == 1  # dcBus: battery.voltage -> esc.busVoltage
     assert badges["allocation"] == 1  # FlightStates -> FlightController
     assert badges["dependency"] == 1  # PlanBattery -> HoverTime
-    assert badges["import"] == 42  # the program's cross-file wiring
+    assert badges["import"] == 49  # the program's cross-file wiring
     #   (+4: the Packaging volume kernels reach every bay-declaring file)
     #   (25 + the 6 imports of surfaces.sysml's ScoutSurfaces package
     #   + the flying wings' StabilityControl import + the two Structures

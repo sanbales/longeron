@@ -670,6 +670,50 @@ print("fitted Rotorcraft::HexaCopter")
     )
 
 
+def tilt_notebook() -> dict[str, Any]:
+    """Scenario: the tilt-rotor conversion affordance (grand.tilt_viewer).
+
+    Cell 0 shows the tilt-tri in the mesh viewer under its conversion
+    slider (hover 90 .. cruise 0).  Cell 1 is the checker: one JSON
+    line naming the commanded tilt, the viewer label, whether the shown
+    scene is byte-identical to a fresh ``scene_for`` bake at that tilt
+    (the slider-drives-the-scene invariant), and a geometric signature
+    of the prop meshes (their Y extent moves as the discs stand up).
+    """
+
+    return _notebook(
+        """
+import longeron
+from longeron.analysis.grand import tilt_viewer
+
+model = longeron.load("examples/deepscout")
+box = tilt_viewer(model, "TiltRotors::TiltTriWing")
+box
+""",
+        """
+import json
+
+from longeron.analysis.grand import scene_for
+
+shown = json.loads(box.viewer.mesh_json)
+baked, _ = scene_for(model, "TiltRotors::TiltTriWing", tilt_deg=float(box.tilt.value))
+props = next(p for p in shown["parts"] if p["name"] == "props")
+ys = props["vertices"][1::3]
+print(
+    json.dumps(
+        {
+            "tilt": float(box.tilt.value),
+            "label": box.viewer.label,
+            "matches": shown == baked,
+            "prop_y_min": round(min(ys), 4),
+            "prop_y_max": round(max(ys), 4),
+        }
+    )
+)
+""",
+    )
+
+
 def dashboard_notebook() -> dict[str, Any]:
     """Scenario: the mission-compromise dashboard on one 1080p screen.
 
@@ -1057,6 +1101,7 @@ SCENARIO_NOTEBOOKS = {
     "app_scenario.ipynb": app_notebook,
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
+    "tilt_scenario.ipynb": tilt_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
     "lossy_seam_scenario.ipynb": lossy_seam_notebook,
     "surfaces_scenario.ipynb": surfaces_notebook,

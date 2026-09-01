@@ -8,10 +8,10 @@
 //   LogisticsUav -- carry a parcel out, return empty (max payload x radius)
 //   InterceptUav -- one-way dash to catch a crossing target (max target speed)
 //
-// The catalog CROSSES architecture with part class: eleven airframes
+// The catalog CROSSES architecture with part class: twelve airframes
 // (six rotor-borne, two winged VTOL, three flying wings -- the twin
-// courier crosses its root pusher stations against a wingtip variant)
-// against four
+// courier crosses its root pusher stations against a wingtip variant --
+// and the tilt-rotor tri-wing) against four
 // motors, four props, and five packs spanning the small F450 class and
 // the heavy 6S class.
 // Dishonest mixes stay in the space and fail honestly -- propFit keeps
@@ -29,7 +29,7 @@
 // the Cartesian candidate space and let the interpreter score every mix
 // exactly (see tutorial T4).
 package ScoutMissions {
-    doc /* The DeepScout trade space: eleven airframe entries across three
+    doc /* The DeepScout trade space: twelve airframe entries across four
            branches, real COTS propulsion and payload options in two
            part classes, a battery-chemistry trade, a structural-material
            trade, and three mission contexts with executable physics.
@@ -42,6 +42,7 @@ package ScoutMissions {
     private import Rotorcraft::*;
     private import WingedVtol::*;
     private import FlyingWings::*;
+    private import TiltRotors::*;
     private import DeepScout::*;
     private import DeepScout::Aerodynamics::*;
     private import DeepScout::Propulsion::*;
@@ -77,6 +78,7 @@ package ScoutMissions {
             variant part flyingWingSingle : FlyingWingSingle;
             variant part flyingWingTwin : FlyingWingTwin;
             variant part flyingWingTwinTip : FlyingWingTwinTip;
+            variant part tiltTriWing : TiltTriWing;
         }
         variation part def MotorChoice :> Motor {
             variant part mt2213 : EmaxMt2213;

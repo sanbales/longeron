@@ -77,6 +77,7 @@ def test_chunk_contract_fields(chunks):
         "FlyingWings::FlyingWingSingle",
         "FlyingWings::FlyingWingTwin",
         "FlyingWings::FlyingWingTwinTip",
+        "TiltRotors::TiltTriWing",
     ]
 
 

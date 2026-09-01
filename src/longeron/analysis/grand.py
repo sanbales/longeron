@@ -74,6 +74,7 @@ __all__ = [
     "drone_scene",
     "grand_dashboard",
     "scene_for",
+    "tilt_viewer",
     "view_cone_part",
 ]
 
@@ -239,6 +240,7 @@ def scene_for(
     config: M.Definition | str,
     *,
     interpreter: Interpreter | None = None,
+    tilt_deg: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Bake the tagged scene for ANY renderable craft definition.
 
@@ -262,7 +264,10 @@ def scene_for(
     This is the config-keyed rendering seam behind
     :func:`longeron.analysis.link.bind_config_view`: resolve a
     selection to its owning configuration, hand the configuration
-    here, swap the viewer to the result.  Returns ``(mesh, part_map)``.
+    here, swap the viewer to the result.  ``tilt_deg`` is the tilt-rotor
+    family's conversion state (hover 90 .. cruise 0, the scene-level
+    knob behind :func:`tilt_viewer`); shells that declare no pivot
+    chain ignore it.  Returns ``(mesh, part_map)``.
     """
 
     interp = interpreter if interpreter is not None else Interpreter(model)
@@ -293,6 +298,12 @@ def scene_for(
             ("bayLength", "bay_length"),
             ("bayWidth", "bay_width"),
             ("bayHeight", "bay_height"),
+            # the tilt-rotor family's declared pivot chain (tilt-tri only)
+            ("fuselageDiameter", "fuselage_diameter"),
+            ("tailArea", "tail_area"),
+            ("tiltPivotSetback", "tilt_pivot_setback"),
+            ("tiltArm", "tilt_arm"),
+            ("noseArm", "nose_arm"),
         ):
             try:
                 extras[kw] = float(interp.evaluate(f"{qname}::{attr_name}"))
@@ -318,6 +329,8 @@ def scene_for(
                 extras["fc_mass"] = float(interp.instantiate(fc_usage).slots["mass"])
         except Exception:
             pass
+        if tilt_deg is not None:
+            extras["tilt_deg"] = float(tilt_deg)
         shell = geometry.airframe_geometry(
             wing_span=knobs["wingSpan"],
             wing_area=knobs["wingArea"],
@@ -389,6 +402,64 @@ def view_cone_part(
         faces += [0, 1 + j, 1 + k]  # lateral surface (outward winding)
         faces += [base, 1 + k, 1 + j]  # base cap
     return {"name": name, "color": color, "opacity": opacity, "vertices": vertices, "faces": faces}
+
+
+def tilt_viewer(
+    model: M.Model,
+    config: str = "TiltRotors::TiltTriWing",
+    *,
+    tilt_deg: float = 90.0,
+    width_px: int = 640,
+    height_px: int = 420,
+) -> Any:
+    """A mesh viewer with the tilt-rotor conversion affordance.
+
+    One :func:`longeron.widgets.viewer3d.mesh_viewer` over one
+    ``ipywidgets`` slider: the slider commands the conversion state,
+    sweeping hover (90 deg) to cruise (0), and every move re-bakes the
+    scene through :func:`scene_for` at that tilt -- the tip pods and
+    the nose unit rotate about the pivots the MODEL declares, so the
+    slider drives the same geometry the interference gate samples.
+    The returned ``VBox`` exposes the pieces for scripting and tests:
+    ``.viewer`` (the mesh viewer), ``.tilt`` (the slider), and
+    ``.part_map``.  Requires the ``viz`` extra.
+    """
+
+    from ..widgets import viewer3d
+
+    widgets = _ipywidgets()
+    interp = Interpreter(model)
+    mesh, part_map = scene_for(model, config, interpreter=interp, tilt_deg=tilt_deg)
+    viewer = viewer3d.mesh_viewer(
+        mesh,
+        label=f"{config} -- tilt {tilt_deg:.0f} deg",
+        width_px=width_px,
+        height_px=height_px,
+    )
+    tilt = widgets.FloatSlider(
+        value=float(tilt_deg),
+        min=0.0,
+        max=90.0,
+        step=5.0,
+        description="tilt deg",
+        readout_format=".0f",
+        continuous_update=True,
+        style={"description_width": "62px"},
+        layout=widgets.Layout(width="98%"),
+    )
+
+    def _on_tilt(_change: Any = None) -> None:
+        angle = float(tilt.value)
+        scene, _ = scene_for(model, config, interpreter=interp, tilt_deg=angle)
+        viewer.mesh_json = json.dumps(scene)
+        viewer.label = f"{config} -- tilt {angle:.0f} deg"
+
+    tilt.observe(_on_tilt, "value")
+    box = widgets.VBox([viewer, tilt])
+    box.viewer = viewer
+    box.tilt = tilt
+    box.part_map = part_map
+    return box
 
 
 # ---------------------------------------------------------------------------

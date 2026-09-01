@@ -122,13 +122,13 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     lab.page.wait_for_selector(".jp-OutputArea .widget-vbox", timeout=120_000)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
 
-    # -- baked state: 1760 crossed candidates, one tab set, toggle off ------
+    # -- baked state: 1920 crossed candidates, one tab set, toggle off ------
     state = lab.run_cell_json(1)
-    assert state["candidates"] == 1760
+    assert state["candidates"] == 1920
     assert state["tabs"] == ["all missions", "ISR", "logistics", "intercept"]
     assert state["toggle"] is False
-    assert state["pool"] == 1760
-    assert 0 < state["front"] < 1760
+    assert state["pool"] == 1920
+    assert 0 < state["front"] < 1920
 
     # -- (1) the whole dashboard fits a 1080p content area AND fills the
     # available output width (finding 3: no more fixed 1500 px on a wide
@@ -155,7 +155,7 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle = lab.page.get_by_role("button", name="Pareto only")
     toggle.click()
     state = _poll_checker(lab, lambda s: s["toggle"] is True)
-    assert state["pool"] == state["front"] < 1760
+    assert state["pool"] == state["front"] < 1920
     lab.page.screenshot(path=str(EVIDENCE / "t4_dashboard_pareto_on.png"))
 
     # -- (2b) the reported scenario: 'Pareto only' at N=8 shows picks that
@@ -203,17 +203,17 @@ def test_dashboard_fits_1080p_and_links_every_view(lab1080: Any) -> None:
     toggle.click()
     # the toggle flag flips before the pool recount lands (a starved CI
     # runner exposed the gap): poll to the POSTCONDITION, not the flag
-    state = _poll_checker(lab, lambda s: s["toggle"] is False and s["pool"] == 1760)
-    assert state["pool"] == 1760
+    state = _poll_checker(lab, lambda s: s["toggle"] is False and s["pool"] == 1920)
+    assert state["pool"] == 1920
 
     # -- (2d) toggle OFF: gray returns, but ONLY on truly dominated
     # points -- the front keeps its ink in the full cloud, and the
     # legend now names the gray too; the hint is gone
-    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1760)
+    _poll_count(lab, ".longeron-moefront-dot:not(.legend)", 1920)
     # the redraw is two-stage on a slow browser -- dots first, front/
     # dominated re-classing after -- so the .front census is ALSO a
     # postcondition to poll, not a state to assert mid-transition (the
-    # sharded-CI lesson: all 1760 dots briefly wore .front)
+    # sharded-CI lesson: all 1920 dots briefly wore .front)
     _poll_count(lab, ".longeron-moefront-dot.front:not(.legend)", state["front"])
     assert (
         lab.page.locator(

@@ -200,7 +200,7 @@ class TestFrontJustifications:
 class TestDashboardData:
     def test_shared_points_and_size(self, data):
         assert data["shared"] == ["airframe", "motors", "props", "battery", "material"]
-        assert len(data["candidates"]) == 11 * 4 * 4 * 5 * 2
+        assert len(data["candidates"]) == 12 * 4 * 4 * 5 * 2
         assert [m["name"] for m in data["missions"]] == ["ISR", "logistics", "intercept"]
 
     def test_thresholds_anchored_in_the_model(self, data):

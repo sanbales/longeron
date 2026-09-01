@@ -84,6 +84,7 @@ class TestModelShape:
             "flyingWingSingle",
             "flyingWingTwin",
             "flyingWingTwinTip",
+            "tiltTriWing",
         }
         assert set(studies["intercept"].points["battery"].variants) == {
             "tattu3s",
@@ -104,14 +105,14 @@ class TestModelShape:
         }
 
     def test_candidate_space_sizes(self, spaces):
-        # the architecture x part-class crossing: 11 airframes x 4 motors
+        # the architecture x part-class crossing: 12 airframes x 4 motors
         # x 4 props x 5 packs x 2 materials (the legacy fleet space was
         # 4 x 3 x 3 x 4 x 2 = 288 shared mixes; the flying wings of 0.12
-        # grew the 8-airframe crossing to 10, and the twin's tip-prop
-        # variant makes it 11)
-        assert len(spaces["isr"]) == 11 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["logistics"]) == 11 * 4 * 4 * 5 * 2 * 3
-        assert len(spaces["intercept"]) == 11 * 4 * 4 * 5 * 2
+        # grew the 8-airframe crossing to 10, the twin's tip-prop
+        # variant made it 11, and the tilt-rotor tri makes it 12)
+        assert len(spaces["isr"]) == 12 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["logistics"]) == 12 * 4 * 4 * 5 * 2 * 3
+        assert len(spaces["intercept"]) == 12 * 4 * 4 * 5 * 2
 
     def test_derived_order_is_dependency_sorted(self, studies):
         # mission metrics may reference inherited derived attributes
@@ -167,15 +168,13 @@ class TestFronts:
 
     def test_feasible_counts(self, spaces):
         counts = {name: sum(a.verified for a in archs) for name, archs in spaces.items()}
-        # the crossed catalog after the dash-envelope honesty of 0.13:
-        # ISR and logistics grow by exactly the tip twin's seats (the
-        # gust placard and the tilt cap live in the intercept chain
-        # only; the tail-sitter's tip-structure mass retires a few of
-        # its courier margins), while intercept collapses from 526 --
-        # the placard caps every wing at its wing loading, the tilt cap
-        # retires five of the six rotor families outright, and only the
-        # teardrop keeps a rotor-borne catcher's seat
-        assert counts == {"isr": 328, "logistics": 397, "intercept": 316}
+        # the crossed catalog after the dash-envelope honesty of 0.13
+        # plus the tilt-rotor tri of 0.14: every mission grows by exactly
+        # the tilt-tri's own seats (ISR +34, logistics +52, intercept
+        # +28 -- three tilted stations hover only the LiPo punch packs,
+        # so the li-ion mixes bust packPower or the lift floors, and the
+        # winch parcel outruns three stations' thrust outright)
+        assert counts == {"isr": 362, "logistics": 449, "intercept": 344}
 
     def test_crossing_is_purely_additive(self, spaces):
         # every pre-crossing mix keeps its verdict axes: restricted to
@@ -385,7 +384,7 @@ class TestVolumeLedger:
         for name in ("boxQuad", "openTri", "hexLifter", "coaxOcto", "ringOcto"):
             assert frames[name]["bayShape"] == "box"
             assert frames[name]["equipmentBayFactor"] == 0.0  # pack on the hub stack
-        for name in ("teardropQuad", "vtolWing", "dartInterceptor"):
+        for name in ("teardropQuad", "vtolWing", "dartInterceptor", "tiltTriWing"):
             assert frames[name]["bayShape"] == "hull"
             assert frames[name]["equipmentBayFactor"] == 1.0
         for name in ("flyingWingSingle", "flyingWingTwin"):
@@ -904,3 +903,107 @@ class TestTipPropTrade:
         root = studies["intercept"].evaluate({**mix, "airframe": "flyingWingTwin"}).metrics
         assert tip["dashSpeed"] == pytest.approx(root["dashSpeed"])  # same CdA, same watts
         assert tip["dashPlacard"] > root["dashPlacard"]  # grams buy placard
+
+
+class TestTiltRotorTrade:
+    """The tilt-rotor tri's mission landing: real prices, real prizes.
+
+    The model file (``examples/deepscout/tilttri.sysml``) derives the
+    prices (tilt-mechanism mass per pivot, the three-rotor hover, the
+    wing-shadow download) and the prizes (the derived tip recovery, the
+    VTOL taskings, the centerline engine-out); tests/test_tilt_tri.py
+    pins those chains interpreter-exact.  HERE the mission ledger says
+    where the shell lands: a genuine VTOL contender behind the
+    tail-sitter on both VTOL-demanding missions, a real (modest)
+    VTOL-launched intercept seat, and no paper crown anywhere.
+    """
+
+    def test_hover_cannot_fly_the_endurance_chemistry(self, studies):
+        # the tri geometry's honest ceiling: three tilted stations must
+        # carry the whole hover, so the climb-out draw of the motors
+        # that CAN lift the shell (3 x 800 W at 0.7) outruns the li-ion
+        # ceiling, and the efficiency motors the li-ion could feed
+        # cannot reach the tri's thrust floor -- the endurance
+        # chemistry that crowns the tail-sitter's ISR is unreachable
+        for motors, violation in (("x4112s", "packPower"), ("mn4006", "isrLift")):
+            arch = studies["isr"].evaluate(
+                {
+                    "airframe": "tiltTriWing",
+                    "motors": motors,
+                    "props": "apc11x55",
+                    "battery": "liion6s6p",
+                    "sensor": "zenmuseH20",
+                    "material": "carbonFiber",
+                }
+            )
+            assert not arch.verified, motors
+            assert violation in arch.violations, motors
+
+    def test_lands_second_among_the_hover_capable(self, spaces):
+        # the interpreter's verdict on "contest the tail-sitter": on
+        # both VTOL-demanding missions the tilt-tri beats every rotor
+        # family outright and loses the hover-capable crown to the
+        # vtolWing -- four wing-assisted stations out-lift and out-last
+        # three pure-rotor ones
+        wings = FLYING_WINGS | {"dartInterceptor"}
+        for name in ("isr", "logistics"):
+            metric = MISSIONS[name][1]
+            best = {}
+            for a in spaces[name]:
+                if not a.verified or a.selection["airframe"] in wings:
+                    continue
+                af = a.selection["airframe"]
+                best[af] = max(best.get(af, 0.0), a.metrics[metric])
+            order = sorted(best, key=lambda af: -best[af])
+            assert order[0] == "vtolWing", name
+            assert order[1] == "tiltTriWing", name
+
+    def test_winch_outruns_three_stations(self, studies):
+        # the 4 kg slung load the tail-sitter delivers is honestly past
+        # the tri: the capacity ledger refuses the winch AND the lift
+        # floor busts even on the 2 kW sprint motors
+        arch = studies["logistics"].evaluate(
+            {
+                "airframe": "tiltTriWing",
+                "motors": "at4120",
+                "props": "tm15x5",
+                "battery": "tattu16000",
+                "cargo": "parcelBayL",
+                "material": "aluminum",
+            }
+        )
+        assert not arch.verified
+        assert set(arch.violations) == {"cargoFits", "logLift"}
+
+    def test_vtol_intercept_seat_is_real_but_modest(self, spaces):
+        # no rail anywhere: the tilt-tri launches from a hover and still
+        # catches the 25 m/s crossing -- the one VTOL wing in the
+        # intercept seats -- but its courier-class wing loading placards
+        # it far below the dart, and below the teardrop's tilt cap
+        seats = [
+            a
+            for a in spaces["intercept"]
+            if a.verified and a.selection["airframe"] == "tiltTriWing"
+        ]
+        assert len(seats) == 28
+        best = max(seats, key=lambda a: a.metrics["maxTargetSpeed"])
+        assert best.metrics["dashPlacard"] < best.metrics["dashSpeed"]  # placard binds
+        assert best.metrics["usableDashSpeed"] == best.metrics["dashPlacard"]
+        others = {
+            af: max(
+                a.metrics["maxTargetSpeed"]
+                for a in spaces["intercept"]
+                if a.verified and a.selection["airframe"] == af
+            )
+            for af in ("teardropQuad", "dartInterceptor", "vtolWing")
+        }
+        assert others["vtolWing"] < best.metrics["maxTargetSpeed"] < others["teardropQuad"]
+        assert best.metrics["maxTargetSpeed"] > 25.0
+
+    def test_no_front_seat_anywhere(self, spaces):
+        # honest standing: every tilt-tri mix is dominated on every
+        # (cost, metric) front -- the specialists' split survives the
+        # twelfth airframe untouched
+        for name in MISSIONS:
+            front = front_2d(spaces[name], MISSIONS[name][1])
+            assert not any(a.selection["airframe"] == "tiltTriWing" for a in front), name

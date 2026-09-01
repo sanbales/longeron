@@ -1653,6 +1653,7 @@ class TestFleetPropDiscClearance:
         "FlyingWings::FlyingWingSingle",
         "FlyingWings::FlyingWingTwin",
         "FlyingWings::FlyingWingTwinTip",
+        "TiltRotors::TiltTriWing",
     )
     BUILDS = (
         "Rotorcraft::QuadCopter",
@@ -1707,6 +1708,85 @@ class TestFleetPropDiscClearance:
             _assert_discs_clear(mesh, "forced legacy placement")
 
 
+class TestTiltSweptClearance:
+    """The tilt-tri's discs clear the airframe ACROSS the conversion.
+
+    The fleet gate above holds every craft at its baked attitude; the
+    tilt-rotor family adds an axis no other craft has -- the tilt angle
+    -- and a clearance that holds at both endpoints can still fail
+    mid-arc.  These tests sample the whole conversion (hover 90 to
+    cruise 0, every 15 deg) at the model's declared geometry AND at the
+    largest catalog prop, and then prove the oracle has teeth on the
+    arc specifically: a pivot buried mid-chord (the pivot crept onto
+    the spar) keeps its HOVER endpoint clean and slices the wing on
+    the cruise half of the conversion -- the breakage a single-attitude
+    gate would have missed.
+    """
+
+    ANGLES = (0, 15, 30, 45, 60, 75, 90)
+
+    def test_declared_geometry_clears_the_whole_arc(self, fleet):
+        from longeron.analysis.grand import scene_for
+
+        model, interp = fleet
+        for tilt in self.ANGLES:
+            mesh, _part_map = scene_for(
+                model, "TiltRotors::TiltTriWing", interpreter=interp, tilt_deg=tilt
+            )
+            _assert_discs_clear(mesh, f"TiltTriWing at tilt {tilt}")
+
+    def test_largest_catalog_prop_clears_the_arc_too(self, mission_study):
+        # the mission studies cross the tilt-tri with every catalog
+        # prop; the 15 in lifter is the worst disc the declared pivot
+        # chain must swing clear
+        arch = mission_study.evaluate(
+            {
+                "airframe": "tiltTriWing",
+                "motors": "at4120",
+                "props": "tm15x5",
+                "battery": "tattu16000",
+                "material": "aluminum",
+            }
+        )
+        for tilt in self.ANGLES:
+            mesh = geometry.mission_geometry(mission_study, arch, tilt_deg=tilt)
+            _assert_discs_clear(mesh, f"tiltTriWing/tm15x5 at tilt {tilt}")
+
+    BROKEN: ClassVar[dict[str, float]] = {
+        # the tip pivot buried 150 mm forward of the TE: mid-chord
+        "wing_span": 2.4,
+        "wing_area": 0.72,
+        "taper": 0.5,
+        "fuselage_length": 1.05,
+        "prop_diameter": 0.2794,
+        "motor_mass": 0.183,
+        "battery_mass": 1.92,
+        "fuselage_diameter": 0.14,
+        "tail_area": 0.14,
+        "sweep_deg": 10.0,
+        "tilt_pivot_setback": -0.15,
+        "tilt_arm": 0.09,
+        "nose_arm": 0.10,
+    }
+
+    def test_the_oracle_catches_a_buried_pivot_mid_arc(self):
+        # hover looks perfectly clean (the disc hangs 90 mm under the
+        # wing wherever its pivot sits)...
+        for tilt in (60, 75, 90):
+            _assert_discs_clear(
+                geometry.tilt_tri_geometry(**self.BROKEN, tilt_deg=tilt),
+                f"broken pivot, hover side ({tilt})",
+            )
+        # ...and the cruise half of the conversion slices the wing: the
+        # arc sampling is what catches the broken pivot
+        for tilt in (0, 15, 30, 45):
+            with pytest.raises(AssertionError, match="cuts 'wing'"):
+                _assert_discs_clear(
+                    geometry.tilt_tri_geometry(**self.BROKEN, tilt_deg=tilt),
+                    f"broken pivot, cruise side ({tilt})",
+                )
+
+
 class TestMissionBridge:
     def test_family_dispatch(self, mission_study):
         def mix(airframe):
@@ -1742,6 +1822,27 @@ class TestMissionBridge:
         ]
         winged = geometry.mission_geometry(mission_study, mix("vtolWing"))
         assert any(p["name"] == "wing" for p in winged["parts"])
+        # the tilt-rotor tri: a wing AND a fuselage AND a pivot chain --
+        # dispatched by the declared tiltArm, hover attitude by default
+        tilttri = geometry.mission_geometry(mission_study, mix("tiltTriWing"))
+        names = [p["name"] for p in tilttri["parts"]]
+        assert names == [
+            "frame",
+            "wing",
+            "tail",
+            "motors",
+            "props",
+            "bay",
+            "battery",
+            "fc",
+            "camera",
+        ]
+        props = next(p for p in tilttri["parts"] if p["name"] == "props")
+        assert len(_component_boxes(props)) == 3  # two tips + the nose
+        span_z = tilttri["bounds"][1][2] - tilttri["bounds"][0][2]
+        # in hover the tip discs hang level UNDER the tips, so the scene
+        # is one prop diameter wider than the declared span
+        assert span_z == pytest.approx(2.4 + 0.2794, abs=0.01)
         dart = geometry.mission_geometry(mission_study, mix("dartInterceptor"))
         span_z = dart["bounds"][1][2] - dart["bounds"][0][2]
         assert span_z == pytest.approx(1.05, abs=1e-3)
