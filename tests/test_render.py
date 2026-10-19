@@ -1922,6 +1922,14 @@ class TestBrowserPipelineFixpoint:
         return ran
 
     @staticmethod
+    def _relaid_out_only(ran):
+        """A layout-options refresh lays out again without validating or
+        measuring again.  Whether VisibilityPipe projects again first is
+        ipyelk's choice (it does from ipyelk #246 on)."""
+
+        return ran[-1:] == ["ElkJS"] and not {"ValidationPipe", "BrowserTextSizer"} & set(ran)
+
+    @staticmethod
     def _geometry(widget):
         import json as json_module
 
@@ -1968,7 +1976,7 @@ class TestBrowserPipelineFixpoint:
 
         The second pass re-enters the layout stage exactly like a
         routing-tool refresh (the layout-options flow, which skips the
-        id-stamping Validation/Visibility pipes) -- the tree must already
+        id-stamping ValidationPipe and the text sizer) -- the tree must already
         be transport-complete and the geometry must not change.
         """
 
@@ -1981,7 +1989,7 @@ class TestBrowserPipelineFixpoint:
         ]
         first = self._geometry(widget)
         widget.source.flow = ("node.layoutOptions",)  # a routing-style refresh
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         assert self._geometry(widget) == first  # byte-equal: a true fixpoint
         self._settled(widget)
 
@@ -2005,7 +2013,7 @@ class TestBrowserPipelineFixpoint:
         polyline = self._geometry(widget)
 
         tool.routing = "orthogonal"
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         orthogonal = self._geometry(widget)
         assert orthogonal != polyline  # routing really changed the routes
 
@@ -2036,7 +2044,7 @@ class TestBrowserPipelineFixpoint:
         down = self._geometry(widget)
 
         tool.ui.click()  # -> RIGHT
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         right = self._geometry(widget)
         assert right != down  # the flow really flipped
 
