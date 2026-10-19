@@ -385,8 +385,8 @@ def _section_header(section: str, folded: bool = False) -> Label:
     italics, centered, right under the separator rule (8.2.3.6 printed
     p.199).  Snug (never pre-sized), so both pipelines center it; the
     separator rule itself is drawn from this label's position -- by the
-    headless SVG writer and by the vendored browser node view (LOCAL
-    PATCH 13), keyed on the ``sysml-comp-label`` class.
+    headless SVG writer (keyed on the ``sysml-comp-label`` class) and by
+    ipyelk's browser node view (keyed on ``properties.separator``).
 
     The header opens with its FOLD affordance, the explorer tree's twist
     (open ``\u25be`` while the rows follow, closed ``\u25b8`` while the
@@ -398,7 +398,9 @@ def _section_header(section: str, folded: bool = False) -> Label:
     """
 
     twist = _TWIST_FOLDED if folded else _TWIST_OPEN
-    return _label(f"{twist} {section}", "sysml-comp-label")
+    label = _label(f"{twist} {section}", "sysml-comp-label")
+    label.properties.separator = True
+    return label
 
 
 def _row_label(text: str, element: M.Element) -> Label:
@@ -679,23 +681,24 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     # MERGED into the per-kind typography rule built above (same key).
     style[" text.elklabel.sysml-comp-label"]["cursor"] = "pointer"
     # -- compartment separator rules (spec 8.2.3.6 printed p.199) ----------
-    # The vendored node view (LOCAL PATCH 13) draws one full-width <path
-    # class="sysml-comp-rule"> per compartment header label, a sibling of
-    # the node's rect -- so the per-kind stroke and the state recolors
-    # bind exactly like the box border (never fattening: width pinned).
-    style[" .sysml-comp-rule"] = {
+    # ipyelk's node view draws one full-width <path class="elkseparator">
+    # per label with properties.separator (the compartment headers), a
+    # sibling of the node's rect -- so the per-kind stroke and the state
+    # recolors bind exactly like the box border (never fattening: width
+    # pinned).
+    style[" .elkseparator"] = {
         "fill": "none",
         "stroke-width": "1",
         "pointer-events": "none",
     }
     for css, node_style in _NODE_STYLES.items():
-        style[f" .{css} > .sysml-comp-rule"] = {"stroke": node_style["stroke"]}
+        style[f" .{css} > .elkseparator"] = {"stroke": node_style["stroke"]}
     for state, state_color in (
         ("selected", selected),
         ("mouseover", hover),
         ("selected.mouseover", hover_selected),
     ):
-        style[f" .elknode.{state} ~ .sysml-comp-rule"] = {"stroke": state_color}
+        style[f" .elknode.{state} ~ .elkseparator"] = {"stroke": state_color}
     # ports (interconnection squares to come, flow pins, and the stubs
     # ipyelk substitutes for collapsed content -- 'slack' ports): white
     # body, border in the OWNING node kind's stroke color, stroke width

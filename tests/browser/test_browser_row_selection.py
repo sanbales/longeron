@@ -10,7 +10,7 @@ selection (the tree -> row direction) must light the row back up.
 
 The scenario also proves the compartment PRESENTATION browser-truth:
 the 'attributes' header renders with its full-width separator rule
-(the vendored view's LOCAL PATCH 13), rows carry the pointer-cursor
+(ipyelk's properties.separator), rows carry the pointer-cursor
 hover affordance, and everything stays visible under the dark theme
 (evidence screenshots land in build/evidence/).
 """
@@ -43,8 +43,8 @@ def test_row_click_and_tree_round_trip(lab):
     header = page.locator(".sprotty svg text.sysml-comp-label", has_text="attributes").first
     # the header text opens with the fold twist (the CollapseTool affordance)
     assert header.text_content() == "\u25be attributes"
-    rules = page.locator(".sprotty svg path.sysml-comp-rule")
-    assert rules.count() >= 1, "no compartment separator rule rendered (LOCAL PATCH 13)"
+    rules = page.locator(".sprotty svg path.elkseparator")
+    assert rules.count() >= 1, "no compartment separator rule rendered (properties.separator)"
     row = _row(page)
     assert row.evaluate("el => getComputedStyle(el).cursor") == "pointer"
 
@@ -102,7 +102,7 @@ def test_row_click_and_tree_round_trip(lab):
         label="dark theme applied",
     )
     assert _row(page, "inertia").is_visible()
-    assert page.locator(".sprotty svg path.sysml-comp-rule").count() >= 1
+    assert page.locator(".sprotty svg path.elkseparator").count() >= 1
     page.locator(".lgx-diagram").first.screenshot(path=str(EVIDENCE / "compartments-dark-mode.png"))
     page.evaluate(
         "() => (window.jupyterapp || window.jupyterlab).commands.execute("

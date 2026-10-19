@@ -886,6 +886,10 @@ class TestCompartments:
         )
         assert not header.properties.selectable
         assert str(header.id).startswith("__lgn__:")  # synthetic transport id
+        # ipyelk's node view draws a separator rule above the headers only
+        for label in labels:
+            is_header = "sysml-comp-label" in (label.properties.cssClasses or "")
+            assert bool(label.properties.separator) is is_header, label.text
 
     def test_constraint_compartments_group_by_declared_kind(self, model):
         widget = diagrams.structure_diagram(model)
@@ -964,14 +968,13 @@ class TestCompartments:
         assert style[" text.elklabel.sysml-row"]["cursor"] == "pointer"
         assert style[" text.elklabel.sysml-row.mouseover"]["fill"] == "var(--jp-elk-stroke-hover)"
         assert style[" text.elklabel.sysml-row.selected"]["fill"] == "var(--jp-elk-color-selected)"
-        assert style[" .sysml-comp-rule"]["pointer-events"] == "none"
+        assert style[" .elkseparator"]["pointer-events"] == "none"
         from longeron.render import _NODE_STYLES
 
         for css, node_style in _NODE_STYLES.items():
-            assert style[f" .{css} > .sysml-comp-rule"]["stroke"] == node_style["stroke"]
+            assert style[f" .{css} > .elkseparator"]["stroke"] == node_style["stroke"]
         assert (
-            style[" .elknode.selected ~ .sysml-comp-rule"]["stroke"]
-            == "var(--jp-elk-color-selected)"
+            style[" .elknode.selected ~ .elkseparator"]["stroke"] == "var(--jp-elk-color-selected)"
         )
 
     def test_adornment_contract_holds_with_compartments(self, model):

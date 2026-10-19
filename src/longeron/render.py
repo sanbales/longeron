@@ -318,8 +318,8 @@ _TAB_WIDTH, _TAB_HEIGHT = 30.0, 8.0
 #: compartment opens with a full-width horizontal rule, the compartment
 #: name in italics under it): the rule draws this many px above the header
 #: label's box top, spanning the node edge to edge.  Both pipelines share
-#: it -- the headless SVG writer here, the vendored browser node view
-#: (LOCAL PATCH 13) hard-codes the same value.
+#: it -- the headless SVG writer here, ipyelk's browser node view as the
+#: default ``separatorGap`` of a ``LabelProperties(separator=True)`` label.
 _COMP_RULE_GAP = 1.0
 
 #: actor stick figure (spec BNF printed p.244; crop gt-actor.png):
@@ -1421,7 +1421,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             # compartment separator rules (spec 8.2.3.6 printed p.199): a
             # full-width horizontal rule above every compartment header
             # label, in the node kind's stroke color -- the same geometry
-            # the vendored browser node view draws (LOCAL PATCH 13)
+            # ipyelk's browser node view draws (properties.separator)
             for label in node.get("labels", []):
                 if "sysml-comp-label" in label.get("properties", {}).get("cssClasses", ""):
                     ry = y + label.get("y", 0) - _COMP_RULE_GAP
