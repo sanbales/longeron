@@ -3484,11 +3484,9 @@ class CollapseTool(Tool):
         source.index.elements = None
         if self.tee is not None:
             # mark the inlet dirty and MERGE with the pending flow (see
-            # EdgeRoutingTool.apply), then refresh through on_done
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            # EdgeRoutingTool.apply), then refresh the diagram
+            self.record_reports()
+            self._diagram.refresh()
 
     def _refresh_maps(self, root: Node | None, builder: _StructureBuilder) -> None:
         """Rebuild the per-tree lookaside maps: which drawn nodes can row
@@ -3616,7 +3614,7 @@ def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> No
     """Swap ipyelk's stock ``ToggleCollapsedTool`` for the structure
     view's :class:`CollapseTool`, in the SAME toolbar slot (the
     affordance users already know); re-assigning ``tools`` rewires
-    tee/on_done for every tool (``Diagram._update_tools``).  The fold
+    tee and the on_done refresh for every tool (``Diagram._update_tools``).  The fold
     channel is the fit sentinel's ``fold_click`` trait (the hidden
     anywidget every diagram carries; absent without anywidget, where
     header clicks simply degrade to no-ops)."""

@@ -736,16 +736,15 @@ class EdgeRoutingTool(Tool):
         self._update_ui()
         if seen and self.tee is not None:
             # the collapse tool's refresh path: mark the inlet dirty, then
-            # run the pipeline (Diagram wires on_done to Diagram.refresh).
-            # MERGE with the pending flow instead of replacing it: clicking
-            # while the initial ``("new",)`` flow is still unconsumed (the
-            # first layout is a browser roundtrip) must not clobber it --
-            # "new" is what wakes ipyelk's ValidationPipe, and a pipeline
-            # that loses it can re-run forever without ever recovering
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            # run the pipeline. record_reports() MERGES with the pending
+            # flow instead of replacing it: clicking while the initial
+            # ``("new",)`` flow is still unconsumed (the first layout is a
+            # browser roundtrip) must not clobber it -- "new" is what wakes
+            # ipyelk's ValidationPipe, and a pipeline that loses it can
+            # re-run forever without ever recovering. Not trigger(): a
+            # trait observer also runs sync (scripts, tests), with no loop.
+            self.record_reports()
+            self._diagram.refresh()
 
     def _cycle(self, *_: Any) -> None:
         index = ROUTING_STYLES.index(self.routing)
@@ -1184,10 +1183,8 @@ class DirectionTool(Tool):
                     tool.request_refit()
             # the routing tool's refresh path: mark the inlet dirty and
             # MERGE with the pending flow (see EdgeRoutingTool.apply)
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            self.record_reports()
+            self._diagram.refresh()
 
     def _toggle(self, *_: Any) -> None:
         index = DIRECTIONS.index(self.direction)
