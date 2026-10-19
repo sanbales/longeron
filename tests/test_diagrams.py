@@ -1247,22 +1247,22 @@ class TestPerNodeCollapse:
         builder + preparation as the birth tree, so the round-tripped
         payload is identical."""
 
-        pristine = diagrams.structure_diagram(model).source.value.dict()
+        pristine = diagrams.structure_diagram(model).source.value.model_dump()
         widget = diagrams.structure_diagram(model)
         for to in ("partial", "collapsed"):
             diagrams.level(widget, model.find("K::drone"), to)
             assert self._node(widget, "K::drone").children == []
         diagrams.level(widget, "K::drone", "expanded")
-        assert widget.source.value.dict() == pristine
+        assert widget.source.value.model_dump() == pristine
         # folds round-trip the same way
         diagrams.fold(widget, "K::drone", "attributes")
         diagrams.fold(widget, "K::drone", "attributes", folded=False)
-        assert widget.source.value.dict() == pristine
+        assert widget.source.value.model_dump() == pristine
         # and seeding FROM the constructor equals driving LIVE
         seeded = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
         live = diagrams.structure_diagram(model)
         diagrams.level(live, "K::drone", "partial")
-        assert live.source.value.dict() == seeded.source.value.dict()
+        assert live.source.value.model_dump() == seeded.source.value.model_dump()
 
     # -- the toolbar button: the cycle -----------------------------------------
 

@@ -1165,15 +1165,12 @@ class TestHighlightApplication:
         """When the browser hands back a new post-layout tree, an active
         search re-applies to it (and clearing cleans both trees)."""
 
-        from ipyelk.elements import Registry, convert_elkjson
-        from ipyelk.elements import index as elk_index
+        from ipyelk.elements import Document, convert_elkjson
 
         search = _search(widget)
         search.query = "battery"
-        with Registry():
-            replacement = convert_elkjson(widget.source.value.dict())
-            for element in elk_index.iter_elements(replacement):
-                element.id = element.get_id()
+        replacement = convert_elkjson(widget.source.value.model_dump())
+        Document(replacement)  # pins an id on every element that has none
         widget.view.source.value = replacement  # what the frontend does
 
         view_tree = widget.view.source.value
@@ -1192,10 +1189,9 @@ class TestHighlightApplication:
                 assert SEARCH_DIM_CSS not in _classes(node)
 
     def test_search_after_view_tree_exists_updates_both(self, widget):
-        from ipyelk.elements import Registry, convert_elkjson
+        from ipyelk.elements import convert_elkjson
 
-        with Registry():
-            widget.view.source.value = convert_elkjson(widget.source.value.dict())
+        widget.view.source.value = convert_elkjson(widget.source.value.model_dump())
         search = _search(widget)
         search.query = "motor"
         for tree in (widget.source.value, widget.view.source.value):
