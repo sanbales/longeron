@@ -1705,6 +1705,13 @@ def _prepare_root(
     # INCLUDE_CHILDREN (unlike the spacing/routing options above); the
     # toolbar's DirectionTool re-applies it live through the same helper
     apply_direction(root, direction)
+    # ipyelk resolves the hierarchy through each element's parent link
+    # (ElementIndex.root() raises on a tree with several parentless
+    # nodes); the builders append to ``children`` in place, which sets
+    # no link, so link the finished tree once
+    for node in _walk_nodes(root):
+        for child in (*node.children, *node.ports):
+            child.set_parent(node)
     # every element ships to the browser with a REAL id (null ids kill the
     # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
     _assign_ids(root, salt=id_salt)

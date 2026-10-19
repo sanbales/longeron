@@ -2556,6 +2556,7 @@ class TestBrowserTransportIds:
         from pathlib import Path
 
         from ipyelk import Diagram
+        from ipyelk.elements import ElementIndex
 
         path = Path(__file__).resolve().parent.parent / "notebooks" / "notation_gallery.ipynb"
         cells = json.loads(path.read_text("utf-8"))["cells"]
@@ -2573,6 +2574,9 @@ class TestBrowserTransportIds:
         for name, widget in sorted(widgets.items()):
             nulls = _null_transport_ids(_transport_json(widget))
             assert nulls == [], f"gallery widget {name!r} ships null ids: {nulls[:5]}"
+            # ipyelk's ValidationPipe walks parent links: ONE parentless node, the root
+            root = widget.source.value
+            assert ElementIndex.from_els(root).root() is root, name
             # the adornment contract holds across the WHOLE gallery too:
             # any node-attached glyph a gallery section emits without the
             # construction helpers fails the suite here
