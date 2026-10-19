@@ -382,7 +382,7 @@ def _inside_label_widths(node: Any) -> list[float]:
 def _fit_compound_labels(root: Any, transposed: bool) -> None:
     """Keep EXPANDED compound nodes at least as wide as their compartments.
 
-    elkjs (0.9.3) sizes a compound node under ``INCLUDE_CHILDREN`` in its
+    elkjs (0.9.3 to 0.12.0) sizes a compound node under ``INCLUDE_CHILDREN`` in its
     internal left-to-right coordinate system and only transposes the
     CONTENT for vertical flows: with ``elk.direction`` DOWN/UP the
     ``NODE_LABELS`` size contribution lands on the wrong axis (the widest

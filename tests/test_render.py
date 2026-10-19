@@ -1683,7 +1683,7 @@ class TestCompoundLabelFit:
     """No compartment label may overflow its node -- in EITHER direction,
     pinned against the REAL vendored elkjs (the maintainer repro:
     QuadCopter's ``totalMass`` row past the border after a top-down
-    toggle).  elkjs 0.9.3 sizes an EXPANDED compound node under a
+    toggle).  elkjs (0.9.3 to 0.12.0) sizes an EXPANDED compound node under a
     vertical flow in its internal horizontal coordinates: the
     ``NODE_LABELS`` width contribution lands on the HEIGHT while the
     width collapses to children + padding (leaves are sized after the

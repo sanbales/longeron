@@ -1,7 +1,7 @@
 """Headless rendering of SysML diagrams to SVG/PNG.
 
 The interactive widgets (:mod:`longeron.diagrams`) lay themselves out in the
-browser.  This module runs the same layout engine -- elkjs 0.9.3, vendored
+browser.  This module runs the same layout engine -- elkjs 0.12.0, vendored
 as ``_js/elk.bundled.js`` (EPL-2.0) -- in a node subprocess instead, then
 draws the result as styled SVG:
 
@@ -1177,7 +1177,7 @@ def _to_elk_json(root: Any) -> dict:
             data["layoutOptions"]["elk.nodeLabels.placement"] = "H_CENTER V_TOP INSIDE"
             data["layoutOptions"]["elk.padding"] = "[top=8,left=12,bottom=12,right=12]"
             if transposed:
-                # elkjs (0.9.3) sizes compounds under a vertical flow in its
+                # elkjs (0.9.3 to 0.12.0) sizes compounds under a vertical flow in its
                 # internal horizontal coordinates: the NODE_LABELS width
                 # contribution lands on the HEIGHT and elk.nodeSize.minimum
                 # is applied swapped, as (height, width) -- so drop the

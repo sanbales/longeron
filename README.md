@@ -512,7 +512,7 @@ from longeron.widgets import explore, mission_dashboard  # one lazy import surfa
 ```
 
 The same views export to images without a browser — `longeron.render` runs
-the vendored elkjs (0.9.3, EPL-2.0, `longeron/_js/`) in a node subprocess and
+the vendored elkjs (0.12.0, EPL-2.0, `longeron/_js/`) in a node subprocess and
 draws styled SVG, with PNG via cairosvg (node + cairo ship in the pixi
 environments):
 
