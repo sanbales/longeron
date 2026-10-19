@@ -1303,16 +1303,17 @@ class TestPerNodeCollapse:
         tool._cycle_selected()
         assert tool.levels == {}
 
-    def test_refresh_contract_marks_the_inlet_dirty(self, model):
+    def test_refresh_contract_marks_the_inlet_dirty(self, model, monkeypatch):
         """The collapse tool's refresh path: the rebuilt tree lands on the
         source, the pipe inlet is marked dirty with the birth flow
-        (MERGED with anything pending), and on_done (Diagram.refresh)
-        runs -- the routing/direction tools' contract."""
+        (MERGED with anything pending), and Diagram.refresh runs -- the
+        routing/direction tools' contract."""
 
         widget = diagrams.structure_diagram(model)
         tool = widget.get_tool(diagrams.CollapseTool)
         refreshes = []
-        tool.on_done = lambda: refreshes.append(True)
+        # a level change is not a run(), so the tool's on_done callbacks do not fire
+        monkeypatch.setattr(widget, "refresh", lambda *_: refreshes.append(True))
         before = widget.source.value
         tool.levels = {"K::drone": "partial"}
         assert widget.source.value is not before  # a rebuild, not a mutation

@@ -218,15 +218,16 @@ class TestEdgeRouting:
             seen.append(tool.routing)
         assert seen == ["POLYLINE", "SPLINES", "ORTHOGONAL"]  # full cycle
 
-    def test_cycling_relays_out_through_the_pipeline(self, widget):
+    def test_cycling_relays_out_through_the_pipeline(self, widget, monkeypatch):
         """The collapse tool's refresh contract: the style lands on the
         source tree (root AND every compound node -- ELK does not inherit
         it through INCLUDE_CHILDREN), the pipe inlet is marked dirty with
-        the layout-options flow, and on_done (Diagram.refresh) runs."""
+        the layout-options flow, and Diagram.refresh runs."""
 
         tool = self._tool(widget)
         refreshes = []
-        tool.on_done = lambda: refreshes.append(True)
+        # apply() is not a run(), so the tool's on_done callbacks do not fire
+        monkeypatch.setattr(widget, "refresh", lambda *_: refreshes.append(True))
         tool.ui.click()
         assert tool.routing == "POLYLINE"
         root = widget.source.value
@@ -339,14 +340,14 @@ class TestDirectionToggle:
             seen.append(tool.direction)
         assert seen == ["DOWN", "RIGHT"]  # a full round trip
 
-    def test_toggling_relays_out_through_the_pipeline(self, widget):
+    def test_toggling_relays_out_through_the_pipeline(self, widget, monkeypatch):
         """The routing tool's refresh contract: the direction lands on the
         source tree, the pipe inlet is marked dirty with the layout-options
-        flow, and on_done (Diagram.refresh) runs."""
+        flow, and Diagram.refresh runs."""
 
         tool = self._tool(widget)
         refreshes = []
-        tool.on_done = lambda: refreshes.append(True)
+        monkeypatch.setattr(widget, "refresh", lambda *_: refreshes.append(True))
         tool.ui.click()
         assert tool.direction == "DOWN"
         root = widget.source.value
