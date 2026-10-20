@@ -387,7 +387,7 @@ def layout_failure_notebook() -> dict[str, Any]:
     """Scenario: a deliberately-broken graph must fail loudly (F10).
 
     The poisoned ``elk.algorithm`` makes the browser-side elkjs layout
-    throw.  Under the F10 semantics (vendored ipyelk patch 9) the error
+    throw.  Under the F10 semantics (ipyelk upstream; once vendored patch 9) the error
     surfaces on ``pipe.status.exception`` and the progress bar fills as a
     visible warning instead of retrying forever.
     """

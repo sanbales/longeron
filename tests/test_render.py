@@ -2177,7 +2177,7 @@ def _routed(source: str, routing: str, css: str):
 
 class TestBrowserEndpointTangents:
     """Pinned reference for the vendored browser edge view's symbol
-    orientation (vendor/ipyelk js/sprotty/views/edge_views.tsx
+    orientation (ipyelk js/sprotty/views/edge_views.tsx
     routeEndAngle / coveredRoutePoints -- compiled into the shipped
     labextension).  The headless renderer is immune (its SVG markers carry
     orient="auto-start-reverse"), so these tests pin the TANGENT MATH the
@@ -2294,7 +2294,7 @@ class TestBrowserEndpointTangents:
         ],
     )
     def test_render_line_trim_never_degenerates(self, route, start_reach, end_reach):
-        """Python mirror of the browser renderLine trim (vendor/ipyelk
+        """Python mirror of the browser renderLine trim (ipyelk
         edge_views.tsx): ``first = 1 + covered(source)``, ``last = n - 2 -
         covered(target)``, path = start' + interior[first..last] + end'.
         For every degenerate-route vector from the item-6 triage the trim

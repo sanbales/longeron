@@ -11,7 +11,7 @@ compartment alone -> back to boxes.  Connector edges that anchored on
 undrawn children re-anchor as proxy dots on the box itself (printed
 p.67).  Selection survives every step -- a selected child box becomes
 its selected row and back -- because rows carry the same qualified-name
-id the boxes carried (plus the vendored LOCAL PATCH 14: relayouts
+id the boxes carried (plus ipyelk upstream's former vendored patch 14: relayouts
 re-apply the kernel's live selection).
 
 Independently, every compartment header carries a fold twist: clicking

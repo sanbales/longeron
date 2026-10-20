@@ -1900,7 +1900,7 @@ class TestPackageTabAndAnnotations:
     def test_note_carries_the_folded_corner_crease(self):
         """The UML/SysML note silhouette (spec printed pp.20-21): the
         cut-off corner PLUS the two short crease lines outlining the fold
-        triangle.  The vendored ipyelk Comment view draws only the plain
+        triangle.  ipyelk's Comment view draws only the plain
         5-sided polygon, so the note pins its geometry and ships the
         outline + crease as one explicit path -- the SAME path family the
         headless renderer draws (render._note_path_d)."""
@@ -2408,7 +2408,7 @@ class TestDispatcherAndSelection:
 
 
 def test_headless_schedule_run_is_safe():
-    """The vendored ipyelk patch: no 'no running event loop' crashes."""
+    """ipyelk (once a vendored patch): no 'no running event loop' crashes."""
 
     from ipyelk.elements import Label, Node
 

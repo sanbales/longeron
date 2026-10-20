@@ -1,7 +1,7 @@
 """Scenario 5: a broken layout must fail LOUDLY -- the F10 canary.
 
 The notebook poisons ``elk.algorithm`` so the browser-side elkjs layout
-throws.  Under the F10 semantics (vendored ipyelk patch 9), the error
+throws.  Under the F10 semantics (ipyelk upstream; once vendored patch 9), the error
 stops the resend loop immediately, surfaces on ``pipe.status.exception``,
 and the progress bar fills as a persistent visible warning -- instead of
 the old behavior, a forever-spinning sliver starving the notebook.

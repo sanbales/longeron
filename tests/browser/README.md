@@ -27,12 +27,12 @@ Plain `pytest -q` never runs these tests: everything here carries
 not grow a browser.
 
 Outside pixi, any interpreter works if it has jupyterlab, the dev
-extras, the `browser-test` extra, the vendored ipyelk installed, and
+extras, the `browser-test` extra, ipyelk 3 installed (its wheel brings the jupyter-elk labextension), and
 `node` on `PATH` (the replay scenario bakes SVG through elkjs-on-node).
-The conftest boots the lab server from `sys.executable` and syncs the
-served jupyter-elk labextension from `vendor/ipyelk/src/_d` first --
-never skip that sync; a stale served bundle "passes" with yesterday's
-frontend code.
+The conftest boots the lab server from `sys.executable`, checks that the
+jupyter-elk labextension is installed, and syncs the served longeron
+launcher tile from `npm/_d` first -- never skip that sync; a stale served
+bundle "passes" with yesterday's frontend code.
 
 ## Flake discipline
 
