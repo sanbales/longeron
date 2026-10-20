@@ -5,7 +5,7 @@ because setuptools has no pyproject syntax for ``data_files`` -- the
 mechanism that places files under ``{sys.prefix}/share/...`` at install
 time, which is where JupyterLab discovers federated extensions.  It maps
 the COMMITTED build in ``npm/_d`` (see ``npm/README.md``; the layout
-mirrors the vendored ipyelk's ``src/_d`` precedent) plus
+mirrors ipyelk's ``src/_d`` precedent) plus
 ``npm/install.json`` into the wheel, so ``pip install longeron`` ships the
 launcher tile with zero extra steps.
 

@@ -30,6 +30,7 @@ the core install stays light:
 | `trades` | CP-SAT architecture trade studies ({mod}`longeron.analysis.trades`) | `ortools` |
 | `smt` | requirement-consistency checks on Z3 ({mod}`longeron.analysis.smt`) | `z3-solver` |
 | `viz` | trade-study figures + parallel-coordinates widget ({mod}`longeron.analysis.viz`) | `matplotlib`, `anywidget` |
+| `diagrams` | interactive SysML diagrams ({mod}`longeron.diagrams`) | `ipyelk` 3 |
 | `cad` | cadquery solid export, for example STEP ({mod}`longeron.analysis.geometry`) | `cadquery` (~1 GB OCC kernel) |
 | `docs` | build this documentation site | `sphinx`, `myst-nb`, `furo`, ... |
 | `dev` | tests, lint, type-checking, notebook execution | `pytest`, `ruff`, `mypy`, solvers, ... |
@@ -42,9 +43,7 @@ The LLM retrieval substrate ({mod}`longeron.rag`) deliberately needs
 **no extra**. Chunking, neighborhoods, and keyword search are stdlib
 only, so the substrate works in any install.
 
-Two features need more than an extra. Interactive diagrams
-({mod}`longeron.diagrams`) need the vendored ipyelk from a source
-checkout (`pip install -e vendor/ipyelk`). Headless SVG/PNG rendering
+One feature needs more than an extra. Headless SVG/PNG rendering
 ({mod}`longeron.render`) needs `node` on `PATH`.
 
 ### From source
@@ -53,7 +52,7 @@ checkout (`pip install -e vendor/ipyelk`). Headless SVG/PNG rendering
 git clone https://github.com/sanbales/longeron
 cd longeron
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" -e vendor/ipyelk
+pip install -e ".[dev]"
 make check        # ruff + mypy + full test suite
 ```
 

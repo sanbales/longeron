@@ -358,7 +358,7 @@ _EDGE_END_CLEARANCE = 24.0
 # ---------------------------------------------------------------------------
 
 #: mirror of ``MIN_TANGENT_LENGTH`` in the vendored browser edge view
-#: (vendor/ipyelk js/sprotty/views/edge_views.tsx).  Zero-length route
+#: (ipyelk js/sprotty/views/edge_views.tsx).  Zero-length route
 #: chords make ``atan2(0, 0) == 0``: elkjs SPLINES sections duplicate
 #: control points at the section knots, so a naive "adjacent segment"
 #: tangent flips end symbols 180 degrees on any right-to-left end (the
@@ -372,7 +372,7 @@ def _route_end_angle(route: list[tuple[float, float]], end: str, reach: float) -
     INTO the edge.
 
     PINNED REFERENCE implementation of ``routeEndAngle`` in the vendored
-    browser edge view (vendor/ipyelk ``js/sprotty/views/edge_views.tsx``,
+    browser edge view (ipyelk ``js/sprotty/views/edge_views.tsx``,
     compiled into the shipped labextension): the two must stay identical,
     and the tests exercise this copy against real elkjs section data.  The
     headless SVG renderer itself needs no angles -- its markers auto-orient
@@ -480,7 +480,7 @@ def _note_points(
 def _note_path_d(width: float, height: float) -> str:
     """The note silhouette as ONE path: the folded-corner pentagon plus
     the crease 'L' outlining the fold triangle (the UML/SysML dog-ear).
-    The browser pipeline draws this path verbatim (the vendored ipyelk
+    The browser pipeline draws this path verbatim (ipyelk's
     ``Comment`` view knows only the plain 5-sided polygon -- no crease);
     the headless renderer draws the same two pieces in ``draw_node``."""
 

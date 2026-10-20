@@ -59,7 +59,7 @@ OWNER's diagram, and highlights the nearest drawn ancestor.
 
 Composed strictly from public surfaces: the diagram constructors and
 ``on_select`` from :mod:`longeron.diagrams`, the model vocabulary, and
-the resolver.  Needs the diagram toolchain (the vendored ipyelk) plus
+the resolver.  Needs the diagram toolchain (ipyelk, the ``diagrams`` extra) plus
 anywidget, like :mod:`longeron.widgets.replay`.
 
 The tree pane sits behind a SMALL EXPLICIT SEAM -- the :class:`TreeView`
@@ -2008,7 +2008,7 @@ class Explorer(W.HBox):
             widget.view.selection.observe(deliver_edges, "ids")
         # built widgets ACCUMULATE as persistent children; showing one is a
         # display toggle, never a children swap.  Swapping would DESTROY
-        # the outgoing browser view, and the vendored jupyter-elk view
+        # the outgoing browser view, and the jupyter-elk view
         # never unbinds its model listeners on removal -- every later fit
         # or selection write would replay into the zombie view's detached
         # DOM ('Host is not attached.' page errors).  Persistent views

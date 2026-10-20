@@ -409,7 +409,7 @@ def replay_widget(
     to a shared clock.
 
     Needs the ``replay`` extra (anywidget) plus the diagram toolchain
-    (vendored ipyelk and a ``node`` executable, as for ``render.to_svg``).
+    (ipyelk and a ``node`` executable, as for ``render.to_svg``).
     """
 
     cls = _widget_class()

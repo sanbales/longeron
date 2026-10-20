@@ -58,11 +58,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError(
-        "longeron.toolbar",
-        "ipyelk (the vendored copy)",
-        command="pip install -e vendor/ipyelk",
-    ) from _err
+    raise MissingExtraError("longeron.toolbar", "ipyelk>=3.0.0a0,<4", "diagrams") from _err
 
 from .render import _BAR_LONG, _BAR_SHORT, _SYNTH_ID_PREFIX, _measure
 
@@ -133,7 +129,7 @@ SEARCH_HIT_COLOR = "#d81b60"
 _SEARCH_HIT_GLOW = "rgba(216, 27, 96, 0.55)"
 
 #: keep the toolbar on screen: the labextension slides it away unless the
-#: pointer hovers the widget (vendor/ipyelk/style/app.css); '!important'
+#: pointer hovers the widget (ipyelk style/app.css); '!important'
 #: outranks the equal-specificity ':hover' opacity rules either way
 _PINNED_TOOLBAR = {
     "visibility": "visible",

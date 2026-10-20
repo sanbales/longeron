@@ -58,17 +58,16 @@ to bridges, and tutorials
 stack end
 to end.
 
-## Vendored ipyelk
+## ipyelk
 
 The interactive diagrams ({mod}`longeron.diagrams`) are built on
-[ipyelk](https://github.com/jupyrdf/ipyelk), which is **vendored** under
-`vendor/ipyelk` (BSD-3-Clause, tag v2.1.1) and installed editable so it
-can be patched as needed: headless-safe scheduling, resend-with-backoff
-browser round-trips, error channels, and a prebuilt JupyterLab extension
-rebuilt from the patched TypeScript sources. Every local patch is marked
-`LOCAL PATCH` and catalogued in
-[`vendor/ipyelk/README.vendor.md`](https://github.com/sanbales/longeron/blob/main/vendor/ipyelk/README.vendor.md);
-the history is tracked by `git log -- vendor/ipyelk`.
+[ipyelk](https://github.com/jupyrdf/ipyelk) 3 (BSD-3-Clause), installed
+from PyPI with the `diagrams` extra. Its wheel also installs the
+jupyter-elk JupyterLab extension. Longeron used to carry a patched copy
+of ipyelk 2.1.1 in `vendor/ipyelk`: headless-safe scheduling,
+resend-with-backoff browser round-trips, and error channels. Those fixes
+are now in ipyelk upstream, and the history of the copy is in
+`git log -- vendor/ipyelk`.
 
 Layout normally runs in the browser (elkjs). For tests, exports, and
 this documentation build, {mod}`longeron.render` runs the same elkjs

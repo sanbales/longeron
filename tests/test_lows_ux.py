@@ -3,6 +3,8 @@ V3 (single-source palette)."""
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -356,16 +358,28 @@ class TestPaletteSingleSource:
         assert render._NODE_STYLES["sysml-usage"]["stroke"] in replay._CSS
 
 
+#: the jupyter-elk labextension the ipyelk wheel installs into the env
+JUPYTER_ELK = Path(sys.prefix) / "share/jupyter/labextensions/@jupyrdf/jupyter-elk"
+
+
+def _elkdisplay_map() -> dict:
+    """The installed elkdisplay chunk's source map (names + TS sources)."""
+
+    maps = sorted(JUPYTER_ELK.glob("static/elkdisplay.*.js.map"))
+    assert maps, f"the ipyelk labextension is not installed in {JUPYTER_ELK}"
+    return json.loads(maps[-1].read_text(encoding="utf-8"))
+
+
 class TestLabextensionServingSync:
     """The 'rebuilt the TS but the fix didn't take' footgun: JupyterLab
-    serves the COPY of the vendored jupyter-elk labextension that pixi
-    made inside each env at install time, not vendor/ipyelk itself.  The
+    serves the COPY of the longeron launcher tile that the
     `sync-labextension` task (a `lab` dependency, mirrored in the
-    Makefile) rsyncs the vendor build over every served copy, warning
-    when one was stale."""
+    Makefile) rsyncs from npm/_d into every env, warning when one was
+    stale.  The jupyter-elk labextension is not synced: the ipyelk wheel
+    installs it."""
 
     ROOT = Path(__file__).resolve().parent.parent
-    VENDOR = ROOT / "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk"
+    TILE = "npm/_d/share/jupyter/labextensions/longeron"
 
     def test_pixi_lab_depends_on_the_sync_task(self):
         import re
@@ -375,8 +389,9 @@ class TestLabextensionServingSync:
         text = (self.ROOT / "pyproject.toml").read_text(encoding="utf-8")
         sync = re.search(r"\[tool\.pixi\.tasks\.sync-labextension\]\n(.*?)(?:\n\[|\Z)", text, re.S)
         block = sync.group(1) if sync else text  # inline-table form falls back
-        # vendor build -> every served env copy, loudly when one was stale
-        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in block
+        # repo build -> every served env copy, loudly when one was stale
+        assert self.TILE in block
+        assert "vendor/ipyelk" not in block
         assert ".pixi/envs/*/share/jupyter/labextensions" in block
         assert "rsync" in block and "--delete" in block
         assert "STALE" in block  # the warning that makes the footgun visible
@@ -386,41 +401,39 @@ class TestLabextensionServingSync:
     def test_makefile_mirrors_the_task(self):
         makefile = (self.ROOT / "Makefile").read_text(encoding="utf-8")
         assert "sync-labextension:" in makefile
-        assert "vendor/ipyelk/src/_d/share/jupyter/labextensions" in makefile
+        assert self.TILE in makefile
+        assert "vendor/ipyelk" not in makefile
         assert "rsync" in makefile and "STALE" in makefile
 
-    def test_vendor_build_carries_the_tangent_fix(self):
-        """Item-5 re-verification: the SHIPPED vendored bundle (the one
-        the sync task serves) really contains the compiled arc-length
-        tangent fix -- routeEndAngle/coveredRoutePoints survive in the
+    def test_installed_build_carries_the_tangent_fix(self):
+        """Item-5 re-verification: the SERVED jupyter-elk bundle really
+        contains the compiled arc-length tangent fix (now upstream in
+        ipyelk) -- routeEndAngle/coveredRoutePoints survive in the
         elkdisplay chunk's source map names."""
 
-        maps = sorted(self.VENDOR.glob("static/elkdisplay.*.js.map"))
-        assert maps, "the vendored labextension build is missing"
-        text = maps[-1].read_text(encoding="utf-8")
-        assert "routeEndAngle" in text and "coveredRoutePoints" in text
+        names = _elkdisplay_map()["names"]
+        assert "routeEndAngle" in names and "coveredRoutePoints" in names
 
 
-class TestVendoredHoverAttribution:
+class TestHoverAttribution:
     """Hover parity direction (b): hovering a node's LABEL (the package
     folder tab, a badge, the title text) must highlight the owning node.
-    ipyelk's DragAwareHoverMouseListener sent HoverFeedbackAction with the
-    RAW event target's id -- for labels that is the label element, which
-    has no hoverFeedbackFeature, so sprotty's HoverFeedbackCommand
+    ipyelk 2.x's DragAwareHoverMouseListener sent HoverFeedbackAction with
+    the RAW event target's id -- for labels that is the label element,
+    which has no hoverFeedbackFeature, so sprotty's HoverFeedbackCommand
     silently dropped the action (maintainer repro: hovering the tab gave
-    no feedback at all).  The vendored listener now resolves the nearest
+    no feedback at all).  ipyelk 3.0's listener resolves the nearest
     HOVERABLE ancestor -- exactly how sprotty core's HoverMouseListener
     and ipyelk's own select tool attribute their targets -- so hover and
-    selection agree on what a shape is.  (Source-level guard; the shipped
-    bundle picks the fix up at the next vendor rebuild + sync.)"""
-
-    LISTENER = (
-        Path(__file__).resolve().parent.parent
-        / "vendor/ipyelk/js/tools/draw-aware-mouse-listener.ts"
-    )
+    selection agree on what a shape is.  Checked against the TypeScript
+    source that the installed bundle's source map carries."""
 
     def test_hover_feedback_targets_the_nearest_hoverable_ancestor(self):
-        source = self.LISTENER.read_text(encoding="utf-8")
+        smap = _elkdisplay_map()
+        sources = dict(zip(smap["sources"], smap["sourcesContent"], strict=True))
+        listener = [s for s in sources if s.endswith("js/tools/draw-aware-mouse-listener.ts")]
+        assert listener, "the bundle's source map lost draw-aware-mouse-listener.ts"
+        source = sources[listener[0]]
         # both directions of the hover pair resolve through the feature
         # walk; neither ships the raw target id any more
         assert source.count("findParentByFeature(target, isHoverable)") == 2

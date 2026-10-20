@@ -15,7 +15,7 @@ With a plain virtualenv:
 git clone https://github.com/sanbales/longeron
 cd longeron
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" -e vendor/ipyelk
+pip install -e ".[dev]"
 make check
 ```
 
@@ -39,9 +39,8 @@ Every task exists in both runners. `make <target>` uses the venv, and
 
 | Task | Does |
 |---|---|
-| `check` | `lint` + `typecheck` + `test` + `test-vendor`. The full gate. |
+| `check` | `lint` + `typecheck` + `test`. The full gate. |
 | `test` | `pytest -q` over `tests/`. |
-| `test-vendor` | the vendored ipyelk test suite (`vendor/ipyelk/tests`). |
 | `test-browser` (pixi) | the browser-truth tier (`tests/browser/`): headless JupyterLab driven by Playwright/Chromium. See below. |
 | `lint` | `ruff format --check` and `ruff check` over `src tests examples scripts notebooks docs`. |
 | `format` | `ruff format` plus `ruff check --fix` over the same paths. |
@@ -54,8 +53,8 @@ Every task exists in both runners. `make <target>` uses the venv, and
 | `capture-widgets` (pixi) | re-capture the notebook widget snapshots (`docs/_static/widget-snapshots/`) from a headless JupyterLab; run after changing a widget-bearing notebook cell. See below. |
 | `hooks` | point `core.hooksPath` at `scripts/git-hooks`. |
 | `notebooks` (pixi) / `scripts/run_notebooks.py` | execute every tutorial notebook, then strip outputs. |
-| `sync-labextension` (pixi) | copy the repo's labextension builds -- the vendored jupyter-elk **and** the longeron launcher tile (`npm/_d`, which editable installs never place) -- into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. |
-| `lab` (pixi) | JupyterLab in `notebooks/`, with the vendored ipyelk extension and the longeron launcher tile pre-registered (depends on `sync-labextension`). |
+| `sync-labextension` (pixi) | copy the repo's labextension build -- the longeron launcher tile (`npm/_d`, which editable installs never place) -- into every pixi env's `share/jupyter/labextensions` (the copy JupyterLab actually serves); warns when a served copy was stale. The jupyter-elk extension comes with the ipyelk wheel. |
+| `lab` (pixi) | JupyterLab in `notebooks/`, with the ipyelk extension and the longeron launcher tile pre-registered (depends on `sync-labextension`). |
 
 Ruff formats and lints the notebooks too (`extend-include = ["*.ipynb"]`
 in `pyproject.toml`), so `lint` gates notebook code cells exactly like
@@ -114,21 +113,18 @@ Some trees are outputs, not sources. Edit the source and regenerate:
 |---|---|---|
 | `src/longeron/_gen/` | `grammars/*.g4` | `pixi run parsers` (or `make parsers`) |
 | `src/longeron/_stdlib/prebuilt.json` | `src/longeron/_stdlib/**/*.sysml` | `make stdlib` |
-| `vendor/ipyelk/` | upstream ipyelk 2.1.1 + local patches | edit in place; mark changes `LOCAL PATCH` and log them in `vendor/ipyelk/README.vendor.md` |
 
-One labextension footgun to know about: rebuilding the vendored
-TypeScript (`vendor/ipyelk/js/`) writes the bundles into
-`vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk`
-(and rebuilding the launcher tile, `npm/`, writes into
-`npm/_d/share/jupyter/labextensions/longeron` -- see `npm/README.md`),
-but JupyterLab serves the **copy** that `pixi install` made under
+One labextension footgun to know about: rebuilding the launcher tile
+(`npm/`) writes the bundle into
+`npm/_d/share/jupyter/labextensions/longeron` (see `npm/README.md`),
+but JupyterLab serves the **copy** under
 `.pixi/envs/*/share/jupyter/labextensions/` -- so a rebuilt bundle
 silently keeps serving the old code ("the fix didn't take").  `pixi run
-lab` now runs `sync-labextension` first (it prints a warning whenever a
-served copy was stale before syncing); after rebuilding either
-extension's TS, restart lab through `pixi run lab` (or run `make
-sync-labextension`) and
-hard-refresh the browser.
+lab` runs `sync-labextension` first (it prints a warning whenever a
+served copy was stale before syncing); after rebuilding the tile's TS,
+restart lab through `pixi run lab` (or run `make sync-labextension`)
+and hard-refresh the browser.  The jupyter-elk extension is not a repo
+build: the ipyelk wheel installs it.
 
 CI runs a grammar-regen job that fails when the committed parsers drift
 from the `.g4` sources, so never hand-edit `_gen/`.

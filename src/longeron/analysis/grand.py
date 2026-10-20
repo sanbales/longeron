@@ -590,7 +590,7 @@ def grand_dashboard(
     ``.unlink`` (drops the diagram <-> 3D binding).
     """
 
-    from ..diagrams import structure_diagram  # pulls the vendored ipyelk
+    from ..diagrams import structure_diagram  # pulls in ipyelk
     from ..widgets import mission3d as mission3d_widget
     from ..widgets import viewer3d
     from . import link, mdao, mission3d, smt

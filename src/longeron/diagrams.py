@@ -1,6 +1,6 @@
 """Interactive SysML v2 diagrams for Jupyter, rendered with ipyelk/ELK.
 
-Requires the vendored ipyelk (``pip install -e vendor/ipyelk``; the pixi
+Requires ipyelk 3 (``pip install "longeron[diagrams]"``; the pixi
 environments install it automatically).  Three views, one dispatcher:
 
 * :func:`structure_diagram` -- packages, definitions (with attribute
@@ -131,11 +131,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError(
-        "longeron.diagrams",
-        "ipyelk (the vendored copy)",
-        command="pip install -e vendor/ipyelk",
-    ) from _err
+    raise MissingExtraError("longeron.diagrams", "ipyelk>=3.0.0a0,<4", "diagrams") from _err
 
 from . import model as M
 from .interpreter import Interpreter, _succession_plan
@@ -3184,7 +3180,7 @@ class _StructureBuilder:
 
         The geometry is pinned ONCE (pre-measured labels, fixed size, the
         exact leaf layout the headless renderer computes) and the outline
-        + crease ride an explicit ``Path`` shape: the vendored ipyelk
+        + crease ride an explicit ``Path`` shape: ipyelk's
         ``Comment`` view draws only the plain 5-sided polygon -- no
         crease -- so both pipelines share render._note_path_d instead."""
 
