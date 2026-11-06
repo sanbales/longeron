@@ -45,6 +45,9 @@ fi
 
 REPO="$(git rev-parse --show-toplevel)"
 cd "$REPO"
+# git exports GIT_DIR to hooks run from a linked worktree; every `git init`
+# the suite runs in a temp dir would then target this repo instead
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
 
 PIXI_PY="$REPO/.pixi/envs/default/bin/python"
 RUFF="$REPO/.pixi/envs/default/bin/ruff"
