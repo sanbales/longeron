@@ -131,7 +131,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError("longeron.diagrams", "ipyelk>=3.0.0a0,<4", "diagrams") from _err
+    raise MissingExtraError("longeron.diagrams", "ipyelk>=3.0.0,<4", "diagrams") from _err
 
 from . import model as M
 from .interpreter import Interpreter, _succession_plan

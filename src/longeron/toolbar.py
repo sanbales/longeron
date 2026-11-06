@@ -58,7 +58,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError("longeron.toolbar", "ipyelk>=3.0.0a0,<4", "diagrams") from _err
+    raise MissingExtraError("longeron.toolbar", "ipyelk>=3.0.0,<4", "diagrams") from _err
 
 from .render import _BAR_LONG, _BAR_SHORT, _SYNTH_ID_PREFIX, _measure
 

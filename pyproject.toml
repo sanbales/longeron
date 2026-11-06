@@ -33,7 +33,7 @@ dev = [
     "pyecore>=0.15",
     "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
     "anywidget>=0.9",  # replay widget + analysis viz widgets
-    "ipyelk>=3.0.0a0,<4",  # mirrors [diagrams] (the interactive SysML diagrams)
+    "ipyelk>=3.0.0,<4",  # mirrors [diagrams] (the interactive SysML diagrams)
     "ipylab>=1",  # mirrors [explorer] (the lab docked layout)
     "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
@@ -80,7 +80,7 @@ verify = [
     "longeron[smt]",
 ]
 viz = ["matplotlib>=3.8", "anywidget>=0.9"]
-diagrams = ["ipyelk>=3.0.0a0,<4"]  # longeron.diagrams / longeron.toolbar: interactive ELK diagrams
+diagrams = ["ipyelk>=3.0.0,<4"]  # longeron.diagrams / longeron.toolbar: interactive ELK diagrams
 cad = ["cadquery>=2.5"]
 evidence = [
     # longeron.evidence: PDF text extraction for citation verification.
@@ -289,7 +289,7 @@ jupyterlab = ">=4.1"
 cadquery = ">=2.5"  # [cad] mirror: OCC kernel from conda-forge (no cp313 pypi wheels)
 [tool.pixi.pypi-dependencies]
 longeron = { path = ".", editable = true, extras = ["dev", "ecore"] }
-ipyelk = ">=3.0.0a0,<4"  # mirrors [diagrams]; its wheel ships the jupyter-elk labextension
+ipyelk = ">=3.0.0,<4"  # mirrors [diagrams]; its wheel ships the jupyter-elk labextension
 
 [tool.pixi.feature.docs.pypi-dependencies]
 # mirrors [project.optional-dependencies].docs (the docs env also gets the
