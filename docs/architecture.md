@@ -62,12 +62,8 @@ to end.
 
 The interactive diagrams ({mod}`longeron.diagrams`) are built on
 [ipyelk](https://github.com/jupyrdf/ipyelk) 3 (BSD-3-Clause), installed
-from PyPI with the `diagrams` extra. Its wheel also installs the
-jupyter-elk JupyterLab extension. Longeron used to carry a patched copy
-of ipyelk 2.1.1 in `vendor/ipyelk`: headless-safe scheduling,
-resend-with-backoff browser round-trips, and error channels. Those fixes
-are now in ipyelk upstream, and the history of the copy is in
-`git log -- vendor/ipyelk`.
+from PyPI with the `diagrams` extra (`pip install "longeron[diagrams]"`).
+Its wheel also installs the jupyter-elk JupyterLab extension.
 
 Layout normally runs in the browser (elkjs). For tests, exports, and
 this documentation build, {mod}`longeron.render` runs the same elkjs

@@ -128,12 +128,12 @@ def test_hook_strip_matches_run_notebooks_strip(repo):
 
 
 def test_vendored_notebook_keeps_upstream_metadata(repo):
-    stage(repo, "vendor/ipyelk/examples/demo.ipynb", dirty_notebook_text())
+    stage(repo, "vendor/example/demo.ipynb", dirty_notebook_text())
 
     result = run_hook(repo)
 
     assert result.returncode == 0, result.stderr
-    committed = json.loads(staged(repo, "vendor/ipyelk/examples/demo.ipynb"))
+    committed = json.loads(staged(repo, "vendor/example/demo.ipynb"))
     code = [c for c in committed["cells"] if c["cell_type"] == "code"]
     assert all(c["outputs"] == [] for c in code)
     assert all(c["execution_count"] is None for c in code)

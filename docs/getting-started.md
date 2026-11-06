@@ -37,6 +37,7 @@ the core install stays light:
 
 ```bash
 pip install "longeron[mdao,trades,smt,viz]"   # the full analysis stack
+pip install "longeron[diagrams]"              # the interactive SysML diagrams
 ```
 
 The LLM retrieval substrate ({mod}`longeron.rag`) deliberately needs

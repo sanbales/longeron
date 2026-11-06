@@ -1,5 +1,49 @@
 # Release notes
 
+## 0.12.0 (unreleased)
+
+### Diagrams and platform
+
+- **ipyelk 3 from PyPI**: the interactive diagrams run on the released
+  ipyelk 3.0 (`ipyelk>=3.0,<4`). The new `diagrams` extra installs it
+  from PyPI, and the `ui` and `dev` extras include it. Longeron no
+  longer carries the patched copy of ipyelk 2.1.1 in `vendor/ipyelk`.
+  The 14 local patches of that copy are in ipyelk upstream, for example
+  the headless-safe scheduling, the resend-with-backoff browser round
+  trips and the error channels. The ipyelk wheel installs the
+  jupyter-elk JupyterLab extension, so `sync-labextension` now syncs
+  only the longeron launcher tile
+
+- **The diagrams use the ipyelk 3.0 API**:
+  - The compartment headers set `LabelProperties(separator=True)`, and
+    ipyelk draws the separator rule above each header. The rule has the
+    ipyelk class `elkseparator`. The longeron stylesheet colors it per
+    kind and on selection and hover.
+  - The routing, direction and collapse tools record their change
+    reports with `Tool.record_reports()` and refresh through
+    `Diagram.refresh()`.
+  - The builders link the children and ports of each finished tree to
+    their parent. ipyelk 3.0 finds the root of a tree through these
+    links, and a tree with more than one root fails its first layout.
+  - The tests use `Document` and `model_dump()` in place of the
+    deprecated `Registry` and `.dict()`.
+
+- **The headless renderer runs elkjs 0.12.0**, the version that ipyelk
+  3.0 bundles for the browser. The deepscout headless layouts are
+  byte-identical to the layouts of elkjs 0.9.3
+
+### Upgrade notes
+
+- **Install the diagrams with the `diagrams` extra**:
+  `pip install "longeron[diagrams]"` replaces
+  `pip install -e vendor/ipyelk`. The pixi environments install ipyelk
+  automatically
+- **A stylesheet that targets `.sysml-comp-rule` must target
+  `.elkseparator`**: in the browser, the compartment separator rule is
+  now the ipyelk separator
+- **`test-vendor` and `pytest-asyncio` are gone**: only the tests of
+  the vendored ipyelk used them
+
 ## 0.11.0 (2026-08-29)
 
 ### The DeepScout program

@@ -196,8 +196,12 @@ engine-out is a COST, not a safety constraint — nobody is aboard):
   toolbox path) — follow the in-repo `_chrome.py` conventions for
   widget UI until the maintainer repairs it.
 - **with-cores** for every suite (`-n 4` light, `-n 8 --min 4` heavy).
-- Vendored ipyelk: LOCAL PATCH protocol (currently at patch 14);
-  upstream PR #139 is the off-ramp.
+- **ipyelk is a plain dependency**: `ipyelk>=3.0,<4` from PyPI, through
+  the `diagrams` extra (mirrored in `dev` and in every pixi env).
+  Longeron carries no ipyelk patches. Report an ipyelk defect upstream
+  (jupyrdf/ipyelk) and work around it in longeron until a release fixes
+  it. The ipyelk wheel installs the jupyter-elk labextension.
+  `sync-labextension` syncs only the longeron launcher tile.
 
 ## Open threads (carried, not blocking)
 

@@ -391,7 +391,7 @@ class TestLabextensionServingSync:
         block = sync.group(1) if sync else text  # inline-table form falls back
         # repo build -> every served env copy, loudly when one was stale
         assert self.TILE in block
-        assert "vendor/ipyelk" not in block
+        assert "@jupyrdf" not in block  # jupyter-elk ships in the ipyelk wheel
         assert ".pixi/envs/*/share/jupyter/labextensions" in block
         assert "rsync" in block and "--delete" in block
         assert "STALE" in block  # the warning that makes the footgun visible
@@ -402,7 +402,7 @@ class TestLabextensionServingSync:
         makefile = (self.ROOT / "Makefile").read_text(encoding="utf-8")
         assert "sync-labextension:" in makefile
         assert self.TILE in makefile
-        assert "vendor/ipyelk" not in makefile
+        assert "@jupyrdf" not in makefile
         assert "rsync" in makefile and "STALE" in makefile
 
     def test_installed_build_carries_the_tangent_fix(self):

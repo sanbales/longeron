@@ -544,12 +544,10 @@ replay.replay_widget(interp, "Machines::Player", events=["play", 3600.0, "play"]
 replay.replay_widget(interp, "Ops::Deploy", inputs={"tested": True})
 ```
 
-The diagrams need ipyelk 3 (BSD-3-Clause), installed from PyPI with the
-`diagrams` extra (`pip install "longeron[diagrams]"`; pixi does this
-automatically). Its wheel also installs the jupyter-elk JupyterLab
-extension. Longeron used to carry a patched copy of ipyelk 2.1.1 in
-`vendor/ipyelk`; those fixes are now in ipyelk upstream, and the history
-of the copy is in `git log -- vendor/ipyelk`.
+The diagrams need ipyelk 3 (BSD-3-Clause) from PyPI. Install it with the
+`diagrams` extra: `pip install "longeron[diagrams]"`. The pixi
+environments install it automatically. The ipyelk wheel also installs the
+jupyter-elk JupyterLab extension.
 
 ## Spec-metamodel projection and API interchange
 
