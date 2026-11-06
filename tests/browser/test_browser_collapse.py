@@ -17,8 +17,8 @@ re-apply the kernel's live selection).
 Independently, every compartment header carries a fold twist: clicking
 the header row folds that ONE compartment while the node keeps its
 level, and the click must NEVER enter the model-selection seam (headers
-are presentation artifacts; the fit sentinel consumes the click before
-sprotty sees it).
+are presentation artifacts; the diagram events widget consumes the click
+before sprotty sees it).
 
 The scenario runs on REAL DeepScout content (MultiRotor + QuadCopter,
 whose phaseLeads connection crosses into QuadCopter's motors child) and

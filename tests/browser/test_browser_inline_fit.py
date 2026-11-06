@@ -4,18 +4,18 @@ The maintainer repro (tutorial 7's diagram-beside-3D cell): a diagram
 displayed beside a 3D
 viewer in an HBox, squeezed to 55% of the cell, rendered CROPPED -- the
 kernel's first-layout auto-fit was dropped while the sprotty view was
-still constructing, and nothing ever re-fit it.  The fix lifted the
-explorer's fit sentinel into the diagram BUILDER (``diagrams._finish``):
-every built widget carries the sentinel inside its own DOM, so plain
-``display(widget)`` -- zero consumer wiring -- gets fitted on first
-reveal and re-fitted on container resizes, always respecting the user's
-pan/zoom latch.
+still constructing, and nothing ever re-fit it.  The diagram BUILDER
+(``diagrams._finish``) now turns on ipyelk's ``fit_on_first_layout``,
+which fits each view in the browser after its own first layout.  Every
+built widget also carries the diagram events inside its own DOM, so
+plain ``display(widget)`` -- zero consumer wiring -- is re-fitted on
+container resizes, always respecting the user's pan/zoom latch.
 
 Three phases against the ``hbox_fit_scenario`` notebook:
 
 1. first render: the wide state machine lands FITTED to its narrow
-   column (scale < 1: unambiguously the auto-fit's doing), and the
-   kernel-side sentinel counters prove the ``fresh`` report arrived;
+   column (scale < 1: unambiguously the first-layout fit's doing), and
+   every kernel-side fit cleared the latch (``fit_stamp == fit_count``);
 2. container resize (a viewport shrink narrows the cell): a debounced
    ``resized`` report re-fits the diagram to the NEW box;
 3. the user latch: after a pan, another resize must NOT re-frame the
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.browser
 NOTEBOOK = "hbox_fit_scenario.ipynb"
 
 #: the ONE diagram widget's framing, browser-truth: the widget's root box
-#: carries the ``lgx-diagram`` class (the sentinel's own DOM handle), the
+#: carries the ``lgx-diagram`` class (the diagram events' DOM handle), the
 #: sprotty host div inside it is the viewport, and the root <g> transform
 #: off the identity is the auto-fit's browser-visible effect
 _DIAGRAM_JS = r"""() => {
@@ -95,11 +95,9 @@ def test_inline_hbox_diagram_self_fits_and_honors_the_latch(lab):
     # means the fit really answered THIS box (identity would crop)
     assert first["scale"] < 1, first
     counters = lab.run_cell_json(index=-1)
-    assert counters["fresh"] >= 1, counters  # the sentinel's view report arrived
-    assert counters["fit_count"] >= 1, counters
     assert counters["fit_stamp"] == counters["fit_count"], counters  # latch cleared per fit
 
-    # -- 2. container resize: the sentinel re-fits to the NEW box -----------
+    # -- 2. container resize: the diagram events re-fit to the NEW box ------
     page.set_viewport_size({"width": 950, "height": 1100})
     lab.wait_until(
         lambda s: (lambda d: _fits_box(d) and d.get("viewWidth", 1e9) < first["viewWidth"] - 50)(
@@ -124,7 +122,7 @@ def test_inline_hbox_diagram_self_fits_and_honors_the_latch(lab):
     page.mouse.up()
     panned = _diagram(page)["transform"]
     page.set_viewport_size({"width": 1500, "height": 1100})
-    page.wait_for_timeout(2500)  # well past the sentinel's 200ms debounce
+    page.wait_for_timeout(2500)  # well past the resize report's 200ms debounce
     after = lab.run_cell_json(index=-1)
     assert after["resized"] == resized["resized"], after  # latch held: no report
     assert _diagram(page)["transform"] == panned  # viewport untouched

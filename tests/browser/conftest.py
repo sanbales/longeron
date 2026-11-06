@@ -610,7 +610,7 @@ def scroll_into_view(locator: Any, *, attempts: int = 3, timeout_ms: int = 10_00
 
 #: one DOM snapshot for settle-polling: rendered diagram cells, busy
 #: prompts, visible progress bars, auto-fitted viewports (transform moved
-#: off the identity -- the AutoFitTool's browser-visible effect)
+#: off the identity -- the first-layout fit's browser-visible effect)
 _SNAPSHOT_JS = """() => {
     const rendered = [...document.querySelectorAll('.jp-Cell')].filter(
         (cell) => cell.querySelectorAll('.sprotty svg .elknode').length).length;

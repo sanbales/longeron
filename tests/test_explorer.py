@@ -1319,19 +1319,6 @@ class TestDocking:
         assert sweeper.stamp == ex.lab_panel.title.dataset["lgxstamp"]
         assert sweeper.swept == 0
 
-    def test_first_reveal_refits_the_visible_diagram(self, drone_model, monkeypatch):
-        # a background tab renders hidden: the initial auto-fit aimed at a
-        # zero-sized viewport, so the browser's first-reveal report must
-        # trigger exactly one immediate re-fit of the current diagram
-        from longeron.toolbar import AutoFitTool
-
-        _install_stub_ipylab(monkeypatch)
-        ex = explore(drone_model, layout="lab")
-        tool = ex.diagram.get_tool(AutoFitTool)
-        before = tool.fit_count
-        ex._dock_sweeper.shown = True  # what the sweeper reports on reveal
-        assert tool.fit_count == before + 1
-
 
 # ---------------------------------------------------------------------------
 # pane layout: the diagram area fills the pane; inline stays bounded
@@ -1379,39 +1366,27 @@ class TestPaneFill:
 
 
 # ---------------------------------------------------------------------------
-# fit plumbing: the widgets' own sentinels do the work; the explorer only
-# adds the kind-switch re-show refit (and the docked panel's first reveal)
+# fit plumbing: the widgets fit their own views; the explorer only adds
+# the kind-switch re-show refit
 # ---------------------------------------------------------------------------
 
 
-class TestFitSentinel:
-    def test_explorer_attaches_no_pane_sentinel(self, ex):
-        # the fit machinery moved to the SOURCE (diagrams._finish mounts
-        # a sentinel inside every built widget): the explorer must not
-        # double-attach its own pane-level reporter
-        assert not hasattr(ex, "_fit_sentinel")
+class TestFitPlumbing:
+    def test_explorer_attaches_no_pane_reporter(self, ex):
+        # the fit machinery lives at the SOURCE (diagrams._finish mounts
+        # the diagram events inside every built widget): the explorer must
+        # not double-attach its own pane-level reporter
         kinds = {type(child).__name__ for child in ex._pane.children}
-        assert "_FitSentinel" not in kinds
+        assert "_DiagramEvents" not in kinds
 
-    def test_shown_widget_carries_its_own_sentinel(self, ex):
+    def test_shown_widget_carries_its_own_events(self, ex):
         from longeron.toolbar import AutoFitTool
 
         ex.select("Rotorcraft::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
-        assert tool.sentinel is not None
-        assert tool.sentinel in ex.diagram.children  # INSIDE the widget's DOM
-
-    def test_fresh_view_report_refits_the_widget(self, ex):
-        from longeron.toolbar import AutoFitTool
-
-        ex.select("Rotorcraft::QuadCopter")
-        tool = ex.diagram.get_tool(AutoFitTool)
-        before = tool.fit_count
-        stamp = tool.sentinel.fit_stamp
-        tool.sentinel.fresh += 1  # what the browser reports on a view swap
-        assert tool.fit_count == before + 1
-        # every auto-fit clears the browser's user-interaction latch
-        assert tool.sentinel.fit_stamp == stamp + 1
+        assert tool.events is not None
+        assert tool.events in ex.diagram.children  # INSIDE the widget's DOM
+        assert ex.diagram.view.fit_on_first_layout is True
 
     def test_resize_report_refits_the_widget(self, ex):
         from longeron.toolbar import AutoFitTool
@@ -1419,8 +1394,11 @@ class TestFitSentinel:
         ex.select("Rotorcraft::QuadCopter")
         tool = ex.diagram.get_tool(AutoFitTool)
         before = tool.fit_count
-        tool.sentinel.resized += 1  # a debounced, latch-guarded resize
+        stamp = tool.events.fit_stamp
+        tool.events.resized += 1  # a debounced, latch-guarded resize
         assert tool.fit_count == before + 1
+        # every kernel-side fit clears the browser's user-interaction latch
+        assert tool.events.fit_stamp == stamp + 1
 
     def test_reshow_refit_targets_the_reshown_widget(self, ex, monkeypatch):
         # the AutoFitTool seam, spied: switching kinds away and back
@@ -1461,8 +1439,7 @@ class TestFitSentinel:
 
     def test_first_build_is_not_kernel_refitted(self, ex, monkeypatch):
         # a brand-new widget has no browser view yet -- a kernel fit
-        # would be dropped; its fit is the sentinel's ``fresh`` report
-        # (plus the AutoFitTool's own first-layout fit)
+        # would be dropped; its first fit is ipyelk's fit_on_first_layout
         from longeron import toolbar
 
         fitted: list = []

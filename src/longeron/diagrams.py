@@ -67,10 +67,11 @@ header row to fold that one compartment); the :func:`level` /
 :func:`fold` kernel API mirrors both (see :class:`CollapseTool`;
 state/action views keep ipyelk's stock hide-the-children collapse).
 Every widget
-(with or without the compact toolbar) fits-and-centers itself ONCE when
-its first layout arrives -- a small margin, never zoomed past 1:1 --
-and later relayouts keep the user's viewport
-(:class:`longeron.toolbar.AutoFitTool`).
+(with or without the compact toolbar) fits itself ONCE after the first
+layout of each view, with a small margin and never zoomed past 1:1
+(ipyelk's ``Viewer.fit_on_first_layout``).  Later relayouts keep the
+user's viewport, except for the fits that
+:class:`longeron.toolbar.AutoFitTool` adds.
 
 Compartment rows cap their display width at ``max_label_width`` px
 (default 480; a kwarg on every view constructor): overlong rows --
@@ -187,6 +188,7 @@ from .render import (
     _port_arrow_d,
 )
 from .toolbar import (
+    FIT_PADDING,
     AutoFitTool,
     EdgeRouting,
     LayoutDirection,
@@ -672,7 +674,7 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     style[" text.elklabel.sysml-row.selected.mouseover"] = {"fill": hover_selected}
     # compartment HEADERS are the fold affordance (CollapseTool): the
     # pointer cursor advertises the click; the click itself is consumed
-    # before sprotty ever sees it (the fit sentinel's fold channel), so
+    # before sprotty ever sees it (the diagram events' fold channel), so
     # headers never hover/select -- they are presentation, not elements.
     # MERGED into the per-kind typography rule built above (same key).
     style[" text.elklabel.sysml-comp-label"]["cursor"] = "pointer"
@@ -1755,24 +1757,26 @@ def _finish(
             raise ValueError(f"height must be a CSS length string or None, not {height!r}")
         result.layout.height = height
         result.layout.min_height = "0"
-    # EVERY widget fits-and-centers itself: once when its first layout
-    # arrives, and again whenever its own fit sentinel reports a fresh
-    # view, a first reveal, or an untouched-viewport resize (registered
-    # before the toolbar upgrade so the DirectionTool can queue re-fits)
+    # EVERY widget fits itself after the first layout of each view, in
+    # the browser (a view hidden then fits when first shown).  Set before
+    # any view exists: ipyelk skips a view that was laid out first.  The
+    # fit defaults also apply to every later fit() and Fit button click.
+    result.view.fit_padding = FIT_PADDING
+    result.view.fit_max_zoom = 1.0  # a small diagram stays at natural size
+    result.view.fit_on_first_layout = True
+    # the kernel-side fits ipyelk does not make: the direction flip and
+    # untouched-viewport resizes (registered before the toolbar upgrade
+    # so the DirectionTool can queue its re-fit)
     fit_tool = AutoFitTool(result)
     result.register_tool(fit_tool)
-    # the sentinel rides INSIDE the widget's own DOM, a hidden child
-    # beside the view + toolbar: plain display(widget) is self-fitting
-    # with zero consumer wiring -- first reveal (background tab,
-    # display:none lifted, lazy output rendering) and container resizes
-    # (an HBox squeeze, a dock drag) re-fit, always respecting the
-    # user's pan/zoom latch (longeron.toolbar._SENTINEL_ESM).  The
-    # lgx-diagram class is the sentinel's DOM handle to the box it
-    # measures.  Without anywidget the sentinel is None and the widget
-    # keeps the first-layout fit only (graceful degradation).
+    # the events widget rides INSIDE the widget's own DOM, a hidden child
+    # beside the view + toolbar, so plain display(widget) needs no wiring
+    # (longeron.toolbar._EVENTS_ESM).  The lgx-diagram class is its DOM
+    # handle to the box it measures.  Without anywidget it is None and
+    # the widget keeps ipyelk's first-layout fit only.
     result.add_class("lgx-diagram")
-    if fit_tool.sentinel is not None:
-        result.children = (*result.children, fit_tool.sentinel)
+    if fit_tool.events is not None:
+        result.children = (*result.children, fit_tool.events)
     if toolbar:  # compact icon toolbar + search (longeron.toolbar)
         upgrade_toolbar(result)
     return result
@@ -3371,7 +3375,7 @@ class CollapseTool(Tool):
     clicking the header row in the browser folds that ONE compartment to
     its header while the node stays at its level.  Headers are
     presentation artifacts, not model elements -- the click is consumed
-    before sprotty sees it (the toolbar fit-sentinel reports it on a
+    before sprotty sees it (the toolbar's diagram events report it on a
     dedicated channel), so it can never enter the model-selection seam.
 
     :attr:`levels` (qualified name -> level) and :attr:`folded`
@@ -3598,7 +3602,7 @@ class CollapseTool(Tool):
             self.folded = normalized  # the observer applies
 
     def _on_fold_click(self, change: Any) -> None:
-        """A header click reported by the diagram's fit sentinel (the
+        """A header click reported by the diagram's events widget (the
         browser consumes the click BEFORE sprotty, so the selection seam
         never sees it).  Resolve the clicked header to (node,
         compartment) by the header label's id -- sprotty DOM ids end
@@ -3621,8 +3625,8 @@ def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> No
     view's :class:`CollapseTool`, in the SAME toolbar slot (the
     affordance users already know); re-assigning ``tools`` rewires
     tee and the on_done refresh for every tool (``Diagram._update_tools``).  The fold
-    channel is the fit sentinel's ``fold_click`` trait (the hidden
-    anywidget every diagram carries; absent without anywidget, where
+    channel is the ``fold_click`` trait of the diagram events widget (the
+    hidden anywidget every diagram carries; absent without anywidget, where
     header clicks simply degrade to no-ops)."""
 
     tools = list(widget.tools)
@@ -3644,12 +3648,12 @@ def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> No
                 "(cycles boxes -> 'name : Type' rows -> name only -> boxes)"
             ),
         )
-    sentinel = next(
-        (t.sentinel for t in widget.tools if isinstance(t, AutoFitTool) and t.sentinel is not None),
+    events = next(
+        (t.events for t in widget.tools if isinstance(t, AutoFitTool) and t.events is not None),
         None,
     )
-    if sentinel is not None:
-        sentinel.observe(tool._on_fold_click, "fold_click")
+    if events is not None:
+        events.observe(tool._on_fold_click, "fold_click")
 
 
 def _collapse_tool(widget: Any) -> CollapseTool:

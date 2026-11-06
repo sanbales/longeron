@@ -32,6 +32,18 @@
   3.0 bundles for the browser. The deepscout headless layouts are
   byte-identical to the layouts of elkjs 0.9.3
 
+- **ipyelk makes the first fit of each diagram view**: the builders set
+  `Viewer.fit_on_first_layout`, with `fit_padding` 24 and `fit_max_zoom`
+  1.0. Each view fits in the browser after its own first layout, so no
+  kernel message can be lost. A view that is hidden at its first layout
+  fits when it is first shown, for example a docked explorer in a
+  background tab. Longeron keeps only the fits that ipyelk does not
+  make: one fit after a direction flip, a fit on a resize of a viewport
+  that the user did not pan or zoom, and a fit of a cached explorer
+  diagram on a kind switch. The Fit button now uses the same padding
+  and zoom limit, so it does not enlarge a small diagram past its
+  natural size
+
 ### Upgrade notes
 
 - **Install the diagrams with the `diagrams` extra**:
@@ -43,6 +55,10 @@
   now the ipyelk separator
 - **`test-vendor` and `pytest-asyncio` are gone**: only the tests of
   the vendored ipyelk used them
+- **Read the fit settings on the view**: `AutoFitTool.padding` and
+  `AutoFitTool.max_zoom` are gone. Use `widget.view.fit_padding` and
+  `widget.view.fit_max_zoom`. `AutoFitTool.sentinel` is now
+  `AutoFitTool.events`, and it no longer has a `fresh` counter
 
 ## 0.11.0 (2026-08-29)
 

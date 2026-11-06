@@ -1219,7 +1219,7 @@ class TestPerNodeCollapse:
         assert diagrams.SYSML_STYLE[" text.elklabel.sysml-comp-label"]["cursor"] == "pointer"
 
     def test_fold_click_channel_resolves_headers(self, model):
-        """The browser reports header clicks through the fit sentinel's
+        """The browser reports header clicks through the diagram events'
         fold channel (never through selection); the tool resolves the
         clicked header by its label id -- sprotty DOM ids end with the
         element id -- and toggles that one compartment."""
@@ -2710,10 +2710,11 @@ class TestMaxLabelWidth:
 
 class TestUniversalFitMachinery:
     """EVERY built diagram is self-fitting: the builder funnel (_finish)
-    registers the AutoFitTool and mounts its fit sentinel INSIDE the
-    widget's own DOM, so plain display(widget) gets fit-on-first-reveal
-    and fit-on-resize with zero consumer wiring -- the explorer's pane,
-    an HBox beside a 3D viewer, a bare notebook cell: same machinery."""
+    turns on ipyelk's first-layout fit, registers the AutoFitTool and
+    mounts its diagram events INSIDE the widget's own DOM, so plain
+    display(widget) gets the first fit and fit-on-resize with zero
+    consumer wiring -- the explorer's pane, an HBox beside a 3D viewer,
+    a bare notebook cell: same machinery."""
 
     def _builders(self, drone_model):
         from longeron.widgets.explorer import requirements_view
@@ -2723,26 +2724,36 @@ class TestUniversalFitMachinery:
         yield diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"))
         yield requirements_view(drone_model)
 
-    def test_every_builder_mounts_the_sentinel(self, drone_model):
+    def test_every_builder_turns_on_the_first_layout_fit(self, drone_model):
+        # ipyelk fits each view after its own first layout; the builder
+        # only sets the three traits (before any view exists)
+        from longeron.toolbar import FIT_PADDING
+
+        for widget in self._builders(drone_model):
+            view = widget.view
+            assert view.fit_on_first_layout is True, widget
+            assert (view.fit_padding, view.fit_max_zoom) == (FIT_PADDING, 1.0), widget
+
+    def test_every_builder_mounts_the_events_widget(self, drone_model):
         from longeron.toolbar import AutoFitTool
 
         for widget in self._builders(drone_model):
             tool = widget.get_tool(AutoFitTool)
-            assert tool.sentinel is not None, widget
-            assert tool.sentinel in widget.children, widget
-            assert tool.sentinel.layout.display == "none", widget
+            assert tool.events is not None, widget
+            assert tool.events in widget.children, widget
+            assert tool.events.layout.display == "none", widget
             assert "lgx-diagram" in widget._dom_classes, widget
 
-    def test_one_sentinel_per_widget(self, drone_model):
+    def test_one_events_widget_per_widget(self, drone_model):
         # the notation gallery renders ~24 diagrams in one notebook: one
-        # (hidden, observer-based) sentinel per widget is the whole cost
+        # (hidden, observer-based) events widget per diagram is the whole cost
         from longeron.toolbar import AutoFitTool
 
         for widget in self._builders(drone_model):
-            sentinel = widget.get_tool(AutoFitTool).sentinel
-            mounted = [child for child in widget.children if child is sentinel]
+            events = widget.get_tool(AutoFitTool).events
+            mounted = [child for child in widget.children if child is events]
             assert len(mounted) == 1
-            kind = type(sentinel).__name__
+            kind = type(events).__name__
             same_kind = [c for c in widget.children if type(c).__name__ == kind]
             assert len(same_kind) == 1
 

@@ -164,8 +164,8 @@ class TestComposition:
         assert not any(isinstance(tool, DiagramSearch) for tool in classic.tools)
         assert not any(isinstance(tool, EdgeRoutingTool) for tool in classic.tools)
         assert not any(isinstance(tool, DirectionTool) for tool in classic.tools)
-        # ... but the one-shot initial fit is not toolbar chrome: every
-        # widget starts centered and fitted, stock toolbar or not
+        # ... but the fit machinery is not toolbar chrome: every widget
+        # starts centered and fitted, stock toolbar or not
         assert any(isinstance(tool, AutoFitTool) for tool in classic.tools)
         assert classic.view.fit_tool.ui.description == "Fit"  # the stock button
         assert not any(key in classic.style for key in TOOLBAR_STYLE)
@@ -433,10 +433,10 @@ class TestDirectionToggle:
     def test_flip_queues_a_one_shot_refit_but_routing_does_not(self, widget):
         """The flip inverts the aspect ratio, so ONE re-fit is queued for
         the relayout about to land; routing/collapse refreshes keep the
-        user's viewport (the auto-fit stays spent)."""
+        user's viewport."""
 
         fit = widget.get_tool(AutoFitTool)
-        fit.pending = False  # the initial fit has been consumed
+        assert fit.pending is False  # the first fit is ipyelk's, not queued
         widget.get_tool(EdgeRoutingTool).ui.click()
         assert fit.pending is False  # routing keeps the viewport
         self._tool(widget).ui.click()
@@ -875,14 +875,12 @@ class TestCompoundLabelFit:
 
 
 class TestAutoFit:
-    """The initial fit plus the widget's own fit sentinel: the first
-    layout arrival from the browser answers with exactly one
-    fit-to-screen request (small padding, zoom capped at 1:1, no
-    animation); later relayouts keep the user's viewport unless a re-fit
-    was explicitly queued.  The sentinel -- a hidden anywidget the
-    builder mounts INSIDE the widget's own DOM -- reports fresh views,
-    first reveals, and untouched-viewport resizes, each answered with an
-    immediate re-fit that clears the browser-side user latch."""
+    """The kernel-side fits on top of ipyelk's first-layout fit: the
+    builder sets the view's fit traits, and the tool fits only when a
+    re-fit was explicitly queued (the direction flip) or the widget's
+    diagram events report an untouched-viewport resize.  Every fit it
+    sends uses the view's fit defaults and clears the browser-side user
+    latch."""
 
     @staticmethod
     def _capture(widget) -> list:
@@ -890,23 +888,22 @@ class TestAutoFit:
         widget.view.fit = lambda **kwargs: sent.append(kwargs)
         return sent
 
-    def test_first_layout_arrival_fits_exactly_once(self, widget):
-        tool = widget.get_tool(AutoFitTool)
-        sent = self._capture(widget)
-        assert tool.pending and tool.fit_count == 0  # armed, not fired
-        widget.view.source.value = widget.source.value  # first layout lands
-        assert tool.fit_count == 1 and not tool.pending
-        assert sent == [{"animate": False, "max_zoom": 1.0, "padding": FIT_PADDING}]
+    def test_builder_hands_the_first_fit_to_ipyelk(self, widget):
+        view = widget.view
+        assert view.fit_on_first_layout is True
+        assert (view.fit_padding, view.fit_max_zoom) == (FIT_PADDING, 1.0)
         # the margin keeps the diagram off the viewport limits
         assert FIT_PADDING > 0
 
-    def test_subsequent_relayouts_keep_the_viewport(self, widget):
+    def test_layout_arrivals_send_no_kernel_fit(self, widget):
+        # the first fit is ipyelk's, in the browser: the kernel stays out
         tool = widget.get_tool(AutoFitTool)
         sent = self._capture(widget)
-        widget.view.source.value = widget.source.value
+        assert not tool.pending
+        widget.view.source.value = widget.source.value  # first layout lands
         widget.view.source.value = None  # the browser clearing/replacing
         widget.view.source.value = widget.source.value  # a relayout lands
-        assert tool.fit_count == 1 and len(sent) == 1  # once, ever
+        assert tool.fit_count == 0 and sent == []
 
     def test_request_refit_arms_exactly_one_more(self, widget):
         tool = widget.get_tool(AutoFitTool)
@@ -914,17 +911,12 @@ class TestAutoFit:
         widget.view.source.value = widget.source.value
         tool.request_refit()
         assert tool.pending
-        widget.view.source.value = None
+        widget.view.source.value = None  # a None arrival never consumes it
+        assert tool.pending and not sent
         widget.view.source.value = widget.source.value
         widget.view.source.value = None
         widget.view.source.value = widget.source.value
-        assert tool.fit_count == 2 and len(sent) == 2
-
-    def test_none_arrivals_never_consume_the_fit(self, widget):
-        tool = widget.get_tool(AutoFitTool)
-        sent = self._capture(widget)
-        widget.view.source.value = None
-        assert tool.pending and not sent  # still armed for the real tree
+        assert tool.fit_count == 1 and sent == [{"animate": False}]
 
     def test_headless_render_is_unaffected(self, drone_model, tmp_path):
         """to_svg never constructs tools or sends fit requests -- the
@@ -937,68 +929,53 @@ class TestAutoFit:
         render.to_svg(widget, tmp_path / "out.svg")
         assert sent == []
 
-    # -- the fit sentinel: universal fit-on-reveal/resize ------------------
+    # -- the diagram events: resize re-fit + fold channel ------------------
 
-    def test_builder_mounts_the_sentinel_inside_the_widget(self, widget):
-        # the sentinel rides INSIDE the widget's own DOM (a hidden child
-        # beside the view + toolbar): plain display(widget) gets
-        # fit-on-reveal/resize with ZERO consumer wiring
+    def test_builder_mounts_the_events_inside_the_widget(self, widget):
+        # the events widget rides INSIDE the widget's own DOM (a hidden
+        # child beside the view + toolbar): plain display(widget) gets
+        # fit-on-resize with ZERO consumer wiring
         tool = widget.get_tool(AutoFitTool)
-        assert tool.sentinel is not None
-        assert tool.sentinel in widget.children
-        assert tool.sentinel.layout.display == "none"
-        assert (tool.sentinel.fresh, tool.sentinel.resized, tool.sentinel.fit_stamp) == (0, 0, 0)
-        # the widget's root node carries the sentinel's DOM handle
+        assert tool.events is not None
+        assert tool.events in widget.children
+        assert tool.events.layout.display == "none"
+        assert (tool.events.resized, tool.events.fit_stamp) == (0, 0)
+        # the widget's root node carries the events widget's DOM handle
         assert "lgx-diagram" in widget._dom_classes
 
-    def test_sentinel_is_not_toolbar_chrome(self, drone_model):
+    def test_events_are_not_toolbar_chrome(self, drone_model):
         # toolbar=False keeps the stock ipyelk toolbar but never loses
         # the self-fitting machinery
         classic = diagrams.structure_diagram(drone_model, toolbar=False)
         tool = classic.get_tool(AutoFitTool)
-        assert tool.sentinel is not None and tool.sentinel in classic.children
+        assert tool.events is not None and tool.events in classic.children
+        assert classic.view.fit_on_first_layout is True
         assert "lgx-diagram" in classic._dom_classes
 
-    def test_fresh_view_report_refits_immediately(self, widget):
-        # a new sprotty view materialized with laid-out nodes: the moment
-        # a fit is deliverable (the first-layout fit can be dropped while
-        # the view is still constructing -- the cropped-diagram bug)
-        tool = widget.get_tool(AutoFitTool)
-        sent = self._capture(widget)
-        before = tool.fit_count
-        tool.sentinel.fresh += 1  # what the browser reports
-        assert tool.fit_count == before + 1 and len(sent) == 1
-
     def test_resize_report_refits_immediately(self, widget):
-        # a debounced, latch-guarded resize (HBox squeeze, dock drag,
-        # reveal of a widget born hidden): re-fit against the new size
+        # a debounced, latch-guarded resize (HBox squeeze, dock drag, a
+        # hidden widget shown again): re-fit against the new size
         tool = widget.get_tool(AutoFitTool)
         sent = self._capture(widget)
-        before = tool.fit_count
-        tool.sentinel.resized += 1
-        assert tool.fit_count == before + 1 and len(sent) == 1
+        tool.events.resized += 1
+        assert tool.fit_count == 1 and sent == [{"animate": False}]
 
     def test_every_kernel_fit_clears_the_user_latch(self, widget):
         # fit_stamp is the kernel -> browser latch-clear signal: bumped
-        # per auto-fit, whatever triggered it (first layout, sentinel
-        # report, an explicit refit_now)
+        # per kernel-side fit, whatever triggered it
         tool = widget.get_tool(AutoFitTool)
         self._capture(widget)
-        assert tool.sentinel.fit_stamp == 0
-        widget.view.source.value = widget.source.value  # first layout lands
-        assert tool.sentinel.fit_stamp == 1
         tool.refit_now()
-        assert tool.sentinel.fit_stamp == 2
-        tool.sentinel.resized += 1
-        assert tool.sentinel.fit_stamp == 3
+        assert tool.events.fit_stamp == 1
+        tool.events.resized += 1
+        assert tool.events.fit_stamp == 2
 
-    def test_sentinel_reports_are_safe_without_a_view(self, widget):
+    def test_resize_reports_are_safe_without_a_view(self, widget):
         # refit_now degrades gracefully when the fit message has nowhere
         # to go (no frontend view yet): never an exception in the
-        # sentinel's observer chain
+        # events widget's observer chain
         tool = widget.get_tool(AutoFitTool)
-        tool.sentinel.fresh += 1  # must not raise (headless: no view)
-        tool.sentinel.resized += 1
+        tool.events.resized += 1  # must not raise (headless: no view)
 
 
 class TestSearchMatching:

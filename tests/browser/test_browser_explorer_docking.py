@@ -212,9 +212,9 @@ def test_restart_run_all_keeps_one_panel_and_full_width_cells(lab):
     page.locator(TAB).click()
     page.wait_for_selector(f"{PANEL} .lgx-row", state="visible", timeout=60_000)
     page.wait_for_selector(f"{PANEL} .sprotty svg .elknode", state="attached", timeout=60_000)
-    # the first reveal triggers a kernel-side re-fit (the initial auto-fit
-    # aimed at a hidden, zero-sized viewport): the diagram must actually
-    # OCCUPY the pane, not merely exist in the DOM
+    # the view was hidden at its first layout, so ipyelk fits it on this
+    # first reveal: the diagram must actually OCCUPY the pane, not merely
+    # exist in the DOM
     lab.wait_until(
         lambda s: page.evaluate(_PANEL_DIAGRAM_VISIBLE_JS),
         timeout=60,

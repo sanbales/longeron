@@ -82,21 +82,17 @@ pass ``mode="split-right"`` (or any Lab dock mode) to opt into a split.
 Either way the panes FILL the panel: the header keeps its natural
 height and the diagram box flex-grows to every remaining pixel (the
 inline layout instead stays bounded at the ``height`` parameter -- it
-lives in a notebook cell).  Because a background tab renders hidden,
-the panel's FIRST reveal triggers one diagram re-fit (the initial
-auto-fit aimed at a zero-sized viewport).  Everything else about
-keeping the framing honest is the DIAGRAM WIDGET'S OWN job now: every
-widget built by :mod:`longeron.diagrams` carries a hidden fit sentinel
-inside its own DOM (see :class:`longeron.toolbar.AutoFitTool`), so a
-newly built diagram is fitted the moment its view actually renders
-(the first-layout auto-fit can be dropped mid view construction: wide
-diagrams used to come up unfitted, overflowing the pane), and a pane
-resize re-fits the visible diagram unless the user has panned or
-zoomed since the last auto-fit (their viewport is theirs).  The
-explorer adds only what the sentinel cannot know: a cached diagram
-re-entering the box on a kind switch is re-fitted against its current
-rendered size (built widgets stay in the box as persistent,
-display-toggled children, so their live views hear the fit).  Second,
+lives in a notebook cell).  Keeping the framing honest is the DIAGRAM
+WIDGET'S OWN job: every widget built by :mod:`longeron.diagrams` fits
+each view after its first layout (ipyelk's ``fit_on_first_layout``).  A
+view in a background tab is hidden at that layout, so it fits when the
+panel is first shown.  A pane resize re-fits the visible diagram unless
+the user has panned or zoomed since the last fit (see
+:class:`longeron.toolbar.AutoFitTool`).  The explorer adds only the fit
+that the widget cannot know about.  A cached diagram that re-enters the
+box on a kind switch is re-fitted against its current rendered size.
+Built widgets stay in the box as persistent, display-toggled children,
+so their live views receive the fit.  Second,
 docking is IDEMPOTENT per model: re-running the
 cell -- or restarting the kernel and running all cells -- REPLACES the
 model's panel instead of stacking a new one.  Two mechanisms cooperate,
@@ -1269,7 +1265,6 @@ function render({ model, el }) {
   };
   const sweep = () => {
     tagOwnPanel(); // add_class needs 'displayed'; a background tab never is
-    watchShown(); // the panel node may attach after render; keep trying
     reveal(); // the reveal-on-dock path (scoreboard tabs); no-op unless set
     let closed = 0;
     for (let round = 0; round < 16; round += 1) {
@@ -1312,25 +1307,6 @@ function render({ model, el }) {
     own.dispatchEvent(new PointerEvent("pointerup", at));
     revealed = Boolean(panel && panel.getBoundingClientRect().width > 0);
   };
-  // report the panel's FIRST reveal: an auto-fit that ran while the tab
-  // was hidden had a zero-sized viewport, so the kernel re-fits on reveal
-  let sizeObserver = null;
-  const watchShown = () => {
-    if (model.get("shown") || sizeObserver) return;
-    const panel = ownPanel();
-    if (!panel) return;
-    const check = () => {
-      const rect = panel.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0 && !model.get("shown")) {
-        model.set("shown", true);
-        model.save_changes();
-        if (sizeObserver) sizeObserver.disconnect();
-      }
-    };
-    sizeObserver = new ResizeObserver(check);
-    sizeObserver.observe(panel);
-    check();
-  };
   sweep(); // orphans are already in the DOM when the new panel renders
   // panels attach asynchronously (ipylab builds the whole view tree before
   // shell.add), so re-sweep whenever the dock's tab set changes; the stamp
@@ -1352,7 +1328,6 @@ function render({ model, el }) {
     : null;
   return () => {
     observer.disconnect();
-    if (sizeObserver) sizeObserver.disconnect();
     if (revealTimer) clearInterval(revealTimer);
   };
 }
@@ -1371,10 +1346,7 @@ class _DockSweeper(anywidget.AnyWidget):
     than :attr:`stamp` -- the orphaned panels of previous runs, including
     panels whose kernel is DEAD (a restart), which no Python-side handle
     can reach.  :attr:`swept` counts the closures (kernel-visible, for
-    tests and diagnostics).  :attr:`shown` flips true on the panel's
-    FIRST reveal (background tabs render hidden), which the explorer
-    answers with one diagram re-fit -- the initial auto-fit had a
-    zero-sized viewport to aim at.  :attr:`reveal` makes the sweeper
+    tests and diagnostics).  :attr:`reveal` makes the sweeper
     CLICK its own tab once (the scoreboard tabs' reveal-on-dock path;
     the ESM comment explains why a real click, not ``activate=True``).
     """
@@ -1384,7 +1356,6 @@ class _DockSweeper(anywidget.AnyWidget):
     key = T.Unicode("", help="the dock key this sweeper guards").tag(sync=True)
     stamp = T.Unicode("", help="this panel's birth stamp (time_ns)").tag(sync=True)
     swept = T.Int(0, help="how many stale panels this sweeper closed").tag(sync=True)
-    shown = T.Bool(False, help="whether the panel has ever been visible").tag(sync=True)
     reveal = T.Bool(False, help="click the panel's own tab once it attaches").tag(sync=True)
 
 
@@ -1580,9 +1551,8 @@ class Explorer(W.HBox):
         )
         self._diagram_box.add_class("lgx-diagram-box")  # a stable DOM handle (tests)
         # NO pane-level fit machinery: every diagram widget the builders
-        # produce carries its own fit sentinel inside its own DOM
-        # (longeron.diagrams._finish), so fresh-view / reveal / resize
-        # re-fits arrive per widget with zero wiring here
+        # produce fits its own views (longeron.diagrams._finish), so the
+        # first-layout, first-reveal and resize fits need no wiring here
         # the right pane is built ONCE, strategy-independently; the layout
         # strategy below only composes it (asserted by the test suite)
         self._pane = W.VBox(
@@ -1691,7 +1661,6 @@ class Explorer(W.HBox):
         panel.add_class("lgx-explorer")
         panel.add_class(f"lgx-explorer-{key}")
         self._dock_sweeper = _DockSweeper(key=key, stamp=stamp, layout=W.Layout(display="none"))
-        self._dock_sweeper.observe(self._on_panel_first_shown, "shown")
         self._pane.children = (*self._pane.children, self._dock_sweeper)
         previous = _DOCKED_PANELS.pop(key, None)
         if previous is not None:
@@ -1702,34 +1671,14 @@ class Explorer(W.HBox):
         self.lab_panel = panel
         self._lab_app = app
 
-    def _on_panel_first_shown(self, change: Any) -> None:
-        """Re-fit the visible diagram when the docked panel first appears.
-
-        Under the default background-tab docking the initial auto-fit
-        runs while the panel is HIDDEN -- a zero-sized viewport -- so the
-        diagram would look blank until the user clicked Fit.  One re-fit
-        on the first reveal corrects it, immediately and deterministically
-        (the widget's own fit sentinel also notices the reveal, but only
-        after its debounce; answering the sweeper's ``shown`` report here
-        keeps the dock's first paint snappy).  Later reveals and resizes
-        are the widget's own sentinel's job
-        (:class:`longeron.toolbar.AutoFitTool`), guarded by the
-        user-viewport latch -- a viewport the user has touched is theirs.
-        """
-
-        if not change["new"]:
-            return
-        self._refit_current()
-
     def _refit_current(self) -> None:
         """Fit the visible diagram to its CURRENT rendered size, now.
 
-        The one funnel for every explorer-driven fit (the docked panel's
-        first reveal, a cached widget re-entering the box on a kind
-        switch).  :meth:`~longeron.toolbar.AutoFitTool.refit_now` bumps
-        the widget's own sentinel ``fit_stamp``, clearing the browser-side
-        user-interaction latch: the viewport is the fitted one again, so
-        a later resize may re-frame it without fighting the user.
+        The explorer calls it when a cached widget re-enters the box on a
+        kind switch: ipyelk fits a view only once, and a reveal keeps its
+        camera.  :meth:`~longeron.toolbar.AutoFitTool.refit_now` also
+        clears the browser-side user-interaction latch, so a later resize
+        may re-frame the viewport.
         """
 
         diagram = self.diagram
