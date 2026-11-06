@@ -2,6 +2,18 @@
 
 ## 0.12.0 (unreleased)
 
+### Verification and conformance
+
+- **Every z3 `Optimize` query has a time limit, and an independent
+  query confirms each supremum**: `prove()`, the domain ladder and
+  `SmtSystem.maximize` stop each `Optimize` query after 10 s. Longeron
+  reports a supremum only when a second solver query finds no value
+  above it. On z3 5.1, the IsrPrime bound of 13.84 kg was a feasible
+  point, not the supremum. On z3 5.3, the same nonlinear query did not
+  terminate. `prove()` now reports no bound for IsrPrime on both
+  versions. Longeron runs on z3 5.1 to 5.3 without a version pin
+  (`z3-solver>=4.12`)
+
 ### Diagrams and platform
 
 - **ipyelk 3 from PyPI**: the interactive diagrams run on the released
