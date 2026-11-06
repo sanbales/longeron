@@ -185,3 +185,54 @@ def test_symlinked_notebook_ignored(repo):
     result = run_hook(repo)
 
     assert result.returncode == 0, result.stderr  # symlinks pass through
+
+
+# --- pre-push: the gate hook must still upload LFS objects -----------------
+
+PRE_PUSH = ROOT / "scripts" / "git-hooks" / "pre-push"
+
+
+def _pre_push(tmp_path: Path, stdin: str, *, lfs: bool) -> subprocess.CompletedProcess[str]:
+    """Run the hook ungated with a stub ``git-lfs`` on PATH (or none at all).
+
+    The stub prints its arguments and echoes its stdin, so the test sees
+    exactly what ``git lfs pre-push`` would have received.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if lfs:
+        stub = bin_dir / "git-lfs"
+        stub.write_text('#!/bin/sh\necho "stub git-lfs $*"\ncat\n')
+        stub.chmod(0o755)
+    env = {**_ENV, "LONGERON_PUSH_UNGATED": "1", "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    return subprocess.run(
+        ["bash", str(PRE_PUSH), "origin", "git@example.invalid:x/y.git"],
+        input=stdin,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash hook")
+def test_pre_push_forwards_the_refs_to_git_lfs(tmp_path):
+    """The refs git hands the hook on stdin reach ``git lfs pre-push`` unchanged."""
+    refs = "refs/heads/main 0123 refs/heads/main 4567\n"
+    done = _pre_push(tmp_path, refs, lfs=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"stub git-lfs pre-push origin git@example.invalid:x/y.git\n{refs}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash hook")
+def test_pre_push_with_nothing_to_push_skips_lfs(tmp_path):
+    done = _pre_push(tmp_path, "", lfs=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash hook")
+def test_pre_push_refuses_to_run_without_git_lfs(tmp_path):
+    done = _pre_push(tmp_path, "refs/heads/main 0123 refs/heads/main 4567\n", lfs=False)
+    assert done.returncode == 2
+    assert "git-lfs is not installed" in done.stderr
