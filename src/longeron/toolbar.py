@@ -529,7 +529,7 @@ class DiagramSearch(Tool):
     total_count = T.Int(0, help="how many searchable nodes the diagram has")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._entries = _collect_entries(diagram.source.value)
         self._known = frozenset(entry.node_id for entry in self._entries)
         super().__init__(**kwargs)
@@ -567,10 +567,10 @@ class DiagramSearch(Tool):
     def _trees(self):
         """The distinct element trees to keep in sync (source, then view)."""
 
-        source = self._diagram.source.value
+        source = self._lgn_diagram.source.value
         if source is not None:
             yield source, False
-        view_source = self._diagram.view.source
+        view_source = self._lgn_diagram.view.source
         if view_source is not None and view_source.value is not None:
             if view_source.value is not source:
                 yield view_source.value, True
@@ -596,7 +596,7 @@ class DiagramSearch(Tool):
         no pipeline run, no selection change, no layout roundtrip.
         """
 
-        view_source = self._diagram.view.source
+        view_source = self._lgn_diagram.view.source
         if view_source is not None and view_source.value is not None:
             view_source.send_state("value")
 
@@ -650,7 +650,7 @@ class DiagramSearch(Tool):
             else ""
         )
         self._clear_btn.layout.visibility = "visible" if active else "hidden"
-        toolbar = getattr(self._diagram, "toolbar", None)
+        toolbar = getattr(self._lgn_diagram, "toolbar", None)
         if toolbar is not None:  # pin the hover-revealed toolbar while active
             if active:
                 toolbar.add_class(SEARCH_ACTIVE_CSS)
@@ -693,7 +693,7 @@ class EdgeRoutingTool(Tool):
     routing = T.Unicode(ROUTING_STYLES[0], help="active elk.edgeRouting style")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._btn: Any = None
         root = diagram.source.value
         if root is not None:
@@ -723,8 +723,8 @@ class EdgeRoutingTool(Tool):
         """Push the active style onto the diagram's trees and re-lay out."""
 
         seen: set[int] = set()
-        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
-        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+        inlet = getattr(getattr(self._lgn_diagram, "pipe", None), "inlet", None)
+        for tree in (self._lgn_diagram.source.value, getattr(inlet, "value", None)):
             if tree is None or id(tree) in seen:
                 continue
             seen.add(id(tree))
@@ -740,7 +740,7 @@ class EdgeRoutingTool(Tool):
             # re-run forever without ever recovering. Not trigger(): a
             # trait observer also runs sync (scripts, tests), with no loop.
             self.record_reports()
-            self._diagram.refresh()
+            self._lgn_diagram.refresh()
 
     def _cycle(self, *_: Any) -> None:
         index = ROUTING_STYLES.index(self.routing)
@@ -1051,7 +1051,7 @@ class AutoFitTool(Tool):
     fit_count = T.Int(0, help="how many fit requests this tool has sent")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         super().__init__(**kwargs)
         # the browser-side elkjs pipe writes the laid-out tree onto the
         # viewer's source; its kernel-side sync is the 'first layout
@@ -1088,7 +1088,7 @@ class AutoFitTool(Tool):
 
         self.fit_count += 1
         try:
-            self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
+            self._lgn_diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
         except Exception:  # never break the caller's observer chain
             self.log.exception("refit request failed")
         if self.sentinel is not None:
@@ -1134,7 +1134,7 @@ class DirectionTool(Tool):
     direction = T.Unicode(DIRECTIONS[0], help="active elk.direction flow")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._btn: Any = None
         root = diagram.source.value
         if root is not None:
@@ -1164,8 +1164,8 @@ class DirectionTool(Tool):
         """Push the active direction onto the diagram's trees and re-lay out."""
 
         seen: set[int] = set()
-        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
-        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+        inlet = getattr(getattr(self._lgn_diagram, "pipe", None), "inlet", None)
+        for tree in (self._lgn_diagram.source.value, getattr(inlet, "value", None)):
             if tree is None or id(tree) in seen:
                 continue
             seen.add(id(tree))
@@ -1174,13 +1174,13 @@ class DirectionTool(Tool):
         if seen and self.tee is not None:
             # a flip inverts the aspect ratio: queue ONE re-fit for the
             # relayout about to land (collapse/routing changes never do)
-            for tool in getattr(self._diagram, "tools", ()):
+            for tool in getattr(self._lgn_diagram, "tools", ()):
                 if isinstance(tool, AutoFitTool):
                     tool.request_refit()
             # the routing tool's refresh path: mark the inlet dirty and
             # MERGE with the pending flow (see EdgeRoutingTool.apply)
             self.record_reports()
-            self._diagram.refresh()
+            self._lgn_diagram.refresh()
 
     def _toggle(self, *_: Any) -> None:
         index = DIRECTIONS.index(self.direction)

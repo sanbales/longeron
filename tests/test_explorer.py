@@ -1430,7 +1430,7 @@ class TestFitSentinel:
 
         fitted: list = []
         monkeypatch.setattr(
-            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
+            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._lgn_diagram)
         )
         ex.select("DeepScout::FlightStates")
         structure = ex.diagram
@@ -1467,7 +1467,7 @@ class TestFitSentinel:
 
         fitted: list = []
         monkeypatch.setattr(
-            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._diagram)
+            toolbar.AutoFitTool, "refit_now", lambda tool: fitted.append(tool._lgn_diagram)
         )
         ex.select("DeepScout::FlightStates")
         ex.kind = "state"  # builds the state widget

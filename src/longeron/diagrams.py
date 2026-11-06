@@ -3406,7 +3406,7 @@ class CollapseTool(Tool):
         builder: _StructureBuilder,
         **kwargs: Any,
     ) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._element = element
         #: the FULL resolved builder options (not the sidecar deviations):
         #: rebuilds replay them verbatim, whatever the defaults become
@@ -3462,7 +3462,7 @@ class CollapseTool(Tool):
         )
         # live presentation carries over: the CURRENT tree holds whatever
         # routing/direction the toolbar toggles left on it
-        tree = getattr(self._diagram.source, "value", None)
+        tree = getattr(self._lgn_diagram.source, "value", None)
         layout = (tree.layoutOptions or {}) if tree is not None else {}
         _prepare_root(
             root,
@@ -3474,11 +3474,11 @@ class CollapseTool(Tool):
         # what ipyelk.from_element applied to the birth tree (label
         # placement defaults above all) -- the rebuilt tree must match it
         ipyelk.ElementLoader().apply_layout_defaults(root)
-        self._diagram._lgn_rel_edges = {
+        self._lgn_diagram._lgn_rel_edges = {
             str(edge.id): rel for edge, rel in builder.rel_edges if edge.id is not None
         }
         self._refresh_maps(root, builder)
-        source = self._diagram.source
+        source = self._lgn_diagram.source
         source.value = root
         # the WHOLE pipeline shares this one element index (ipyelk wires
         # every endpoint to the source's MarkIndex): built for the old
@@ -3492,7 +3492,7 @@ class CollapseTool(Tool):
             # mark the inlet dirty and MERGE with the pending flow (see
             # EdgeRoutingTool.apply), then refresh the diagram
             self.record_reports()
-            self._diagram.refresh()
+            self._lgn_diagram.refresh()
 
     def _refresh_maps(self, root: Node | None, builder: _StructureBuilder) -> None:
         """Rebuild the per-tree lookaside maps: which drawn nodes can row
@@ -3531,7 +3531,7 @@ class CollapseTool(Tool):
         that child's collapsed presentation); nodes with nothing to
         collapse are no-ops."""
 
-        tree = getattr(self._diagram.source, "value", None)
+        tree = getattr(self._lgn_diagram.source, "value", None)
         if tree is None:
             return
         nodes = {str(node.id): node for node in _walk_nodes(tree) if node.id}
@@ -3670,7 +3670,7 @@ def _collapse_qname(tool: CollapseTool, element: Any) -> str:
     resolve -- then the diagram's model."""
 
     qname = str(getattr(element, "qualified_name", None) or element)
-    tree = getattr(tool._diagram.source, "value", None)
+    tree = getattr(tool._lgn_diagram.source, "value", None)
     if tree is not None and any(str(node.id) == qname for node in _walk_nodes(tree) if node.id):
         return qname
     owner: M.Element = tool._element
