@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -196,15 +197,27 @@ def _pre_push(tmp_path: Path, stdin: str, *, lfs: bool) -> subprocess.CompletedP
     """Run the hook ungated with a stub ``git-lfs`` on PATH (or none at all).
 
     The stub prints its arguments and echoes its stdin, so the test sees
-    exactly what ``git lfs pre-push`` would have received.
+    exactly what ``git lfs pre-push`` would have received. PATH holds ONLY
+    the temp bin dir: the hook's other needs (``bash``, ``git``, ``cat``)
+    are linked into it, so a real ``git-lfs`` on the machine (GitHub's
+    runners ship one in /usr/bin) can neither answer for the stub nor
+    contact the fake remote.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    # the git binary itself, not a PATH wrapper around it (a wrapper's own
+    # helpers would be missing from the isolated PATH)
+    exec_path = subprocess.check_output(["git", "--exec-path"], text=True).strip()
+    (bin_dir / "git").symlink_to(Path(exec_path) / "git")
+    for tool in ("bash", "cat"):
+        real = shutil.which(tool)
+        assert real, tool
+        (bin_dir / tool).symlink_to(real)
     if lfs:
         stub = bin_dir / "git-lfs"
         stub.write_text('#!/bin/sh\necho "stub git-lfs $*"\ncat\n')
         stub.chmod(0o755)
-    env = {**_ENV, "LONGERON_PUSH_UNGATED": "1", "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    env = {**_ENV, "LONGERON_PUSH_UNGATED": "1", "PATH": str(bin_dir)}
     return subprocess.run(
         ["bash", str(PRE_PUSH), "origin", "git@example.invalid:x/y.git"],
         input=stdin,
