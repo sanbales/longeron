@@ -71,6 +71,13 @@
   `AutoFitTool.max_zoom` are gone. Use `widget.view.fit_padding` and
   `widget.view.fit_max_zoom`. `AutoFitTool.sentinel` is now
   `AutoFitTool.events`, and it no longer has a `fresh` counter
+- **JupyterLab sessions need ipykernel >= 7.4 on Python >= 3.11**:
+  ipykernel 7.0-7.3 can stop reading a notebook's kernel connection
+  after a reply crosses a request. A widget click then never reaches
+  the kernel (ipykernel#1554). On Python >= 3.11, the `dev` extra and
+  the pixi environments require ipykernel 7.4. If slider updates lag
+  with ipykernel 7.4 and JupyterLab 4.6, set `commsOverSubshells` to
+  `disabled` (an ipyelk 3.0 known issue)
 
 ## 0.11.0 (2026-08-29)
 

@@ -23,6 +23,7 @@ On failure, a full-page screenshot plus the console/page-error log land in
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import itertools
 import json
 import os
@@ -447,6 +448,11 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     (notification / "notification.jupyterlab-settings").write_text(
         json.dumps({"fetchNews": "false", "checkForUpdates": False}), encoding="utf-8"
     )
+    # subshell comms OFF: ipyelk 3.0's guidance for JupyterLab 4.6 with
+    # ipykernel 7.4 (slider updates can lag on subshells, ipykernel#1565)
+    (notification / "kernels-settings.jupyterlab-settings").write_text(
+        json.dumps({"commsOverSubshells": "disabled"}), encoding="utf-8"
+    )
     env = dict(
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
@@ -683,15 +689,19 @@ _FIND_NOTEBOOK_JS = """
 #: websocket send -> kernel -> reply -> the connection's serial incoming
 #: message chain, end to end -- exactly the path run-all and cell prompts
 #: depend on.  Bounded by our own race; never hangs page.evaluate.
+#: ``clone: true`` runs the same probe over a fresh ``kernel.clone()``
+#: connection: own dead + clone alive = the kernel stopped reading the
+#: notebook's connection (ipykernel#1554).
 _CHANNEL_PROBE_JS = (
-    """async ({timeoutMs}) => {"""
+    """async ({timeoutMs, clone}) => {"""
     + _FIND_NOTEBOOK_JS
     + """
-    const state = () => ' (connectionStatus=' + kernel.connectionStatus
-        + ', kernelStatus=' + kernel.status
+    const conn = clone ? kernel.clone() : kernel;
+    const state = () => ' (connectionStatus=' + conn.connectionStatus
+        + ', kernelStatus=' + conn.status
         + ', isReady=' + panel.sessionContext.isReady + ')';
     try {
-        const future = kernel.requestExecute(
+        const future = conn.requestExecute(
             {code: '', silent: true, store_history: false}, false);
         const reply = await Promise.race([
             future.done,
@@ -706,6 +716,8 @@ _CHANNEL_PROBE_JS = (
         return {ok: true};
     } catch (err) {
         return {why: 'probe requestExecute threw: ' + err + state()};
+    } finally {
+        if (clone) conn.dispose();
     }
 }"""
 )
@@ -1294,9 +1306,44 @@ class LabPage:
             sys.stderr.write(f"screenshot failed for {name}: {err}\n")
         log = directory / f"{name}.console.txt"
         log.write_text(
-            "\n".join(["== page errors ==", *self.page_errors, "== console ==", *self.console]),
+            "\n".join(
+                [
+                    "== page errors ==",
+                    *self.page_errors,
+                    "== console ==",
+                    *self.console,
+                    "== kernel connection ==",
+                    *self._connection_report(),
+                ]
+            ),
             encoding="utf-8",
         )
+
+    def _connection_report(self) -> list[str]:
+        """Probe the notebook's own kernel connection and a fresh clone.
+
+        Own dead + clone alive = the kernel stopped reading the notebook's
+        connection (ipykernel#1554). Bounded; never raises.
+        """
+
+        lines: list[str] = []
+        try:
+            lines.append(f"ipykernel {importlib.metadata.version('ipykernel')} (test env)")
+        except Exception as err:
+            lines.append(f"ipykernel version unknown: {err!r}")
+        for clone in (False, True):
+            label = "clone connection" if clone else "own connection"
+            try:
+                result = self.evaluate(
+                    _CHANNEL_PROBE_JS,
+                    {"timeoutMs": 8000, "clone": clone},
+                    timeout=10.0,
+                    label=f"artifact probe: {label}",
+                )
+                lines.append(f"{label}: {result}")
+            except Exception as err:
+                lines.append(f"{label}: probe failed: {err!r}")
+        return lines
 
 
 def _lab_page(
