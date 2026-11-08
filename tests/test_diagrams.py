@@ -886,6 +886,10 @@ class TestCompartments:
         )
         assert not header.properties.selectable
         assert str(header.id).startswith("__lgn__:")  # synthetic transport id
+        # ipyelk's node view draws a separator rule above the headers only
+        for label in labels:
+            is_header = "sysml-comp-label" in (label.properties.cssClasses or "")
+            assert bool(label.properties.separator) is is_header, label.text
 
     def test_constraint_compartments_group_by_declared_kind(self, model):
         widget = diagrams.structure_diagram(model)
@@ -964,14 +968,13 @@ class TestCompartments:
         assert style[" text.elklabel.sysml-row"]["cursor"] == "pointer"
         assert style[" text.elklabel.sysml-row.mouseover"]["fill"] == "var(--jp-elk-stroke-hover)"
         assert style[" text.elklabel.sysml-row.selected"]["fill"] == "var(--jp-elk-color-selected)"
-        assert style[" .sysml-comp-rule"]["pointer-events"] == "none"
+        assert style[" .elkseparator"]["pointer-events"] == "none"
         from longeron.render import _NODE_STYLES
 
         for css, node_style in _NODE_STYLES.items():
-            assert style[f" .{css} > .sysml-comp-rule"]["stroke"] == node_style["stroke"]
+            assert style[f" .{css} > .elkseparator"]["stroke"] == node_style["stroke"]
         assert (
-            style[" .elknode.selected ~ .sysml-comp-rule"]["stroke"]
-            == "var(--jp-elk-color-selected)"
+            style[" .elknode.selected ~ .elkseparator"]["stroke"] == "var(--jp-elk-color-selected)"
         )
 
     def test_adornment_contract_holds_with_compartments(self, model):
@@ -1216,7 +1219,7 @@ class TestPerNodeCollapse:
         assert diagrams.SYSML_STYLE[" text.elklabel.sysml-comp-label"]["cursor"] == "pointer"
 
     def test_fold_click_channel_resolves_headers(self, model):
-        """The browser reports header clicks through the fit sentinel's
+        """The browser reports header clicks through the diagram events'
         fold channel (never through selection); the tool resolves the
         clicked header by its label id -- sprotty DOM ids end with the
         element id -- and toggles that one compartment."""
@@ -1247,22 +1250,22 @@ class TestPerNodeCollapse:
         builder + preparation as the birth tree, so the round-tripped
         payload is identical."""
 
-        pristine = diagrams.structure_diagram(model).source.value.dict()
+        pristine = diagrams.structure_diagram(model).source.value.model_dump()
         widget = diagrams.structure_diagram(model)
         for to in ("partial", "collapsed"):
             diagrams.level(widget, model.find("K::drone"), to)
             assert self._node(widget, "K::drone").children == []
         diagrams.level(widget, "K::drone", "expanded")
-        assert widget.source.value.dict() == pristine
+        assert widget.source.value.model_dump() == pristine
         # folds round-trip the same way
         diagrams.fold(widget, "K::drone", "attributes")
         diagrams.fold(widget, "K::drone", "attributes", folded=False)
-        assert widget.source.value.dict() == pristine
+        assert widget.source.value.model_dump() == pristine
         # and seeding FROM the constructor equals driving LIVE
         seeded = diagrams.structure_diagram(model, levels={"K::drone": "partial"})
         live = diagrams.structure_diagram(model)
         diagrams.level(live, "K::drone", "partial")
-        assert live.source.value.dict() == seeded.source.value.dict()
+        assert live.source.value.model_dump() == seeded.source.value.model_dump()
 
     # -- the toolbar button: the cycle -----------------------------------------
 
@@ -1303,16 +1306,17 @@ class TestPerNodeCollapse:
         tool._cycle_selected()
         assert tool.levels == {}
 
-    def test_refresh_contract_marks_the_inlet_dirty(self, model):
+    def test_refresh_contract_marks_the_inlet_dirty(self, model, monkeypatch):
         """The collapse tool's refresh path: the rebuilt tree lands on the
         source, the pipe inlet is marked dirty with the birth flow
-        (MERGED with anything pending), and on_done (Diagram.refresh)
-        runs -- the routing/direction tools' contract."""
+        (MERGED with anything pending), and Diagram.refresh runs -- the
+        routing/direction tools' contract."""
 
         widget = diagrams.structure_diagram(model)
         tool = widget.get_tool(diagrams.CollapseTool)
         refreshes = []
-        tool.on_done = lambda: refreshes.append(True)
+        # a level change is not a run(), so the tool's on_done callbacks do not fire
+        monkeypatch.setattr(widget, "refresh", lambda *_: refreshes.append(True))
         before = widget.source.value
         tool.levels = {"K::drone": "partial"}
         assert widget.source.value is not before  # a rebuild, not a mutation
@@ -1896,7 +1900,7 @@ class TestPackageTabAndAnnotations:
     def test_note_carries_the_folded_corner_crease(self):
         """The UML/SysML note silhouette (spec printed pp.20-21): the
         cut-off corner PLUS the two short crease lines outlining the fold
-        triangle.  The vendored ipyelk Comment view draws only the plain
+        triangle.  ipyelk's Comment view draws only the plain
         5-sided polygon, so the note pins its geometry and ships the
         outline + crease as one explicit path -- the SAME path family the
         headless renderer draws (render._note_path_d)."""
@@ -2404,7 +2408,7 @@ class TestDispatcherAndSelection:
 
 
 def test_headless_schedule_run_is_safe():
-    """The vendored ipyelk patch: no 'no running event loop' crashes."""
+    """ipyelk (once a vendored patch): no 'no running event loop' crashes."""
 
     from ipyelk.elements import Label, Node
 
@@ -2555,6 +2559,7 @@ class TestBrowserTransportIds:
         from pathlib import Path
 
         from ipyelk import Diagram
+        from ipyelk.elements import ElementIndex
 
         path = Path(__file__).resolve().parent.parent / "notebooks" / "notation_gallery.ipynb"
         cells = json.loads(path.read_text("utf-8"))["cells"]
@@ -2572,6 +2577,9 @@ class TestBrowserTransportIds:
         for name, widget in sorted(widgets.items()):
             nulls = _null_transport_ids(_transport_json(widget))
             assert nulls == [], f"gallery widget {name!r} ships null ids: {nulls[:5]}"
+            # ipyelk's ValidationPipe walks parent links: ONE parentless node, the root
+            root = widget.source.value
+            assert ElementIndex.from_els(root).root() is root, name
             # the adornment contract holds across the WHOLE gallery too:
             # any node-attached glyph a gallery section emits without the
             # construction helpers fails the suite here
@@ -2702,10 +2710,11 @@ class TestMaxLabelWidth:
 
 class TestUniversalFitMachinery:
     """EVERY built diagram is self-fitting: the builder funnel (_finish)
-    registers the AutoFitTool and mounts its fit sentinel INSIDE the
-    widget's own DOM, so plain display(widget) gets fit-on-first-reveal
-    and fit-on-resize with zero consumer wiring -- the explorer's pane,
-    an HBox beside a 3D viewer, a bare notebook cell: same machinery."""
+    turns on ipyelk's first-layout fit, registers the AutoFitTool and
+    mounts its diagram events INSIDE the widget's own DOM, so plain
+    display(widget) gets the first fit and fit-on-resize with zero
+    consumer wiring -- the explorer's pane, an HBox beside a 3D viewer,
+    a bare notebook cell: same machinery."""
 
     def _builders(self, drone_model):
         from longeron.widgets.explorer import requirements_view
@@ -2715,26 +2724,36 @@ class TestUniversalFitMachinery:
         yield diagrams.action_diagram(drone_model.find("DeepScout::PlanBattery"))
         yield requirements_view(drone_model)
 
-    def test_every_builder_mounts_the_sentinel(self, drone_model):
+    def test_every_builder_turns_on_the_first_layout_fit(self, drone_model):
+        # ipyelk fits each view after its own first layout; the builder
+        # only sets the three traits (before any view exists)
+        from longeron.toolbar import FIT_PADDING
+
+        for widget in self._builders(drone_model):
+            view = widget.view
+            assert view.fit_on_first_layout is True, widget
+            assert (view.fit_padding, view.fit_max_zoom) == (FIT_PADDING, 1.0), widget
+
+    def test_every_builder_mounts_the_events_widget(self, drone_model):
         from longeron.toolbar import AutoFitTool
 
         for widget in self._builders(drone_model):
             tool = widget.get_tool(AutoFitTool)
-            assert tool.sentinel is not None, widget
-            assert tool.sentinel in widget.children, widget
-            assert tool.sentinel.layout.display == "none", widget
+            assert tool.events is not None, widget
+            assert tool.events in widget.children, widget
+            assert tool.events.layout.display == "none", widget
             assert "lgx-diagram" in widget._dom_classes, widget
 
-    def test_one_sentinel_per_widget(self, drone_model):
+    def test_one_events_widget_per_widget(self, drone_model):
         # the notation gallery renders ~24 diagrams in one notebook: one
-        # (hidden, observer-based) sentinel per widget is the whole cost
+        # (hidden, observer-based) events widget per diagram is the whole cost
         from longeron.toolbar import AutoFitTool
 
         for widget in self._builders(drone_model):
-            sentinel = widget.get_tool(AutoFitTool).sentinel
-            mounted = [child for child in widget.children if child is sentinel]
+            events = widget.get_tool(AutoFitTool).events
+            mounted = [child for child in widget.children if child is events]
             assert len(mounted) == 1
-            kind = type(sentinel).__name__
+            kind = type(events).__name__
             same_kind = [c for c in widget.children if type(c).__name__ == kind]
             assert len(same_kind) == 1
 

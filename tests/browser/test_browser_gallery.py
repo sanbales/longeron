@@ -2,8 +2,8 @@
 
 The strongest single signal the tier has: 96 cells build ~23 diagram
 widgets exercising every implemented SysML v2 glyph, the browser lays all
-of them out (elkjs + text sizing run client-side), and the AutoFitTool
-moves each viewport off the identity transform.  Anything stuck busy, any
+of them out (elkjs + text sizing run client-side), and ipyelk's
+first-layout fit moves each viewport off the identity transform.  Anything stuck busy, any
 progress bar left visible, or any console/page error fails the sweep.
 """
 

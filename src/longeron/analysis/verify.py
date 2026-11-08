@@ -233,7 +233,8 @@ class Proof:
     interpreter re-check).  ``bound`` carries the exact rational supremum
     of a free attribute over the all-checks-hold region, attached to every
     proof of the query and attributed to ``binding_constraint`` -- the
-    check whose exclusion moves that bound.
+    check whose exclusion moves that bound.  ``bound`` is ``""`` when an
+    independent query does not confirm the solver's supremum.
     """
 
     requirement: str
@@ -407,11 +408,11 @@ def _z3_window(
     provably tight sampling windows.  Refusals are honest and recorded."""
 
     try:
-        z3 = _z3()
+        _z3()
     except MissingExtraError:
         dom.mined_from.append("z3 bounds skipped: z3-solver not installed")
         return
-    from .smt import to_smt
+    from .smt import timed_optimize, to_smt
 
     try:
         system = to_smt(interp.model, defn, requirements=requirements, free=(dom.name,))
@@ -430,7 +431,7 @@ def _z3_window(
     for side, maximize in (("lo", False), ("hi", True)):
         if getattr(dom, side) is not None:
             continue  # a mined direct bound is more specific; keep it
-        opt = z3.Optimize()
+        opt = timed_optimize()
         for expr in keep:
             opt.add(expr)
         handle = opt.maximize(var) if maximize else opt.minimize(var)
@@ -1173,10 +1174,12 @@ def prove(
     pins, assumptions, and all *other* checks held: UNSAT is a **proof of
     absence** no sampling can deliver; SAT witnesses are re-checked by
     the interpreter before they are believed (the solver proposes, the
-    interpreter decides).  Per free attribute, ``Optimize`` computes the
-    exact rational supremum over the all-checks-hold region and
-    attributes it to the check whose exclusion moves it (the *binding*
-    constraint) -- carried on every :class:`Proof` of the query.
+    interpreter decides).  Per free attribute, ``Optimize`` proposes the
+    exact rational supremum over the all-checks-hold region, and
+    :func:`longeron.analysis.smt.confirmed_sup` decides it the same way.
+    The confirmed supremum is attributed to the check whose exclusion
+    moves it (the *binding* constraint) -- carried on every
+    :class:`Proof` of the query.  An unconfirmed supremum is no bound.
 
     Encodability is per-query, not per-model: where a free path reaches
     nonlinear algebra the encoder refuses honestly, the refusal lands in
@@ -1257,7 +1260,7 @@ def prove(
 
     bound_text, binding = "", ""
     if len(free) == 1 and free[0] in system.variables:
-        bound_text, binding = _binding_bound(z3, system, base, checks, free[0])
+        bound_text, binding = _binding_bound(system, checks, free[0])
     for label, status in statuses:
         report.proofs.append(
             Proof(requirement=label, status=status, bound=bound_text, binding_constraint=binding)
@@ -1278,34 +1281,16 @@ def _same_check(smt_label: str, verdict_name: str) -> bool:
     return bare(smt_label) == bare(verdict_name)
 
 
-def _sup(z3: Any, assertions: list[tuple[str, Any]], var: Any) -> str:
-    opt = z3.Optimize()
-    for _, expr in assertions:
-        opt.add(expr)
-    handle = opt.maximize(var)
-    if str(opt.check()) != "sat":
-        return ""
-    return str(opt.upper(handle))
-
-
-def _binding_bound(
-    z3: Any,
-    system: Any,
-    base: list[tuple[str, Any]],
-    checks: list[tuple[str, Any]],
-    name: str,
-) -> tuple[str, str]:
+def _binding_bound(system: Any, checks: list[tuple[str, Any]], name: str) -> tuple[str, str]:
     """The free attribute's exact supremum under every check, attributed to
     the first check whose exclusion moves it."""
 
-    var = system.variables[name]
-    bound = _sup(z3, base + checks, var)
+    bound, _ = system.maximize(name)
     if not bound or "oo" in bound:
         return "", ""
     binding = ""
     for label, _ in checks:
-        without = base + [(lbl, e) for lbl, e in checks if lbl != label]
-        if _sup(z3, without, var) != bound:
+        if system.maximize(name, exclude=(label,))[0] != bound:
             binding = label
             break
     return bound, binding

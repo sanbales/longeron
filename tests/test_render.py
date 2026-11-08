@@ -1683,7 +1683,7 @@ class TestCompoundLabelFit:
     """No compartment label may overflow its node -- in EITHER direction,
     pinned against the REAL vendored elkjs (the maintainer repro:
     QuadCopter's ``totalMass`` row past the border after a top-down
-    toggle).  elkjs 0.9.3 sizes an EXPANDED compound node under a
+    toggle).  elkjs (0.9.3 to 0.12.0) sizes an EXPANDED compound node under a
     vertical flow in its internal horizontal coordinates: the
     ``NODE_LABELS`` width contribution lands on the HEIGHT while the
     width collapses to children + padding (leaves are sized after the
@@ -1823,9 +1823,10 @@ class TestPng:
 # A faithful headless re-enactment of the ipyelk BROWSER cycle: kernel-side
 # pipes (ValidationPipe, VisibilityPipe) run for real; the two browser pipes
 # are emulated exactly the way the frontend performs them -- the tree crosses
-# the widget transport (to_json/from_elk_json) both ways, label measuring
-# mutates the JSON like measure_text.ts, and layout runs the REAL vendored
-# elkjs (the same engine the elklayout worker wraps).  The regression this
+# the widget transport both ways (model_dump out, set_state + persist back),
+# label measuring mutates the JSON like measure_text.ts, and layout runs the
+# REAL bundled elkjs (the same engine the elklayout worker wraps).  The
+# Diagram.refresh around them is ipyelk's own.  The regression this
 # guards: the notation gallery's flow-pin diagram looped forever because a
 # routing-tool flow reached the layout stage with unstamped (null) ids.
 
@@ -1847,15 +1848,17 @@ class TestBrowserPipelineFixpoint:
 
     @classmethod
     def _run_cycle(cls, widget):
-        """One Pipeline.run + Diagram.refresh.update_view; names of pipes run."""
+        """One real Diagram.refresh with the browser stages stubbed; names of pipes run.
+
+        Each browser stub answers like the frontend: it serializes its inlet,
+        works on the JSON, and the answer lands through the comm path
+        (``outlet.set_state`` + ``persist``), which folds it into the shared
+        index and so onto the user's tree.  Kernel pipes run for real.
+        """
 
         import asyncio
-        import copy
-        import json as json_module
 
-        from ipyelk.elements.serialization import from_elk_json, to_json
         from ipyelk.pipes import BrowserTextSizer, ElkJS
-        from ipyelk.pipes.base import PipeStatus
 
         def collect_properties(node, props):
             props[node.get("id")] = node.pop("properties", None)
@@ -1869,44 +1872,62 @@ class TestBrowserPipelineFixpoint:
                 for sub in node.get(key) or []:
                     apply_properties(sub, props)
 
-        async def run():
-            pipeline = widget.pipe
-            pipeline.check_dirty()
-            ran = []
-            for pipe in pipeline.pipes:
-                if pipe.status.dirty():
-                    ran.append(type(pipe).__name__)
-                    if isinstance(pipe, BrowserTextSizer):
-                        data = to_json(pipe.inlet.value, pipe.inlet)
-                        cls._measure_labels(data)
-                        pipe.outlet.value = from_elk_json(
-                            json_module.loads(json_module.dumps(data)), None
-                        )
-                        pipe.outlet.persist()
-                    elif isinstance(pipe, ElkJS):
-                        data = to_json(pipe.inlet.value, pipe.inlet)
-                        graph = copy.deepcopy(data)
-                        props: dict = {}
-                        collect_properties(graph, props)
-                        result = render.layout(graph)  # the REAL elkjs
-                        apply_properties(result, props)
-                        pipe.outlet.value = from_elk_json(
-                            json_module.loads(json_module.dumps(result)), None
-                        )
-                        pipe.outlet.persist()
-                    else:
-                        await pipe.run()
-                else:
-                    pipe.outlet.value = pipe.inlet.value
-                pipe.status_update(PipeStatus.finished())
-            # Diagram.refresh -> update_view (the browser's settle step)
-            laid_out = pipeline.outlet.value
-            widget.view.source.value = laid_out
-            pipeline.inlet.value = laid_out
-            pipeline.inlet.flow = ()
-            return ran
+        def measure(wire):
+            cls._measure_labels(wire)
+            return wire
 
-        return asyncio.run(run())
+        def lay_out(wire):
+            # the layout widget strips properties for elkjs and puts them back
+            props: dict = {}
+            collect_properties(wire, props)
+            result = render.layout(wire)  # the REAL elkjs
+            apply_properties(result, props)
+            return result
+
+        ran = []
+
+        def browser_stage(pipe, answer):
+            async def run():
+                ran.append(type(pipe).__name__)
+                wire = pipe.inlet.value.model_dump(mode="json", exclude_none=True)
+                pipe.outlet.set_state({"value": answer(wire)})
+                pipe.outlet.persist()
+
+            return run
+
+        def kernel_stage(pipe, real_run):
+            async def run():
+                ran.append(type(pipe).__name__)
+                await real_run()
+
+            return run
+
+        async def refresh():
+            task = widget.refresh()
+            await task
+            for _ in range(3):  # let Diagram._update_view (a done-callback) fire
+                await asyncio.sleep(0)
+            assert widget.pipe.status.exception is None
+
+        with pytest.MonkeyPatch.context() as patch:
+            for pipe in widget.pipe.pipes:
+                if isinstance(pipe, BrowserTextSizer):
+                    stage = browser_stage(pipe, measure)
+                elif isinstance(pipe, ElkJS):
+                    stage = browser_stage(pipe, lay_out)
+                else:
+                    stage = kernel_stage(pipe, pipe.run)
+                patch.setattr(pipe, "run", stage)
+            asyncio.run(refresh())
+        return ran
+
+    @staticmethod
+    def _relaid_out_only(ran):
+        """A layout-options refresh lays out again without validating or
+        measuring again.  Whether VisibilityPipe projects again first is
+        ipyelk's choice (it does from ipyelk #246 on)."""
+
+        return ran[-1:] == ["ElkJS"] and not {"ValidationPipe", "BrowserTextSizer"} & set(ran)
 
     @staticmethod
     def _geometry(widget):
@@ -1955,7 +1976,7 @@ class TestBrowserPipelineFixpoint:
 
         The second pass re-enters the layout stage exactly like a
         routing-tool refresh (the layout-options flow, which skips the
-        id-stamping Validation/Visibility pipes) -- the tree must already
+        id-stamping ValidationPipe and the text sizer) -- the tree must already
         be transport-complete and the geometry must not change.
         """
 
@@ -1968,7 +1989,7 @@ class TestBrowserPipelineFixpoint:
         ]
         first = self._geometry(widget)
         widget.source.flow = ("node.layoutOptions",)  # a routing-style refresh
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         assert self._geometry(widget) == first  # byte-equal: a true fixpoint
         self._settled(widget)
 
@@ -1992,7 +2013,7 @@ class TestBrowserPipelineFixpoint:
         polyline = self._geometry(widget)
 
         tool.routing = "orthogonal"
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         orthogonal = self._geometry(widget)
         assert orthogonal != polyline  # routing really changed the routes
 
@@ -2023,7 +2044,7 @@ class TestBrowserPipelineFixpoint:
         down = self._geometry(widget)
 
         tool.ui.click()  # -> RIGHT
-        assert self._run_cycle(widget) == ["ElkJS"]
+        assert self._relaid_out_only(self._run_cycle(widget))
         right = self._geometry(widget)
         assert right != down  # the flow really flipped
 
@@ -2156,7 +2177,7 @@ def _routed(source: str, routing: str, css: str):
 
 class TestBrowserEndpointTangents:
     """Pinned reference for the vendored browser edge view's symbol
-    orientation (vendor/ipyelk js/sprotty/views/edge_views.tsx
+    orientation (ipyelk js/sprotty/views/edge_views.tsx
     routeEndAngle / coveredRoutePoints -- compiled into the shipped
     labextension).  The headless renderer is immune (its SVG markers carry
     orient="auto-start-reverse"), so these tests pin the TANGENT MATH the
@@ -2273,7 +2294,7 @@ class TestBrowserEndpointTangents:
         ],
     )
     def test_render_line_trim_never_degenerates(self, route, start_reach, end_reach):
-        """Python mirror of the browser renderLine trim (vendor/ipyelk
+        """Python mirror of the browser renderLine trim (ipyelk
         edge_views.tsx): ``first = 1 + covered(source)``, ``last = n - 2 -
         covered(target)``, path = start' + interior[first..last] + end'.
         For every degenerate-route vector from the item-6 triage the trim

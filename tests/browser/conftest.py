@@ -9,9 +9,10 @@ this importable everywhere:
 * no top-level ``playwright`` import -- default envs do not carry a
   browser, and collection imports this file even when the tier is
   deselected;
-* the served jupyter-elk labextension is synced from the vendored build
+* the served longeron launcher tile is synced from the repo build
   before the server boots (the stale-bundle trap: JupyterLab serves the
-  copy that ``pixi install`` made, not ``vendor/ipyelk/src/_d``);
+  env copy, not ``npm/_d``), and the jupyter-elk labextension that the
+  ipyelk wheel installed must be present;
 * ``PYTHONHASHSEED=0`` and ``PYTHONPATH=<repo>/src`` pin the kernel
   environment exactly like the pixi ``lab`` task.
 
@@ -22,6 +23,7 @@ On failure, a full-page screenshot plus the console/page-error log land in
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import itertools
 import json
 import os
@@ -49,7 +51,6 @@ if TYPE_CHECKING:
 REPO = Path(__file__).resolve().parents[2]
 ARTIFACTS = REPO / "build" / "test-artifacts"
 _LABEXT_REL = Path("share/jupyter/labextensions/@jupyrdf/jupyter-elk")
-_VENDOR_BUILD = REPO / "vendor/ipyelk/src/_d" / _LABEXT_REL
 _LONGERON_EXT_REL = Path("share/jupyter/labextensions/longeron")
 _LONGERON_EXT_BUILD = REPO / "npm/_d" / _LONGERON_EXT_REL
 
@@ -218,27 +219,30 @@ def _manifest(root: Path) -> dict[str, int]:
 
 
 def _sync_labextension() -> None:
-    """Copy the repo's labextension builds over the served copies.
+    """Copy the repo's labextension build over the served copy.
 
     JupyterLab serves ``{sys.prefix}/share/jupyter/labextensions/...`` --
     a copy made at install time -- so a rebuilt bundle silently keeps
     serving stale code unless synced (see the ``sync-labextension``
     pixi task, which this mirrors for the interpreter running the tests).
-    Two builds ride this: the vendored jupyter-elk and the longeron
-    launcher tile (npm/_d; editable installs never place data files, so
-    without this sync the tile tier would test NOTHING).
+    One build rides this: the longeron launcher tile (npm/_d; editable
+    installs never place data files, so without this sync the tile tier
+    would test NOTHING).  The jupyter-elk labextension is the one the
+    ipyelk wheel installed; it is checked, not synced.
     """
 
-    for build, rel in ((_VENDOR_BUILD, _LABEXT_REL), (_LONGERON_EXT_BUILD, _LONGERON_EXT_REL)):
-        if not build.is_dir():
-            pytest.fail(f"labextension build missing: {build}")
-        served = Path(sys.prefix) / rel
-        if served.is_dir() and _manifest(served) == _manifest(build):
-            continue
-        if served.is_dir():
-            sys.stderr.write(f"WARNING: {served} was serving a STALE build; syncing\n")
-            shutil.rmtree(served)
-        shutil.copytree(build, served)
+    elk = Path(sys.prefix) / _LABEXT_REL
+    if not (elk / "package.json").is_file():
+        pytest.fail(f"the ipyelk labextension is not installed: {elk}")
+    build, served = _LONGERON_EXT_BUILD, Path(sys.prefix) / _LONGERON_EXT_REL
+    if not build.is_dir():
+        pytest.fail(f"labextension build missing: {build}")
+    if served.is_dir() and _manifest(served) == _manifest(build):
+        return
+    if served.is_dir():
+        sys.stderr.write(f"WARNING: {served} was serving a STALE build; syncing\n")
+        shutil.rmtree(served)
+    shutil.copytree(build, served)
 
 
 @dataclass
@@ -444,6 +448,11 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
     (notification / "notification.jupyterlab-settings").write_text(
         json.dumps({"fetchNews": "false", "checkForUpdates": False}), encoding="utf-8"
     )
+    # subshell comms OFF: ipyelk 3.0's guidance for JupyterLab 4.6 with
+    # ipykernel 7.4 (slider updates can lag on subshells, ipykernel#1565)
+    (notification / "kernels-settings.jupyterlab-settings").write_text(
+        json.dumps({"commsOverSubshells": "disabled"}), encoding="utf-8"
+    )
     env = dict(
         os.environ,
         # deterministic kernel hashing, exactly like the pixi `lab` task
@@ -459,15 +468,9 @@ def lab_server(tmp_path_factory: pytest.TempPathFactory) -> Any:
         JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
         # the kernel must import THIS tree's sources even when the editable
         # install resolves elsewhere (worktree runs against the main venv);
-        # the vendored ipyelk rides along for the same reason
+        # ipyelk is the env's installed wheel
         PYTHONPATH=os.pathsep.join(
-            p
-            for p in (
-                str(REPO / "src"),
-                str(REPO / "vendor/ipyelk/src"),
-                os.environ.get("PYTHONPATH", ""),
-            )
-            if p
+            p for p in (str(REPO / "src"), os.environ.get("PYTHONPATH", "")) if p
         ),
     )
     with log_path.open("wb") as log:
@@ -613,7 +616,7 @@ def scroll_into_view(locator: Any, *, attempts: int = 3, timeout_ms: int = 10_00
 
 #: one DOM snapshot for settle-polling: rendered diagram cells, busy
 #: prompts, visible progress bars, auto-fitted viewports (transform moved
-#: off the identity -- the AutoFitTool's browser-visible effect)
+#: off the identity -- the first-layout fit's browser-visible effect)
 _SNAPSHOT_JS = """() => {
     const rendered = [...document.querySelectorAll('.jp-Cell')].filter(
         (cell) => cell.querySelectorAll('.sprotty svg .elknode').length).length;
@@ -686,15 +689,19 @@ _FIND_NOTEBOOK_JS = """
 #: websocket send -> kernel -> reply -> the connection's serial incoming
 #: message chain, end to end -- exactly the path run-all and cell prompts
 #: depend on.  Bounded by our own race; never hangs page.evaluate.
+#: ``clone: true`` runs the same probe over a fresh ``kernel.clone()``
+#: connection: own dead + clone alive = the kernel stopped reading the
+#: notebook's connection (ipykernel#1554).
 _CHANNEL_PROBE_JS = (
-    """async ({timeoutMs}) => {"""
+    """async ({timeoutMs, clone}) => {"""
     + _FIND_NOTEBOOK_JS
     + """
-    const state = () => ' (connectionStatus=' + kernel.connectionStatus
-        + ', kernelStatus=' + kernel.status
+    const conn = clone ? kernel.clone() : kernel;
+    const state = () => ' (connectionStatus=' + conn.connectionStatus
+        + ', kernelStatus=' + conn.status
         + ', isReady=' + panel.sessionContext.isReady + ')';
     try {
-        const future = kernel.requestExecute(
+        const future = conn.requestExecute(
             {code: '', silent: true, store_history: false}, false);
         const reply = await Promise.race([
             future.done,
@@ -709,6 +716,8 @@ _CHANNEL_PROBE_JS = (
         return {ok: true};
     } catch (err) {
         return {why: 'probe requestExecute threw: ' + err + state()};
+    } finally {
+        if (clone) conn.dispose();
     }
 }"""
 )
@@ -1297,9 +1306,44 @@ class LabPage:
             sys.stderr.write(f"screenshot failed for {name}: {err}\n")
         log = directory / f"{name}.console.txt"
         log.write_text(
-            "\n".join(["== page errors ==", *self.page_errors, "== console ==", *self.console]),
+            "\n".join(
+                [
+                    "== page errors ==",
+                    *self.page_errors,
+                    "== console ==",
+                    *self.console,
+                    "== kernel connection ==",
+                    *self._connection_report(),
+                ]
+            ),
             encoding="utf-8",
         )
+
+    def _connection_report(self) -> list[str]:
+        """Probe the notebook's own kernel connection and a fresh clone.
+
+        Own dead + clone alive = the kernel stopped reading the notebook's
+        connection (ipykernel#1554). Bounded; never raises.
+        """
+
+        lines: list[str] = []
+        try:
+            lines.append(f"ipykernel {importlib.metadata.version('ipykernel')} (test env)")
+        except Exception as err:
+            lines.append(f"ipykernel version unknown: {err!r}")
+        for clone in (False, True):
+            label = "clone connection" if clone else "own connection"
+            try:
+                result = self.evaluate(
+                    _CHANNEL_PROBE_JS,
+                    {"timeoutMs": 8000, "clone": clone},
+                    timeout=10.0,
+                    label=f"artifact probe: {label}",
+                )
+                lines.append(f"{label}: {result}")
+            except Exception as err:
+                lines.append(f"{label}: probe failed: {err!r}")
+        return lines
 
 
 def _lab_page(

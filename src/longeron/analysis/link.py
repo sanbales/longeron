@@ -262,7 +262,7 @@ def link_selection(
     inert after ``unlink`` -- the one seam this glue cannot close.)
     """
 
-    from ..diagrams import on_select  # lazy: pulls in the vendored ipyelk
+    from ..diagrams import on_select  # lazy: pulls in ipyelk
 
     if part_map:
         viewer.mesh_json = json.dumps(tag_parts(json.loads(viewer.mesh_json), part_map))
@@ -460,7 +460,7 @@ def bind_config_view(
         viewer.highlight_json = json.dumps(sorted(matched))
 
     if hasattr(source, "view") and hasattr(source.view, "selection"):  # a diagram
-        from ..diagrams import on_select  # lazy: pulls in the vendored ipyelk
+        from ..diagrams import on_select  # lazy: pulls in ipyelk
 
         on_select(source, model, _on_elements)
 

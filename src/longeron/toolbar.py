@@ -20,18 +20,17 @@ buttons).  It reworks ipyelk's hover-revealed toolbar in place:
   tool's ``direction`` trait (seeded by the ``direction=`` constructor
   kwarg), and the flip queues a one-shot re-fit so the new aspect ratio
   lands centered instead of keeping a viewport framed for the old one;
-* an (invisible) :class:`AutoFitTool` fits-and-centers the diagram
-  when its FIRST layout arrives from the browser, with a small padding
-  and never zooming past 1:1 -- later relayouts (collapse, routing)
-  keep the user's viewport.  Its hidden :class:`_FitSentinel` companion
-  rides INSIDE the widget's own DOM and reports the browser-side
-  moments a kernel-side re-fit must answer -- a fresh sprotty view
-  materializing (the first-layout fit can be dropped while the view is
-  still constructing: the cropped-diagram bug), the widget's first
-  reveal (background tab, ``display:none`` lifted, lazy output
-  rendering), and container resizes (an HBox squeeze, a dock drag) --
-  always respecting the user's pan/zoom latch, so a viewport the user
-  has touched is never re-framed behind their back;
+* every widget fits itself once after the first layout of each view,
+  in the browser: the builder turns on ipyelk's
+  ``Viewer.fit_on_first_layout`` with a :data:`FIT_PADDING` margin and a
+  zoom limit of 1:1.  A view that is hidden at its first layout (a
+  background tab, ``display:none``) fits when it is first shown.  An
+  (invisible) :class:`AutoFitTool` adds the two fits that ipyelk does not
+  make: one more fit after a direction flip, and a fit when the widget
+  changes size while the user has not panned or zoomed.  Its hidden
+  :class:`_DiagramEvents` companion rides INSIDE the widget's own DOM
+  and reports those resizes.  A viewport that the user has touched is
+  never re-framed behind their back;
 * a :class:`DiagramSearch` tool is registered: typing in its text box
   live-highlights every diagram node whose *title* or *qualified name*
   contains the query (case-insensitive), shows a ``matches/total``
@@ -58,11 +57,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError(
-        "longeron.toolbar",
-        "ipyelk (the vendored copy)",
-        command="pip install -e vendor/ipyelk",
-    ) from _err
+    raise MissingExtraError("longeron.toolbar", "ipyelk>=3.0.0,<4", "diagrams") from _err
 
 from .render import _BAR_LONG, _BAR_SHORT, _SYNTH_ID_PREFIX, _measure
 
@@ -115,8 +110,10 @@ _DIRECTION_WORDS = {"RIGHT": "left-to-right", "DOWN": "top-to-bottom"}
 #: FontAwesome-4 icons showing the ACTIVE flow direction on the button
 _DIRECTION_ICONS = {"RIGHT": "long-arrow-right", "DOWN": "long-arrow-down"}
 
-#: viewport padding (px) of the one-shot initial fit: the diagram never
-#: touches the viewport limits
+#: margin of every fit, in diagram units (sprotty adds it to the diagram
+#: bounds, so it is 24 px at natural size and scales with the zoom): the
+#: diagram never touches the viewport limits.  The builder sets it as the
+#: view's ``fit_padding``.
 FIT_PADDING = 24.0
 
 #: cssClasses fragment marking a search match (node box + its labels)
@@ -133,7 +130,7 @@ SEARCH_HIT_COLOR = "#d81b60"
 _SEARCH_HIT_GLOW = "rgba(216, 27, 96, 0.55)"
 
 #: keep the toolbar on screen: the labextension slides it away unless the
-#: pointer hovers the widget (vendor/ipyelk/style/app.css); '!important'
+#: pointer hovers the widget (ipyelk style/app.css); '!important'
 #: outranks the equal-specificity ':hover' opacity rules either way
 _PINNED_TOOLBAR = {
     "visibility": "visible",
@@ -382,7 +379,7 @@ def _inside_label_widths(node: Any) -> list[float]:
 def _fit_compound_labels(root: Any, transposed: bool) -> None:
     """Keep EXPANDED compound nodes at least as wide as their compartments.
 
-    elkjs (0.9.3) sizes a compound node under ``INCLUDE_CHILDREN`` in its
+    elkjs (0.9.3 to 0.12.0) sizes a compound node under ``INCLUDE_CHILDREN`` in its
     internal left-to-right coordinate system and only transposes the
     CONTENT for vertical flows: with ``elk.direction`` DOWN/UP the
     ``NODE_LABELS`` size contribution lands on the wrong axis (the widest
@@ -533,7 +530,7 @@ class DiagramSearch(Tool):
     total_count = T.Int(0, help="how many searchable nodes the diagram has")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._entries = _collect_entries(diagram.source.value)
         self._known = frozenset(entry.node_id for entry in self._entries)
         super().__init__(**kwargs)
@@ -571,10 +568,10 @@ class DiagramSearch(Tool):
     def _trees(self):
         """The distinct element trees to keep in sync (source, then view)."""
 
-        source = self._diagram.source.value
+        source = self._lgn_diagram.source.value
         if source is not None:
             yield source, False
-        view_source = self._diagram.view.source
+        view_source = self._lgn_diagram.view.source
         if view_source is not None and view_source.value is not None:
             if view_source.value is not source:
                 yield view_source.value, True
@@ -600,7 +597,7 @@ class DiagramSearch(Tool):
         no pipeline run, no selection change, no layout roundtrip.
         """
 
-        view_source = self._diagram.view.source
+        view_source = self._lgn_diagram.view.source
         if view_source is not None and view_source.value is not None:
             view_source.send_state("value")
 
@@ -654,7 +651,7 @@ class DiagramSearch(Tool):
             else ""
         )
         self._clear_btn.layout.visibility = "visible" if active else "hidden"
-        toolbar = getattr(self._diagram, "toolbar", None)
+        toolbar = getattr(self._lgn_diagram, "toolbar", None)
         if toolbar is not None:  # pin the hover-revealed toolbar while active
             if active:
                 toolbar.add_class(SEARCH_ACTIVE_CSS)
@@ -697,7 +694,7 @@ class EdgeRoutingTool(Tool):
     routing = T.Unicode(ROUTING_STYLES[0], help="active elk.edgeRouting style")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._btn: Any = None
         root = diagram.source.value
         if root is not None:
@@ -727,8 +724,8 @@ class EdgeRoutingTool(Tool):
         """Push the active style onto the diagram's trees and re-lay out."""
 
         seen: set[int] = set()
-        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
-        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+        inlet = getattr(getattr(self._lgn_diagram, "pipe", None), "inlet", None)
+        for tree in (self._lgn_diagram.source.value, getattr(inlet, "value", None)):
             if tree is None or id(tree) in seen:
                 continue
             seen.add(id(tree))
@@ -736,16 +733,15 @@ class EdgeRoutingTool(Tool):
         self._update_ui()
         if seen and self.tee is not None:
             # the collapse tool's refresh path: mark the inlet dirty, then
-            # run the pipeline (Diagram wires on_done to Diagram.refresh).
-            # MERGE with the pending flow instead of replacing it: clicking
-            # while the initial ``("new",)`` flow is still unconsumed (the
-            # first layout is a browser roundtrip) must not clobber it --
-            # "new" is what wakes ipyelk's ValidationPipe, and a pipeline
-            # that loses it can re-run forever without ever recovering
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            # run the pipeline. record_reports() MERGES with the pending
+            # flow instead of replacing it: clicking while the initial
+            # ``("new",)`` flow is still unconsumed (the first layout is a
+            # browser roundtrip) must not clobber it -- "new" is what wakes
+            # ipyelk's ValidationPipe, and a pipeline that loses it can
+            # re-run forever without ever recovering. Not trigger(): a
+            # trait observer also runs sync (scripts, tests), with no loop.
+            self.record_reports()
+            self._lgn_diagram.refresh()
 
     def _cycle(self, *_: Any) -> None:
         index = ROUTING_STYLES.index(self.routing)
@@ -767,73 +763,45 @@ class EdgeRoutingTool(Tool):
         )
 
 
-# The fit sentinel: a hidden child INSIDE every built diagram widget's
+# The diagram events: a hidden child INSIDE every built diagram widget's
 # own DOM (mounted by ``diagrams._finish`` beside the view + toolbar, so
-# plain ``display(widget)`` gets it with zero consumer wiring).  It
-# reports the browser-side moments a kernel-side re-fit must answer:
+# plain ``display(widget)`` gets it with zero consumer wiring).  The
+# first fit of each view is ipyelk's (``Viewer.fit_on_first_layout``);
+# this widget reports the two browser events that ipyelk does not use:
 #
-# * ``fresh`` -- a NEW sprotty view materialized as the widget's visible
-#   diagram, with its layout rendered.  A fresh view paints at sprotty's
-#   identity transform (top-left, 1:1), and the kernel-side auto-fit
-#   that answers the first layout arrival can be DROPPED: the viewer
-#   view registers its message handler asynchronously (initSprotty),
-#   after the layout pipe has already reported back, so a wide diagram
-#   used to come up unfitted -- CROPPED to its top-left corner.
-#   Watching the DOM for the view's laid-out nodes is the reliable
-#   signal that the handler exists and a fit will land.  Detection: the
-#   visible sprotty host div's id changed (each view mints
-#   ``sprotty_N``) and it holds ``.elknode``s; a hidden widget
-#   (display:none, a background tab) is skipped until it can be
-#   measured.
 # * ``resized`` -- the widget changed size while visible (an HBox
-#   squeezed, a dock split handle dragged, a hidden tab re-revealed,
-#   lazy output rendering), debounced, and ONLY while the user has not
-#   panned or zoomed since the last kernel-side auto-fit: the viewport
-#   is the user's the moment they touch it (wheel = zoom, pointer drag
-#   = pan; plain clicks are selection, not panning, and do not latch).
-#   The kernel bumps ``fit_stamp`` after every auto-fit, which clears
-#   the latch -- an untouched-since-fit viewport is exactly the fitted
-#   one, so re-fitting it on resize corrects the frame without fighting
-#   anyone.  A widget FIRST observed hidden re-fits on its reveal (any
-#   fit that ran while it was hidden aimed at a zero-sized viewport);
-#   a widget first observed visible treats that observation as the
-#   baseline, not a resize.
+#   squeezed, a dock split handle dragged, a hidden widget shown again),
+#   debounced, and ONLY while the user has not panned or zoomed since
+#   the last kernel-side fit.  The viewport is the user's the moment
+#   they touch it (wheel = zoom, pointer drag = pan).  Plain clicks
+#   select and do not latch.  The kernel bumps ``fit_stamp`` after every
+#   fit it sends, which clears the latch.  The first visible observation
+#   is the baseline, not a resize: ipyelk fits that first appearance.
+# * ``fold_click`` -- a click on a compartment header label
+#   (text.sysml-comp-label).  Capture-phase listeners consume the click
+#   before sprotty can select anything: headers are presentation, and
+#   folding must never enter the model-selection seam
+#   (longeron.diagrams.CollapseTool resolves the reports).
 #
-# One ResizeObserver + one MutationObserver per widget -- no polling
-# loops, so a notebook full of diagrams (the notation gallery renders
-# ~24) stays cheap.  The sentinel also carries the diagram's FOLD
-# channel: capture-phase listeners consume clicks on compartment header
-# labels (text.sysml-comp-label) before sprotty can select anything and
-# report them on the fold_click trait -- headers are presentation
-# artifacts, and folding must never enter the model-selection seam
-# (longeron.diagrams.CollapseTool resolves the reports).
-_SENTINEL_ESM = """
+# One ResizeObserver per widget and no polling loops, so a notebook full
+# of diagrams (the notation gallery renders ~24) stays cheap.
+_EVENTS_ESM = """
 function render({ model, el }) {
   el.style.display = "none";
   let box = null;
-  let sprottyId = "";
   let interacted = false;
   let baseline = null; // last acknowledged {w, h} of the visible widget
   let hidden = false; // the widget was 0x0 on the previous observation
   let debounce = null;
   let retry = null;
-  let mutations = null;
   let sizer = null;
   let downAt = null;
   let foldSeq = 0;
 
-  const bump = (name) => {
-    model.set(name, model.get(name) + 1);
-    model.save_changes();
-  };
-
   // -- fold: compartment-header clicks (CollapseTool's fold channel) --
-  // Headers (text.sysml-comp-label) are presentation artifacts, not
-  // model elements: their click folds ONE compartment and must never
-  // reach sprotty's selection machinery.  Capture-phase listeners on
-  // the widget box run before any descendant handler, so stopping
-  // propagation consumes the gesture entirely (mousedown/mouseup are
-  // what sprotty selects on; click is what reports the fold).
+  // Capture-phase listeners on the widget box run before any descendant
+  // handler, so stopping propagation consumes the gesture entirely
+  // (mousedown/mouseup are what sprotty selects on; click reports the fold).
   const headerOf = (ev) =>
     ev.target instanceof Element ? ev.target.closest("text.sysml-comp-label") : null;
   const onHeaderPress = (ev) => {
@@ -860,23 +828,6 @@ function render({ model, el }) {
     model.save_changes();
   };
 
-  // -- fresh: the widget's VISIBLE sprotty view is a new one, with
-  // laid-out nodes (div.sprotty is the view's HOST node -- its
-  // sprotty-root CHILD shares the id prefix, so the class guard keeps
-  // the match unique)
-  const checkFresh = () => {
-    for (const div of box.querySelectorAll('div.sprotty[id^="sprotty"]')) {
-      if (!div.querySelector(".elknode")) continue; // not laid out yet
-      const rect = div.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue; // hidden widget
-      if (div.id !== sprottyId) {
-        sprottyId = div.id;
-        bump("fresh");
-      }
-      return; // one visible host per widget
-    }
-  };
-
   // -- resized: debounced, guarded by the user-viewport latch ----------
   const onResize = () => {
     const rect = box.getBoundingClientRect();
@@ -884,22 +835,24 @@ function render({ model, el }) {
       hidden = true; // display:none / a background tab: nothing to fit
       return;
     }
+    const previous = baseline;
     const revealed = hidden;
-    const first = baseline === null;
-    const changed =
-      revealed ||
-      first ||
-      Math.abs(rect.width - baseline.w) >= 2 ||
-      Math.abs(rect.height - baseline.h) >= 2;
     baseline = { w: rect.width, h: rect.height };
     hidden = false;
-    // the initial VISIBLE observation is a baseline, not a resize; but a
-    // widget first seen HIDDEN re-fits on its reveal -- any fit that ran
-    // while it was hidden aimed at a zero-sized viewport
-    if ((first && !revealed) || !changed) return;
+    // the first visible observation is the baseline: ipyelk's first-layout
+    // fit frames it, even for a widget that was hidden at its first layout
+    if (previous === null) return;
+    const changed =
+      revealed ||
+      Math.abs(rect.width - previous.w) >= 2 ||
+      Math.abs(rect.height - previous.h) >= 2;
+    if (!changed) return;
     clearTimeout(debounce);
     debounce = setTimeout(() => {
-      if (!interacted) bump("resized");
+      if (!interacted) {
+        model.set("resized", model.get("resized") + 1);
+        model.save_changes();
+      }
     }, 200);
   };
 
@@ -928,8 +881,6 @@ function render({ model, el }) {
       retry = setTimeout(attach, 200); // widget views attach asynchronously
       return;
     }
-    mutations = new MutationObserver(checkFresh);
-    mutations.observe(box, { childList: true, subtree: true });
     sizer = new ResizeObserver(onResize);
     sizer.observe(box);
     box.addEventListener("wheel", onWheel, { capture: true, passive: true });
@@ -939,14 +890,12 @@ function render({ model, el }) {
     box.addEventListener("mousedown", onHeaderPress, true);
     box.addEventListener("mouseup", onHeaderPress, true);
     box.addEventListener("click", onHeaderClick, true);
-    checkFresh();
     onResize();
   };
   attach();
   return () => {
     clearTimeout(debounce);
     clearTimeout(retry);
-    if (mutations) mutations.disconnect();
     if (sizer) sizer.disconnect();
     if (box) {
       box.removeEventListener("wheel", onWheel, { capture: true });
@@ -962,48 +911,45 @@ function render({ model, el }) {
 export default { render };
 """
 
-#: the lazily defined :class:`_FitSentinel` (anywidget is optional)
-_SENTINEL_CLS: type | None = None
+#: the lazily defined :class:`_DiagramEvents` (anywidget is optional)
+_EVENTS_CLS: type | None = None
 
 
-def _sentinel_class() -> type | None:
-    """The ``_FitSentinel`` anywidget class, or ``None`` without anywidget.
+def _events_class() -> type | None:
+    """The ``_DiagramEvents`` anywidget class, or ``None`` without anywidget.
 
-    Defined lazily because anywidget is an optional extra (``replay``)
-    and diagram building must keep working without it: the widgets then
-    simply lose the browser-side fit-on-reveal/resize reports (the
-    first-layout auto-fit still runs) -- graceful degradation, never an
-    ImportError.
+    The class is defined lazily because anywidget is an optional extra
+    (``replay``), and diagram building must work without it.  Without
+    anywidget, a widget loses the resize re-fit and the compartment-header
+    fold clicks.  The first-layout fit is ipyelk's, so it stays.
 
-    Frontend -> kernel traits: ``fresh`` counts new sprotty views
-    materializing as the widget's visible diagram; ``resized`` counts
-    debounced widget resizes (including the first reveal of a widget
-    born hidden) that happened while the user had NOT panned/zoomed
-    since the last auto-fit.  :class:`AutoFitTool` answers both with one
-    :meth:`AutoFitTool.refit_now`.  Kernel -> frontend: ``fit_stamp`` is
-    bumped after every kernel-side auto-fit and clears the browser's
-    user-interaction latch.  See :data:`_SENTINEL_ESM`.
+    Frontend -> kernel traits: ``resized`` counts debounced widget
+    resizes that happened while the user had NOT panned or zoomed since
+    the last kernel-side fit, and :class:`AutoFitTool` answers each one
+    with :meth:`AutoFitTool.refit_now`.  ``fold_click`` carries the last
+    compartment-header click.  Kernel -> frontend: ``fit_stamp`` is
+    bumped after every kernel-side fit and clears the browser's
+    user-interaction latch.  See :data:`_EVENTS_ESM`.
     """
 
-    global _SENTINEL_CLS
-    if _SENTINEL_CLS is not None:
-        return _SENTINEL_CLS
+    global _EVENTS_CLS
+    if _EVENTS_CLS is not None:
+        return _EVENTS_CLS
     try:
         import anywidget
     except ImportError:  # pragma: no cover - exercised without anywidget
         return None
 
-    class _FitSentinel(anywidget.AnyWidget):
-        """A hidden fit reporter inside the diagram widget's own DOM
-        (see :func:`_sentinel_class` and :data:`_SENTINEL_ESM`)."""
+    class _DiagramEvents(anywidget.AnyWidget):
+        """A hidden reporter of resizes and header clicks inside the
+        diagram widget's own DOM (see :func:`_events_class`)."""
 
-        _esm = _SENTINEL_ESM
+        _esm = _EVENTS_ESM
 
-        fresh = T.Int(0, help="how many fresh diagram views appeared in the widget").tag(sync=True)
         resized = T.Int(0, help="debounced widget resizes with an untouched viewport").tag(
             sync=True
         )
-        fit_stamp = T.Int(0, help="bumped per kernel auto-fit; clears the user latch").tag(
+        fit_stamp = T.Int(0, help="bumped per kernel-side fit; clears the user latch").tag(
             sync=True
         )
         fold_click = T.Unicode(
@@ -1014,62 +960,52 @@ def _sentinel_class() -> type | None:
             ),
         ).tag(sync=True)
 
-    _SENTINEL_CLS = _FitSentinel
-    return _FitSentinel
+    _EVENTS_CLS = _DiagramEvents
+    return _DiagramEvents
 
 
 class AutoFitTool(Tool):
-    """Keep the diagram fitted-and-centered until the user takes over.
+    """Send the kernel-side fits that ipyelk's first-layout fit does not make.
 
-    Diagrams used to first paint at 1:1 anchored top-left, so anything
-    larger than the viewport started half off-screen until the user
-    clicked Fit.  This tool watches the viewer's post-layout source tree
-    (``view.source.value`` -- set by the browser-side elkjs pipe, i.e.
-    exactly when the first layout settles) and answers the first arrival
-    with one ``FitToScreenAction`` request: :attr:`padding` px of margin,
-    zoom capped at :attr:`max_zoom` (small diagrams center at natural
-    size instead of blowing up), no animation (a snap, not a glide).
+    The first fit of every view is ipyelk's: the builder sets the view's
+    ``fit_on_first_layout``, ``fit_padding`` (:data:`FIT_PADDING`) and
+    ``fit_max_zoom`` (1.0, so a small diagram stays at natural size).
+    ipyelk fits each view once, and later layouts, reveals and resizes
+    keep its camera.  This tool adds two fits on top:
 
-    The layout watcher fires ONCE: collapse/routing relayouts keep the
-    user's viewport.  :meth:`request_refit` queues exactly one more fit
-    for the NEXT layout arrival -- the direction toggle uses it, because
-    a viewport framed for a left-to-right layout reads wrong on the
-    top-to-bottom flip.
+    * :meth:`request_refit` queues one fit for the NEXT layout arrival.
+      The direction toggle uses it, because a viewport framed for a
+      left-to-right layout reads wrong on the top-to-bottom flip.
+    * The hidden :attr:`events` widget reports a resize of the widget
+      while the user has not panned or zoomed, and the tool answers with
+      :meth:`refit_now` (see :func:`_events_class`).
 
-    The first-layout fit request is a widget message: if a frontend view
-    does not exist yet when the first layout lands (a slow display, a
-    lazily rendered output), the message is dropped.  That is what the
-    tool's :attr:`sentinel` exists for -- a hidden anywidget the builder
-    mounts INSIDE the diagram widget's own DOM whose browser half
-    reports ``fresh`` views, first reveals, and untouched-viewport
-    resizes (see :func:`_sentinel_class`); each report is answered with
-    :meth:`refit_now`, which also bumps the sentinel's ``fit_stamp`` to
-    clear the browser-side user-interaction latch.  Without anywidget
-    the sentinel is ``None`` and only the first-layout fit remains.
+    Each fit uses the view's own fit defaults and bumps the ``fit_stamp``
+    of :attr:`events`, which clears the browser-side user-interaction
+    latch.  Without anywidget, :attr:`events` is ``None`` and only the
+    direction re-fit remains.
 
     Headless renders never construct tools, so they are unaffected.
     """
 
-    padding = T.Float(FIT_PADDING, help="viewport margin (px) around the fitted diagram")
-    max_zoom = T.Float(1.0, help="never zoom in past this to fit (1.0 = natural size)")
-    pending = T.Bool(True, help="whether the next layout arrival triggers a fit")
+    pending = T.Bool(False, help="whether the next layout arrival triggers a fit")
     fit_count = T.Int(0, help="how many fit requests this tool has sent")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         super().__init__(**kwargs)
         # the browser-side elkjs pipe writes the laid-out tree onto the
-        # viewer's source; its kernel-side sync is the 'first layout
-        # settled' signal (the same event DiagramSearch re-applies on)
+        # viewer's source; its kernel-side sync is the 'layout settled'
+        # signal for a queued re-fit
         diagram.view.source.observe(self._on_view_tree, "value")
-        # the browser-side reporter (mounted into the widget's DOM by
-        # diagrams._finish); None without anywidget -- degrade gracefully
-        sentinel_cls = _sentinel_class()
-        self.sentinel: Any = (
-            None if sentinel_cls is None else sentinel_cls(layout=W.Layout(display="none"))
+        # mounted into the widget's DOM by diagrams._finish; None without
+        # anywidget (graceful degradation)
+        events_cls = _events_class()
+        self.events: Any = (
+            None if events_cls is None else events_cls(layout=W.Layout(display="none"))
         )
-        if self.sentinel is not None:
-            self.sentinel.observe(self._on_sentinel_report, ["fresh", "resized"])
+        if self.events is not None:
+            self.events.observe(lambda _change: self.refit_now(), "resized")
 
     async def run(self) -> None:  # Tool protocol; the tool is event-driven
         pass
@@ -1080,37 +1016,20 @@ class AutoFitTool(Tool):
         self.pending = True
 
     def refit_now(self) -> None:
-        """Fit immediately, without waiting for a layout arrival.
+        """Fit every live view of the diagram now, with the view's fit defaults.
 
-        For fits that happened into a USELESS viewport (a hidden widget
-        has a zero-sized one: a docked background tab, a display:none'd
-        cached diagram) or that were dropped outright (no frontend view
-        yet).  Bumping the sentinel's ``fit_stamp`` afterwards clears the
+        Bumping the ``fit_stamp`` of :attr:`events` afterwards clears the
         browser-side user-interaction latch: the viewport is the fitted
-        one again, so a later resize may re-frame it without fighting
-        anyone.
+        one again, so a later resize may re-frame it.
         """
 
         self.fit_count += 1
         try:
-            self._diagram.view.fit(animate=False, max_zoom=self.max_zoom, padding=self.padding)
+            self._lgn_diagram.view.fit(animate=False)
         except Exception:  # never break the caller's observer chain
             self.log.exception("refit request failed")
-        if self.sentinel is not None:
-            self.sentinel.fit_stamp += 1
-
-    def _on_sentinel_report(self, change: Any) -> None:
-        """A browser report from the widget's own DOM: re-fit, now.
-
-        ``fresh``: a newly built diagram view materialized with its
-        layout rendered -- the reliable moment to fit it (the
-        first-layout auto-fit can be dropped while the view is still
-        constructing).  ``resized``: the widget changed size -- or was
-        revealed -- and the user has not panned/zoomed since the last
-        auto-fit (guarded browser-side).
-        """
-
-        self.refit_now()
+        if self.events is not None:
+            self.events.fit_stamp += 1
 
     def _on_view_tree(self, change: Any) -> None:
         if change["new"] is None or not self.pending:
@@ -1139,7 +1058,7 @@ class DirectionTool(Tool):
     direction = T.Unicode(DIRECTIONS[0], help="active elk.direction flow")
 
     def __init__(self, diagram: Any, **kwargs: Any) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._btn: Any = None
         root = diagram.source.value
         if root is not None:
@@ -1169,8 +1088,8 @@ class DirectionTool(Tool):
         """Push the active direction onto the diagram's trees and re-lay out."""
 
         seen: set[int] = set()
-        inlet = getattr(getattr(self._diagram, "pipe", None), "inlet", None)
-        for tree in (self._diagram.source.value, getattr(inlet, "value", None)):
+        inlet = getattr(getattr(self._lgn_diagram, "pipe", None), "inlet", None)
+        for tree in (self._lgn_diagram.source.value, getattr(inlet, "value", None)):
             if tree is None or id(tree) in seen:
                 continue
             seen.add(id(tree))
@@ -1179,15 +1098,13 @@ class DirectionTool(Tool):
         if seen and self.tee is not None:
             # a flip inverts the aspect ratio: queue ONE re-fit for the
             # relayout about to land (collapse/routing changes never do)
-            for tool in getattr(self._diagram, "tools", ()):
+            for tool in getattr(self._lgn_diagram, "tools", ()):
                 if isinstance(tool, AutoFitTool):
                     tool.request_refit()
             # the routing tool's refresh path: mark the inlet dirty and
             # MERGE with the pending flow (see EdgeRoutingTool.apply)
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            self.record_reports()
+            self._lgn_diagram.refresh()
 
     def _toggle(self, *_: Any) -> None:
         index = DIRECTIONS.index(self.direction)

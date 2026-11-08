@@ -1,7 +1,7 @@
 """Headless rendering of SysML diagrams to SVG/PNG.
 
 The interactive widgets (:mod:`longeron.diagrams`) lay themselves out in the
-browser.  This module runs the same layout engine -- elkjs 0.9.3, vendored
+browser.  This module runs the same layout engine -- elkjs 0.12.0, vendored
 as ``_js/elk.bundled.js`` (EPL-2.0) -- in a node subprocess instead, then
 draws the result as styled SVG:
 
@@ -318,8 +318,8 @@ _TAB_WIDTH, _TAB_HEIGHT = 30.0, 8.0
 #: compartment opens with a full-width horizontal rule, the compartment
 #: name in italics under it): the rule draws this many px above the header
 #: label's box top, spanning the node edge to edge.  Both pipelines share
-#: it -- the headless SVG writer here, the vendored browser node view
-#: (LOCAL PATCH 13) hard-codes the same value.
+#: it -- the headless SVG writer here, ipyelk's browser node view as the
+#: default ``separatorGap`` of a ``LabelProperties(separator=True)`` label.
 _COMP_RULE_GAP = 1.0
 
 #: actor stick figure (spec BNF printed p.244; crop gt-actor.png):
@@ -358,7 +358,7 @@ _EDGE_END_CLEARANCE = 24.0
 # ---------------------------------------------------------------------------
 
 #: mirror of ``MIN_TANGENT_LENGTH`` in the vendored browser edge view
-#: (vendor/ipyelk js/sprotty/views/edge_views.tsx).  Zero-length route
+#: (ipyelk js/sprotty/views/edge_views.tsx).  Zero-length route
 #: chords make ``atan2(0, 0) == 0``: elkjs SPLINES sections duplicate
 #: control points at the section knots, so a naive "adjacent segment"
 #: tangent flips end symbols 180 degrees on any right-to-left end (the
@@ -372,7 +372,7 @@ def _route_end_angle(route: list[tuple[float, float]], end: str, reach: float) -
     INTO the edge.
 
     PINNED REFERENCE implementation of ``routeEndAngle`` in the vendored
-    browser edge view (vendor/ipyelk ``js/sprotty/views/edge_views.tsx``,
+    browser edge view (ipyelk ``js/sprotty/views/edge_views.tsx``,
     compiled into the shipped labextension): the two must stay identical,
     and the tests exercise this copy against real elkjs section data.  The
     headless SVG renderer itself needs no angles -- its markers auto-orient
@@ -480,7 +480,7 @@ def _note_points(
 def _note_path_d(width: float, height: float) -> str:
     """The note silhouette as ONE path: the folded-corner pentagon plus
     the crease 'L' outlining the fold triangle (the UML/SysML dog-ear).
-    The browser pipeline draws this path verbatim (the vendored ipyelk
+    The browser pipeline draws this path verbatim (ipyelk's
     ``Comment`` view knows only the plain 5-sided polygon -- no crease);
     the headless renderer draws the same two pieces in ``draw_node``."""
 
@@ -1177,7 +1177,7 @@ def _to_elk_json(root: Any) -> dict:
             data["layoutOptions"]["elk.nodeLabels.placement"] = "H_CENTER V_TOP INSIDE"
             data["layoutOptions"]["elk.padding"] = "[top=8,left=12,bottom=12,right=12]"
             if transposed:
-                # elkjs (0.9.3) sizes compounds under a vertical flow in its
+                # elkjs (0.9.3 to 0.12.0) sizes compounds under a vertical flow in its
                 # internal horizontal coordinates: the NODE_LABELS width
                 # contribution lands on the HEIGHT and elk.nodeSize.minimum
                 # is applied swapped, as (height, width) -- so drop the
@@ -1421,7 +1421,7 @@ def _svg_from_layout(graph: dict, padding: float = 8.0, title: str | None = None
             # compartment separator rules (spec 8.2.3.6 printed p.199): a
             # full-width horizontal rule above every compartment header
             # label, in the node kind's stroke color -- the same geometry
-            # the vendored browser node view draws (LOCAL PATCH 13)
+            # ipyelk's browser node view draws (properties.separator)
             for label in node.get("labels", []):
                 if "sysml-comp-label" in label.get("properties", {}).get("cssClasses", ""):
                     ry = y + label.get("y", 0) - _COMP_RULE_GAP

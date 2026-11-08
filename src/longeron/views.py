@@ -700,7 +700,7 @@ def restore_view(
     ``sidecar`` may be a path, an already-loaded entries mapping, or
     ``None`` to auto-discover the workspace sidecar next to the model's
     sources (silently absent for in-memory models).  Needs the diagram
-    toolchain (the vendored ipyelk), like :mod:`longeron.diagrams`.
+    toolchain (ipyelk, the ``diagrams`` extra), like :mod:`longeron.diagrams`.
     """
 
     from . import diagrams

@@ -1,6 +1,6 @@
 """Interactive SysML v2 diagrams for Jupyter, rendered with ipyelk/ELK.
 
-Requires the vendored ipyelk (``pip install -e vendor/ipyelk``; the pixi
+Requires ipyelk 3 (``pip install "longeron[diagrams]"``; the pixi
 environments install it automatically).  Three views, one dispatcher:
 
 * :func:`structure_diagram` -- packages, definitions (with attribute
@@ -67,10 +67,11 @@ header row to fold that one compartment); the :func:`level` /
 :func:`fold` kernel API mirrors both (see :class:`CollapseTool`;
 state/action views keep ipyelk's stock hide-the-children collapse).
 Every widget
-(with or without the compact toolbar) fits-and-centers itself ONCE when
-its first layout arrives -- a small margin, never zoomed past 1:1 --
-and later relayouts keep the user's viewport
-(:class:`longeron.toolbar.AutoFitTool`).
+(with or without the compact toolbar) fits itself ONCE after the first
+layout of each view, with a small margin and never zoomed past 1:1
+(ipyelk's ``Viewer.fit_on_first_layout``).  Later relayouts keep the
+user's viewport, except for the fits that
+:class:`longeron.toolbar.AutoFitTool` adds.
 
 Compartment rows cap their display width at ``max_label_width`` px
 (default 480; a kwarg on every view constructor): overlong rows --
@@ -131,11 +132,7 @@ try:
 except ImportError as _err:  # pragma: no cover - exercised without ipyelk
     from .errors import MissingExtraError
 
-    raise MissingExtraError(
-        "longeron.diagrams",
-        "ipyelk (the vendored copy)",
-        command="pip install -e vendor/ipyelk",
-    ) from _err
+    raise MissingExtraError("longeron.diagrams", "ipyelk>=3.0.0,<4", "diagrams") from _err
 
 from . import model as M
 from .interpreter import Interpreter, _succession_plan
@@ -191,6 +188,7 @@ from .render import (
     _port_arrow_d,
 )
 from .toolbar import (
+    FIT_PADDING,
     AutoFitTool,
     EdgeRouting,
     LayoutDirection,
@@ -385,8 +383,8 @@ def _section_header(section: str, folded: bool = False) -> Label:
     italics, centered, right under the separator rule (8.2.3.6 printed
     p.199).  Snug (never pre-sized), so both pipelines center it; the
     separator rule itself is drawn from this label's position -- by the
-    headless SVG writer and by the vendored browser node view (LOCAL
-    PATCH 13), keyed on the ``sysml-comp-label`` class.
+    headless SVG writer (keyed on the ``sysml-comp-label`` class) and by
+    ipyelk's browser node view (keyed on ``properties.separator``).
 
     The header opens with its FOLD affordance, the explorer tree's twist
     (open ``\u25be`` while the rows follow, closed ``\u25b8`` while the
@@ -398,7 +396,9 @@ def _section_header(section: str, folded: bool = False) -> Label:
     """
 
     twist = _TWIST_FOLDED if folded else _TWIST_OPEN
-    return _label(f"{twist} {section}", "sysml-comp-label")
+    label = _label(f"{twist} {section}", "sysml-comp-label")
+    label.properties.separator = True
+    return label
 
 
 def _row_label(text: str, element: M.Element) -> Label:
@@ -674,28 +674,29 @@ def _sysml_style() -> dict[str, dict[str, str]]:
     style[" text.elklabel.sysml-row.selected.mouseover"] = {"fill": hover_selected}
     # compartment HEADERS are the fold affordance (CollapseTool): the
     # pointer cursor advertises the click; the click itself is consumed
-    # before sprotty ever sees it (the fit sentinel's fold channel), so
+    # before sprotty ever sees it (the diagram events' fold channel), so
     # headers never hover/select -- they are presentation, not elements.
     # MERGED into the per-kind typography rule built above (same key).
     style[" text.elklabel.sysml-comp-label"]["cursor"] = "pointer"
     # -- compartment separator rules (spec 8.2.3.6 printed p.199) ----------
-    # The vendored node view (LOCAL PATCH 13) draws one full-width <path
-    # class="sysml-comp-rule"> per compartment header label, a sibling of
-    # the node's rect -- so the per-kind stroke and the state recolors
-    # bind exactly like the box border (never fattening: width pinned).
-    style[" .sysml-comp-rule"] = {
+    # ipyelk's node view draws one full-width <path class="elkseparator">
+    # per label with properties.separator (the compartment headers), a
+    # sibling of the node's rect -- so the per-kind stroke and the state
+    # recolors bind exactly like the box border (never fattening: width
+    # pinned).
+    style[" .elkseparator"] = {
         "fill": "none",
         "stroke-width": "1",
         "pointer-events": "none",
     }
     for css, node_style in _NODE_STYLES.items():
-        style[f" .{css} > .sysml-comp-rule"] = {"stroke": node_style["stroke"]}
+        style[f" .{css} > .elkseparator"] = {"stroke": node_style["stroke"]}
     for state, state_color in (
         ("selected", selected),
         ("mouseover", hover),
         ("selected.mouseover", hover_selected),
     ):
-        style[f" .elknode.{state} ~ .sysml-comp-rule"] = {"stroke": state_color}
+        style[f" .elknode.{state} ~ .elkseparator"] = {"stroke": state_color}
     # ports (interconnection squares to come, flow pins, and the stubs
     # ipyelk substitutes for collapsed content -- 'slack' ports): white
     # body, border in the OWNING node kind's stroke color, stroke width
@@ -1705,6 +1706,13 @@ def _prepare_root(
     # INCLUDE_CHILDREN (unlike the spacing/routing options above); the
     # toolbar's DirectionTool re-applies it live through the same helper
     apply_direction(root, direction)
+    # ipyelk resolves the hierarchy through each element's parent link
+    # (ElementIndex.root() raises on a tree with several parentless
+    # nodes); the builders append to ``children`` in place, which sets
+    # no link, so link the finished tree once
+    for node in _walk_nodes(root):
+        for child in (*node.children, *node.ports):
+            child.set_parent(node)
     # every element ships to the browser with a REAL id (null ids kill the
     # elkjs worker; see _assign_ids) -- last, so it sees the whole tree
     _assign_ids(root, salt=id_salt)
@@ -1749,24 +1757,26 @@ def _finish(
             raise ValueError(f"height must be a CSS length string or None, not {height!r}")
         result.layout.height = height
         result.layout.min_height = "0"
-    # EVERY widget fits-and-centers itself: once when its first layout
-    # arrives, and again whenever its own fit sentinel reports a fresh
-    # view, a first reveal, or an untouched-viewport resize (registered
-    # before the toolbar upgrade so the DirectionTool can queue re-fits)
+    # EVERY widget fits itself after the first layout of each view, in
+    # the browser (a view hidden then fits when first shown).  Set before
+    # any view exists: ipyelk skips a view that was laid out first.  The
+    # fit defaults also apply to every later fit() and Fit button click.
+    result.view.fit_padding = FIT_PADDING
+    result.view.fit_max_zoom = 1.0  # a small diagram stays at natural size
+    result.view.fit_on_first_layout = True
+    # the kernel-side fits ipyelk does not make: the direction flip and
+    # untouched-viewport resizes (registered before the toolbar upgrade
+    # so the DirectionTool can queue its re-fit)
     fit_tool = AutoFitTool(result)
     result.register_tool(fit_tool)
-    # the sentinel rides INSIDE the widget's own DOM, a hidden child
-    # beside the view + toolbar: plain display(widget) is self-fitting
-    # with zero consumer wiring -- first reveal (background tab,
-    # display:none lifted, lazy output rendering) and container resizes
-    # (an HBox squeeze, a dock drag) re-fit, always respecting the
-    # user's pan/zoom latch (longeron.toolbar._SENTINEL_ESM).  The
-    # lgx-diagram class is the sentinel's DOM handle to the box it
-    # measures.  Without anywidget the sentinel is None and the widget
-    # keeps the first-layout fit only (graceful degradation).
+    # the events widget rides INSIDE the widget's own DOM, a hidden child
+    # beside the view + toolbar, so plain display(widget) needs no wiring
+    # (longeron.toolbar._EVENTS_ESM).  The lgx-diagram class is its DOM
+    # handle to the box it measures.  Without anywidget it is None and
+    # the widget keeps ipyelk's first-layout fit only.
     result.add_class("lgx-diagram")
-    if fit_tool.sentinel is not None:
-        result.children = (*result.children, fit_tool.sentinel)
+    if fit_tool.events is not None:
+        result.children = (*result.children, fit_tool.events)
     if toolbar:  # compact icon toolbar + search (longeron.toolbar)
         upgrade_toolbar(result)
     return result
@@ -3174,7 +3184,7 @@ class _StructureBuilder:
 
         The geometry is pinned ONCE (pre-measured labels, fixed size, the
         exact leaf layout the headless renderer computes) and the outline
-        + crease ride an explicit ``Path`` shape: the vendored ipyelk
+        + crease ride an explicit ``Path`` shape: ipyelk's
         ``Comment`` view draws only the plain 5-sided polygon -- no
         crease -- so both pipelines share render._note_path_d instead."""
 
@@ -3365,7 +3375,7 @@ class CollapseTool(Tool):
     clicking the header row in the browser folds that ONE compartment to
     its header while the node stays at its level.  Headers are
     presentation artifacts, not model elements -- the click is consumed
-    before sprotty sees it (the toolbar fit-sentinel reports it on a
+    before sprotty sees it (the toolbar's diagram events report it on a
     dedicated channel), so it can never enter the model-selection seam.
 
     :attr:`levels` (qualified name -> level) and :attr:`folded`
@@ -3400,7 +3410,7 @@ class CollapseTool(Tool):
         builder: _StructureBuilder,
         **kwargs: Any,
     ) -> None:
-        self._diagram = diagram
+        self._lgn_diagram = diagram
         self._element = element
         #: the FULL resolved builder options (not the sidecar deviations):
         #: rebuilds replay them verbatim, whatever the defaults become
@@ -3456,7 +3466,7 @@ class CollapseTool(Tool):
         )
         # live presentation carries over: the CURRENT tree holds whatever
         # routing/direction the toolbar toggles left on it
-        tree = getattr(self._diagram.source, "value", None)
+        tree = getattr(self._lgn_diagram.source, "value", None)
         layout = (tree.layoutOptions or {}) if tree is not None else {}
         _prepare_root(
             root,
@@ -3468,11 +3478,11 @@ class CollapseTool(Tool):
         # what ipyelk.from_element applied to the birth tree (label
         # placement defaults above all) -- the rebuilt tree must match it
         ipyelk.ElementLoader().apply_layout_defaults(root)
-        self._diagram._lgn_rel_edges = {
+        self._lgn_diagram._lgn_rel_edges = {
             str(edge.id): rel for edge, rel in builder.rel_edges if edge.id is not None
         }
         self._refresh_maps(root, builder)
-        source = self._diagram.source
+        source = self._lgn_diagram.source
         source.value = root
         # the WHOLE pipeline shares this one element index (ipyelk wires
         # every endpoint to the source's MarkIndex): built for the old
@@ -3484,11 +3494,9 @@ class CollapseTool(Tool):
         source.index.elements = None
         if self.tee is not None:
             # mark the inlet dirty and MERGE with the pending flow (see
-            # EdgeRoutingTool.apply), then refresh through on_done
-            tee_inlet = self.tee.inlet
-            tee_inlet.flow = tuple(dict.fromkeys((*tee_inlet.flow, *self.reports)))
-            if callable(self.on_done):
-                self.on_done()
+            # EdgeRoutingTool.apply), then refresh the diagram
+            self.record_reports()
+            self._lgn_diagram.refresh()
 
     def _refresh_maps(self, root: Node | None, builder: _StructureBuilder) -> None:
         """Rebuild the per-tree lookaside maps: which drawn nodes can row
@@ -3527,7 +3535,7 @@ class CollapseTool(Tool):
         that child's collapsed presentation); nodes with nothing to
         collapse are no-ops."""
 
-        tree = getattr(self._diagram.source, "value", None)
+        tree = getattr(self._lgn_diagram.source, "value", None)
         if tree is None:
             return
         nodes = {str(node.id): node for node in _walk_nodes(tree) if node.id}
@@ -3594,7 +3602,7 @@ class CollapseTool(Tool):
             self.folded = normalized  # the observer applies
 
     def _on_fold_click(self, change: Any) -> None:
-        """A header click reported by the diagram's fit sentinel (the
+        """A header click reported by the diagram's events widget (the
         browser consumes the click BEFORE sprotty, so the selection seam
         never sees it).  Resolve the clicked header to (node,
         compartment) by the header label's id -- sprotty DOM ids end
@@ -3616,9 +3624,9 @@ def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> No
     """Swap ipyelk's stock ``ToggleCollapsedTool`` for the structure
     view's :class:`CollapseTool`, in the SAME toolbar slot (the
     affordance users already know); re-assigning ``tools`` rewires
-    tee/on_done for every tool (``Diagram._update_tools``).  The fold
-    channel is the fit sentinel's ``fold_click`` trait (the hidden
-    anywidget every diagram carries; absent without anywidget, where
+    tee and the on_done refresh for every tool (``Diagram._update_tools``).  The fold
+    channel is the ``fold_click`` trait of the diagram events widget (the
+    hidden anywidget every diagram carries; absent without anywidget, where
     header clicks simply degrade to no-ops)."""
 
     tools = list(widget.tools)
@@ -3640,12 +3648,12 @@ def _install_collapse_tool(widget: Any, tool: CollapseTool, compact: bool) -> No
                 "(cycles boxes -> 'name : Type' rows -> name only -> boxes)"
             ),
         )
-    sentinel = next(
-        (t.sentinel for t in widget.tools if isinstance(t, AutoFitTool) and t.sentinel is not None),
+    events = next(
+        (t.events for t in widget.tools if isinstance(t, AutoFitTool) and t.events is not None),
         None,
     )
-    if sentinel is not None:
-        sentinel.observe(tool._on_fold_click, "fold_click")
+    if events is not None:
+        events.observe(tool._on_fold_click, "fold_click")
 
 
 def _collapse_tool(widget: Any) -> CollapseTool:
@@ -3666,7 +3674,7 @@ def _collapse_qname(tool: CollapseTool, element: Any) -> str:
     resolve -- then the diagram's model."""
 
     qname = str(getattr(element, "qualified_name", None) or element)
-    tree = getattr(tool._diagram.source, "value", None)
+    tree = getattr(tool._lgn_diagram.source, "value", None)
     if tree is not None and any(str(node.id) == qname for node in _walk_nodes(tree) if node.id):
         return qname
     owner: M.Element = tool._element

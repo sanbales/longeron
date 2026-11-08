@@ -103,8 +103,7 @@ Five principles hold everywhere, stated here as design facts:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-pip install -e vendor/ipyelk   # vendored diagram engine (make check runs its tests)
+pip install -e ".[dev]"   # dev mirrors every extra, ipyelk 3 for the diagrams included
 make check        # ruff + mypy + the full pytest suite
 ```
 
@@ -117,6 +116,7 @@ Everything past the core toolchain is an extra:
 | `mdao` | the OpenMDAO bridge |
 | `trades` | the CP-SAT trade-study encoder (ortools) |
 | `viz` | the widget stack: scoreboard, dashboards, 3D viewers (matplotlib, anywidget) |
+| `diagrams` | the interactive SysML diagrams and their toolbar (ipyelk 3) |
 | `replay` | simulation replay + the explorer/workbench widgets (anywidget) |
 | `explorer` | JupyterLab docking for the workbench (ipylab) |
 | `units` | the typed conversion facade (pint; the dimensional lint needs no extra) |
@@ -125,7 +125,7 @@ Everything past the core toolchain is an extra:
 | `server`, `client` | the Systems Modeling API server (`longeron serve`) and REST client |
 | `cad` | the exact-boolean occlusion engine (cadquery) |
 | `analysis` | composite: `mdao` + `trades` + `smt` + `viz` |
-| `ui` | composite: `explorer` + `replay` + `viz` |
+| `ui` | composite: `diagrams` + `explorer` + `replay` + `viz` |
 | `all` | composite: `analysis` + `ui` + `verify` + `rdf` + `client` + `server` + `ecore` |
 
 `cad` is deliberately excluded from `all`: its OCC kernel is ~1 GB
@@ -148,8 +148,8 @@ pixi run check          # lint + mypy + tests in a locked environment
 pixi run -e py310 test  # any supported Python: py310 | py311 | py312 | py313
 pixi run parsers        # regenerate ANTLR parsers -- no manual Java setup:
                         # conda-forge's antlr 4.13.2 ships the tool + JDK
-pixi run lab            # JupyterLab in notebooks/ (vendored ipyelk extension
-                        # pre-registered -- diagrams render interactively)
+pixi run lab            # JupyterLab in notebooks/ (the ipyelk extension comes
+                        # with its wheel -- diagrams render interactively)
 pixi run stdlib | demo | coverage | format | notebooks
 ```
 
@@ -419,7 +419,6 @@ src/longeron/
                            3D viewers, mission globe, dashboards, grand tour
     errors.py              one error family (SysMLError, MissingExtraError)
     cli.py                 the `longeron` console command
-vendor/ipyelk/             vendored ipyelk 2.1.1 + local fixes (editable)
 npm/                       the JupyterLab launcher tile (prebuilt; ships in the wheel)
 examples/                  the DeepScout program (deepscout/) + analysis
                            conventions + kernel.kerml + demo.py
@@ -512,7 +511,7 @@ from longeron.widgets import explore, mission_dashboard  # one lazy import surfa
 ```
 
 The same views export to images without a browser — `longeron.render` runs
-the vendored elkjs (0.9.3, EPL-2.0, `longeron/_js/`) in a node subprocess and
+the vendored elkjs (0.12.0, EPL-2.0, `longeron/_js/`) in a node subprocess and
 draws styled SVG, with PNG via cairosvg (node + cairo ship in the pixi
 environments):
 
@@ -545,14 +544,10 @@ replay.replay_widget(interp, "Machines::Player", events=["play", 3600.0, "play"]
 replay.replay_widget(interp, "Ops::Deploy", inputs={"tested": True})
 ```
 
-ipyelk is **vendored** (`vendor/ipyelk`, BSD-3-Clause, tag v2.1.1) and
-installed editable (`pip install -e vendor/ipyelk`; pixi does this
-automatically) so it can be patched as needed. Twelve local patches are
-active, from headless-safe scheduling to a self-healing re-sync for
-widget messages that jupyter-server's rate limiter drops. Each patch is
-marked `LOCAL PATCH` in the sources and cataloged in
-[`vendor/ipyelk/README.vendor.md`](vendor/ipyelk/README.vendor.md);
-history: `git log -- vendor/ipyelk`.
+The diagrams need ipyelk 3 (BSD-3-Clause) from PyPI. Install it with the
+`diagrams` extra: `pip install "longeron[diagrams]"`. The pixi
+environments install it automatically. The ipyelk wheel also installs the
+jupyter-elk JupyterLab extension.
 
 ## Spec-metamodel projection and API interchange
 

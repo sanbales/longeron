@@ -88,7 +88,6 @@ DEMO_DIR = REPO / "build" / "demo"
 LAB_ROOT = DEMO_DIR / "lab-root"
 FRAME_DIR = DEMO_DIR / "frames"
 MODEL_CACHE = DEMO_DIR / "model-cache"
-VENDOR_LABEXTENSIONS = REPO / "vendor/ipyelk/src/_d/share/jupyter/labextensions"
 FFMPEG = os.environ.get("LONGERON_FFMPEG", "/opt/homebrew/bin/ffmpeg")
 
 NOTEBOOK = "09_grand_tour.ipynb"
@@ -256,16 +255,10 @@ def _kernel_env() -> dict[str, str]:
         # a rig-local parse cache, warmed off camera so the on-camera
         # Run All spends its seconds building the dashboard, not parsing
         LONGERON_CACHE_DIR=str(MODEL_CACHE),
-        # the kernel must import THIS tree's sources (and its vendored
-        # ipyelk) even when the editable install resolves elsewhere
+        # the kernel must import THIS tree's sources even when the
+        # editable install resolves elsewhere (ipyelk is the env's wheel)
         PYTHONPATH=os.pathsep.join(
-            path
-            for path in (
-                str(REPO / "src"),
-                str(REPO / "vendor" / "ipyelk" / "src"),
-                os.environ.get("PYTHONPATH", ""),
-            )
-            if path
+            path for path in (str(REPO / "src"), os.environ.get("PYTHONPATH", "")) if path
         ),
     )
 
@@ -347,7 +340,6 @@ def start_lab_server() -> LabServer:
                 "jupyterlab",
                 "--no-browser",
                 "--LabApp.expose_app_in_browser=True",
-                f"--LabApp.extra_labextensions_path={VENDOR_LABEXTENSIONS}",
                 f"--port={port}",
                 "--ServerApp.port_retries=0",
                 f"--ServerApp.token={token}",

@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("z3")
-
 import longeron
 from longeron import model as M
 from longeron.analysis import smt
+
+z3 = pytest.importorskip("z3")
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -273,3 +273,31 @@ class TestCalcInliningAndEdges:
             smt.to_smt(calcs, "Calcs")
         with pytest.raises(longeron.analysis.AnalysisError, match="is not a requirement"):
             smt.to_smt(calcs, "Calcs::Box", requirements=("Calcs",))
+
+
+class TestConfirmedSupremum:
+    """Every ``Optimize`` query has a timeout, and an independent query decides its supremum."""
+
+    def test_optimize_queries_carry_a_timeout(self):
+        assert "(set-option :opt.timeout 10000)" in smt.timed_optimize().sexpr()
+        assert "(set-option :opt.timeout 25)" in smt.timed_optimize(timeout_ms=25).sexpr()
+
+    def test_an_unconfirmed_bound_is_rejected(self):
+        x = z3.Real("x")
+        # 5/4 is what z3 5.1 reports for this optimum: feasible, but x = 1.4 lies above it
+        assert smt.confirmed_sup([x * x <= 2], x, "5/4") == ""
+        # z3 5.3 reports the algebraic sqrt(2): no exact rational to confirm
+        assert smt.confirmed_sup([x * x <= 2], x, "1.4142135623?") == ""
+
+    def test_a_confirmed_bound_is_kept(self):
+        x = z3.Real("x")
+        assert smt.confirmed_sup([x <= 3], x, "3") == "3"
+        assert smt.confirmed_sup([x < 3], x, "3 + -1*epsilon") == "3 + -1*epsilon"
+        assert smt.confirmed_sup([x >= 0], x, "oo") == "oo"
+
+    def test_maximize_reports_no_bound_for_a_nonlinear_optimum(self):
+        x = z3.Real("x")
+        nonlinear = smt.SmtSystem(variables={"x": x}, assertions=[("sq", x * x <= 2)])
+        assert nonlinear.maximize("x")[0] == ""
+        linear = smt.SmtSystem(variables={"x": x}, assertions=[("lin", x <= 3)])
+        assert linear.maximize("x")[0] == "3"

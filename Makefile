@@ -5,13 +5,10 @@
 
 VENV ?= .venv/bin
 
-check: lint typecheck test test-vendor  ## lint + mypy + tests
+check: lint typecheck test  ## lint + mypy + tests
 
 test:
 	$(VENV)/pytest -q
-
-test-vendor:  ## vendored ipyelk test suite (incl. ported F1-F6 fixes)
-	$(VENV)/pytest -c pyproject.toml -q vendor/ipyelk/tests
 
 coverage:
 	$(VENV)/pytest -q --cov=longeron --cov-report=term-missing:skip-covered
@@ -42,7 +39,7 @@ docs:  ## build the documentation site (needs the [docs] extra; pixi: `pixi run 
 hooks:  ## enable the repo git hooks (auto-strips staged notebook outputs; blocks >5MB blobs)
 	git config core.hooksPath scripts/git-hooks
 
-sync-labextension:  ## sync the repo labextension builds (vendored jupyter-elk + the longeron launcher tile) into every pixi env (JupyterLab serves the env COPY, not the repo build)
+sync-labextension:  ## sync the repo labextension build (the longeron launcher tile) into every pixi env (JupyterLab serves the env COPY, not the repo build; jupyter-elk comes with the ipyelk wheel)
 	@sync() { src="$$1"; rel="$$2"; \
 	for root in .pixi/envs/*/share/jupyter/labextensions; do \
 		[ -d "$$root" ] || continue; \
@@ -51,5 +48,4 @@ sync-labextension:  ## sync the repo labextension builds (vendored jupyter-elk +
 		mkdir -p "$$dst"; \
 		rsync -a --delete "$$src/" "$$dst/"; \
 	done; }; \
-	sync "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk" "@jupyrdf/jupyter-elk"; \
 	sync "npm/_d/share/jupyter/labextensions/longeron" "longeron"

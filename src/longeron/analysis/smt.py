@@ -27,6 +27,7 @@ Requires the ``smt`` extra: ``pip install "longeron[smt]"``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any, Literal, cast
 
 from .. import ast as A
@@ -47,6 +48,46 @@ def _z3() -> Any:
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise MissingExtraError("longeron.analysis.smt", "Z3", "smt") from err
     return z3
+
+
+def timed_optimize(*, timeout_ms: int = 10_000) -> Any:
+    """A ``z3.Optimize`` that stops after ``timeout_ms`` of wall-clock time.
+
+    A nonlinear optimum need not terminate. On z3 5.3, ``check()`` on some
+    nonlinear objectives climbs by smaller and smaller steps and never
+    returns. With the timeout, ``check()`` returns ``unknown`` instead.
+    """
+
+    opt = _z3().Optimize()
+    opt.set(timeout=timeout_ms)
+    return opt
+
+
+def confirmed_sup(exprs: list[Any], var: Any, text: str, *, timeout_ms: int = 10_000) -> str:
+    """``text`` if an independent query finds no ``var`` above it, else ``""``.
+
+    The solver proposes, an independent query decides. ``Optimize`` can
+    report a feasible value as the optimum of a nonlinear query: z3 5.1
+    does. So a fresh ``Solver`` must find ``var > value`` unsatisfiable
+    under ``exprs``. An open bound (``2865/1090 + -1*epsilon``) is checked
+    at its rational part. An unbounded answer (``oo``) passes unchanged.
+    An algebraic number (``13.88?``) has no exact rational to check and
+    comes back as ``""``.
+    """
+
+    if "oo" in text:
+        return text
+    try:
+        value = Fraction(text.split("+")[0].strip())
+    except ValueError:
+        return ""
+    z3 = _z3()
+    above = z3.Solver()
+    above.set(timeout=timeout_ms)
+    for expr in exprs:
+        above.add(expr)
+    above.add(var > z3.Q(value.numerator, value.denominator))
+    return text if str(above.check()) == "unsat" else ""
 
 
 @dataclass
@@ -88,19 +129,22 @@ class SmtSystem:
         """Supremum of a variable over the feasible region (exact, as text).
 
         Strict inequalities yield open bounds: Z3 reports the supremum with
-        an infinitesimal (e.g. ``2865/1090 + -1*epsilon``).
+        an infinitesimal (e.g. ``2865/1090 + -1*epsilon``).  The bound is
+        ``""`` when :func:`confirmed_sup` cannot confirm it, for example an
+        algebraic optimum of a nonlinear query.
         """
 
-        z3 = _z3()
-        opt = z3.Optimize()
-        for label, expr in self.assertions:
-            if label not in exclude:
-                opt.add(expr)
-        handle = opt.maximize(self.variables[path])
+        kept = [expr for label, expr in self.assertions if label not in exclude]
+        var = self.variables[path]
+        opt = timed_optimize()
+        for expr in kept:
+            opt.add(expr)
+        handle = opt.maximize(var)
         status = str(opt.check())
         if status != "sat":
             return "", SmtResult(cast(SmtStatus, status))  # z3 reports sat/unsat/unknown
-        return str(opt.upper(handle)), SmtResult("sat", witness=self._witness(opt.model()))
+        bound = confirmed_sup(kept, var, str(opt.upper(handle)))
+        return bound, SmtResult("sat", witness=self._witness(opt.model()))
 
     def _witness(self, model: Any) -> dict[str, float | bool]:
         out: dict[str, float | bool] = {}

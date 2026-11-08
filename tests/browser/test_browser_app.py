@@ -161,7 +161,8 @@ def test_app_sidebar_loads_a_model_and_launches_tabs(lab):
     # -- load examples/deepscout through the path field ------------------
     page.fill(".lgx-app-path input", str(DRONE))
     page.click("button.lgx-app-load")
-    page.wait_for_selector(DRONE_ROW, state="attached", timeout=60_000)
+    # a fresh runner's empty ~/.cache/longeron makes this first parse 60-90 s
+    page.wait_for_selector(DRONE_ROW, state="attached", timeout=180_000)
     # the program's geometric installation requirements are USAGES: its
     # Score button is live, like ScoutMini's; the defs-only model (a
     # requirement def, no usages) keeps the honest disabled tooltip
@@ -284,7 +285,8 @@ def test_inspector_reveals_follows_selection_and_edits(lab):
     assert not page.locator(".lgx-insp-host").is_visible()
     page.fill(".lgx-app-path input", str(DRONE))
     page.click("button.lgx-app-load")
-    page.wait_for_selector(DRONE_ROW, state="attached", timeout=60_000)
+    # a fresh runner's empty ~/.cache/longeron makes this first parse 60-90 s
+    page.wait_for_selector(DRONE_ROW, state="attached", timeout=180_000)
     # loading alone selects no ELEMENT: still collapsed (finding 4 -- the
     # reveal is selection-driven, not load-driven)
     assert not page.locator(".lgx-insp-host").is_visible()

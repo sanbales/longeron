@@ -324,16 +324,15 @@ def hbox_fit_notebook() -> dict[str, Any]:
 
     The tutorial-7 shape (diagram beside a 3D viewer, squeezed to a fraction
     of the cell): NO explorer, NO consumer wiring -- just
-    ``display(HBox([widget, filler]))``.  The widget's own fit sentinel
-    (mounted by the builder, ``diagrams._finish``) must report the fresh
-    view and answer container resizes, so the diagram lands FITTED to
-    its box instead of cropped at sprotty's identity transform (the
-    maintainer-reported bug).  The state machine is the explorer
+    ``display(HBox([widget, filler]))``.  The builder (``diagrams._finish``)
+    turns on ipyelk's first-layout fit, so the diagram lands FITTED to its
+    box instead of cropped at sprotty's identity transform (the
+    maintainer-reported bug), and the widget's own diagram events answer
+    container resizes.  The state machine is the explorer
     scenario's deliberately WIDE one: it only fits its 55% column with
     ``scale < 1``, so a fitted transform is unambiguous proof.  The
-    checker prints the kernel-side sentinel counters, closing the
-    browser -> kernel loop (``fresh``/``resized`` reports really
-    arrived).
+    checker prints the kernel-side counters, closing the browser -> kernel
+    loop (``resized`` reports really arrived).
     """
 
     return _notebook(
@@ -374,10 +373,9 @@ W.HBox([widget, filler], layout=W.Layout(align_items="stretch"))
         """
 tool = widget.get_tool(AutoFitTool)
 print(json.dumps({
-    "fresh": tool.sentinel.fresh,
-    "resized": tool.sentinel.resized,
+    "resized": tool.events.resized,
     "fit_count": tool.fit_count,
-    "fit_stamp": tool.sentinel.fit_stamp,
+    "fit_stamp": tool.events.fit_stamp,
 }))
 """,
     )
@@ -387,7 +385,7 @@ def layout_failure_notebook() -> dict[str, Any]:
     """Scenario: a deliberately-broken graph must fail loudly (F10).
 
     The poisoned ``elk.algorithm`` makes the browser-side elkjs layout
-    throw.  Under the F10 semantics (vendored ipyelk patch 9) the error
+    throw.  Under the F10 semantics (ipyelk upstream; once vendored patch 9) the error
     surfaces on ``pipe.status.exception`` and the progress bar fills as a
     visible warning instead of retrying forever.
     """

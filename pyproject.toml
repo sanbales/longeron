@@ -31,9 +31,13 @@ Repository = "https://github.com/sanbales/longeron"
 dev = [
     "pytest>=8", "pytest-cov>=5", "mypy>=1.11", "ruff>=0.6",
     "pyecore>=0.15",
-    "nbformat>=5", "nbclient>=0.10", "ipykernel>=6",  # notebooks
-    "pytest-asyncio>=0.23",  # vendored ipyelk tests
+    "nbformat>=5", "nbclient>=0.10",  # notebooks
+    # ipykernel 7.0-7.3 can stop reading a client's requests (widget clicks
+    # die silently): ipykernel#1554, fixed in 7.4, which needs Python >= 3.11
+    "ipykernel>=7.4; python_version >= '3.11'",
+    "ipykernel>=6; python_version < '3.11'",
     "anywidget>=0.9",  # replay widget + analysis viz widgets
+    "ipyelk>=3.0.0,<4",  # mirrors [diagrams] (the interactive SysML diagrams)
     "ipylab>=1",  # mirrors [explorer] (the lab docked layout)
     "matplotlib>=3.8",  # analysis viz figures (mirrors [viz])
     "openmdao>=3.30", "ortools>=9.8", "z3-solver>=4.12",  # analysis extras
@@ -80,6 +84,7 @@ verify = [
     "longeron[smt]",
 ]
 viz = ["matplotlib>=3.8", "anywidget>=0.9"]
+diagrams = ["ipyelk>=3.0.0,<4"]  # longeron.diagrams / longeron.toolbar: interactive ELK diagrams
 cad = ["cadquery>=2.5"]
 evidence = [
     # longeron.evidence: PDF text extraction for citation verification.
@@ -93,7 +98,7 @@ evidence = [
 # kitchen sink ([cad] is deliberately excluded from [all] -- the ~1 GB OCC
 # kernel stays an explicit opt-in)
 analysis = ["longeron[mdao,trades,smt,viz]"]
-ui = ["longeron[explorer,replay,viz]"]
+ui = ["longeron[diagrams,explorer,replay,viz]"]
 all = ["longeron[analysis,ui,verify,rdf,client,server,ecore,evidence]"]
 units = [
     # longeron.units boundary tier: conversion, display, exchange (the
@@ -126,6 +131,7 @@ longeron = [
     # fingerprinted against them and rebuilt from them when stale
     "_stdlib/README.md",
     "_js/elk.bundled.js",     # headless SVG/PNG layout (node still required)
+    "_js/elk.VENDOR.md",
     "_js/voronoi_treemap.bundled.js",  # scoreboard voronoi (vendored, BSD/ISC)
     "_js/voronoi_treemap.VENDOR.md",
 ]
@@ -195,7 +201,8 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-# vendored, pydantic-v1 models confuse mypy's constructor signatures
+# ipyelk (the [diagrams] extra) is not checked: longeron's ipyelk calls are
+# covered by the test suite, not by ipyelk's typing
 module = "ipyelk.*"
 follow_imports = "skip"
 ignore_missing_imports = true
@@ -286,11 +293,11 @@ jupyterlab = ">=4.1"
 cadquery = ">=2.5"  # [cad] mirror: OCC kernel from conda-forge (no cp313 pypi wheels)
 [tool.pixi.pypi-dependencies]
 longeron = { path = ".", editable = true, extras = ["dev", "ecore"] }
-ipyelk = { path = "vendor/ipyelk", editable = true }  # vendored, with local TLC
+ipyelk = ">=3.0.0,<4"  # mirrors [diagrams]; its wheel ships the jupyter-elk labextension
 
 [tool.pixi.feature.docs.pypi-dependencies]
 # mirrors [project.optional-dependencies].docs (the docs env also gets the
-# default feature: dev extras, editable ipyelk, node -- notebook execution)
+# default feature: dev extras, ipyelk, node -- notebook execution)
 sphinx = ">=8"
 myst-nb = ">=1.2"
 furo = ">=2024.8"
@@ -315,6 +322,11 @@ python = "3.12.*"
 [tool.pixi.feature.py313.dependencies]
 python = "3.13.*"
 
+[tool.pixi.feature.lab.dependencies]
+# every env but py310: ipykernel 7.0-7.3 can stop reading a client's
+# requests (ipykernel#1554), fixed in 7.4, which needs Python >= 3.11
+ipykernel = ">=7.4"
+
 [tool.pixi.feature.browser.pypi-dependencies]
 # mirrors [project.optional-dependencies].browser-test (dependency truth
 # stays in [project]; this feature only opts an environment into it)
@@ -323,19 +335,19 @@ pytest-rerunfailures = ">=14"
 pytest-timeout = ">=2.3"
 
 [tool.pixi.environments]
+default = ["lab"]
 # per-Python test environments; `pixi run -e py310 test` etc.
 py310 = ["py310"]
-py311 = ["py311"]
-py312 = ["py312"]
-py313 = ["py313"]
+py311 = ["py311", "lab"]
+py312 = ["py312", "lab"]
+py313 = ["py313", "lab"]
 # docs = default toolchain (node, dev extras for notebook execution) + sphinx
-docs = ["docs"]
+docs = ["docs", "lab"]
 # browser = default toolchain + playwright: the browser-truth test tier
-browser = ["browser"]
+browser = ["browser", "lab"]
 
 [tool.pixi.tasks]
 test = "pytest -q"
-test-vendor = "pytest -c pyproject.toml -q vendor/ipyelk/tests"
 lint = "ruff format --check src tests examples scripts notebooks docs && ruff check src tests examples scripts notebooks docs"
 format = "ruff format src tests examples scripts notebooks docs && ruff check --fix src tests examples scripts notebooks docs"
 typecheck = "mypy"
@@ -344,23 +356,22 @@ demo = "python examples/demo.py"
 stdlib = "python scripts/vendor_stdlib.py --prebuilt-only"
 notebooks = "python scripts/run_notebooks.py"
 hooks = "git config core.hooksPath scripts/git-hooks"
-# serve from the repo root so both notebooks/ (longeron tutorials) and
-# vendor/ipyelk/examples/ (ipyelk demos, incl. 07_Simulation) are browsable;
-# PYTHONHASHSEED pins kernel hashing so interactive runs are deterministic.
-# depends-on sync-labextension: JupyterLab serves the COPY of the vendored
-# jupyter-elk labextension that `pixi install` made inside each env, so a
-# rebuilt vendor bundle would otherwise keep serving stale code silently.
+# JupyterLab in notebooks/ (the longeron tutorials); PYTHONHASHSEED pins
+# kernel hashing so interactive runs are deterministic. depends-on
+# sync-labextension: the longeron launcher tile is a repo build that the
+# editable install never places in the env, so the task copies it there.
+# The jupyter-elk labextension comes installed with the ipyelk wheel.
 lab = { cmd = "jupyter lab notebooks/", env = { PYTHONHASHSEED = "0" }, depends-on = [
     "sync-labextension",
 ] }
-check = { depends-on = ["lint", "typecheck", "test", "test-vendor"] }
+check = { depends-on = ["lint", "typecheck", "test"] }
 
 [tool.pixi.feature.browser.tasks.test-browser]
 # the browser-truth tier (tests/browser/): boots JupyterLab headless and
 # drives it with Playwright. Defined on the browser feature, so
 # `pixi run test-browser` resolves to the browser environment. Depends on
 # sync-labextension for the same reason `lab` does: JupyterLab serves the
-# env's COPY of the vendored jupyter-elk bundle, and testing a stale copy
+# env's COPY of the longeron tile build, and testing a stale copy
 # proves nothing (browser binary: `pixi run -e browser playwright install
 # chromium`, once per machine). --reruns 1 is the retry-once flake policy
 # (see tests/browser/README.md). Hang layering: conftest's page watchdog
@@ -397,15 +408,15 @@ env = { PYTHONHASHSEED = "0", PYTHONUNBUFFERED = "1" }
 depends-on = ["sync-labextension"]
 
 [tool.pixi.tasks.sync-labextension]
-# rsync the repo's labextension BUILDS -- the vendored jupyter-elk
-# (vendor/ipyelk/src/_d/...) and the longeron launcher tile (npm/_d/...,
-# which editable installs never place: data_files only ship in wheels) --
+# rsync the repo's labextension BUILD -- the longeron launcher tile
+# (npm/_d/..., which editable installs never place: data_files only ship
+# in wheels; the jupyter-elk one arrives with the ipyelk wheel) --
 # over the SERVED copies (.pixi/envs/*/share/jupyter/labextensions/...),
 # warning first when a served copy is stale -- the classic "rebuilt the TS
 # but the fix didn't take" footgun (the env copy is made once, at install
 # time)
 cmd = """
-bash -euc 'sync() { src="$1"; rel="$2"; for root in .pixi/envs/*/share/jupyter/labextensions; do [ -d "$root" ] || continue; dst="$root/$rel"; if [ -d "$dst" ]; then diff -rq "$src" "$dst" >/dev/null 2>&1 || echo "WARNING: $dst was serving a STALE build (differs from the repo build); syncing" >&2; fi; mkdir -p "$dst"; rsync -a --delete "$src/" "$dst/"; done; }; sync "vendor/ipyelk/src/_d/share/jupyter/labextensions/@jupyrdf/jupyter-elk" "@jupyrdf/jupyter-elk"; sync "npm/_d/share/jupyter/labextensions/longeron" "longeron"'
+bash -euc 'sync() { src="$1"; rel="$2"; for root in .pixi/envs/*/share/jupyter/labextensions; do [ -d "$root" ] || continue; dst="$root/$rel"; if [ -d "$dst" ]; then diff -rq "$src" "$dst" >/dev/null 2>&1 || echo "WARNING: $dst was serving a STALE build (differs from the repo build); syncing" >&2; fi; mkdir -p "$dst"; rsync -a --delete "$src/" "$dst/"; done; }; sync "npm/_d/share/jupyter/labextensions/longeron" "longeron"'
 """
 
 [tool.pixi.tasks.parsers]

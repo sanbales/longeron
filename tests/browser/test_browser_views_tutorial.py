@@ -19,7 +19,7 @@ fixed:
   click in the explorer tab then updates the docked sheet;
 * **the console stays clean** (finding 1): the kernel-side selections
   the tutorial fires before the first diagram layout used to throw the
-  vendored ``getById`` TypeError (vendor patch 11 queues them instead);
+  ``getById`` TypeError (ipyelk queues them instead; once vendored patch 11);
   this scenario asserts NO page or console errors, with no allowances.
   Tutorial 3 lays out MORE diagrams than the retired model-app tutorial
   (the inline explorer, the standalone views, the toolbar), so the

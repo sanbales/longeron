@@ -53,11 +53,6 @@ SNAPSHOT_DIR = REPO / "docs" / "_static" / "widget-snapshots"
 MANIFEST_PATH = SNAPSHOT_DIR / "manifest.json"
 #: durable scratch (server log, Lab user settings) -- inspectable after a run
 SCRATCH = REPO / "build" / "widget-capture"
-#: the vendored jupyter-elk labextension build; passed as an EXTRA
-#: labextensions path so the served bundle is always THIS checkout's build,
-#: even when the interpreter's own env carries a stale copy (extra paths
-#: take precedence: jupyterlab_server keeps the first occurrence of a name)
-VENDOR_LABEXTENSIONS = REPO / "vendor/ipyelk/src/_d/share/jupyter/labextensions"
 
 WIDGET_VIEW_MIMETYPE = "application/vnd.jupyter.widget-view+json"
 VIEWPORT = {"width": 1500, "height": 1100}  # matches tests/browser/conftest.py
@@ -223,16 +218,10 @@ def start_lab_server() -> LabServer:
         # leaves a poisoned layout where the notebook is not the current
         # widget and the capture waits forever. Isolate per run.
         JUPYTERLAB_WORKSPACES_DIR=str(settings / "workspaces"),
-        # the kernel must import THIS tree's sources (and its vendored
-        # ipyelk) even when the editable install resolves elsewhere
+        # the kernel must import THIS tree's sources even when the
+        # editable install resolves elsewhere (ipyelk is the env's wheel)
         PYTHONPATH=os.pathsep.join(
-            path
-            for path in (
-                str(REPO / "src"),
-                str(REPO / "vendor" / "ipyelk" / "src"),
-                os.environ.get("PYTHONPATH", ""),
-            )
-            if path
+            path for path in (str(REPO / "src"), os.environ.get("PYTHONPATH", "")) if path
         ),
     )
     port = _free_port()
@@ -246,7 +235,6 @@ def start_lab_server() -> LabServer:
                 "jupyterlab",
                 "--no-browser",
                 "--LabApp.expose_app_in_browser=True",
-                f"--LabApp.extra_labextensions_path={VENDOR_LABEXTENSIONS}",
                 f"--port={port}",
                 "--ServerApp.port_retries=0",
                 f"--ServerApp.token={token}",

@@ -1,5 +1,84 @@
 # Release notes
 
+## 0.12.0 (unreleased)
+
+### Verification and conformance
+
+- **Every z3 `Optimize` query has a time limit, and an independent
+  query confirms each supremum**: `prove()`, the domain ladder and
+  `SmtSystem.maximize` stop each `Optimize` query after 10 s. Longeron
+  reports a supremum only when a second solver query finds no value
+  above it. On z3 5.1, the IsrPrime bound of 13.84 kg was a feasible
+  point, not the supremum. On z3 5.3, the same nonlinear query did not
+  terminate. `prove()` now reports no bound for IsrPrime on both
+  versions. Longeron runs on z3 5.1 to 5.3 without a version pin
+  (`z3-solver>=4.12`)
+
+### Diagrams and platform
+
+- **ipyelk 3 from PyPI**: the interactive diagrams run on the released
+  ipyelk 3.0 (`ipyelk>=3.0,<4`). The new `diagrams` extra installs it
+  from PyPI, and the `ui` and `dev` extras include it. Longeron no
+  longer carries the patched copy of ipyelk 2.1.1 in `vendor/ipyelk`.
+  The 14 local patches of that copy are in ipyelk upstream, for example
+  the headless-safe scheduling, the resend-with-backoff browser round
+  trips and the error channels. The ipyelk wheel installs the
+  jupyter-elk JupyterLab extension, so `sync-labextension` now syncs
+  only the longeron launcher tile
+
+- **The diagrams use the ipyelk 3.0 API**:
+  - The compartment headers set `LabelProperties(separator=True)`, and
+    ipyelk draws the separator rule above each header. The rule has the
+    ipyelk class `elkseparator`. The longeron stylesheet colors it per
+    kind and on selection and hover.
+  - The routing, direction and collapse tools record their change
+    reports with `Tool.record_reports()` and refresh through
+    `Diagram.refresh()`.
+  - The builders link the children and ports of each finished tree to
+    their parent. ipyelk 3.0 finds the root of a tree through these
+    links, and a tree with more than one root fails its first layout.
+  - The tests use `Document` and `model_dump()` in place of the
+    deprecated `Registry` and `.dict()`.
+
+- **The headless renderer runs elkjs 0.12.0**, the version that ipyelk
+  3.0 bundles for the browser. The deepscout headless layouts are
+  byte-identical to the layouts of elkjs 0.9.3
+
+- **ipyelk makes the first fit of each diagram view**: the builders set
+  `Viewer.fit_on_first_layout`, with `fit_padding` 24 and `fit_max_zoom`
+  1.0. Each view fits in the browser after its own first layout, so no
+  kernel message can be lost. A view that is hidden at its first layout
+  fits when it is first shown, for example a docked explorer in a
+  background tab. Longeron keeps only the fits that ipyelk does not
+  make: one fit after a direction flip, a fit on a resize of a viewport
+  that the user did not pan or zoom, and a fit of a cached explorer
+  diagram on a kind switch. The Fit button now uses the same padding
+  and zoom limit, so it does not enlarge a small diagram past its
+  natural size
+
+### Upgrade notes
+
+- **Install the diagrams with the `diagrams` extra**:
+  `pip install "longeron[diagrams]"` replaces
+  `pip install -e vendor/ipyelk`. The pixi environments install ipyelk
+  automatically
+- **A stylesheet that targets `.sysml-comp-rule` must target
+  `.elkseparator`**: in the browser, the compartment separator rule is
+  now the ipyelk separator
+- **`test-vendor` and `pytest-asyncio` are gone**: only the tests of
+  the vendored ipyelk used them
+- **Read the fit settings on the view**: `AutoFitTool.padding` and
+  `AutoFitTool.max_zoom` are gone. Use `widget.view.fit_padding` and
+  `widget.view.fit_max_zoom`. `AutoFitTool.sentinel` is now
+  `AutoFitTool.events`, and it no longer has a `fresh` counter
+- **JupyterLab sessions need ipykernel >= 7.4 on Python >= 3.11**:
+  ipykernel 7.0-7.3 can stop reading a notebook's kernel connection
+  after a reply crosses a request. A widget click then never reaches
+  the kernel (ipykernel#1554). On Python >= 3.11, the `dev` extra and
+  the pixi environments require ipykernel 7.4. If slider updates lag
+  with ipykernel 7.4 and JupyterLab 4.6, set `commsOverSubshells` to
+  `disabled` (an ipyelk 3.0 known issue)
+
 ## 0.11.0 (2026-08-29)
 
 ### The DeepScout program

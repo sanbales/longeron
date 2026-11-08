@@ -26,7 +26,7 @@ returned handle bound as `app`.
   `tests/test_labextension.py`), the `longeron:launch` command, and the
   `ILauncher`/`ICommandPalette` registrations.
 - `_d/share/jupyter/labextensions/longeron/` — the COMMITTED federated
-  build (the `jupyterlab.outputDir`), mirroring how `vendor/ipyelk` ships
+  build (the `jupyterlab.outputDir`), mirroring how ipyelk ships
   its `src/_d` build inside a wheel. The repo-root `setup.py` maps this
   tree (plus `install.json`) into the wheel as data files, so
   `pip install longeron` places it under
@@ -42,5 +42,5 @@ jlpm build     # tsc -> lib/, then `jupyter labextension build .` -> _d/
 
 Then commit the refreshed `_d/` output. Editable installs do **not** place
 data files: for a dev environment run `pixi run sync-labextension`, which
-rsyncs both this build and the vendored jupyter-elk build over the served
+rsyncs this build over the served
 copies in `.pixi/envs/*/share/jupyter/labextensions/`.

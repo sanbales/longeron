@@ -1,5 +1,0 @@
-channels:
-  - conda-forge
-  - nodefaults
-dependencies:
-  - pixi ==0.34.0

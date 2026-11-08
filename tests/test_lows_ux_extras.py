@@ -35,7 +35,7 @@ def test_missing_extra_error_is_both_import_and_sysml_error():
 def test_diagrams_needs_ipyelk(monkeypatch):
     _block(monkeypatch, "ipyelk")
     monkeypatch.delitem(sys.modules, "longeron.diagrams", raising=False)
-    with pytest.raises(MissingExtraError, match=r"pip install -e vendor/ipyelk"):
+    with pytest.raises(MissingExtraError, match=r"longeron\[diagrams\]"):
         importlib.import_module("longeron.diagrams")
 
 

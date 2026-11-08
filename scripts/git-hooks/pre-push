@@ -23,13 +23,31 @@
 
 set -euo pipefail
 
+# git hands the refs being pushed on stdin ("<local ref> <sha> <remote ref>
+# <sha>" per line); git-lfs needs the same lines to upload the LFS objects
+# those refs carry, so capture them once and feed them to it on every exit.
+REFS="$(cat)"
+command -v git-lfs >/dev/null 2>&1 || {
+    echo "pre-push: git-lfs is not installed; this repo stores binaries in LFS" >&2
+    exit 2
+}
+lfs_push() {
+    if [ -n "$REFS" ]; then
+        printf '%s\n' "$REFS" | git lfs pre-push "$@"  # $(cat) dropped the final newline
+    fi
+}
+
 if [ "${LONGERON_PUSH_UNGATED:-0}" = "1" ]; then
     echo "pre-push: UNGATED push (LONGERON_PUSH_UNGATED=1) -- you own the CI board" >&2
+    lfs_push "$@"
     exit 0
 fi
 
 REPO="$(git rev-parse --show-toplevel)"
 cd "$REPO"
+# git exports GIT_DIR to hooks run from a linked worktree; every `git init`
+# the suite runs in a temp dir would then target this repo instead
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
 
 PIXI_PY="$REPO/.pixi/envs/default/bin/python"
 RUFF="$REPO/.pixi/envs/default/bin/ruff"
@@ -58,3 +76,4 @@ else
 fi
 
 echo "pre-push: battery green -- pushing" >&2
+lfs_push "$@"
