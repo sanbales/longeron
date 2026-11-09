@@ -18,6 +18,7 @@ import longeron
 from longeron.analysis import AnalysisError, geometry, trades
 from longeron.analysis.grand import (
     ATLANTA_LOOP,
+    DEFAULT_SIZING_CONTEXTS,
     drone_scene,
     grand_dashboard,
     scene_for,
@@ -378,6 +379,46 @@ class TestCameraWhatIf:
         dash.elevation.value = -15.0
 
 
+class TestSubjectScoreboard:
+    """The scoreboard scores the subject's requirement set, each requirement
+    for the instance where it applies."""
+
+    def test_board_scores_the_requirement_set(self, dash):
+        assert list(dash.requirements) == [
+            "DeepScout::installation",
+            "ScoutMissions::MissionRequirements::IsrTasking",
+            "ScoutMissions::MissionRequirements::PayloadBayFit",
+            "ScoutMissions::StabilityRequirements::PitchStability",
+            "ScoutMissions::StabilityRequirements::PitchRollAuthority",
+            "ScoutMissions::StabilityRequirements::YawStability",
+        ]
+        roots = [row.qname for row in dash.scoreboard.table() if row.depth == 1]
+        assert roots == list(dash.requirements)
+
+    def test_the_isr_winner_measures_its_tasking(self, dash):
+        # holding station needs no hover: the tasking applies to the wing
+        tasking = _leaf(json.loads(dash.board.nodes_json), "IsrTasking")
+        assert tasking["measured"] is True and tasking["utility"] == 1.0
+
+    def test_a_dropdown_change_rescores_the_board(self, dash):
+        dash.knobs["minStationMinutes"].value = 240.0
+        assert _leaf(json.loads(dash.board.nodes_json), "IsrTasking")["utility"] == 1.0
+        dash.knobs["battery"].value = "tattu3s"  # far below 240 min on station
+        assert _leaf(json.loads(dash.board.nodes_json), "IsrTasking")["utility"] == 0.0
+        dash.knobs["battery"].value = "liion6s6p"
+        dash.knobs["minStationMinutes"].value = 25.0
+        assert _leaf(json.loads(dash.board.nodes_json), "IsrTasking")["utility"] == 1.0
+
+    def test_the_mission_toggle_rescores_the_board(self, dash):
+        dash.mission_toggle.value = "logistics"
+        assert "ScoutMissions::MissionRequirements::LogisticsTasking" in dash.requirements
+        assert _leaf(json.loads(dash.board.nodes_json), "LogisticsTasking") is not None
+        dash.mission_toggle.value = "ISR"
+        dash.diagram.view.selection.ids = [HOME]
+        dash.diagram.view.selection.ids = []
+        assert _leaf(json.loads(dash.board.nodes_json), "IsrTasking") is not None
+
+
 class TestSizingStrip:
     def test_loiter_slider_reruns_the_problem(self, dash):
         dash.loiter.value = 15.0
@@ -398,6 +439,27 @@ class TestSizingStrip:
 
     def test_margin_rows_render(self, dash):
         assert "stationFloor" in dash.sizing_card.value
+
+    def test_bounds_come_from_the_sizing_context(self, dash):
+        # IsrPrime's aboveStall / belowCruise asserts: the model states 11..24
+        assert (dash.loiter.min, dash.loiter.max) == (11.0, 24.0)
+        design_vars = dash.optimum.problem.model.get_design_vars()
+        (bounds,) = design_vars.values()
+        assert (float(bounds["lower"]), float(bounds["upper"])) == (11.0, 24.0)
+        assert "ScoutSizing::IsrPrime" in dash.sizing_title.value
+        assert "ScoutSizing::IsrStation" in dash.verdict_title.value
+
+    def test_a_mission_without_a_context_shows_an_honest_absence(self, dash):
+        isr_problem = dash.problem
+        dash.mission_toggle.value = "logistics"
+        assert dash.problem is None and dash.loiter is None and dash.smt_sat is None
+        assert "no context for logistics" in dash.sizing_title.value
+        assert "no context for logistics" in dash.verdict_title.value
+        assert dash.sizing_contexts == {"ISR": DEFAULT_SIZING_CONTEXTS["ISR"]}
+        dash.mission_toggle.value = "ISR"
+        assert dash.problem is isr_problem  # built once per mission
+        dash.diagram.view.selection.ids = [HOME]
+        dash.diagram.view.selection.ids = []
 
 
 class TestVerdictStrip:
@@ -527,6 +589,11 @@ class TestSubject:
         assert "<b>logistics</b>" in dash.header.value
         self._home(dash)
         assert dash.subject.mission == "ISR" and "sensor" in dash.knobs
+
+    def test_camera_bounds_come_from_the_camera_case(self, dash):
+        # ScoutSurfaces::CameraWhatIf's assume constraints
+        assert (dash.elevation.min, dash.elevation.max) == (-90.0, 90.0)
+        assert (dash.azimuth.min, dash.azimuth.max) == (-180.0, 180.0)
 
     def test_each_reaction_stays_under_the_continuous_update_budget(self, dash):
         # PLAN risk: a reaction over 300 ms needs continuous_update=False

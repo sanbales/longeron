@@ -38,6 +38,14 @@
 - **`scene_for` stamps the declared camera on every craft family**:
   `occlusion_report` measures a fleet shell without a `camera=`
   argument
+- **The grand tour scores the subject**: the scoreboard scores each
+  requirement that applies to the subject, for the mission architecture
+  or for its airframe. The sizing and Z3 strips show the sizing context
+  of the subject's mission. A mission without a sizing context shows an
+  honest absence. The model supplies the bounds of the loiter and
+  camera sliders
+- **`requirement_set` includes the requirement usages that a package
+  owns**, for example `DeepScout::installation`
 
 ### Verification and conformance
 
@@ -118,6 +126,9 @@
 - **`grand_dashboard(assembly=...)` is gone**: pass `mission=` and
   `airframe=`, a variant name of `AirframeChoice`. The default subject
   is the ISR winner
+- **`grand_dashboard(sizer=..., station_requirement=...,
+  station_var=...)` are gone**: pass `sizing_contexts={"ISR":
+  (sizer, requirement, station_attribute)}`
 
 ## 0.11.0 (2026-08-29)
 

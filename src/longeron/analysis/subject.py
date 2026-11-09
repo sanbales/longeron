@@ -18,10 +18,10 @@ The module has three pure functions over the model and the trade study
 * :func:`craft_variant` maps a clicked definition to its airframe
   variant. A build configuration such as ``Rotorcraft::QuadCopter`` is
   not a catalog airframe, so it maps to ``None``.
-* :func:`requirement_set` pairs each requirement definition with the
-  first instance of the subject where the requirement applies. The
-  interpreter decides conformance to the subject parameter and
-  applicability.
+* :func:`requirement_set` pairs each requirement definition, and each
+  requirement usage that a package owns, with the first instance of the
+  subject where the requirement applies. The interpreter decides
+  conformance to the subject parameter and applicability.
 """
 
 from __future__ import annotations
@@ -159,9 +159,12 @@ def craft_variant(study: TradeStudy, element: M.Element, *, point: str = "airfra
 def requirement_set(
     mission: Instance, airframe: Instance, *, interp: Interpreter
 ) -> dict[str, Instance]:
-    """Each applicable requirement definition, with the instance it scores.
+    """Each applicable requirement, with the instance it scores.
 
-    ``mission`` is an instance of the mission definition, and
+    A requirement here is a requirement definition, or a requirement usage
+    that a package owns (such as ``DeepScout::installation``). A nested
+    requirement usage scores with its owner. ``mission`` is an instance of
+    the mission definition, and
     ``airframe`` is the airframe instance that ``mission`` holds. If
     ``mission`` or ``airframe`` conforms to the type of the subject
     parameter, the requirement definition is a candidate. The
@@ -175,7 +178,13 @@ def requirement_set(
 
     pairs: dict[str, Instance] = {}
     for req in interp.model.iter_tree():
-        if not (isinstance(req, M.Definition) and req.kind == "requirement"):
+        if (
+            not (
+                isinstance(req, M.Definition)
+                or (isinstance(req, M.Usage) and isinstance(req.owner, M.Package))
+            )
+            or req.kind != "requirement"
+        ):
             continue
         # the first subject member is the one check_requirement binds
         subjects = [

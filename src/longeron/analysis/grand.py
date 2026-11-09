@@ -38,19 +38,27 @@ subject.  The panes:
   the subject craft;
 * a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
-  scoring the model's own requirement hierarchy, repainted live as the
-  measured geometry changes;
+  scoring the subject's requirement set
+  (:func:`longeron.analysis.subject.requirement_set`).  Each requirement
+  scores for the subject instance where it applies: the mission
+  architecture, or its airframe.  The board repaints live as the subject
+  and the measured geometry change;
 * a **camera what-if** card -- elevation/azimuth sliders that re-run the
   CAD-native occlusion measure (:func:`longeron.analysis.geometry.
   occlusion_report`, deterministic mesh engine) on the subject craft's
   declared camera on every move;
-* an **OpenMDAO sizing** strip -- the sizing part's generated ``Problem``
-  (:func:`longeron.analysis.mdao.build_problem`), re-run live from a
-  loiter-speed slider, with a one-click driver run that snaps the slider
-  to the optimum;
+* an **OpenMDAO sizing** strip -- the generated ``Problem``
+  (:func:`longeron.analysis.mdao.build_problem`) of the mission's
+  **sizing context**, a frozen sizing part such as
+  ``ScoutSizing::IsrPrime``.  A loiter-speed slider re-runs it live, and
+  a one-click driver run snaps the slider to the optimum.  The model
+  supplies the slider bounds and the optimizer bounds.  The strip title
+  names the sizing context;
 * a **Z3 verdict** strip -- requirement-consistency cards
-  (:func:`longeron.analysis.smt.to_smt`): the design point's SAT witness
-  beside an impossible what-if's UNSAT conflict core;
+  (:func:`longeron.analysis.smt.to_smt`) for the same sizing context: the
+  design point's SAT witness beside an impossible what-if's UNSAT
+  conflict core.  A mission without a sizing context shows an honest
+  absence in both strips;
 * a **Cesium mission** pane (:mod:`longeron.widgets.mission3d`) flying
   the subject's geometry through the recorded execution of the shared
   ``FlightStates`` machine over the shared route, at satellite imagery
@@ -73,8 +81,11 @@ traitlets observers (so the whole surface works headless):
 * any subject change -> the subject scene re-bakes (the stale entry of
   :attr:`longeron.analysis.link.ConfigViewBinding.scenes` is replaced),
   the 3D pane shows the subject, the camera card measures the subject's
-  declared camera, the Cesium pane flies the subject's mesh, and the
-  header names the new subject;
+  declared camera, the scoreboard re-scores the subject's requirement
+  set, the Cesium pane flies the subject's mesh, and the header names
+  the new subject;
+* mission change -> the sizing and Z3 strips show the new mission's
+  sizing context, built on its first use, or an honest absence;
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
 * containment tree selection -> diagram selection of the element, or of
   its nearest drawn ancestor when the diagram does not draw the element
@@ -109,17 +120,19 @@ from math import cos, floor, log10, pi, radians, sin, tan
 from typing import Any, cast
 
 from .. import model as M
-from ..interpreter import Interpreter
+from ..interpreter import Instance, Interpreter
 from ..widgets.mission3d import Imagery
 from . import geometry
 from ._expr import AnalysisError
 from .dashboard import DEFAULT_MISSIONS, _ipywidgets
 from .knobs import derive_knobs
-from .subject import MissionName, Preset, Subject, craft_variant, preset
+from .subject import MissionName, Preset, Subject, craft_variant, preset, requirement_set
 from .trades import Architecture, TradeStudy
+from .verify import attribute_domains
 
 __all__ = [
     "ATLANTA_LOOP",
+    "DEFAULT_SIZING_CONTEXTS",
     "FLIGHT_EVENTS",
     "drone_scene",
     "grand_dashboard",
@@ -141,6 +154,14 @@ ATLANTA_LOOP: tuple[tuple[float, float, float], ...] = (
 #: default event feed for the flight state machine replay
 #: (the ``Interpreter.simulate`` protocol: numbers advance the clock)
 FLIGHT_EVENTS: tuple[Any, ...] = (2.0, "launch", 6.0, "airborne", 150.0, "low_battery", 10.0)
+
+#: default sizing contexts of :func:`grand_dashboard`: mission name ->
+#: ``(sizing part, station requirement, station attribute)``.  Only the ISR
+#: mission has a frozen sizing context in the DeepScout program today, so
+#: the logistics and intercept strips show an honest absence.
+DEFAULT_SIZING_CONTEXTS: dict[MissionName, tuple[str, str, str]] = {
+    "ISR": ("ScoutSizing::IsrPrime", "ScoutSizing::IsrStation", "stationMinutes"),
+}
 
 #: the 30.5 mm stack heuristic -- the demo model carries no ESC part
 _ESC_MASS = 0.012
@@ -554,6 +575,10 @@ def _card(title: str, body: str) -> str:
     return f'<div style="{_CARD_STYLE}"><div style="{_TITLE_STYLE}">{title}</div>{body}</div>'
 
 
+def _strip_title(title: str) -> str:
+    return f'<div style="{_TITLE_STYLE}">{title}</div>'
+
+
 def _stat(label: str, value: str, *, color: str = "inherit") -> str:
     return (
         '<div style="display:flex; justify-content:space-between; gap:8px; margin:1px 0">'
@@ -660,11 +685,10 @@ def grand_dashboard(
     mission: MissionName = "ISR",
     airframe: str | None = None,
     states: str = "DeepScout::FlightStates",
-    sizer: str = "ScoutSizing::IsrPrime",
-    station_requirement: str = "ScoutSizing::IsrStation",
-    station_var: str = "stationMinutes",
+    sizing_contexts: Mapping[MissionName, tuple[str, str, str]] = DEFAULT_SIZING_CONTEXTS,
     loiter_var: str = "loiterSpeed",
     what_if_station: float = 420.0,
+    camera_case: str = "ScoutSurfaces::CameraWhatIf",
     values: Mapping[str, Any] | None = None,
     waypoints: Sequence[Sequence[float]] = ATLANTA_LOOP,
     events: Sequence[Any] = FLIGHT_EVENTS,
@@ -684,15 +708,30 @@ def grand_dashboard(
     ``mission`` names the first subject's mission, and ``airframe`` its
     airframe variant.  The default airframe is the mission's winner: the
     airframe whose preset (:func:`~longeron.analysis.subject.preset`) has
-    the best mission metric.  ``sizing`` (default: ``model`` itself)
-    carries the continuous side: ``sizer`` becomes the OpenMDAO problem
-    behind the loiter slider, and ``station_requirement`` the Z3
-    consistency cards -- the what-if card demands ``station_var >=
-    what_if_station`` with ``loiter_var`` freed, an impossible floor whose
-    UNSAT core names the binding constraints.  ``values`` injects extra
-    measured scoreboard bindings (e.g. performance measures computed
-    through the interpreter); the live occlusion and disc-overlap measures
-    of the subject craft are merged on top.
+    the best mission metric.
+
+    The scoreboard scores the subject's requirement set
+    (:func:`~longeron.analysis.subject.requirement_set`), each requirement
+    for the subject instance where it applies.  ``values`` injects extra
+    measured scoreboard bindings, for example performance measures that
+    the interpreter computes.  The live occlusion and disc-overlap
+    measures of the subject craft merge on top.
+
+    ``sizing`` (default: ``model`` itself) carries the continuous side.
+    ``sizing_contexts`` maps a mission to its **sizing context**: the
+    sizing part, the station requirement, and the station attribute.  For
+    the subject's mission, the sizing part becomes the OpenMDAO problem
+    behind the ``loiter_var`` slider, and the requirement becomes the Z3
+    consistency cards.  The what-if card demands ``station attribute >=
+    what_if_station`` with ``loiter_var`` freed.  That floor is
+    impossible, and its UNSAT core names the binding constraints.  The
+    model supplies the slider bounds and the optimizer bounds
+    (:func:`~longeron.analysis.knobs.derive_knobs` on the sizing part).
+    Each context builds once, when its mission first becomes the
+    subject's mission.  A mission without a sizing context shows an
+    honest absence in both strips.  ``camera_case`` names the analysis
+    case whose assume constraints bound the camera sliders
+    (:func:`~longeron.analysis.verify.attribute_domains`).
 
     See the module docstring for the pane list and the wiring map.  The
     returned layout exposes every piece for scripting and tests:
@@ -710,8 +749,12 @@ def grand_dashboard(
     ``.board`` (+ ``.scoreboard``, the current
     :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
-    ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum``,
-    ``.smt_sat`` / ``.smt_what_if``, ``.mission`` (the Cesium viewer) /
+    ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum`` /
+    ``.sizing_card`` and ``.smt_sat`` / ``.smt_what_if`` / ``.verdicts``
+    (the current mission's sizing context, each ``None`` when the mission
+    has none), ``.sizing_title`` / ``.verdict_title`` (the strip titles),
+    ``.requirements`` (requirement qualified name -> the subject
+    instance it scores), ``.mission`` (the Cesium viewer) /
     ``.track``, ``.mesh`` / ``.part_map`` / ``.camera`` (the subject
     scene, its identity keys, and its declared camera, ``None`` when the
     craft declares none), ``.header``, ``.config_view`` (the
@@ -731,7 +774,8 @@ def grand_dashboard(
         _tree_data,
     )
     from . import link, mdao, mission3d, smt
-    from .scoreboard import scoreboard
+    from .scoreboard import Scoreboard, scoreboard
+    from .surfaces import _absence_html  # surfaces imports this module
 
     widgets = _ipywidgets()
     sizing_model = sizing if sizing is not None else model
@@ -795,8 +839,12 @@ def grand_dashboard(
             tilt = mission3d.model_tilt(interp, qname)
         except AnalysisError:  # no cruiseTilt: the shell flies level
             tilt = 0.0
+        instance = study.instance(subject.mix(), subject.overrides)
         return {
             "architecture": architecture,
+            "requirements": requirement_set(
+                instance, instance.get("airframe"), interp=study.interp
+            ),
             "craft": qname,
             "mesh": mesh,
             "part_map": part_map,
@@ -805,6 +853,18 @@ def grand_dashboard(
             "disc_overlap": disc_overlap,
             "tilt": tilt,
         }
+
+    def _subject_board(
+        requirements: Mapping[str, Instance], measured: Mapping[str, Any]
+    ) -> Scoreboard:
+        """The subject's requirement set, each scored for its own instance."""
+
+        targets = [
+            element
+            for qname in requirements
+            if isinstance(element := interp.resolve(qname), (M.Definition, M.Usage))
+        ]
+        return scoreboard(targets, values=measured, subjects=requirements)
 
     if mission not in DEFAULT_MISSIONS:
         raise AnalysisError(f"unknown mission {mission!r} (have: {sorted(DEFAULT_MISSIONS)})")
@@ -823,31 +883,9 @@ def grand_dashboard(
         width_px=_VIEWER_PX,
         height_px=_ROW1_PX,
     )
-    board_score = scoreboard(model, values={**base_values, "occludedFraction": 0.0})
+    board_score = _subject_board(baked["requirements"], base_values)
     board = board_score.widget("voronoi", width_px=_BOARD_PX, height_px=_ROW1_PX - 26, seed=42)
     board_qnames = {row.qname for row in board_score.table()}
-
-    # -- OpenMDAO: the generated sizing problem + its optimization twin ------
-    build = mdao.build_problem(sizing_model, sizer, requirements=(station_requirement,))
-    build.problem.run_model()
-    optimum = mdao.build_problem(
-        sizing_model, sizer, setup=False, requirements=(station_requirement,)
-    )
-    mdao.add_optimization(
-        optimum, objective=station_var, design_vars={loiter_var: (11.0, 24.0)}, maximize=True
-    )
-    optimum.problem.setup()
-
-    # -- Z3: the design point's witness beside an impossible what-if ---------
-    smt_sat = smt.to_smt(sizing_model, sizer, requirements=(station_requirement,)).check()
-    what_if_system = smt.to_smt(
-        sizing_model, sizer, requirements=(station_requirement,), free=(loiter_var,)
-    )
-    what_if_label = f"{station_var} &ge; {what_if_station:g} (what-if)"
-    what_if_system.assertions.append(
-        (what_if_label, what_if_system.variables[station_var] >= float(what_if_station))
-    )
-    smt_what_if = what_if_system.check()
 
     # -- Cesium: the state machine's recorded execution over the route -------
     # FlightStates and the route are shared by every mission (no mission
@@ -875,10 +913,18 @@ def grand_dashboard(
         "layout": widgets.Layout(width="98%"),
     }
     camera0 = baked["camera"] or {"elevation": 0.0, "azimuth": 0.0}
+    # the camera bounds are the case's assume constraints, mined from the model
+    case = interp.resolve(camera_case)
+    if not isinstance(case, (M.Definition, M.Usage)):
+        raise AnalysisError(f"camera case {camera_case!r} is not a definition")
+    angles = attribute_domains(interp, case, ("elevation", "azimuth"))
+    for name, dom in angles.items():
+        if dom.lo is None or dom.hi is None:
+            raise AnalysisError(f"{camera_case} bounds {name} on fewer than two sides")
     elevation = widgets.FloatSlider(
         value=camera0["elevation"],
-        min=-90.0,
-        max=90.0,
+        min=angles["elevation"].lo,
+        max=angles["elevation"].hi,
         step=5.0,
         description="elevation",
         readout_format=".0f",
@@ -886,26 +932,12 @@ def grand_dashboard(
     )
     azimuth = widgets.FloatSlider(
         value=camera0["azimuth"],
-        min=-180.0,
-        max=180.0,
+        min=angles["azimuth"].lo,
+        max=angles["azimuth"].hi,
         step=15.0,
         description="azimuth",
         readout_format=".0f",
         **slider_kw,
-    )
-    loiter = widgets.FloatSlider(
-        value=float(build.problem.get_val(loiter_var)[0]),
-        min=11.0,
-        max=24.0,
-        step=0.5,
-        description="loiter m/s",
-        readout_format=".1f",
-        **slider_kw,
-    )
-    optimize = widgets.Button(
-        description="maximize station time",
-        tooltip="run the OpenMDAO driver and snap the slider to the optimum",
-        layout=widgets.Layout(width="98%"),
     )
     mission_toggle = widgets.ToggleButtons(
         options=list(DEFAULT_MISSIONS),
@@ -914,7 +946,6 @@ def grand_dashboard(
         layout=widgets.Layout(width="98%"),
     )
     readout = widgets.HTML()
-    sizing_card = widgets.HTML()
     subject_card = widgets.HTML()
     knob_grid = widgets.GridBox(
         layout=widgets.Layout(width="98%", grid_template_columns="1fr 1fr", grid_gap="0 6px")
@@ -937,6 +968,7 @@ def grand_dashboard(
         box.mesh = pieces["mesh"]
         box.part_map = dict(pieces["part_map"])
         box.camera = None if pieces["camera"] is None else dict(pieces["camera"])
+        box.requirements = dict(pieces["requirements"])
         live["cone_length"] = pieces["cone_length"]
         live["disc_overlap"] = pieces["disc_overlap"]
         box.track = replace(replay, tilt_deg=pieces["tilt"])
@@ -955,8 +987,10 @@ def grand_dashboard(
             merged["occludedFraction"] = occluded
         if live["disc_overlap"] is not None:
             merged["discOverlapVolume"] = live["disc_overlap"]
-        score = scoreboard(model, values=merged)
+        score = _subject_board(box.requirements, merged)
         box.scoreboard = score
+        board_qnames.clear()
+        board_qnames.update(row.qname for row in score.table())
         payload = json.dumps(score.payload())
         if board.nodes_json != payload:
             board.nodes_json = payload
@@ -1071,6 +1105,8 @@ def grand_dashboard(
                 _render_knobs()
             finally:
                 sync["knobs"] = False
+            if subject.mission != old_subject.mission:
+                _show_strips(subject.mission)
             if box.camera is not None:  # the new craft's declared camera angles
                 sync["camera"] = True
                 try:
@@ -1102,17 +1138,149 @@ def grand_dashboard(
             plain = {k: v for k, v in box.subject.overrides.items() if "." not in k}
             _set_subject(replace(subject, overrides=plain))
 
-    def _on_loiter(_change: Any = None) -> None:
-        build.problem.set_val(loiter_var, float(loiter.value))
-        build.problem.run_model()
-        sizing_card.value = _sizing_html(build.problem, station_var, build.constraints)
+    # -- the sizing and Z3 strips: one sizing context per mission ----------
+    sizing_interp = Interpreter(sizing_model)
+    strips: dict[str, dict[str, Any] | None] = {}
 
-    def _on_optimize(_button: Any = None) -> None:
-        with redirect_stdout(io.StringIO()):  # the scipy driver prints its epilogue
-            optimum.problem.set_val(loiter_var, float(loiter.value))
-            optimum.problem.run_driver()
-        loiter.value = round(float(optimum.problem.get_val(loiter_var)[0]), 2)
-        _on_loiter()  # a no-op change (already-optimal slider) still repaints
+    def _build_strip(sizer: str, requirement: str, station_var: str) -> dict[str, Any]:
+        """The OpenMDAO problem, its optimization twin, and the Z3 cards of one context."""
+
+        context = sizing_interp.resolve(sizer)
+        if not isinstance(context, (M.Definition, M.Usage)):
+            raise AnalysisError(f"sizing context {sizer!r} is not a definition")
+        knob = next(
+            (k for k in derive_knobs(sizing_interp, context).sliders if k.name == loiter_var), None
+        )
+        if knob is None:
+            raise AnalysisError(
+                f"{sizer} bounds no input attribute {loiter_var!r} on both sides "
+                "(the loiter slider and the optimizer take their bounds from the model)"
+            )
+        build = mdao.build_problem(sizing_model, sizer, requirements=(requirement,))
+        build.problem.run_model()
+        optimum = mdao.build_problem(sizing_model, sizer, setup=False, requirements=(requirement,))
+        mdao.add_optimization(
+            optimum,
+            objective=station_var,
+            design_vars={loiter_var: (knob.low, knob.high)},
+            maximize=True,
+        )
+        optimum.problem.setup()
+        smt_sat = smt.to_smt(sizing_model, sizer, requirements=(requirement,)).check()
+        what_if_system = smt.to_smt(
+            sizing_model, sizer, requirements=(requirement,), free=(loiter_var,)
+        )
+        what_if_label = f"{station_var} &ge; {what_if_station:g} (what-if)"
+        what_if_system.assertions.append(
+            (what_if_label, what_if_system.variables[station_var] >= float(what_if_station))
+        )
+        smt_what_if = what_if_system.check()
+        loiter = widgets.FloatSlider(
+            value=float(build.problem.get_val(loiter_var)[0]),
+            min=knob.low,
+            max=knob.high,
+            step=knob.step,
+            description="loiter m/s",
+            readout_format=".1f",
+            **slider_kw,
+        )
+        optimize = widgets.Button(
+            description="maximize station time",
+            tooltip="run the OpenMDAO driver and snap the slider to the optimum",
+            layout=widgets.Layout(width="98%"),
+        )
+        sizing_card = widgets.HTML()
+        verdicts = widgets.HTML(
+            _verdict_html(
+                f"{requirement.split('::')[-1]} at the design point",
+                smt_sat,
+                "".join(
+                    _stat(path, f"{smt_sat.witness[path]:.1f}")
+                    for path in (loiter_var, station_var)
+                    if path in smt_sat.witness
+                ),
+            )
+            + _verdict_html(
+                what_if_label,
+                smt_what_if,
+                "".join(
+                    f'<div style="color:{_BAD}; {_NUM}">&#10007; {name}</div>'
+                    for name in smt_what_if.core
+                    if not name.endswith(".value")
+                )
+                or f'<div style="color:{_DIM}">no conflict core</div>',
+            )
+        )
+
+        def _on_loiter(_change: Any = None) -> None:
+            build.problem.set_val(loiter_var, float(loiter.value))
+            build.problem.run_model()
+            sizing_card.value = _sizing_html(build.problem, station_var, build.constraints)
+
+        def _on_optimize(_button: Any = None) -> None:
+            with redirect_stdout(io.StringIO()):  # the scipy driver prints its epilogue
+                optimum.problem.set_val(loiter_var, float(loiter.value))
+                optimum.problem.run_driver()
+            loiter.value = round(float(optimum.problem.get_val(loiter_var)[0]), 2)
+            _on_loiter()  # a no-op change (already-optimal slider) still repaints
+
+        loiter.observe(_on_loiter, names="value")
+        optimize.on_click(_on_optimize)
+        _on_loiter()
+        return {
+            "sizer": sizer,
+            "requirement": requirement,
+            "problem": build,
+            "optimum": optimum,
+            "smt_sat": smt_sat,
+            "smt_what_if": smt_what_if,
+            "loiter": loiter,
+            "optimize": optimize,
+            "sizing_card": sizing_card,
+            "verdicts": verdicts,
+        }
+
+    sizing_title = widgets.HTML()
+    verdict_title = widgets.HTML()
+    sizing_body = widgets.VBox(layout=widgets.Layout(width="100%"))
+    verdict_body = widgets.VBox(layout=widgets.Layout(width="100%"))
+
+    def _show_strips(name: MissionName) -> None:
+        """Show the sizing context of mission ``name``, built on first use."""
+
+        if name not in strips:
+            entry = sizing_contexts.get(name)
+            strips[name] = None if entry is None else _build_strip(*entry)
+        strip = strips[name]
+        for attr in (
+            "loiter",
+            "optimize",
+            "problem",
+            "optimum",
+            "sizing_card",
+            "smt_sat",
+            "smt_what_if",
+            "verdicts",
+        ):
+            setattr(box, attr, None if strip is None else strip[attr])
+        if strip is None:
+            absent = _absence_html(
+                f"no sizing context for {name}",
+                f"The model declares no frozen sizing context for the {name} mission.",
+            )
+            sizing_title.value = _strip_title(f"OpenMDAO sizing -- no context for {name}")
+            verdict_title.value = _strip_title(
+                f"Z3 requirement consistency -- no context for {name}"
+            )
+            sizing_body.children = [widgets.HTML(absent)]
+            verdict_body.children = [widgets.HTML(absent)]
+            return
+        sizing_title.value = _strip_title(
+            f"OpenMDAO sizing -- {strip['sizer']}, the {name} context"
+        )
+        verdict_title.value = _strip_title(f"Z3 requirement consistency -- {strip['requirement']}")
+        sizing_body.children = [strip["loiter"], strip["sizing_card"], strip["optimize"]]
+        verdict_body.children = [strip["verdicts"]]
 
     syncing = {"active": False}  # reentrancy guard: diagram <-> scoreboard
 
@@ -1200,8 +1368,6 @@ def grand_dashboard(
     board.on_select(_on_board)
     elevation.observe(_on_camera, names="value")
     azimuth.observe(_on_camera, names="value")
-    loiter.observe(_on_loiter, names="value")
-    optimize.on_click(_on_optimize)
     mission_toggle.observe(_on_mission, names="value")
     _render_knobs()
 
@@ -1227,8 +1393,8 @@ def grand_dashboard(
         ),
     )
 
-    def _strip_card(title: str, children: list[Any], *, flex: str = "1 1 0") -> Any:
-        titled = widgets.HTML(f'<div style="{_TITLE_STYLE}">{title}</div>')
+    def _strip_card(title: Any, children: list[Any], *, flex: str = "1 1 0") -> Any:
+        titled = widgets.HTML(_strip_title(title)) if isinstance(title, str) else title
         card = widgets.VBox(
             [titled, *children],
             layout=widgets.Layout(
@@ -1241,27 +1407,6 @@ def grand_dashboard(
         card.add_class("lgn-grand-card")
         return card
 
-    verdicts = widgets.HTML(
-        _verdict_html(
-            f"{station_requirement.split('::')[-1]} at the design point",
-            smt_sat,
-            "".join(
-                _stat(path, f"{smt_sat.witness[path]:.1f}")
-                for path in (loiter_var, station_var)
-                if path in smt_sat.witness
-            ),
-        )
-        + _verdict_html(
-            what_if_label,
-            smt_what_if,
-            "".join(
-                f'<div style="color:{_BAD}; {_NUM}">&#10007; {name}</div>'
-                for name in smt_what_if.core
-                if not name.endswith(".value")
-            )
-            or f'<div style="color:{_DIM}">no conflict core</div>',
-        )
-    )
     row2 = widgets.HBox(
         [
             _strip_card(
@@ -1270,10 +1415,8 @@ def grand_dashboard(
                 flex="1.6 1 0",
             ),
             _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
-            _strip_card(
-                f"OpenMDAO sizing -- {sizer.split('::')[-1]}", [loiter, sizing_card, optimize]
-            ),
-            _strip_card("Z3 requirement consistency", [verdicts]),
+            _strip_card(sizing_title, [sizing_body]),
+            _strip_card(verdict_title, [verdict_body]),
         ],
         layout=widgets.Layout(width="100%", align_items="stretch", overflow="hidden"),
     )
@@ -1297,20 +1440,15 @@ def grand_dashboard(
     box.subject_card = subject_card
     box.header = header
     box.readout = readout
-    box.sizing_card = sizing_card
-    box.verdicts = verdicts
+    box.sizing_title = sizing_title
+    box.verdict_title = verdict_title
+    box.sizing_contexts = dict(sizing_contexts)
     box.elevation = elevation
     box.azimuth = azimuth
-    box.loiter = loiter
-    box.optimize = optimize
-    box.problem = build
-    box.optimum = optimum
-    box.smt_sat = smt_sat
-    box.smt_what_if = smt_what_if
     box.values = base_values
     box.config_view = binding
     box.unlink = binding.unbind
 
+    _show_strips(first.mission)
     _on_camera()
-    _on_loiter()
     return box

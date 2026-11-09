@@ -162,6 +162,9 @@ class TestRequirementSet:
         pairs, _ = self.pairs(presets, studies, "ISR", "flyingWingSingle")
         # IsrTasking applies to the wing: holding station needs no hover
         assert pairs == {
+            # a package-owned requirement usage: the installation envelope
+            # takes any Aircraft, and a MissionUAV is one
+            "DeepScout::installation": "mission",
             "ScoutMissions::MissionRequirements::IsrTasking": "mission",
             "ScoutMissions::MissionRequirements::PayloadBayFit": "mission",
             "ScoutMissions::StabilityRequirements::PitchStability": "airframe",
@@ -172,6 +175,7 @@ class TestRequirementSet:
     def test_tip_twin_scores_engine_out_on_its_airframe(self, presets, studies):
         pairs, air = self.pairs(presets, studies, "logistics", "flyingWingTwinTip")
         assert pairs == {
+            "DeepScout::installation": "mission",
             "ScoutMissions::MissionRequirements::LogisticsTasking": "mission",
             "ScoutMissions::MissionRequirements::PayloadBayFit": "mission",
             "ScoutMissions::StabilityRequirements::PitchStability": "airframe",
@@ -188,3 +192,9 @@ class TestRequirementSet:
         pairs, _ = self.pairs(presets, studies, "ISR", "tiltTriWing")
         assert pairs["TiltRotors::CruiseEngineOut"] == "airframe"
         assert "ScoutMissions::StabilityRequirements::PitchStability" not in pairs
+
+    def test_rotorcraft_requirement_usages_stay_out(self, presets, studies):
+        # DeepScout::mission takes a MultiRotor: no mission architecture is one
+        pairs, _ = self.pairs(presets, studies, "ISR", "boxQuad")
+        assert pairs["DeepScout::installation"] == "mission"
+        assert "DeepScout::mission" not in pairs
