@@ -1021,11 +1021,17 @@ package DeepScout {
                a deterministic volume-quadrature estimate of the same
                measures otherwise), injected into the scoreboard as
                values= bindings for the unvalued attributes below --
-               see tutorial 7.  The subject is the abstract MultiRotor
-               so any configuration can be measured; the reference CAD
+               see tutorial 7.  The subject is Aircraft, the program
+               root.  So the requirement applies to the MultiRotor
+               build family and to every fleet airframe shell.  Each
+               of these crafts declares a camera part.  A mission
+               architecture (a MissionUAV) is an Aircraft too, and its
+               camera is the camera of its airframe.  The
+               constraints read only the two measured attributes
+               below, never a rotorcraft attribute.  The reference CAD
                build the tutorials measure is the QuadCopter's (the
                satisfy edge in multirotor.sysml). */
-        subject drone : MultiRotor;
+        subject craft : Aircraft;
         attribute occludedFraction : Real;    // measured: airframe volume inside the view cone / cone volume
         attribute discOverlapVolume : Real;   // measured: m^3 of prop-disc overlap with other components
 
@@ -1033,7 +1039,7 @@ package DeepScout {
             doc /* The camera's view cone -- apex at the lens, axis along
                    the boresight, half-angle fieldOfView / 2, reaching one
                    airframe bounding-box diagonal -- shall contain no part
-                   of the drone's own airframe. */
+                   of the craft's own airframe. */
             attribute weight : Real = 2.0;
             attribute utility : String = "smaller-is-better";
             attribute ramp0 : Real = 0.001;

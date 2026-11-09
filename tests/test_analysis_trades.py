@@ -729,11 +729,16 @@ class TestTransientOverrides:
     def test_assembly_override_adds_the_violation(self, missions):
         study = missions["IsrUav"]
         selection = MISSION_WINNERS["IsrUav"][0]
+        # 300 min is above the winner's 274.6 AND above the floor's own declared
+        # range [25, 240], so the range assert fails with the tasking
         overrides = {"minStationMinutes": 300.0}
         arch = study.evaluate(selection, overrides)
         assert not arch.verified
-        assert arch.violations == ["stationReq"]
-        assert self.failed(study, study.instance(selection, overrides)) == ["stationReq"]
+        assert arch.violations == ["stationReq", "minStationMinutesHigh"]
+        assert self.failed(study, study.instance(selection, overrides)) == [
+            "stationReq",
+            "minStationMinutesHigh",
+        ]
 
     def test_override_reaches_an_attribute_without_a_variant_dependency(self, missions):
         # payloadVolume = seekerVolume depends on no variation point, so the

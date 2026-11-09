@@ -160,8 +160,9 @@ class TestRequirementSet:
 
     def test_isr_flying_wing(self, presets, studies):
         pairs, _ = self.pairs(presets, studies, "ISR", "flyingWingSingle")
-        # c0-model: IsrTasking joins as "mission" once its hover assumption is deleted
+        # IsrTasking applies to the wing: holding station needs no hover
         assert pairs == {
+            "ScoutMissions::MissionRequirements::IsrTasking": "mission",
             "ScoutMissions::MissionRequirements::PayloadBayFit": "mission",
             "ScoutMissions::StabilityRequirements::PitchStability": "airframe",
             "ScoutMissions::StabilityRequirements::PitchRollAuthority": "airframe",

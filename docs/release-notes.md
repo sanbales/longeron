@@ -2,6 +2,27 @@
 
 ## 0.12.0 (unreleased)
 
+### The DeepScout program
+
+- **The mission thresholds have ranges in the model, and two mission
+  requirements apply to more crafts**. The trade winners and the
+  declared reference values do not change:
+  - `IsrUav`, `LogisticsUav` and `InterceptUav` assert a two-sided
+    range on each of their five tasking floors, one named constraint
+    per bound (`minStationMinutesLow`, `minStationMinutesHigh` and so
+    on). The station floor spans the `isrStation` ramp of
+    `ScoutMissions::scoring`, 25 to 240 min. The target speed spans the
+    `interceptCatch` ramp, 25 to 75 m/s. No ramp scores the payload,
+    the radius or the detection distance alone, so each of these ranges
+    is half to twice its default: 0.5 to 2 kg, 4 to 16 km and 1500 to
+    6000 m
+  - `IsrTasking` no longer assumes `hoverThrustFactor > 0`. Holding
+    station needs no hover, so the requirement now applies to the
+    flying wings, and the ISR winner `flyingWingSingle` passes it
+  - `DeepScout::installation` takes `craft : Aircraft` as its subject
+    in place of `drone : MultiRotor`. The camera occlusion requirement
+    now applies to every craft and to every mission architecture
+
 ### Verification and conformance
 
 - **Every z3 `Optimize` query has a time limit, and an independent

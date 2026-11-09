@@ -281,6 +281,18 @@ package ScoutMissions {
         assert constraint isrLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
         assert constraint stationReq { stationMinutes >= minStationMinutes }
+
+        // the range of the tasking floor, one constraint per bound: the
+        // ends of the isrStation ramp in ScoutMissions::scoring
+        assert constraint minStationMinutesLow {
+            doc /* The tasking floor is at least 25 minutes.  The
+                   isrStation ramp gives zero utility at 25 minutes. */
+            minStationMinutes >= 25.0 }
+        assert constraint minStationMinutesHigh {
+            doc /* The tasking floor is at most 240 minutes, a four-hour
+                   watch.  The isrStation ramp gives full utility at 240
+                   minutes. */
+            minStationMinutes <= 240.0 }
     }
 
     // ----- mission 2: logistics -----------------------------------------------------
@@ -344,6 +356,27 @@ package ScoutMissions {
             maxThrust >= airframe.hoverThrustFactor * outboundMass * 9.81 }
         assert constraint payloadReq { cargo.payloadKg >= minPayloadKg }
         assert constraint radiusReq { deliveryRadiusKm >= minDeliveryRadiusKm }
+
+        // the ranges of the two tasking floors, one constraint per
+        // bound.  The logisticsWork ramp in ScoutMissions::scoring scores
+        // the product payloadRangeKgKm, so neither floor has a ramp end
+        // of its own.  Each range is half to twice the declared default.
+        assert constraint minPayloadKgLow {
+            doc /* The payload floor is at least 0.5 kg, half the
+                   declared 1 kg.  No ramp scores the payload alone. */
+            minPayloadKg >= 0.5 }
+        assert constraint minPayloadKgHigh {
+            doc /* The payload floor is at most 2 kg, twice the declared
+                   1 kg.  No ramp scores the payload alone. */
+            minPayloadKg <= 2.0 }
+        assert constraint minDeliveryRadiusKmLow {
+            doc /* The radius floor is at least 4 km, half the declared
+                   8 km.  No ramp scores the radius alone. */
+            minDeliveryRadiusKm >= 4.0 }
+        assert constraint minDeliveryRadiusKmHigh {
+            doc /* The radius floor is at most 16 km, twice the declared
+                   8 km.  No ramp scores the radius alone. */
+            minDeliveryRadiusKm <= 16.0 }
     }
 
     // ----- mission 3: high-speed intercept ---------------------------------------------
@@ -438,6 +471,27 @@ package ScoutMissions {
         assert constraint launchLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
         assert constraint canCatch { maxTargetSpeed >= targetSpeed }
+
+        // the ranges of the target, one constraint per bound.  The speed
+        // range is the ends of the interceptCatch ramp in
+        // ScoutMissions::scoring.  No ramp scores the detection
+        // distance, so its range is half to twice the declared default.
+        assert constraint targetSpeedLow {
+            doc /* The target speed is at least 25 m/s.  The
+                   interceptCatch ramp gives zero utility at 25 m/s. */
+            targetSpeed >= 25.0 }
+        assert constraint targetSpeedHigh {
+            doc /* The target speed is at most 75 m/s.  The
+                   interceptCatch ramp gives full utility at 75 m/s. */
+            targetSpeed <= 75.0 }
+        assert constraint targetDistanceLow {
+            doc /* The detection distance is at least 1500 m, half the
+                   declared 3000 m.  No ramp scores the distance. */
+            targetDistance >= 1500.0 }
+        assert constraint targetDistanceHigh {
+            doc /* The detection distance is at most 6000 m, twice the
+                   declared 3000 m.  No ramp scores the distance. */
+            targetDistance <= 6000.0 }
     }
 
     // ----- mission requirements (the dashboard's threshold anchors) ---------
@@ -452,9 +506,13 @@ package ScoutMissions {
 
         requirement def IsrTasking {
             doc /* Hold station with a stabilized grade-2+ sensor at
-                   least minStationMinutes. */
+                   least minStationMinutes.  The requirement applies to
+                   every airframe family, because holding station needs
+                   no hover.  An orbiting wing holds station on cruise
+                   power, and stationMinutes models that loiter for the
+                   wing-borne families.  So no assumption excludes the
+                   rail-launched wings. */
             subject uav : IsrUav;
-            assume constraint { uav.airframe.hoverThrustFactor > 0.0 }
             require constraint stationFloor {
                 uav.stationMinutes >= uav.minStationMinutes }
         }

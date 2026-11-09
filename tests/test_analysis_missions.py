@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import longeron
-from longeron.analysis import AnalysisError, trades
+from longeron.analysis import AnalysisError, surfaces, trades
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -27,6 +27,14 @@ MISSIONS = {
 #: the catapult-launched branch of 0.12 (never hover-capable); the tip-prop
 #: twin of 0.13 crosses the courier's pusher stations root-against-tip
 FLYING_WINGS = {"flyingWingSingle", "flyingWingTwin", "flyingWingTwinTip"}
+
+#: the five tasking floors and the range each mission def asserts on it
+#: (``<attr>Low`` / ``<attr>High``, one constraint per bound)
+THRESHOLD_RANGES = {
+    "isr": {"minStationMinutes": (25.0, 240.0)},
+    "logistics": {"minPayloadKg": (0.5, 2.0), "minDeliveryRadiusKm": (4.0, 16.0)},
+    "intercept": {"targetSpeed": (25.0, 75.0), "targetDistance": (1500.0, 6000.0)},
+}
 
 
 @pytest.fixture(scope="module")
@@ -349,6 +357,63 @@ class TestFamilyWinners:
         assert mats["isr"] == {"aluminum", "carbonFiber"}
         assert mats["logistics"] == {"aluminum", "carbonFiber"}
         assert mats["intercept"] == {"aluminum"}
+
+
+class TestThresholdRanges:
+    """Each tasking floor is an input attribute with a two-sided range in
+    the model, so a what-if slider reads its bounds from the model."""
+
+    @pytest.mark.parametrize("name", sorted(MISSIONS))
+    def test_each_floor_has_a_named_range_around_its_default(self, studies, spaces, name):
+        mix = next(a for a in spaces[name] if a.verified)
+        margins = studies[name].margins(mix.selection)
+        for attr, (lo, hi) in THRESHOLD_RANGES[name].items():
+            low, high = margins[f"{attr}Low"], margins[f"{attr}High"]
+            assert (low["text"], high["text"]) == (f"{attr} >= {lo}", f"{attr} <= {hi}")
+            assert low["ok"] and high["ok"], attr  # the declared default is inside
+
+    def test_ramped_floors_span_their_scoring_ramps(self, studies):
+        interp = studies["isr"].interp
+        leaf = "ScoutMissions::scoring::effectiveness::{}::ramp{}"
+        for ramp, (name, attr) in {
+            "isrStation": ("isr", "minStationMinutes"),
+            "interceptCatch": ("intercept", "targetSpeed"),
+        }.items():
+            ends = (interp.evaluate(leaf.format(ramp, 0)), interp.evaluate(leaf.format(ramp, 1)))
+            assert ends == THRESHOLD_RANGES[name][attr], ramp
+
+
+class TestRequirementSubjects:
+    def test_isr_tasking_scores_the_flying_wing_winner(self, studies, spaces):
+        """Holding station needs no hover: the catapult-launched ISR
+        winner is a subject of IsrTasking, measured, not excluded."""
+
+        study = studies["isr"]
+        best = max(
+            (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
+        )
+        assert best.selection["airframe"] == "flyingWingSingle"
+        uav = study.interp.instantiate(study.assembly, study._bindings(best.selection))
+        result = study.interp.check_requirement(
+            "ScoutMissions::MissionRequirements::IsrTasking", subject=uav
+        )
+        assert not result.assumptions
+        assert result.applicable and result.satisfied
+
+    def test_installation_admits_every_craft(self, studies):
+        interp = studies["isr"].interp
+        installation = interp.resolve("DeepScout::installation")
+        for craft in (
+            "Rotorcraft::QuadCopter",
+            "FlyingWings::FlyingWingSingle",
+            "WingedVtol::DartInterceptor",
+            "ScoutMissions::IsrUav",
+        ):
+            assert surfaces._admits(interp, installation, interp.resolve(craft)) == (True, "")
+        admitted, reason = surfaces._admits(
+            interp, installation, interp.resolve("ScoutSizing::IsrPrime")
+        )
+        assert not admitted and reason == "installation applies to DeepScout::Aircraft"
 
 
 class TestVolumeLedger:
