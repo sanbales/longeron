@@ -676,7 +676,8 @@ def grand_tour_notebook() -> dict[str, Any]:
     Cell 1 is the checker: one JSON line of the subject, the 3D pane's
     label and scene digest, the diagram and tree selections, the header
     text, the knob names, the scored aggregates of the scoreboard rows,
-    and the sizing strip title.  Cells 2 and 3 are the fit drivers of
+    the scoreboard selection, the diagram's resize refit count, and the
+    sizing strip title.  Cells 2 and 3 are the fit drivers of
     :func:`config_view_notebook`: the whole-program diagram fits the pane
     below the label LOD threshold, so a test zooms onto the node it is
     about to click.
@@ -697,6 +698,8 @@ import json
 import math
 import re
 
+from longeron.toolbar import AutoFitTool
+
 print(
     json.dumps(
         {
@@ -710,6 +713,8 @@ print(
             "mesh": hashlib.sha1(grand.viewer.mesh_json.encode()).hexdigest(),
             "diagram": list(grand.diagram.view.selection.ids),
             "tree": list(grand.tree.selected),
+            "board": list(grand.board.selected),
+            "refits": next(t.fit_count for t in grand.diagram.tools if isinstance(t, AutoFitTool)),
             "header": " ".join(re.sub(r"<[^>]+>", " ", grand.header.value).split()),
             "knobs": sorted(grand.knobs),
             "scores": {

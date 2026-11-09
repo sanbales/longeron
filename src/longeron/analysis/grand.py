@@ -179,8 +179,13 @@ _ESC_MASS = 0.012
 # ~1600x900 recording viewport together with the notebook chrome) --------
 _ROW1_PX = 430  # tree / diagram / 3D / scoreboard
 _TREE_PX = 240  # fixed containment tree pane width
-_VIEWER_PX = 400  # fixed 3D pane width (canvas height = width / aspect)
-_BOARD_PX = 400  # fixed scoreboard pane width
+# the diagram, the 3D pane and the scoreboard share the rest of row 1,
+# 2 : 1 : 1.  The 3D pane and the scoreboard stay between these widths.
+# The minimum is also their model width (the 3D aspect, the scoreboard
+# viewBox), so both draw at 1:1 there.  Both keep that aspect, so above
+# the maximum they would outgrow the row height
+_PANE_MIN_PX = 280
+_PANE_MAX_PX = 300
 _STRIP_PX = 200  # what-if / sizing / verdict cards
 _MISSION_PX = 330  # the Cesium finale
 
@@ -895,11 +900,11 @@ def grand_dashboard(
     viewer = viewer3d.mesh_viewer(
         baked["mesh"],
         label=f"{baked['craft']} -- the {mission} subject",
-        width_px=_VIEWER_PX,
-        height_px=_ROW1_PX,
+        width_px=_PANE_MIN_PX,
+        height_px=_ROW1_PX - 46,  # the caption line still fits at _PANE_MAX_PX
     )
     board_score = _subject_board(baked["requirements"], base_values)
-    board = board_score.widget("voronoi", width_px=_BOARD_PX, height_px=_ROW1_PX - 26, seed=42)
+    board = board_score.widget("voronoi", width_px=_PANE_MIN_PX, height_px=_ROW1_PX - 26, seed=42)
     board_qnames = {row.qname for row in board_score.table()}
 
     # -- Cesium: the state machine's recorded execution over the route -------
@@ -1391,14 +1396,26 @@ def grand_dashboard(
     # evidence capture):
     # anywidget roots are flex items with min-width:auto, so a wrapper Box
     # does NOT constrain them -- the canvas grows toward the notebook width
-    # and the visible pane clips its empty corner.  Pin width/flex on each
-    # widget's OWN layout instead.
+    # and the visible pane clips its empty corner.  Pin flex and an explicit
+    # min-width on each widget's OWN layout instead.  The tree is fixed.  The
+    # others share the rest from a zero basis (the 3D canvas and the
+    # scoreboard SVG follow their pane's width), and the diagram takes what
+    # the side panes' maximum leaves.  The diagram's floor is lower than the
+    # side panes', so in a narrow output area it gives way first, down to
+    # its own floor.
     tree.layout = widgets.Layout(width=f"{_TREE_PX}px", height=f"{_ROW1_PX}px", flex="0 0 auto")
-    viewer.layout = widgets.Layout(width=f"{_VIEWER_PX}px", flex="0 0 auto")
-    board.layout = widgets.Layout(width=f"{_BOARD_PX}px", flex="0 0 auto")
+    side = {
+        "width": "auto",
+        "flex": "1 1 0",
+        "min_width": f"{_PANE_MIN_PX}px",
+        "max_width": f"{_PANE_MAX_PX}px",
+        "overflow": "hidden",
+    }
+    viewer.layout = widgets.Layout(**side)
+    board.layout = widgets.Layout(**side)
     diagram.layout.width = "auto"
-    diagram.layout.flex = "1 1 auto"
-    diagram.layout.min_width = "0"
+    diagram.layout.flex = "2 1 0"
+    diagram.layout.min_width = "240px"
     diagram.layout.overflow = "hidden"
     flight.layout = widgets.Layout(width="100%")
     row1 = widgets.HBox(

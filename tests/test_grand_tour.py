@@ -206,7 +206,19 @@ class TestComposition:
         assert type(dash.tree).__name__ == "ModelTree"
         row1 = dash.children[2]
         assert list(row1.children) == [dash.tree, dash.diagram, dash.viewer, dash.board]
-        assert dash.tree.layout.width == "240px"  # fixed; the diagram flexes
+        assert dash.tree.layout.width == "240px"  # fixed
+        # the rest is shared 2 : 1 : 1 from a zero basis.  The side panes keep
+        # their aspect, so their width is bounded on both sides
+        bounds = [
+            (w.layout.flex, w.layout.min_width, w.layout.max_width) for w in row1.children[1:]
+        ]
+        assert bounds == [
+            ("2 1 0", "240px", None),
+            ("1 1 0", "280px", "300px"),
+            ("1 1 0", "280px", "300px"),
+        ]
+        # the side panes draw at 1:1 at their floor: the 3D aspect, the viewBox
+        assert (dash.viewer.width_px, dash.board.width_px) == (280, 280)
         assert dash.track.duration > 0
         assert json.loads(dash.mission.czml_json)  # the finale pane is baked
 

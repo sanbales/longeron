@@ -8,7 +8,7 @@ surfaces: a genuine click on a containment-tree row, on a sprotty
 diagram label, on a dropdown, a slider and a toggle button, each
 repainting the panes beside it.
 
-Four scenarios, each on a fresh kernel:
+Five scenarios, each on a fresh kernel:
 
 1. a tree row click changes the subject: the diagram repaints its
    selection and the 3D pane rebuilds its scene for the new craft;
@@ -17,16 +17,22 @@ Four scenarios, each on a fresh kernel:
 3. a knob change repaints the 3D pane (the battery dropdown) and
    re-scores the scoreboard (the station-time slider);
 4. the mission toggle to logistics shows the honest-absence card in the
-   sizing strip and swaps the knob card.
+   sizing strip and swaps the knob card;
+5. row 1 shares its width: after the 240 px tree, the diagram, the 3D
+   pane and the scoreboard take 2 : 1 : 1 of the rest, and the 3D pane
+   and the scoreboard stay between 280 and 300 px wide.  The scenario
+   measures the panes with the left sidebar open, collapsed, and on a
+   1900 px page.  The 3D canvas and the scoreboard SVG fill their panes
+   and do not hang below the row, one re-share costs the diagram one
+   refit, and a click on the scaled SVG selects the clicked requirement.
 
-The tests collapse JupyterLab's left sidebar first.  At the harness
-viewport (1500 px) the open file browser leaves the output area about
-1070 px wide, and the three fixed panes of row 1 (tree 240 px, 3D and
-scoreboard 400 px each) then squeeze the diagram to about 30 px: no label
-to click.  Scenarios 3 and 4 also record the layout (row-1 pane widths,
-and whether a row-2 card's content is taller than the card) in
-``build/evidence/grand_tour_layout_<state>.json``.  The values are a
-record, not an assertion (the tier asserts no geometry).  Each stage
+Scenarios 1, 2 and 4 collapse JupyterLab's left sidebar first.  At the
+harness viewport (1500 px) the open file browser leaves the output area
+about 1070 px wide, and the diagram then gets about 270 px.  Scenarios 3
+and 4 also record the layout (row-1 pane widths, and whether a row-2
+card's content is taller than the card) in
+``build/evidence/grand_tour_layout_<state>.json``.  Those values are a
+record.  Scenario 5 is the only one that asserts geometry.  Each stage
 saves a PNG under ``build/evidence/``.
 """
 
@@ -347,5 +353,117 @@ def test_mission_toggle_shows_absence_and_swaps_the_knobs(lab: Any) -> None:
     _record_layout(lab, "logistics")
     scroll_into_view(absence.first)
     lab.page.screenshot(path=str(EVIDENCE / "grand_mission_logistics.png"), full_page=True)
+
+    lab.assert_no_errors()
+
+
+#: row-1 pane widths, the 3D canvas and the scoreboard SVG against their
+#: panes, and the SVG's scale (its rendered width over its viewBox width)
+_PANES_JS = """() => {
+    const viewer = document.querySelector('.longeron-viewer3d');
+    const row = viewer.closest('.widget-hbox');
+    const width = (el) => el ? el.getBoundingClientRect().width : null;
+    const [tree, diagram, view, board] = [...row.children];
+    const svg = board.querySelector('.lgn-sb-wrap svg');
+    const bottom = (el) => Math.round(el.getBoundingClientRect().bottom);
+    return {
+        row: width(row), tree: width(tree), diagram: width(diagram),
+        viewer: width(view), board: width(board),
+        canvas: width(view.querySelector('canvas')), svg: width(svg),
+        svg_scale: width(svg) / svg.viewBox.baseVal.width,
+        // nothing of the side panes may hang below the row (it clips)
+        overhang: Math.max(bottom(view.querySelector('.longeron-viewer3d-captions')),
+                           bottom(svg)) - bottom(row),
+    };
+}"""
+
+#: a screen point inside a scoreboard cell: the cell's vertex centroid (a
+#: Voronoi cell is convex) in viewBox units, mapped to the screen through
+#: the SVG's own transform, and the element the browser hit-tests there
+_CELL_POINT_JS = """(qname) => {
+    const path = document.querySelector(`.lgn-sb-cell[data-qname="${qname}"]`);
+    if (!path) return null;
+    const nums = (path.getAttribute('d').match(/-?[0-9.]+(?:e-?[0-9]+)?/g) || []).map(Number);
+    let x = 0, y = 0;
+    for (let i = 0; i + 1 < nums.length; i += 2) { x += nums[i]; y += nums[i + 1]; }
+    const point = path.ownerSVGElement.createSVGPoint();
+    point.x = x / (nums.length / 2);
+    point.y = y / (nums.length / 2);
+    const inside = path.isPointInFill(point);
+    const screen = point.matrixTransform(path.getScreenCTM());
+    return {x: screen.x, y: screen.y, inside,
+            hit: document.elementFromPoint(screen.x, screen.y) === path};
+}"""
+
+#: the tree's width, and the bounds of the 3D pane and the scoreboard
+#: (grand._TREE_PX, grand._PANE_MIN_PX, grand._PANE_MAX_PX)
+_TREE, _SIDE_MIN, _SIDE_MAX = 240, 280, 300
+
+
+def _panes(lab: Any) -> dict[str, float]:
+    return dict(lab.evaluate(_PANES_JS, label="row-1 pane widths"))
+
+
+def _assert_shares(panes: dict[str, float]) -> None:
+    """Row 1 shares 2 : 1 : 1 after the tree, within the side panes' bounds."""
+
+    rest = panes["row"] - _TREE
+    side = min(_SIDE_MAX, max(_SIDE_MIN, rest / 4))
+    assert abs(panes["tree"] - _TREE) <= 1, panes
+    assert abs(panes["viewer"] - side) <= 2 and abs(panes["board"] - side) <= 2, panes
+    assert abs(panes["diagram"] - (rest - 2 * side)) <= 3, panes
+    # the panes follow their containers: the canvas and the SVG fill them
+    assert abs(panes["canvas"] - panes["viewer"]) <= 2, panes
+    assert abs(panes["svg"] - panes["board"]) <= 2, panes
+    assert panes["overhang"] <= 0, panes
+
+
+def _wait_panes(lab: Any, predicate: Any, label: str) -> dict[str, float]:
+    lab.wait_until(lambda _s: predicate(_panes(lab)), timeout=60, label=label)
+    return _panes(lab)
+
+
+def test_row1_shares_its_width_and_the_panes_follow(lab: Any) -> None:
+    """Sidebar open, collapsed, then a wide page: the shares and one refit (scenario 5)."""
+
+    # -- the harness page as it opens: the file browser takes ~430 px -------
+    _open(lab, collapse_sidebar=False)
+    started = time.monotonic()
+    narrow = _wait_panes(lab, lambda p: p["canvas"] <= p["viewer"] + 2, "3D canvas fits")
+    _assert_shares(narrow)
+    assert narrow["diagram"] >= 240, narrow  # never the 28 px of the fixed panes
+    refits = _poll_checker(lab, lambda _s: True)["refits"]
+
+    # -- collapsed: the diagram takes the freed width, the side panes keep 280
+    _collapse_sidebar(lab)
+    wide = _wait_panes(lab, lambda p: p["row"] > narrow["row"] + 100, "row 1 re-shared")
+    wide = _wait_panes(lab, lambda p: abs(p["canvas"] - p["viewer"]) <= 2, "3D canvas follows")
+    _assert_shares(wide)
+    assert wide["diagram"] > narrow["diagram"] + 100, (narrow, wide)
+    # one re-share is one AutoFit refit (the resize reporter debounces), not a loop
+    after = _poll_checker(lab, lambda s: s["refits"] > refits, timeout=30)["refits"]
+    time.sleep(3.0)
+    assert _poll_checker(lab, lambda _s: True)["refits"] == after == refits + 1
+    _record_layout(lab, "row1_collapsed")
+
+    # -- a wide page: the side panes stop at their maximum, the SVG scales --
+    lab.page.set_viewport_size({"width": 1900, "height": 1100})
+    big = _wait_panes(lab, lambda p: p["board"] >= _SIDE_MAX - 1, "the side panes grew")
+    big = _wait_panes(lab, lambda p: abs(p["canvas"] - p["viewer"]) <= 2, "3D canvas follows")
+    _assert_shares(big)
+    assert big["svg_scale"] > 1.05, big
+    # a cell click on the scaled SVG still selects that requirement
+    scroll_into_view(lab.page.locator(f'.lgn-sb-cell[data-qname="{ISR_TASKING}"]').first)
+    point = lab.evaluate(_CELL_POINT_JS, ISR_TASKING, label="IsrTasking cell point")
+    assert point and point["inside"] and point["hit"], point
+    lab.page.mouse.click(point["x"], point["y"])
+    state = _poll_checker(lab, lambda s: s["board"] == [ISR_TASKING])
+    assert state["diagram"] == [ISR_TASKING], state
+    selected = f'.lgn-sb-cell.lgn-sb-selected[data-qname="{ISR_TASKING}"]'
+    lab.page.locator(selected).first.wait_for(state="attached", timeout=60_000)
+    lab.page.screenshot(path=str(EVIDENCE / "grand_row1_wide.png"), full_page=True)
+    record = {"open": narrow, "collapsed": wide, "wide_1900": big, "refits": [refits, after]}
+    record["seconds"] = round(time.monotonic() - started, 1)
+    (EVIDENCE / "grand_tour_row1_shares.json").write_text(json.dumps(record, indent=1))
 
     lab.assert_no_errors()
