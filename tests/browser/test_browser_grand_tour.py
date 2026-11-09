@@ -16,7 +16,9 @@ The scenarios, each on a fresh kernel:
    the subject, while a build configuration only visits;
 3. a knob change repaints the 3D pane (the battery dropdown) and
    re-scores the scoreboard (the station-time slider), and a span
-   slider rebuilds the 3D scene and the Cesium model (scenario 3b);
+   slider rebuilds the 3D scene and the Cesium model (scenario 3b).
+   The 3D pane keeps its camera across the span rebuild, so the wing
+   draws wider, and a catalog craft click re-fits the camera;
 4. the mission toggle to logistics shows the honest-absence card in the
    sizing strip and swaps the knob card;
 5. row 1 shares its width: after the 240 px tree, the diagram, the 3D
@@ -65,6 +67,7 @@ saves a PNG under ``build/evidence/``.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import time
@@ -80,6 +83,7 @@ NOTEBOOK = "grand_tour_scenario.ipynb"
 EVIDENCE = REPO / "build" / "evidence"
 ISR_TASKING = "ScoutMissions::MissionRequirements::IsrTasking"
 TWIN_VARIANT = "ScoutMissions::Catalog::AirframeChoice::flyingWingTwin"
+TEARDROP_VARIANT = "ScoutMissions::Catalog::AirframeChoice::teardropQuad"
 
 #: count the 3D pane's scene rebuilds: the viewer's rebuild() is the only
 #: code that writes the canvas aria-label, and a mutation record is queued
@@ -426,8 +430,84 @@ def test_knob_changes_repaint_the_3d_pane_and_rescore_the_board(lab: Any) -> Non
     lab.assert_no_errors()
 
 
+#: landmarks in a PNG of the 3D canvas, decoded by the page (the test
+#: needs no image library): the centroid of the red propeller hub (the
+#: hub does not depend on the span), the centroids of the slate wingtip
+#: fins left and right of the hub, and the box of the dark pixels of the
+#: solid parts
+_LANDMARKS_JS = """async (b64) => {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + b64;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const box = () => ({x0: c.width, x1: -1, y0: c.height, y1: -1, n: 0});
+    const grow = (b, x, y) => {
+        b.n++;
+        b.x0 = Math.min(b.x0, x); b.x1 = Math.max(b.x1, x);
+        b.y0 = Math.min(b.y0, y); b.y1 = Math.max(b.y1, y);
+    };
+    const dark = box(), fins = [];
+    let hx = 0, hy = 0, hn = 0;
+    for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+            const i = 4 * (y * c.width + x);
+            const r = d[i], g = d[i + 1], b = d[i + 2];
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (r - g > 40 && r - b > 50) { hx += x; hy += y; hn++; }
+            if (b - r > 4 && b - g > 2 && luma < 120) fins.push([x, y]);
+            if (luma < 150) grow(dark, x, y);
+        }
+    }
+    const hub = hn ? [hx / hn, hy / hn] : null;
+    const centroid = (side) => {
+        const own = fins.filter(([x]) => hub && side * (x - hub[0]) > 0);
+        return own.length ? [own.reduce((s, p) => s + p[0], 0) / own.length,
+                             own.reduce((s, p) => s + p[1], 0) / own.length] : null;
+    };
+    return {width: c.width, height: c.height, hub, fins: [centroid(-1), centroid(1)], dark};
+}"""
+
+#: one wheel step of the 3D pane: the viewer scales the camera distance
+#: by exp(0.001 * deltaY), so +800 then -800 restores the distance
+_ZOOM_OUT = 800
+
+
+def _landmarks(lab: Any, pane: Any, name: str) -> dict[str, Any]:
+    """Screenshot the 3D canvas to ``EVIDENCE/name`` and measure its landmarks.
+
+    The screenshot paints the binding hint over the canvas in the
+    background colour, so the hint text does not count as a solid part.
+    """
+
+    png = pane.locator("canvas").first.screenshot(
+        path=str(EVIDENCE / name),
+        mask=[pane.locator(".longeron-viewer3d-hint")],
+        mask_color="#f4f4f2",
+    )
+    found = lab.evaluate(
+        _LANDMARKS_JS, base64.b64encode(png).decode(), label=f"3D landmarks ({name})"
+    )
+    return dict(found)
+
+
+def _wheel(lab: Any, pane: Any, delta: float) -> None:
+    pane.locator("canvas").first.hover()
+    lab.page.mouse.wheel(0, delta)
+
+
 def test_span_slider_widens_the_3d_wing_and_the_flight(lab: Any) -> None:
-    """The span slider rebuilds the 3D scene and the Cesium model (scenario 3b)."""
+    """The span slider rebuilds the 3D scene and the Cesium model (scenario 3b).
+
+    The 3D pane keeps its camera across the rebuild, so the wider wing
+    draws wider.  The scenario zooms out until both wingtip fins show.
+    The distance between the fins on the canvas then grows by the span
+    ratio, and the propeller hub stays where it was.  A click on another
+    catalog craft re-fits the camera to that craft.
+    """
 
     state = _open(lab)
     assert state["airframe"] == "flyingWingSingle", state
@@ -435,6 +515,10 @@ def test_span_slider_widens_the_3d_wing_and_the_flight(lab: Any) -> None:
     pane = lab.page.locator(".longeron-viewer3d").first
     scroll_into_view(pane)
     pane.screenshot(path=str(EVIDENCE / "grand_span_default.png"))
+    _wheel(lab, pane, _ZOOM_OUT)  # both wingtip fins in view
+    before = _landmarks(lab, pane, "grand_span_default_zoomed_out.png")
+    span = lab.page.locator(".widget-hslider").filter(has_text="wingSpan").first
+    default = float(span.locator(".widget-readout").first.text_content() or "nan")
     _arm_rebuilds(lab)
     _drag_slider(lab, "wingSpan", 1.0)
     after = _poll_checker(lab, lambda s: s["overrides"].get("airframe.wingSpan", 0) >= 2.8)
@@ -442,7 +526,36 @@ def test_span_slider_widens_the_3d_wing_and_the_flight(lab: Any) -> None:
     assert after["czml"] != state["czml"], after  # ... and so does the Cesium glTF
     _wait_rebuilt(lab, "the 3D pane rebuilt the wider wing")
     scroll_into_view(pane)
+    wide = _landmarks(lab, pane, "grand_span_max_zoomed_out.png")
+    _wheel(lab, pane, -_ZOOM_OUT)  # back to the framing of the default wing
     pane.screenshot(path=str(EVIDENCE / "grand_span_max.png"))
+    ratio = after["overrides"]["airframe.wingSpan"] / default
+    record: dict[str, Any] = {"span_ratio": ratio, "default": before, "max": wide}
+    assert before["hub"] and wide["hub"], record
+    assert all(before["fins"]) and all(wide["fins"]), record  # both fins in view
+    record["fin_ratio"] = math.dist(*wide["fins"]) / math.dist(*before["fins"])
+    # the camera stays: the hub holds its pixels, and the wing grows with the span
+    assert math.dist(wide["hub"], before["hub"]) < 2.0, record
+    assert record["fin_ratio"] == pytest.approx(ratio, abs=0.03), record
+
+    # -- a catalog craft click re-fits the camera to the new craft ----------
+    _arm_rebuilds(lab)
+    search = lab.page.locator(".lgx-tree-search").first
+    scroll_into_view(search)
+    search.fill("teardropQuad")
+    row = lab.page.locator(f'.lgx-row[data-id="{TEARDROP_VARIANT}"]')
+    row.first.wait_for(state="visible", timeout=60_000)
+    row.first.click()
+    _poll_checker(lab, lambda s: s["airframe"] == "teardropQuad")
+    _wait_rebuilt(lab, "the 3D pane rebuilt the teardrop quad")
+    scroll_into_view(pane)
+    pane.screenshot(path=str(EVIDENCE / "grand_span_then_teardrop.png"))
+    quad = _landmarks(lab, pane, "grand_span_then_teardrop_canvas.png")
+    record["teardrop"] = quad
+    (EVIDENCE / "grand_span_framing.json").write_text(json.dumps(record, indent=1), "utf-8")
+    # re-fitted, the quad's solid parts span about 40 % of the canvas
+    # height; with the camera of the flying wing they would span about 13 %
+    assert (quad["dark"]["y1"] - quad["dark"]["y0"]) / quad["height"] > 0.25, record
 
     lab.assert_no_errors()
 

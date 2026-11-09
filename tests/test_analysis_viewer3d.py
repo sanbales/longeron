@@ -119,3 +119,12 @@ class TestMeshViewer:
             )
         )
         assert json.loads(widget.mesh_json)["bounds"][1][0] > 0.2
+
+    def test_refit_on_rebuild_defaults_on_and_the_front_end_reads_it(self):
+        """A mesh swap re-fits the camera by default; ``False`` keeps it."""
+
+        pytest.importorskip("anywidget")
+        widget = viewer3d.mesh_viewer(MESH)
+        assert widget.refit_on_rebuild is True
+        assert "refit_on_rebuild" in widget.keys  # synced to the front-end
+        assert 'model.get("refit_on_rebuild")' in widget._esm

@@ -21,7 +21,9 @@ by side at true scale for A/B comparison, with captions from
 :func:`longeron.analysis.geometry.lineup` -- rendered as billboard
 sprites above each configuration, so a grid lineup names its cells
 in-scene.  Updating ``mesh_json`` from Python (e.g. observing another
-widget's traitlet) re-bakes the scene in place.
+widget's traitlet) re-bakes the scene in place and re-fits the camera.
+If ``refit_on_rebuild`` is ``False``, the re-baked scene keeps the
+current camera, so a change of size shows as a change on screen.
 
 Linked selection: ``highlight_json`` (a JSON array of part identity
 keys -- each part's ``key`` if tagged via
@@ -116,6 +118,7 @@ async function render({ model, el }) {
   // --- camera: spherical orbit about a fit target, render on demand
   let target = new THREE.Vector3();
   let radius = 1, theta = 0.9, phi = 1.05;
+  let framed = false;  // the first scene always frames the camera
   let height = model.get("height_px");
   let pending = false;
   function requestRender() {
@@ -139,6 +142,7 @@ async function render({ model, el }) {
     const size = box.getSize(new THREE.Vector3());
     const span = Math.max(size.x, size.y, size.z, 1e-6);
     radius = (span / 2) / Math.tan((camera.fov / 2) * Math.PI / 180) * 1.35;
+    framed = true;
     applyCamera();
   }
 
@@ -249,7 +253,8 @@ async function render({ model, el }) {
       "3D drone view: " + [model.get("label"), model.get("label_b")]
         .filter(Boolean).join(" vs. "));
     applyHighlight();  // a swapped-in mesh keeps the active highlight
-    fit();
+    // a what-if rebuild keeps the camera, so a bigger part draws bigger
+    if (model.get("refit_on_rebuild") || !framed) fit(); else requestRender();
   }
 
   // --- linked selection: highlighted keys pop (emissive accent -- the
@@ -438,6 +443,9 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         #: aspect ratio + fallback width; the canvas fills the host width
         width_px = traitlets.Int(760).tag(sync=True)
         height_px = traitlets.Int(430).tag(sync=True)
+        #: re-fit the camera when ``mesh_json``/``mesh_b_json`` changes;
+        #: ``False`` keeps the current camera for the next scene
+        refit_on_rebuild = traitlets.Bool(True).tag(sync=True)
 
         def highlight(self, keys: Iterable[str] = ()) -> None:
             """Pop the parts whose identity key is in ``keys``.

@@ -103,7 +103,9 @@ traitlets observers (so the whole surface works headless):
   declared camera (a new airframe resets the sliders to its declared
   angles), the scoreboard re-scores the subject's requirement
   set, the Cesium pane flies the subject's mesh, and the header names
-  the new subject;
+  the new subject.  The 3D pane re-fits its camera only if it showed
+  another craft before.  A knob change of the shown craft keeps the
+  camera, so a wider wing draws wider;
 * mission change -> the sizing and Z3 strips show the new mission's
   sizing context, built on its first use, or an honest absence;
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
@@ -120,9 +122,9 @@ traitlets observers (so the whole surface works headless):
   scoreboard cell click -> diagram selection);
 * camera sliders -> occlusion re-measure -> the view cone repaints, the
   obstructing parts highlight in 3D, the occlusion readout lists them,
-  the scoreboard recolors, and the header score updates.  The Cesium
-  pane's ``onboard_camera`` takes the new angles, so the onboard view
-  looks where the occlusion measure looks;
+  the scoreboard recolors, and the header score updates.  The 3D pane
+  keeps its camera.  The Cesium pane's ``onboard_camera`` takes the new
+  angles, so the onboard view looks where the occlusion measure looks;
 * loiter slider -> ``run_model`` -> the sizing cards and the table values
   repaint; the *maximize* button runs the optimization driver
   (:func:`~longeron.analysis.mdao.run_optimization`), fills the history
@@ -1486,7 +1488,9 @@ def grand_dashboard(
         cone = view_cone_part(camera, length=live["cone_length"])
         return {**base, "parts": [*base["parts"], cone]}
 
-    def _on_camera(_change: Any = None) -> None:
+    def _on_camera(_change: Any = None, *, refit: bool = False) -> None:
+        """Re-measure the occlusion; ``refit`` re-frames the 3D pane on the new scene."""
+
         if sync["camera"]:
             return
         camera = _camera_now()
@@ -1506,7 +1510,12 @@ def grand_dashboard(
             occluded = float(report["occludedFraction"])
             offenders = sorted(box.part_map.get(name, name) for name in report["obstructions"])
         if binding.current == box.craft:  # the pane may be showing a visiting craft
-            viewer.mesh_json = json.dumps(_cone_scene(box.mesh))
+            # a what-if scene keeps the camera; the binding's visits re-fit (the default)
+            viewer.refit_on_rebuild = refit
+            try:
+                viewer.mesh_json = json.dumps(_cone_scene(box.mesh))
+            finally:
+                viewer.refit_on_rebuild = True
             viewer.highlight_json = json.dumps(offenders)
         _repaint_board(occluded)
 
@@ -1576,7 +1585,7 @@ def grand_dashboard(
     def _set_subject(subject: Subject) -> None:
         """Make ``subject`` the tour's subject and repaint every pane that follows it."""
 
-        old_subject, old_craft = box.subject, box.craft
+        old_subject, old_craft, shown = box.subject, box.craft, binding.current
         _install(subject, _bake(subject))
         # the bake cache holds the old subject scene under its craft name
         binding.scenes.pop(old_craft, None)
@@ -1601,7 +1610,7 @@ def grand_dashboard(
                     azimuth.value = box.camera["azimuth"]
                 finally:
                     sync["camera"] = False
-        _on_camera()
+        _on_camera(refit=shown != box.craft)  # the pane showed another craft: re-frame
 
     def _on_mission(change: Any) -> None:
         if sync["knobs"]:

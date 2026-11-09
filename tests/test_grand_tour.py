@@ -795,6 +795,38 @@ class TestSubject:
         assert _wing_span(dash.mesh) == pytest.approx(span.max)  # the subject keeps its what-if
         span.value = default
 
+    def test_the_3d_pane_refits_only_when_the_shown_craft_changes(self, dash):
+        """A what-if rebuild of the shown craft keeps the 3D camera; a craft change re-fits it."""
+
+        seen: list[bool] = []  # refit_on_rebuild at each scene write
+
+        def record(_change):
+            seen.append(dash.viewer.refit_on_rebuild)
+
+        dash.viewer.observe(record, names="mesh_json")
+        try:
+            span = dash.knobs["airframe.wingSpan"]
+            default = span.value
+            span.value = span.max  # a slider of the shown craft
+            span.value = default
+            elevation = dash.elevation.value
+            dash.elevation.value = -30.0  # the camera what-if moves the view cone
+            dash.elevation.value = elevation
+            assert seen == [False] * 4
+            seen.clear()
+            dash.diagram.view.selection.ids = [TWIN]  # a catalog craft: a new subject
+            assert seen == [True]
+            dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]  # a visit
+            assert seen == [True, True]
+            battery = dash.knobs["battery"].value
+            dash.knobs["battery"].value = "tattu3s"  # the pane shows the subject again
+            dash.knobs["battery"].value = battery
+            assert seen == [True, True, True, False]
+        finally:
+            dash.viewer.unobserve(record, names="mesh_json")
+            self._home(dash)
+        assert dash.viewer.refit_on_rebuild is True  # the default for every other writer
+
     def test_mission_toggle_keeps_the_airframe(self, dash):
         dash.mission_toggle.value = "logistics"
         assert dash.subject.mission == "logistics"
