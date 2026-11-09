@@ -1395,13 +1395,15 @@ def grand_dashboard(
 
     def _strip_card(title: Any, children: list[Any], *, flex: str = "1 1 0") -> Any:
         titled = widgets.HTML(_strip_title(title)) if isinstance(title, str) else title
+        for child in (titled, *children):  # natural height: the card scrolls, no child shrinks
+            child.layout.flex = "0 0 auto"
         card = widgets.VBox(
             [titled, *children],
             layout=widgets.Layout(
                 flex=flex,
                 min_width="0",
                 height=f"{_STRIP_PX}px",
-                overflow="hidden",
+                overflow="hidden auto",  # x clips, y scrolls (a tall knob card)
             ),
         )
         card.add_class("lgn-grand-card")

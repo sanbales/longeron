@@ -668,6 +668,70 @@ print("fitted Rotorcraft::HexaCopter")
     )
 
 
+def grand_tour_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour's selection hub (``grand.grand_dashboard``).
+
+    Cell 0 builds and displays the grand tour over the DeepScout program
+    (the default subject: the ISR mission with its computed winner).
+    Cell 1 is the checker: one JSON line of the subject, the 3D pane's
+    label and scene digest, the diagram and tree selections, the header
+    text, the knob names, the scored aggregates of the scoreboard rows,
+    and the sizing strip title.  Cells 2 and 3 are the fit drivers of
+    :func:`config_view_notebook`: the whole-program diagram fits the pane
+    below the label LOD threshold, so a test zooms onto the node it is
+    about to click.
+    """
+
+    return _notebook(
+        """
+import longeron
+from longeron.analysis.grand import grand_dashboard
+
+model = longeron.load("examples/deepscout")
+grand = grand_dashboard(model)
+grand
+""",
+        """
+import hashlib
+import json
+import math
+import re
+
+print(
+    json.dumps(
+        {
+            "mission": grand.subject.mission,
+            "airframe": grand.subject.airframe,
+            "selection": dict(grand.subject.selection),
+            "overrides": dict(grand.subject.overrides),
+            "craft": grand.craft,
+            "current": grand.config_view.current,
+            "label": grand.viewer.label,
+            "mesh": hashlib.sha1(grand.viewer.mesh_json.encode()).hexdigest(),
+            "diagram": list(grand.diagram.view.selection.ids),
+            "tree": list(grand.tree.selected),
+            "header": " ".join(re.sub(r"<[^>]+>", " ", grand.header.value).split()),
+            "knobs": sorted(grand.knobs),
+            "scores": {
+                row.qname: None if math.isnan(row.aggregate) else row.aggregate
+                for row in grand.scoreboard.table()
+            },
+            "sizing": " ".join(re.sub(r"<[^>]+>", " ", grand.sizing_title.value).split()),
+        }
+    )
+)
+""",
+        """
+grand.diagram.view.fit(["FlyingWings::FlyingWingTwin"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted FlyingWings::FlyingWingTwin")
+""",
+        """
+grand.diagram.view.fit(["Rotorcraft::QuadCopter"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted Rotorcraft::QuadCopter")
+""",
+    )
+
+
 def tilt_notebook() -> dict[str, Any]:
     """Scenario: the tilt-rotor conversion affordance (grand.tilt_viewer).
 
@@ -1099,6 +1163,7 @@ SCENARIO_NOTEBOOKS = {
     "app_scenario.ipynb": app_notebook,
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
+    "grand_tour_scenario.ipynb": grand_tour_notebook,
     "tilt_scenario.ipynb": tilt_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
     "lossy_seam_scenario.ipynb": lossy_seam_notebook,
