@@ -1297,7 +1297,13 @@ def grand_dashboard(
 
         subject = box.subject
         study = _study(subject.mission)
-        knob_set = derive_knobs(study.interp, study.assembly, study=study, selection=subject.mix())
+        knob_set = derive_knobs(
+            study.interp,
+            study.assembly,
+            study=study,
+            selection=subject.mix(),
+            metric=DEFAULT_MISSIONS[subject.mission][1],
+        )
         box.knob_set = knob_set
         made: dict[str, Any] = {}
         for dropdown in knob_set.dropdowns:

@@ -24,6 +24,14 @@ one definition with these rules:
 7. Each variation point of the trade study becomes a :class:`Dropdown`
    over its variants, except the airframe point. A click in the tour
    fills the airframe point.
+8. With a trade study, a slider is kept only if its input **reaches** the
+   mission: the metric, or a constraint of the study's assembly that reads
+   more than the input itself. A constraint that reads only the input is
+   the input's range, not a use of it. :meth:`TradeStudy.dependents
+   <longeron.analysis.trades.TradeStudy.dependents>` answers the question
+   from the model's references, so no attribute name is matched. An input
+   that does not reach goes to :attr:`KnobSet.skipped` as ``"unreachable"``.
+   For example, the ISR mission never reads the airframe's ``cruiseSpeed``.
 
 The module imports no third-party package, and no function creates a
 widget. The knob set describes the knobs, and the tour builds them.
@@ -39,16 +47,18 @@ from typing import Literal
 from .. import ast as A
 from .. import model as M
 from ..interpreter import Interpreter
-from ._expr import AnalysisError, constraint_expr
+from ._expr import AnalysisError, constraint_expr, free_refs, named_members
 from .trades import TradeStudy
 from .verify import Domain, _literal_number, _mine_comparison
 
 __all__ = ["Dropdown", "KnobSet", "SkipReason", "Skipped", "Slider", "derive_knobs"]
 
 #: why an input attribute with a bound gets no slider:
-#: ``"lower_only"`` and ``"upper_only"`` name the one bound found, and
-#: ``"default_outside"`` says the literal value is outside the interval
-SkipReason = Literal["lower_only", "upper_only", "default_outside"]
+#: ``"lower_only"`` and ``"upper_only"`` name the one bound found,
+#: ``"default_outside"`` says the literal value is outside the interval, and
+#: ``"unreachable"`` says the input reaches neither the metric nor a
+#: constraint of the subject mission (rule 8)
+SkipReason = Literal["lower_only", "upper_only", "default_outside", "unreachable"]
 
 
 @dataclass(frozen=True)
@@ -195,6 +205,21 @@ def _sliders(
     return sliders, skipped
 
 
+def _reaches(study: TradeStudy, name: str, variant: str | None, metric: str | None) -> bool:
+    """Rule 8: ``name`` reaches ``metric`` or a constraint that is not its range."""
+
+    reached = study.dependents(name, variant)
+    if metric is not None and metric in reached:
+        return True
+    own = {tuple(name.split("."))}
+    for con in named_members(study.interp, study.assembly, ("constraint",)):
+        body = constraint_expr(study.interp, con)
+        label = con.name or con.label
+        if body is not None and label in reached and not free_refs(body) <= own:
+            return True
+    return False
+
+
 def derive_knobs(
     interp: Interpreter,
     definition: M.Definition | M.Usage,
@@ -202,6 +227,7 @@ def derive_knobs(
     study: TradeStudy | None = None,
     selection: Mapping[str, str] | None = None,
     point: str = "airframe",
+    metric: str | None = None,
 ) -> KnobSet:
     """The knobs of ``definition`` by the rules of this module.
 
@@ -219,6 +245,10 @@ def derive_knobs(
     set as ``<point>.<attribute>``. Each dropdown selects the variant that
     ``selection`` names, or the first variant if ``selection`` names none.
     A ``selection`` needs a ``study``.
+
+    With a ``study``, rule 8 removes each slider whose input reaches
+    neither ``metric`` (a derived attribute of the study, the mission
+    metric) nor a constraint of the study's assembly.
     """
 
     sliders, skipped = _sliders(interp, definition, "")
@@ -247,4 +277,10 @@ def derive_knobs(
         more, gaps = _sliders(interp, study._variant_usage(point, chosen[point]), f"{point}.")
         sliders.extend(more)
         skipped.extend(gaps)
-    return KnobSet(tuple(sliders), tuple(dropdowns), tuple(skipped))
+    kept: list[Slider] = []
+    for s in sliders:
+        if _reaches(study, s.name, chosen.get(point), metric):
+            kept.append(s)
+        else:
+            skipped.append(Skipped(s.name, "unreachable", s.low, s.high))
+    return KnobSet(tuple(kept), tuple(dropdowns), tuple(skipped))

@@ -293,3 +293,102 @@ class TestSubjectComposition:
             derive_knobs(study.interp, study.assembly, study=study, selection={"cargo": "x"})
         with pytest.raises(AnalysisError, match="unknown variant"):
             derive_knobs(study.interp, study.assembly, study=study, selection={"pack": "packC"})
+
+
+REACH = """
+package Reach {
+    part def Frame { attribute span : Real; attribute speed : Real; attribute trim : Real; }
+    part def Wing :> Frame {
+        attribute span : Real = 2.0;
+        attribute speed : Real = 10.0;
+        attribute trim : Real = 1.0;
+        attribute area : Real = span * 0.3;     // a variant attribute that reads span
+        attribute trimmed : Real = trim * 2.0;  // read by no mission feature
+        assert constraint spanLow { span >= 1.0 }
+        assert constraint spanHigh { span <= 3.0 }
+        assert constraint speedLow { speed >= 5.0 }
+        assert constraint speedHigh { speed <= 20.0 }
+        assert constraint trimLow { trim >= 0.0 }
+        assert constraint trimHigh { trim <= 2.0 }
+    }
+    part def Pack { attribute wh : Real; }
+    part def PackA :> Pack { attribute wh : Real = 10.0; }
+    variation part def FrameChoice :> Frame { variant part wing : Wing; }
+    variation part def PackChoice :> Pack { variant part packA : PackA; }
+    part def Mission {
+        part airframe : FrameChoice;
+        part pack : PackChoice;
+        attribute floor : Real = 4.0;     // read by its range and by 'enough'
+        attribute spare : Real = 1.0;     // read by its range only
+        attribute endurance : Real = pack.wh / airframe.area;   // the metric
+        attribute dash : Real = airframe.speed * 2.0;
+        assert constraint floorRange { floor >= 1.0 and floor <= 8.0 }
+        assert constraint spareRange { spare >= 0.0 and spare <= 2.0 }
+        assert constraint enough { pack.wh >= floor }
+        assert constraint fast { dash >= 0.0 }
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def reach():
+    return trades.TradeStudy(longeron.loads(REACH), "Reach::Mission")
+
+
+class TestReachability:
+    """Rule 8: a slider is kept only if its input reaches the mission."""
+
+    def test_the_rule_on_a_synthetic_mission(self, reach):
+        knobs = derive_knobs(
+            reach.interp,
+            reach.assembly,
+            study=reach,
+            selection={"airframe": "wing"},
+            metric="endurance",
+        )
+        # span reaches the metric through the variant's area; speed reaches
+        # the 'fast' constraint through dash; floor reaches 'enough'
+        assert [s.name for s in knobs.sliders] == ["floor", "airframe.span", "airframe.speed"]
+        # spare: only its own range reads it; trim: only a variant attribute
+        # that no mission feature reads
+        assert set(knobs.skipped) == {
+            Skipped("spare", "unreachable", 0.0, 2.0),
+            Skipped("airframe.trim", "unreachable", 0.0, 2.0),
+        }
+
+    def test_dependents_follow_whole_paths(self, reach):
+        assert reach.dependents("airframe.span", "wing") == {"endurance"}
+        assert reach.dependents("airframe.speed", "wing") == {"dash", "fast"}
+        assert reach.dependents("airframe.trim", "wing") == set()
+        assert reach.dependents("floor") == {"floorRange", "enough"}
+        with pytest.raises(AnalysisError, match="needs a variant"):
+            reach.dependents("airframe.span")
+
+    def test_without_the_metric_only_constraints_count(self, reach):
+        knobs = derive_knobs(
+            reach.interp, reach.assembly, study=reach, selection={"airframe": "wing"}
+        )
+        assert "airframe.span" in {s.name for s in knobs.skipped}
+
+    @pytest.mark.parametrize(
+        ("mission", "airframe", "listed", "unreachable"),
+        [
+            ("ISR", "vtolWing", "airframe.loiterSpeed", "airframe.cruiseSpeed"),
+            ("logistics", "vtolWing", "airframe.cruiseSpeed", "airframe.loiterSpeed"),
+            ("ISR", "tiltTriWing", "airframe.loiterSpeed", "airframe.cruiseSpeed"),
+            ("intercept", "boxQuad", "targetSpeed", "airframe.cruiseSpeed"),
+        ],
+    )
+    def test_the_rule_on_deepscout(self, studies, mission, airframe, listed, unreachable):
+        study = studies[mission]
+        knobs = derive_knobs(
+            study.interp,
+            study.assembly,
+            study=study,
+            selection={"airframe": airframe},
+            metric=DEFAULT_MISSIONS[mission][1],
+        )
+        assert listed in {s.name for s in knobs.sliders}
+        skipped = {s.name: s.reason for s in knobs.skipped}
+        assert skipped[unreachable] == "unreachable"

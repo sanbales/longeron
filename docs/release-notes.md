@@ -62,7 +62,6 @@
   `cruiseSpeed`. The stall floors use 1.2 times the stall speed at the
   preset mass, and the span and chord tops are owner assumptions
 
-
 ### The grand tour
 
 - **Grand tour v2: every pane follows one mission architecture**.
@@ -82,7 +81,10 @@
     as `Rotorcraft::QuadCopter` only visits the 3D pane
   - The model supplies the knobs: a dropdown for each variation point,
     and a slider for each input attribute that constraints bound on both
-    sides. No annotation or Python table declares a knob
+    sides. No annotation or Python table declares a knob. A slider shows
+    only if its input reaches the mission metric or a mission
+    constraint, so the ISR subject has no `cruiseSpeed` slider and the
+    logistics subject has no `loiterSpeed` slider
   - The 3D pane, the camera what-if and the Cesium flight show the
     subject craft. The scoreboard scores each requirement that applies
     to the subject, for the mission architecture or for its airframe.
@@ -114,7 +116,12 @@
     requirement usages that a package owns, for example
     `DeepScout::installation`
   - `longeron.analysis.knobs`: `derive_knobs` returns a `KnobSet` of
-    sliders, dropdowns and the skipped one-sided bounds
+    sliders, dropdowns and the skipped inputs. Its `metric=` keyword
+    names the mission metric, and an input that reaches neither the
+    metric nor a constraint of the study is skipped as `"unreachable"`
+  - `TradeStudy.dependents(key, variant)` returns the assembly
+    attributes and constraints that depend on an override key, from the
+    references of the model
   - `TradeStudy.evaluate(selection, overrides=...)` applies transient
     overrides, and the new `TradeStudy.instance(selection, overrides=...)`
     returns the instantiated assembly

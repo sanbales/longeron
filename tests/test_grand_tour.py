@@ -623,11 +623,19 @@ class TestSubject:
             "battery",
             "material",
             "minStationMinutes",
-            # the flying wing's own range asserts
+            # the flying wing's own range asserts, each an input that
+            # reaches stationMinutes (rule 8 of analysis.knobs)
             "airframe.wingSpan",
             "airframe.wingChord",
             "airframe.loiterSpeed",
         ]
+        assert dash.knob_set.skipped == ()
+        # every airframe slider moves the mission metric, measured off the model
+        study, mix = dash.studies["ISR"], dash.subject.mix()
+        base = study.evaluate(mix).metrics["stationMinutes"]
+        for knob in dash.knob_set.sliders[1:]:
+            moved = study.evaluate(mix, {knob.name: knob.high}).metrics["stationMinutes"]
+            assert moved != pytest.approx(base, rel=1e-6), knob.name
         assert dash.knobs["battery"].value == dash.subject.selection["battery"]
         slider = dash.knobs["minStationMinutes"]
         assert (slider.min, slider.max, slider.value) == (25.0, 240.0, 25.0)
@@ -706,6 +714,11 @@ class TestSubject:
         assert dash.subject.mission == "logistics"
         assert dash.subject.airframe == "flyingWingSingle"
         assert "cargo" in dash.knobs and "sensor" not in dash.knobs
+        # logistics flies the cruise, not the loiter: the loiter slider goes
+        assert "airframe.loiterSpeed" not in dash.knobs
+        assert {s.name: s.reason for s in dash.knob_set.skipped} == {
+            "airframe.loiterSpeed": "unreachable"
+        }
         assert "<b>logistics</b>" in dash.header.value
         self._home(dash)
         assert dash.subject.mission == "ISR" and "sensor" in dash.knobs

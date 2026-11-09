@@ -714,6 +714,66 @@ class TradeStudy:
             remaining = [n for n in remaining if n not in placed]
         return out
 
+    def dependents(self, key: str, variant: str | None = None) -> set[str]:
+        """The assembly attributes and constraints whose value depends on ``key``.
+
+        ``key`` takes the form of an :meth:`evaluate` override. A dotted key
+        (``airframe.wingSpan``) names an input attribute of ``variant``, a
+        variant of that point. The walk is the reference closure that
+        :meth:`_derived_attributes` runs, on whole feature paths. It first
+        closes over the variant attributes that read the input, such as the
+        ``wingArea`` that reads ``wingSpan``. It then closes over the
+        assembly attributes that read the input or a reached attribute. A
+        constraint is in the result if its body reads one of them.
+        """
+
+        pname, dot, attr = key.partition(".")
+        seeds: set[QName] = set()
+        reached: set[str] = set()
+        if dot:
+            if pname not in self.points or variant not in self.points[pname].variants:
+                raise AnalysisError(f"{key!r} needs a variant of point {pname!r}")
+            inner = {attr}
+            exprs = {
+                a.name: a.value.expr
+                for a in named_members(
+                    self.interp, self._variant_usage(pname, variant), ("attribute",)
+                )
+                if a.name and a.value is not None
+            }
+            changed = True
+            while changed:  # fixed point: member order must not matter
+                changed = False
+                for name, expr in exprs.items():
+                    if name not in inner and {p[0] for p in free_refs(expr)} & inner:
+                        inner.add(name)
+                        changed = True
+            seeds = {(pname, name) for name in inner}
+        else:
+            reached.add(key)
+
+        def reads(expr: A.Expr) -> bool:
+            return any(p[:2] in seeds or p[0] in reached for p in free_refs(expr))
+
+        exprs = {
+            a.name: a.value.expr
+            for a in named_members(self.interp, self.assembly, ("attribute",))
+            if a.name and a.value is not None
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name, expr in exprs.items():
+                if name not in reached and reads(expr):
+                    reached.add(name)
+                    changed = True
+        for con in named_members(self.interp, self.assembly, ("constraint",)):
+            body = constraint_expr(self.interp, con)
+            if body is not None and reads(body):
+                reached.add(con.name or con.label)
+        reached.discard(key)
+        return reached
+
     # -- CP-SAT build -----------------------------------------------------------
 
     def _build(self, enforce: bool) -> tuple[Any, Any, dict, dict, list]:
