@@ -6,6 +6,9 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
 
 * a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
   compact toolbar on) -- the linked-selection hub;
+* a **containment tree** pane (:class:`longeron.widgets.explorer.ModelTree`,
+  the model explorer's tree) beside the diagram.  The containment tree
+  lists every package, definition, usage and relationship by ownership;
 * a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
   (tutorial 7's seam, promoted): clicking ANY craft in the diagram --
@@ -37,6 +40,11 @@ WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
 
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
+* containment tree selection -> diagram selection of the element, or of
+  its nearest drawn ancestor when the diagram does not draw the element
+  (the diagram selection then drives the 3D pane and the scoreboard);
+  diagram selection -> containment tree selection, with the row
+  revealed;
 * diagram click on another craft -> the 3D pane bakes and shows THAT
   craft (the camera what-if keeps measuring the home assembly);
 * diagram click on a requirement -> scoreboard selection (and a
@@ -97,7 +105,8 @@ _ESC_MASS = 0.012
 
 # -- layout constants (explicit heights: the composed surface must fit a
 # ~1600x900 recording viewport together with the notebook chrome) --------
-_ROW1_PX = 430  # diagram / 3D / scoreboard
+_ROW1_PX = 430  # tree / diagram / 3D / scoreboard
+_TREE_PX = 240  # fixed containment tree pane width
 _VIEWER_PX = 400  # fixed 3D pane width (canvas height = width / aspect)
 _BOARD_PX = 400  # fixed scoreboard pane width
 _STRIP_PX = 200  # what-if / sizing / verdict cards
@@ -579,7 +588,9 @@ def grand_dashboard(
 
     See the module docstring for the pane list and the wiring map.  The
     returned layout exposes every piece for scripting and tests:
-    ``.diagram``, ``.viewer``, ``.board`` (+ ``.scoreboard``, the
+    ``.diagram``, ``.tree`` (the containment tree, a
+    :class:`~longeron.widgets.explorer.ModelTree`), ``.viewer``,
+    ``.board`` (+ ``.scoreboard``, the
     current :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
     ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum``,
@@ -593,6 +604,13 @@ def grand_dashboard(
     from ..diagrams import structure_diagram  # pulls in ipyelk
     from ..widgets import mission3d as mission3d_widget
     from ..widgets import viewer3d
+    from ..widgets.explorer import (
+        ModelTree,
+        _diagram_node_ids,
+        _nearest_drawn,
+        _nearest_tree_id,
+        _tree_data,
+    )
     from . import link, mdao, mission3d, smt
     from .scoreboard import scoreboard
 
@@ -610,6 +628,10 @@ def grand_dashboard(
 
     # -- panes ---------------------------------------------------------------
     diagram = structure_diagram(model, height=f"{_ROW1_PX}px")
+    drawn = _diagram_node_ids(diagram)
+    tree_nodes, tree_index = _tree_data(model)
+    tree_ids = {id(element): node_id for node_id, element in tree_index.items()}
+    tree = ModelTree(tree_nodes)
     viewer = viewer3d.mesh_viewer(
         mesh,
         label=f"{assembly} -- one M0 interpretation",
@@ -789,6 +811,38 @@ def grand_dashboard(
         finally:
             syncing["active"] = False
 
+    # tree <-> diagram has its own guard: a tree-originated diagram write
+    # must still reach the scoreboard through _on_diagram
+    tree_sync = {"active": False}
+
+    def _on_tree(ids: list[str]) -> None:
+        if tree_sync["active"] or not ids:
+            return
+        element = tree_index.get(ids[0])
+        if element is None:
+            return
+        qname = _nearest_drawn(element, drawn)
+        want = [qname] if qname is not None else []
+        if list(diagram.view.selection.ids) != want:
+            tree_sync["active"] = True
+            try:
+                diagram.view.selection.ids = want
+            finally:
+                tree_sync["active"] = False
+
+    def _diagram_to_tree(elements: list[M.Element]) -> None:
+        if tree_sync["active"] or not elements:
+            return  # the echo of a tree selection stops here
+        node_id = _nearest_tree_id(elements[0], tree_ids)
+        if node_id is None or list(tree.selected) == [node_id]:
+            return
+        tree_sync["active"] = True
+        try:
+            tree.selected = [node_id]
+        finally:
+            tree_sync["active"] = False
+        tree.reveal(node_id)
+
     # the config-keyed 3D pane: any craft clicked in the diagram renders
     # in the viewer (scene_for bakes it); the home assembly keeps its
     # camera-what-if view cone through the decorate hook
@@ -802,6 +856,8 @@ def grand_dashboard(
     from ..diagrams import on_select
 
     on_select(diagram, model, _on_diagram)
+    on_select(diagram, model, _diagram_to_tree)
+    tree.on_select(_on_tree)
     board.on_select(_on_board)
     elevation.observe(_on_camera, names="value")
     azimuth.observe(_on_camera, names="value")
@@ -815,6 +871,7 @@ def grand_dashboard(
     # does NOT constrain them -- the canvas grows toward the notebook width
     # and the visible pane clips its empty corner.  Pin width/flex on each
     # widget's OWN layout instead.
+    tree.layout = widgets.Layout(width=f"{_TREE_PX}px", height=f"{_ROW1_PX}px", flex="0 0 auto")
     viewer.layout = widgets.Layout(width=f"{_VIEWER_PX}px", flex="0 0 auto")
     board.layout = widgets.Layout(width=f"{_BOARD_PX}px", flex="0 0 auto")
     diagram.layout.width = "auto"
@@ -823,7 +880,7 @@ def grand_dashboard(
     diagram.layout.overflow = "hidden"
     mission.layout = widgets.Layout(width="100%")
     row1 = widgets.HBox(
-        [diagram, viewer, board],
+        [tree, diagram, viewer, board],
         layout=widgets.Layout(
             width="100%", height=f"{_ROW1_PX + 8}px", align_items="stretch", overflow="hidden"
         ),
@@ -886,6 +943,7 @@ def grand_dashboard(
 
     # -- the automation/testing surface ---------------------------------------
     box.diagram = diagram
+    box.tree = tree
     box.viewer = viewer
     box.board = board
     box.mission = mission

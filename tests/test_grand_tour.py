@@ -2,7 +2,7 @@
 
 Everything runs kernel-side (the house widgets are dumb painters over
 synced traitlets), so the full reaction graph is testable headless:
-diagram <-> 3D <-> scoreboard selection, the camera what-if -> occlusion
+containment tree <-> diagram <-> 3D <-> scoreboard selection, the camera what-if -> occlusion
 -> scoreboard recolor chain, the OpenMDAO loiter slider, the Z3 verdict
 strip, and the Cesium finale's presence.
 """
@@ -165,6 +165,10 @@ class TestComposition:
             "ScoreboardWidget",
         ]
         assert type(dash.mission).__name__ == "MissionViewer"
+        assert type(dash.tree).__name__ == "ModelTree"
+        row1 = dash.children[2]
+        assert list(row1.children) == [dash.tree, dash.diagram, dash.viewer, dash.board]
+        assert dash.tree.layout.width == "240px"  # fixed; the diagram flexes
         assert dash.track.duration > 0
         assert json.loads(dash.mission.czml_json)  # the finale pane is baked
 
@@ -239,6 +243,73 @@ class TestSelectionWiring:
         assert list(dash.diagram.view.selection.ids) == ["DeepScout::installation::clearView"]
         dash.board.selected = []
         dash.diagram.view.selection.ids = []
+
+
+class TestTreeWiring:
+    """The containment tree joins the selection hub in both directions."""
+
+    @staticmethod
+    def _home(dash):
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        dash.diagram.view.selection.ids = []
+        dash.tree.selected = []
+
+    def test_tree_selection_drives_the_diagram_and_the_3d_pane(self, dash):
+        dash.tree.selected = ["Rotorcraft::TeardropQuad"]
+        assert list(dash.diagram.view.selection.ids) == ["Rotorcraft::TeardropQuad"]
+        assert dash.config_view.current == "Rotorcraft::TeardropQuad"
+        self._home(dash)
+
+    def test_tree_selection_of_a_requirement_reaches_the_scoreboard(self, dash):
+        dash.tree.selected = ["DeepScout::installation::propClearance"]
+        assert list(dash.board.selected) == ["DeepScout::installation::propClearance"]
+        self._home(dash)
+
+    def test_diagram_requirement_click_selects_and_reveals_its_tree_row(self, dash, monkeypatch):
+        revealed = []
+        monkeypatch.setattr(dash.tree, "reveal", revealed.append)
+        dash.diagram.view.selection.ids = ["DeepScout::installation::propClearance"]
+        assert list(dash.tree.selected) == ["DeepScout::installation::propClearance"]
+        assert revealed == ["DeepScout::installation::propClearance"]
+        self._home(dash)
+
+    def test_scoreboard_click_selects_the_tree_row(self, dash):
+        dash.board.selected = ["DeepScout::installation::clearView"]
+        assert list(dash.tree.selected) == ["DeepScout::installation::clearView"]
+        dash.board.selected = []
+        self._home(dash)
+
+    def test_selection_echo_stops_after_one_hop(self, dash, monkeypatch):
+        revealed = []
+        monkeypatch.setattr(dash.tree, "reveal", revealed.append)
+        tree_writes, diagram_writes = [], []
+
+        def count_tree(change):
+            tree_writes.append(list(change["new"]))
+
+        def count_diagram(change):
+            diagram_writes.append(list(change["new"]))
+
+        dash.tree.observe(count_tree, "selected")
+        dash.diagram.view.selection.observe(count_diagram, "ids")
+        try:
+            # the diagram draws no row for the harness connection: the
+            # diagram selects the owner, and the echo must not move the
+            # tree selection to the owner
+            dash.tree.selected = ["DeepScout::MultiRotor::powerHarness"]
+            assert diagram_writes == [["DeepScout::MultiRotor"]]
+            assert tree_writes == [["DeepScout::MultiRotor::powerHarness"]]
+            assert revealed == []
+            # the other direction: one tree write, one reveal, no second
+            # diagram write
+            dash.diagram.view.selection.ids = ["Rotorcraft::HexaCopter"]
+            assert diagram_writes[1:] == [["Rotorcraft::HexaCopter"]]
+            assert tree_writes[1:] == [["Rotorcraft::HexaCopter"]]
+            assert revealed == ["Rotorcraft::HexaCopter"]
+        finally:
+            dash.tree.unobserve(count_tree, "selected")
+            dash.diagram.view.selection.unobserve(count_diagram, "ids")
+        self._home(dash)
 
 
 class TestCameraWhatIf:
