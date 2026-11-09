@@ -647,3 +647,134 @@ class TestThrustParametric:
                 / 0.097
             )
             assert inst.slots["thrustTerm"] == pytest.approx(expected, rel=5e-3), motor
+
+
+#: the mission winners: selection, objective metric, reference value (the
+#: winner identities are pinned by tests/test_analysis_missions.py)
+MISSION_WINNERS = {
+    "IsrUav": (
+        {
+            "airframe": "flyingWingSingle",
+            "motors": "mn4006",
+            "props": "apc11x55",
+            "battery": "liion6s6p",
+            "material": "carbonFiber",
+            "sensor": "zenmuseH20",
+        },
+        "stationMinutes",
+        274.57,
+    ),
+    "LogisticsUav": (
+        {
+            "airframe": "flyingWingTwinTip",
+            "motors": "mn4006",
+            "props": "apc11x55",
+            "battery": "liion6s6p",
+            "material": "carbonFiber",
+            "cargo": "parcelBayM",
+        },
+        "payloadRangeKgKm",
+        187.02,
+    ),
+    "InterceptUav": (
+        {
+            "airframe": "dartInterceptor",
+            "motors": "at4120",
+            "props": "tm15x5",
+            "battery": "tattu16000",
+            "material": "aluminum",
+        },
+        "maxTargetSpeed",
+        66.80,
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def missions(catalog):
+    return {name: trades.TradeStudy(catalog, f"ScoutMissions::{name}") for name in MISSION_WINNERS}
+
+
+class TestTransientOverrides:
+    """``evaluate(..., overrides=)`` and ``instance(..., overrides=)``: an
+    override binds an input attribute for one call and never writes the
+    model."""
+
+    @staticmethod
+    def failed(study, inst):
+        return [r.name for r in study.interp.check(inst) if not r.passed]
+
+    @pytest.mark.parametrize("name", list(MISSION_WINNERS))
+    def test_evaluate_and_instance_agree_on_the_winners(self, missions, name):
+        selection, metric, reference = MISSION_WINNERS[name]
+        study = missions[name]
+        arch = study.evaluate(selection)
+        inst = study.instance(selection)
+        assert arch.verified
+        assert arch.metrics[metric] == pytest.approx(reference, abs=0.01)
+        assert inst.definition is study.assembly
+        for key, value in arch.metrics.items():
+            assert inst.slots[key] == pytest.approx(value, rel=1e-12), key
+        assert self.failed(study, inst) == arch.violations == []
+
+    def test_variant_override_moves_the_isr_winner(self, missions):
+        selection = MISSION_WINNERS["IsrUav"][0]
+        overrides = {"airframe.loiterSpeed": 18.0}
+        arch = missions["IsrUav"].evaluate(selection, overrides)
+        inst = missions["IsrUav"].instance(selection, overrides)
+        assert arch.metrics["stationMinutes"] == pytest.approx(187.1, abs=0.05)
+        assert inst.slots["airframe"].slots["loiterSpeed"] == 18.0
+        assert inst.slots["stationMinutes"] == pytest.approx(arch.metrics["stationMinutes"])
+
+    def test_assembly_override_adds_the_violation(self, missions):
+        study = missions["IsrUav"]
+        selection = MISSION_WINNERS["IsrUav"][0]
+        overrides = {"minStationMinutes": 300.0}
+        arch = study.evaluate(selection, overrides)
+        assert not arch.verified
+        assert arch.violations == ["stationReq"]
+        assert self.failed(study, study.instance(selection, overrides)) == ["stationReq"]
+
+    def test_override_reaches_an_attribute_without_a_variant_dependency(self, missions):
+        # payloadVolume = seekerVolume depends on no variation point, so the
+        # plain derived order skips it -- the override must still reach it
+        study = missions["InterceptUav"]
+        selection = MISSION_WINNERS["InterceptUav"][0]
+        overrides = {"seekerVolume": 0.01}
+        assert study.evaluate(selection, overrides).violations == ["bayFit"]
+        inst = study.instance(selection, overrides)
+        assert inst.slots["payloadVolume"] == 0.01
+        assert self.failed(study, inst) == ["bayFit"]
+
+    def test_overrides_never_write_the_model(self, missions, catalog):
+        study = missions["IsrUav"]
+        selection = MISSION_WINNERS["IsrUav"][0]
+        overrides = {"minStationMinutes": 300.0, "airframe.loiterSpeed": 18.0}
+        study.evaluate(selection, overrides)
+        study.instance(selection, overrides)
+        assert study.interp.evaluate("minStationMinutes", study.assembly) == 25.0
+        assert longeron.Interpreter(catalog).evaluate("minStationMinutes", study.assembly) == 25.0
+        arch = study.evaluate(selection)
+        assert arch.verified
+        assert arch.metrics["stationMinutes"] == pytest.approx(274.57, abs=0.01)
+        assert study.instance(selection).slots["airframe"].slots["loiterSpeed"] == 14.0
+
+    @pytest.mark.parametrize(
+        ("key", "valid"),
+        [
+            ("stationMinutes", "minStationMinutes"),  # a derived attribute
+            ("nope", "minStationMinutes"),  # an unknown name
+            ("sensor", "minStationMinutes"),  # a part
+            ("airframe.dragArea", "loiterSpeed"),  # a derived variant attribute
+            ("airframe.nope", "loiterSpeed"),  # an unknown variant attribute
+            ("nope.mass", "airframe"),  # an unknown variation point
+        ],
+    )
+    def test_non_input_keys_are_refused(self, missions, key, valid):
+        study = missions["IsrUav"]
+        selection = MISSION_WINNERS["IsrUav"][0]
+        for call in (study.evaluate, study.instance):
+            with pytest.raises(longeron.analysis.AnalysisError) as err:
+                call(selection, {key: 1.0})
+            assert repr(key) in str(err.value)
+            assert valid in str(err.value)
