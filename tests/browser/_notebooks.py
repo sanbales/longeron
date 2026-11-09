@@ -807,6 +807,29 @@ print("camera at elevation 0, azimuth 0")
     )
 
 
+def grand_tour_dock_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour docked in the JupyterLab main area.
+
+    Cells 0 to 3 are the cells of :func:`grand_tour_notebook`.  Cell 4
+    docks the tour (``grand.dock()``) and cell 5 undocks it.  Each prints
+    one JSON line: the docked panes and the number of inline children.
+    Cells 4 and 5 are raw cells, so a run-all does not run them.  The test
+    runs them with ``run_cell``, which sends a cell's source to the kernel.
+    """
+
+    cells = [cell["source"] for cell in grand_tour_notebook()["cells"]]
+    report = """
+import json
+
+print(json.dumps({"panels": sorted(grand.panels), "children": len(grand.children)}))
+"""
+    notebook = _notebook(*cells, "grand.dock()\n" + report, "grand.undock()\n" + report)
+    for cell in notebook["cells"][4:]:
+        cell["cell_type"] = "raw"
+        del cell["execution_count"], cell["outputs"]
+    return notebook
+
+
 def tilt_notebook() -> dict[str, Any]:
     """Scenario: the tilt-rotor conversion affordance (grand.tilt_viewer).
 
@@ -1239,6 +1262,7 @@ SCENARIO_NOTEBOOKS = {
     "config_view_scenario.ipynb": config_view_notebook,
     "grand_tour_scenario.ipynb": grand_tour_notebook,
     "grand_tour_onboard_scenario.ipynb": grand_tour_onboard_notebook,
+    "grand_tour_dock_scenario.ipynb": grand_tour_dock_notebook,
     "tilt_scenario.ipynb": tilt_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
     "lossy_seam_scenario.ipynb": lossy_seam_notebook,

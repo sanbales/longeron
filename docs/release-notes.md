@@ -106,6 +106,17 @@
     An N2 matrix shows the components of the problem and their
     connections. The dashboard exposes them as `.sizing_history`,
     `.sizing_table` and `.sizing_n2`
+- **The grand tour docks in JupyterLab**: `dash.dock()` moves the panes
+  into nine panels of the JupyterLab main area, each with a titled tab:
+  *Tree*, *Structure*, *3D*, *Scoreboard*, *Subject*, *Camera what-if*,
+  *Sizing*, *Z3* and *Mission*. The first view keeps the inline order,
+  and the Cesium pane is a tab beside the notebook. A drag of a split bar
+  resizes two panes, and a drag of a tab moves a pane. The panels hold
+  the same widgets, so every pane still follows the subject.
+  `dash.undock()` shows the dashboard in the notebook again, and
+  `grand_dashboard(..., dock=True)` docks it when it is built. Without a
+  JupyterLab front end, `dock()` prints a note and the layout stays
+  inline. The inline layout stays the default
 - **The analysis API behind the tour**:
   - `longeron.analysis.mdao`: `add_optimization` attaches an
     `om.SqliteRecorder` to the driver. `run_optimization` runs the driver

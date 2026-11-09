@@ -828,3 +828,116 @@ class TestSubject:
         dash.elevation.value = -15.0
         dash.knobs["minStationMinutes"].value = 25.0
         dash.knobs["props"].value = "apc11x55"
+
+
+#: the docked panes' tab labels, in docking order
+DOCK_LABELS = {
+    "mission": "Mission",
+    "structure": "Structure",
+    "subject": "Subject",
+    "3d": "3D",
+    "scoreboard": "Scoreboard",
+    "tree": "Tree",
+    "sizing": "Sizing",
+    "camera": "Camera what-if",
+    "z3": "Z3",
+}
+
+
+class TestDock:
+    """``dock()`` moves the panes into nine Lab panels and ``undock()`` back."""
+
+    @pytest.fixture
+    def shell(self, monkeypatch):
+        """A Lab front end is detected, and every ipylab shell message is kept."""
+
+        ipylab = pytest.importorskip("ipylab")
+        from ipylab.shell import Shell
+
+        assert ipylab.Panel  # the real ipylab composes the panels
+        monkeypatch.setenv("JPY_SESSION_NAME", "notebooks/09_grand_tour.ipynb")
+        sent = []
+        monkeypatch.setattr(
+            Shell, "send", lambda _self, content, buffers=None: sent.append(content)
+        )
+        return sent
+
+    def test_without_a_lab_front_end_the_tour_stays_inline(self, dash, monkeypatch, capsys):
+        monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+        inline = list(dash.children)
+        dash.dock()
+        assert "stays inline" in capsys.readouterr().out
+        assert list(dash.children) == inline
+        assert dash.panels == {}
+        dash.undock()  # not docked: a no-op
+        assert list(dash.children) == inline
+
+    def test_dock_composes_nine_panels_and_undock_restores_the_layout(self, dash, shell):
+        inline = list(dash.children)
+        moved = (dash.tree, dash.diagram, dash.viewer, dash.board, dash.mission)
+        layouts = [w.layout for w in moved]
+        try:
+            dash.dock()
+            assert {pane: p.title.label for pane, p in dash.panels.items()} == DOCK_LABELS
+            stamps = {p.title.dataset["lgxstamp"] for p in dash.panels.values()}
+            assert len(stamps) == 1
+            for pane, panel in dash.panels.items():
+                assert panel.title.dataset["lgxkey"] == f"grand-{pane}"
+                assert panel.title.icon is not None
+                assert panel.layout is None  # the Lab dock's geometry stays on the node
+                assert panel.children[-1].key == f"grand-{pane}"  # the explorer's sweeper
+            # the SAME widget instances move: the hub needs no rewiring
+            assert dash.panels["tree"].children[0] is dash.tree
+            assert dash.panels["structure"].children[0] is dash.diagram
+            assert dash.panels["3d"].children[0] is dash.viewer
+            assert dash.panels["scoreboard"].children[0] is dash.board
+            assert dash.panels["mission"].children[0] is dash.mission
+            assert dash.panels["subject"].children[0] is dash.header
+            row2 = inline[3].children
+            for pane, card in zip(("subject", "camera", "sizing", "z3"), row2, strict=True):
+                assert card in dash.panels[pane].children
+                assert card.layout.height == "100%"  # a docked card fills its panel
+            assert dash.tree.layout.height == "100%"
+            # the inline layout keeps only the style and the note
+            assert len(dash.children) == 2 and dash.children[0] is inline[0]
+            assert "undock()" in dash.children[1].value
+            # nine adds to the main area; each ref names a panel added earlier
+            adds = [m["payload"] for m in shell if m["func"] == "add"]
+            assert [a["serializedWidget"] for a in adds] == [
+                f"IPY_MODEL_{p.model_id}" for p in dash.panels.values()
+            ]
+            seen = {adds[0]["id"]}
+            for add in adds[1:]:
+                assert add["area"] == "main" and add["args"]["activate"] is False
+                assert add["args"]["ref"] in seen  # a panel added earlier
+                seen.add(add["id"])
+            # the Cesium pane first: the current tab beside the notebook
+            assert adds[0]["args"] == {"mode": "tab-after", "activate": True}
+        finally:
+            dash.undock()
+        assert list(dash.children) == inline
+        assert [w.layout for w in moved] == layouts
+        assert dash.panels == {}
+
+    def test_redock_replaces_every_panel(self, dash, shell):
+        try:
+            dash.dock()
+            first = list(dash.panels.values())
+            dash.dock()
+            assert len(dash.panels) == 9
+            assert all(p.comm is None for p in first)  # closed: no zombie panels
+            assert not set(map(id, first)) & set(map(id, dash.panels.values()))
+            assert len([m for m in shell if m["func"] == "add"]) == 18
+        finally:
+            dash.undock()
+
+    def test_the_hub_works_while_docked(self, dash, shell):
+        try:
+            dash.dock()
+            dash.tree.selected = [TWIN]
+            assert dash.subject.airframe == "flyingWingTwin"
+            assert list(dash.diagram.view.selection.ids) == [TWIN]
+        finally:
+            dash.undock()
+            TestTreeWiring._home(dash)
+        assert dash.subject.airframe == "flyingWingSingle"

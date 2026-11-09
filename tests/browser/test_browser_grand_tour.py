@@ -8,7 +8,7 @@ surfaces: a genuine click on a containment-tree row, on a sprotty
 diagram label, on a dropdown, a slider and a toggle button, each
 repainting the panes beside it.
 
-Six scenarios, each on a fresh kernel:
+The scenarios, each on a fresh kernel:
 
 1. a tree row click changes the subject: the diagram repaints its
    selection and the 3D pane rebuilds its scene for the new craft;
@@ -44,6 +44,14 @@ Six scenarios, each on a fresh kernel:
    the width of the sizing card.  Each one is no taller than the card,
    so one scroll position of the card shows all of it.  The measurements go to
    ``build/evidence/grand_tour_sizing.json``.
+
+7. ``dock()`` moves the tour into nine JupyterLab main-area panels with
+   titled tabs, in the inline order: row 1, row 2, and the Cesium pane
+   beside the notebook.  A drag of the split bar between the tree and
+   the diagram widens one and narrows the other.  A drag of the 3D tab
+   onto the tree pane moves the tab into the tree's tab bar.  A tree row
+   click still changes the subject, and ``undock()`` closes the panels
+   and shows the inline layout again.
 
 Scenarios 1, 2, 4 and 6 collapse JupyterLab's left sidebar first.  At the
 harness viewport (1500 px) the open file browser leaves the output area
@@ -842,3 +850,165 @@ def test_maximize_draws_the_driver_history(lab: Any) -> None:
         rendering.screenshot(path=str(EVIDENCE / f"grand_sizing_{name}.png"))
 
     lab.assert_no_errors()
+
+
+DOCK_NOTEBOOK = "grand_tour_dock_scenario.ipynb"
+GRAND_TABS = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey^="grand-"]'
+
+#: every docked pane: its tab label, the keys of the tabs in the same tab
+#: bar, and the box of its panel.  LabShell writes the panel's DOM id into
+#: the tab's dataset, so ``data-id`` finds the panel of a tab
+_DOCK_JS = """() => {
+    const out = {};
+    for (const tab of document.querySelectorAll(
+        '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey^="grand-"]')) {
+        const panel = tab.dataset.id ? document.getElementById(tab.dataset.id) : null;
+        const r = panel ? panel.getBoundingClientRect() : null;
+        out[tab.dataset.lgxkey] = {
+            label: tab.textContent.trim(),
+            bar: [...tab.closest('.lm-TabBar').querySelectorAll('.lm-TabBar-tab')]
+                .map((t) => t.dataset.lgxkey || 'other'),
+            box: r && {x: r.x, y: r.y, width: r.width, height: r.height},
+        };
+    }
+    return out;
+}"""
+
+#: the center of the dock handle between the panels of two panes, side by
+#: side: a visible handle in the gap between them, at their shared height
+_HANDLE_JS = """([leftKey, rightKey]) => {
+    const box = (key) => {
+        const tab = document.querySelector(
+            `#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="${key}"]`);
+        const panel = tab && document.getElementById(tab.dataset.id);
+        return panel ? panel.getBoundingClientRect() : null;
+    };
+    const a = box(leftKey), b = box(rightKey);
+    if (!a || !b) return null;
+    for (const handle of document.querySelectorAll(
+        '#jp-main-dock-panel > .lm-DockPanel-handle')) {
+        const r = handle.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.x >= a.right - 6 && r.right <= b.left + 6 && r.top <= a.top + 40
+            && r.bottom >= a.top + a.height / 2) {
+            return {x: r.x + r.width / 2, y: a.top + a.height / 2};
+        }
+    }
+    return null;
+}"""
+
+
+def _dock(lab: Any) -> dict[str, Any]:
+    return dict(lab.evaluate(_DOCK_JS, label="the docked panes"))
+
+
+def _drag(lab: Any, start: tuple[float, float], end: tuple[float, float]) -> None:
+    """A user drag: press, move in steps, release."""
+
+    mouse = lab.page.mouse
+    mouse.move(*start)
+    mouse.down()
+    mouse.move(start[0] + 4, start[1] + 40, steps=6)  # past lumino's detach threshold
+    mouse.move(*end, steps=20)
+    mouse.up()
+
+
+def test_dock_resizes_and_rearranges_the_panes(lab: Any) -> None:
+    """The docked tour: nine Lab panels, a drag handle, a tab drag (scenario 7)."""
+
+    _open(lab, notebook=DOCK_NOTEBOOK)
+    assert lab.page.locator(GRAND_TABS).count() == 0
+
+    docked = lab._extract_json(lab.run_cell(4))
+    assert len(docked["panels"]) == 9 and docked["children"] == 2, docked
+    lab.wait_until(
+        lambda _s: lab.page.locator(GRAND_TABS).count() == 9,
+        timeout=60,
+        label="nine grand-tour tabs in the main dock",
+    )
+    # the inline output keeps only the note (the notebook is behind the Mission tab)
+    lab.page.wait_for_selector(".jp-OutputArea .lgn-grand-docked", state="attached")
+    assert lab.page.locator(".jp-OutputArea .longeron-viewer3d").count() == 0
+    lab.page.wait_for_selector(".lgn-grand-pane .longeron-viewer3d canvas", timeout=120_000)
+    lab.page.wait_for_selector(".lgn-grand-pane .lgx-row", timeout=60_000)
+    panes = _dock(lab)
+    labels = {key: pane["label"] for key, pane in panes.items()}
+    assert labels == {
+        "grand-tree": "Tree",
+        "grand-structure": "Structure",
+        "grand-3d": "3D",
+        "grand-scoreboard": "Scoreboard",
+        "grand-subject": "Subject",
+        "grand-camera": "Camera what-if",
+        "grand-sizing": "Sizing",
+        "grand-z3": "Z3",
+        "grand-mission": "Mission",
+    }, labels
+    # the first view follows the inline layout: row 1 left to right, row 2 below
+    row1 = [panes[f"grand-{p}"]["box"] for p in ("tree", "structure", "3d", "scoreboard")]
+    row2 = [panes[f"grand-{p}"]["box"] for p in ("subject", "camera", "sizing", "z3")]
+    assert all(box and box["width"] > 100 and box["height"] > 100 for box in row1), panes
+    assert [b["x"] for b in row1] == sorted(b["x"] for b in row1), row1
+    assert min(b["y"] for b in row2) > max(b["y"] for b in row1), (row1, row2)
+    assert panes["grand-mission"]["box"]["y"] > min(b["y"] for b in row2), panes
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    (EVIDENCE / "grand_tour_dock_first.json").write_text(json.dumps(panes, indent=1), "utf-8")
+    lab.page.screenshot(path=str(EVIDENCE / "grand_tour_docked.png"))
+
+    # a drag of the handle between the tree and the structure diagram
+    handle = lab.evaluate(_HANDLE_JS, ["grand-tree", "grand-structure"], label="tree handle")
+    assert handle, f"no dock handle between the tree and the diagram: {panes}"
+    mouse = lab.page.mouse
+    mouse.move(handle["x"], handle["y"])
+    mouse.down()
+    mouse.move(handle["x"] + 120, handle["y"], steps=12)
+    mouse.up()
+    resized = _dock(lab)
+    tree_grew = resized["grand-tree"]["box"]["width"] - panes["grand-tree"]["box"]["width"]
+    diagram_shrank = (
+        panes["grand-structure"]["box"]["width"] - resized["grand-structure"]["box"]["width"]
+    )
+    assert tree_grew > 60 and diagram_shrank > 60, (panes, resized)
+
+    # a drag of the 3D tab onto the middle of the tree pane joins the tree's tab bar
+    tab = lab.page.locator('#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="grand-3d"]')
+    grip = tab.bounding_box()
+    tree = resized["grand-tree"]["box"]
+    assert grip is not None
+    start = (grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+    _drag(lab, start, (tree["x"] + tree["width"] / 2, tree["y"] + tree["height"] / 2))
+    lab.wait_until(
+        lambda _s: "grand-tree" in _dock(lab)["grand-3d"]["bar"],
+        timeout=30,
+        label="the 3D tab joined the tree's tab bar",
+    )
+    moved = _dock(lab)
+    assert "grand-3d" not in moved["grand-scoreboard"]["bar"], moved
+    lab.page.screenshot(path=str(EVIDENCE / "grand_tour_docked_rearranged.png"))
+
+    # the hub still works: a tree row click changes the subject
+    lab.page.locator('#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="grand-tree"]').click()
+    search = lab.page.locator(".lgn-grand-pane .lgx-tree-search").first
+    search.wait_for(state="visible", timeout=30_000)
+    search.fill("flyingWingTwin")
+    row = lab.page.locator(f'.lgn-grand-pane .lgx-row[data-id="{TWIN_VARIANT}"]').first
+    row.wait_for(state="visible", timeout=60_000)
+    row.click()
+    state = _poll_checker(lab, lambda s: s["airframe"] == "flyingWingTwin")
+    assert state["diagram"] == [TWIN_VARIANT], state
+
+    # undock: the panels close and the inline layout comes back
+    undocked = lab._extract_json(lab.run_cell(5))
+    assert undocked == {"panels": [], "children": 5}, undocked
+    lab.wait_until(
+        lambda _s: lab.page.locator(GRAND_TABS).count() == 0,
+        timeout=60,
+        label="every grand-tour tab closed",
+    )
+    lab.page.wait_for_selector(".jp-OutputArea .longeron-viewer3d canvas", timeout=120_000)
+    assert lab.page.locator(".jp-OutputArea .lgn-grand-docked").count() == 0
+    # the new view of the tree shows the query that its rows still apply
+    search = lab.page.locator(".jp-OutputArea .lgx-tree-search").first
+    assert search.input_value() == "flyingWingTwin"
+    scroll_into_view(_header(lab))
+    lab.page.screenshot(path=str(EVIDENCE / "grand_tour_undocked.png"))

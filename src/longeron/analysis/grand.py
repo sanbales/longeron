@@ -137,11 +137,13 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
 from dataclasses import replace
+from functools import cache
 from math import cos, floor, log10, pi, radians, sin, tan
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .. import model as M
 from ..interpreter import Instance, Interpreter
@@ -161,6 +163,8 @@ __all__ = [
     "ATLANTA_LOOP",
     "DEFAULT_SIZING_CONTEXTS",
     "FLIGHT_EVENTS",
+    "DockPane",
+    "GrandDock",
     "drone_scene",
     "grand_dashboard",
     "scene_for",
@@ -924,6 +928,205 @@ def _verdict_html(title: str, result: Any, detail: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# docking: the panes as JupyterLab main-area panels
+# ---------------------------------------------------------------------------
+
+#: the panes that :meth:`GrandDock.dock` moves into the JupyterLab main area.
+#: Each pane's tab carries ``data-lgxkey="grand-<pane>"``
+DockPane = Literal[
+    "mission", "structure", "subject", "3d", "scoreboard", "tree", "sizing", "camera", "z3"
+]
+
+#: the Lab dock modes that :data:`_DOCK_PLAN` uses
+_DockMode = Literal["tab-after", "split-top", "split-left", "split-right"]
+
+#: the docking order: pane, tab label, Lab dock mode, and the pane that the
+#: mode is relative to (``None``: the Lab's current widget, the notebook).
+#: Lumino halves the reference pane's share on every split, so this order
+#: gives row 1 and row 2 four equal columns each.  Row 1 takes half of the
+#: main-area height, and row 2 and the notebook row a quarter each
+_DOCK_PLAN: tuple[tuple[DockPane, str, _DockMode, DockPane | None], ...] = (
+    ("mission", "Mission", "tab-after", None),
+    ("structure", "Structure", "split-top", "mission"),
+    ("subject", "Subject", "split-top", "mission"),
+    ("3d", "3D", "split-right", "structure"),
+    ("scoreboard", "Scoreboard", "split-right", "3d"),
+    ("tree", "Tree", "split-left", "structure"),
+    ("sizing", "Sizing", "split-right", "subject"),
+    ("camera", "Camera what-if", "split-right", "subject"),
+    ("z3", "Z3", "split-right", "sizing"),
+)
+
+_DOCKED_NOTE = (
+    '<em class="lgn-grand-docked" style="font-size:12px; color:var(--jp-ui-font-color2,#666)">'
+    "The grand tour is docked in the JupyterLab main area. "
+    "Call <code>undock()</code> to show it here again.</em>"
+)
+
+
+@cache
+def _layoutless_panel() -> type:
+    """An :class:`ipylab.Panel` class without a ``Layout`` model.
+
+    The Lab dock writes the panel's geometry (``top``, ``left``, ``width``
+    and ``height``) on the panel node when the panel joins the dock.  The
+    ipywidgets front end then builds the panel's layout view, and that view
+    removes every inline style property that its ``Layout`` leaves unset.
+    A visible panel thus loses its geometry and collapses.  A panel with no
+    ``Layout`` model has no layout view, so the geometry stays.
+    """
+
+    import ipylab
+    import ipywidgets
+    import traitlets
+
+    class LayoutlessPanel(ipylab.Panel):
+        layout = traitlets.Instance(ipywidgets.Layout, allow_none=True).tag(
+            sync=True, **ipywidgets.widget_serialization
+        )
+
+    return LayoutlessPanel
+
+
+class GrandDock:
+    """The dock state of one grand tour: :meth:`dock` and :meth:`undock`.
+
+    A **docked pane** is a group of dashboard widgets in its own JupyterLab
+    main-area panel (an :class:`ipylab.Panel`) with a titled tab.  The Lab
+    dock puts a **split bar** on each edge that two docked panes share, and a
+    drag of the split bar resizes the two panes.  A drag of a tab moves its
+    pane to another place in the dock.  The panels hold the SAME widget
+    instances as the inline layout, so the kernel-side selection hub keeps
+    working wherever the widgets show.  ``panes`` maps each
+    :data:`DockPane` to its widgets, each with the layout keywords it takes
+    while docked (``None`` keeps its layout).
+    """
+
+    def __init__(
+        self,
+        box: Any,
+        panes: Mapping[DockPane, Sequence[tuple[Any, Mapping[str, str] | None]]],
+        *,
+        style: Any,
+    ) -> None:
+        widgets = _ipywidgets()
+        self._box = box
+        self._inline = tuple(box.children)
+        self._style = style
+        self._panes = {pane: tuple(members) for pane, members in panes.items()}
+        self._inline_layouts = [
+            (widget, widget.layout) for members in self._panes.values() for widget, _ in members
+        ]
+        self._frontend: Any = None
+        self._icon: Any = None
+        #: pane -> its :class:`ipylab.Panel` while docked, empty while inline
+        self.panels: dict[DockPane, Any] = {}
+        self.note = widgets.HTML(_DOCKED_NOTE)
+
+    def dock(self) -> None:
+        """Move the panes into the JupyterLab main area, nine panels.
+
+        The first view follows the inline layout: the tree, the structure
+        diagram, the 3D pane and the scoreboard in the top row, and the
+        subject, camera what-if, sizing and Z3 cards in the next row.  The
+        Cesium pane is the current tab of the notebook's tab area, below the
+        cards, and the notebook tab stays beside it.  The inline layout shows
+        a note in place of the panes.
+
+        A second ``dock()`` closes the open panels and docks all nine
+        panes again in the first view.  Thus ``dock()`` also re-opens a
+        pane whose tab the user closed.  A closed tab does not change the
+        widgets, so the selection hub keeps working.  The tabs carry the
+        explorer's dock identity (:class:`~longeron.widgets.explorer._DockSweeper`),
+        so a dock after a kernel restart closes the panels of the dead
+        kernel.  If no JupyterLab front end hosts the kernel, ``dock()``
+        prints a note and keeps the inline layout.
+        """
+
+        from ..widgets.explorer import _DockSweeper, _lab_frontend_detected
+
+        if not _lab_frontend_detected():
+            print("No JupyterLab front end hosts this kernel: the grand tour stays inline.")
+            return
+        try:
+            import ipylab
+        except ImportError as err:
+            from ..errors import MissingExtraError
+
+            raise MissingExtraError("the grand tour's dock()", "ipylab", "explorer") from err
+        from ..widgets.app import _ICON_SVG
+
+        widgets = _ipywidgets()
+        self._close_panels()
+        self._box.children = (self._style, self.note)  # the inline views go first
+        stamp = str(time.time_ns())
+        if self._icon is None:
+            self._icon = ipylab.Icon(name="longeron:grand", svgstr=_ICON_SVG)
+        for pane, label, _mode, _ref in _DOCK_PLAN:
+            members = self._panes[pane]
+            for widget, docked in members:
+                if docked is not None:
+                    widget.layout = widgets.Layout(**docked)
+            panel = _layoutless_panel()()
+            panel.title.label = label
+            panel.title.icon = self._icon
+            panel.title.dataset = {"lgxkey": f"grand-{pane}", "lgxstamp": stamp}
+            panel.add_class("lgn-grand-pane")
+            sweeper = _DockSweeper(
+                key=f"grand-{pane}", stamp=stamp, layout=widgets.Layout(display="none")
+            )
+            panel.children = (*(widget for widget, _ in members), sweeper)
+            self.panels[pane] = panel
+        if self._frontend is None:
+            self._frontend = ipylab.JupyterFrontEnd()
+        ids = {pane: f"lgn-grand-{pane}-{stamp}" for pane in self.panels}
+        for pane, _label, mode, ref in _DOCK_PLAN:
+            # the Cesium pane becomes the current tab of the notebook's tab
+            # area.  The other panes each open a tab area of their own
+            args: dict[str, Any] = {"mode": mode, "activate": pane == "mission"}
+            if ref is not None:
+                args["ref"] = ids[ref]
+            # ipylab 1.1's Shell.add with one more payload key: the front
+            # end's ShellModel._add gives the Lumino widget the payload's
+            # ``id``, so a later add names this panel as its ``ref``
+            self._frontend.shell.send(
+                {
+                    "func": "add",
+                    "payload": {
+                        "serializedWidget": f"IPY_MODEL_{self.panels[pane].model_id}",
+                        "area": "main",
+                        "args": args,
+                        "id": ids[pane],
+                    },
+                }
+            )
+
+    def undock(self) -> None:
+        """Close the panels and show the inline layout again.
+
+        The widgets take back their inline layouts.  If the tour is not
+        docked, ``undock()`` does nothing.
+        """
+
+        if not self.panels:
+            return
+        self._close_panels()
+        for widget, layout in self._inline_layouts:
+            widget.layout = layout
+        self._box.children = self._inline
+
+    def _close_panels(self) -> None:
+        """Close the panel widgets.  The pane widgets inside stay open."""
+
+        for panel in self.panels.values():
+            sweeper = panel.children[-1]
+            panel.close()  # the front end removes the panel's tab
+            panel.title.close()
+            sweeper.close()
+        self.panels.clear()
+
+
+# ---------------------------------------------------------------------------
 # the dashboard composition
 # ---------------------------------------------------------------------------
 
@@ -944,6 +1147,7 @@ def grand_dashboard(
     events: Sequence[Any] = FLIGHT_EVENTS,
     ground_alt: float = 0.0,
     imagery: Imagery = "satellite",
+    dock: bool = False,
 ) -> Any:
     """The grand-tour dashboard (an ipywidgets ``VBox``) -- one call.
 
@@ -1015,8 +1219,14 @@ def grand_dashboard(
     scene, its identity keys, and its declared camera, ``None`` when the
     craft declares none), ``.header``, ``.config_view`` (the
     :class:`~longeron.analysis.link.ConfigViewBinding` behind the
-    config-keyed 3D pane), and ``.unlink`` (drops the diagram <-> 3D
-    binding).
+    config-keyed 3D pane), ``.unlink`` (drops the diagram <-> 3D
+    binding), ``.dock`` / ``.undock`` (:meth:`GrandDock.dock` and
+    :meth:`GrandDock.undock`: move the panes into the JupyterLab main area
+    as nine resizable, rearrangeable panels, and back), and ``.panels``
+    (:data:`DockPane` -> its ``ipylab.Panel`` while docked, empty while
+    inline).  ``dock=True`` docks the dashboard when it is built.  The
+    inline layout is the default, so a notebook without a JupyterLab front
+    end renders as before.
     """
 
     from ..diagrams import structure_diagram  # pulls in ipyelk
@@ -1723,28 +1933,46 @@ def grand_dashboard(
         card.add_class("lgn-grand-card")
         return card
 
+    subject_pane, camera_pane, sizing_pane, verdict_pane = (
+        _strip_card(
+            "subject (mission, knobs)",
+            [mission_toggle, subject_card, knob_grid, knob_sliders],
+            flex="1.6 1 0",
+        ),
+        _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
+        _strip_card(sizing_title, [sizing_body]),
+        _strip_card(verdict_title, [verdict_body]),
+    )
     row2 = widgets.HBox(
-        [
-            _strip_card(
-                "subject (mission, knobs)",
-                [mission_toggle, subject_card, knob_grid, knob_sliders],
-                flex="1.6 1 0",
-            ),
-            _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
-            _strip_card(sizing_title, [sizing_body]),
-            _strip_card(verdict_title, [verdict_body]),
-        ],
+        [subject_pane, camera_pane, sizing_pane, verdict_pane],
         layout=widgets.Layout(width="100%", align_items="stretch", overflow="hidden"),
     )
 
-    box.children = [
-        widgets.HTML(_GRAND_CSS, layout=widgets.Layout(display="none")),
-        header,
-        row1,
-        row2,
-        flight,
-    ]
+    style = widgets.HTML(_GRAND_CSS, layout=widgets.Layout(display="none"))
+    box.children = [style, header, row1, row2, flight]
     box.layout = widgets.Layout(width="100%")
+
+    # docked, a pane fills its panel's width.  The tree, the diagram and the
+    # cards also fill its height; the 3D pane, the scoreboard and the Cesium
+    # stage keep their own aspect or height, and the panel scrolls
+    fill = {"width": "100%", "height": "100%", "flex": "1 1 auto", "min_width": "0"}
+    wide = {"width": "100%", "flex": "0 0 auto", "overflow": "hidden"}
+    card = {**fill, "overflow": "hidden auto"}
+    grand_dock = GrandDock(
+        box,
+        {
+            "tree": ((tree, fill),),
+            "structure": ((diagram, {**fill, "overflow": "hidden"}),),
+            "3d": ((viewer, wide),),
+            "scoreboard": ((board, wide),),
+            "subject": ((header, None), (subject_pane, card)),
+            "camera": ((camera_pane, card),),
+            "sizing": ((sizing_pane, card),),
+            "z3": ((verdict_pane, card),),
+            "mission": ((flight, {"width": "100%"}),),
+        },
+        style=style,
+    )
 
     # -- the automation/testing surface ---------------------------------------
     box.diagram = diagram
@@ -1764,7 +1992,12 @@ def grand_dashboard(
     box.values = base_values
     box.config_view = binding
     box.unlink = binding.unbind
+    box.dock = grand_dock.dock
+    box.undock = grand_dock.undock
+    box.panels = grand_dock.panels
 
     _show_strips(first.mission)
     _on_camera()
+    if dock:
+        grand_dock.dock()
     return box

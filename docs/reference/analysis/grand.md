@@ -39,6 +39,7 @@ tests:
 | row 2 | N2 matrix (in the sizing strip) | `.sizing_n2` |
 | row 2 | Z3 verdict strip | `.verdict_title`, `.smt_sat`, `.smt_what_if`, `.verdicts` |
 | bottom | Cesium pane | `.mission`, `.track` |
+| JupyterLab main area | docked panes | `.dock`, `.undock`, `.panels` |
 
 The subject state is `.subject`, `.architecture` (the trade-study
 result with the overrides applied), `.craft` (the qualified name of the
@@ -47,6 +48,42 @@ mission). `.sizing_contexts` holds the mission-to-context map, and `.values` the
 injected scoreboard values. The
 sizing and Z3 attributes are `None` for a mission without a sizing
 context.
+
+## Dock the panes in JupyterLab
+
+`dash.dock()` moves the panes into the JupyterLab **main area**, the part
+of the window that shows the notebook and the other open documents. Each
+pane group becomes a **docked pane**: an `ipylab.Panel` with a titled tab.
+A **split bar** is the thin bar between two docked panes. A drag of a
+split bar resizes the two panes, and a drag of a tab moves a pane.
+
+| Tab | Widgets | Tab key (`data-lgxkey`) |
+|---|---|---|
+| Tree | `.tree` | `grand-tree` |
+| Structure | `.diagram` | `grand-structure` |
+| 3D | `.viewer` | `grand-3d` |
+| Scoreboard | `.board` | `grand-scoreboard` |
+| Subject | `.header` and the subject card | `grand-subject` |
+| Camera what-if | the camera what-if card | `grand-camera` |
+| Sizing | the OpenMDAO sizing strip | `grand-sizing` |
+| Z3 | the Z3 verdict strip | `grand-z3` |
+| Mission | `.mission` | `grand-mission` |
+
+The first view keeps the inline order. The first four tabs make the top
+row, and the four cards make the next row. The *Mission* tab is the
+current tab of the notebook's tab area, at the bottom. `.panels` maps each
+pane name to its panel while the tour is docked, and it is empty while
+the tour is inline.
+
+The docked panes hold the same widget instances as the inline layout, so
+the selection links keep working. A closed tab does not close its
+widgets. A second `dash.dock()` closes the open panels and docks all nine
+panes again in the first view. `dash.undock()` closes the panels and shows
+the inline layout again. `grand_dashboard(..., dock=True)` docks the
+dashboard when it is built. If no JupyterLab front end hosts the kernel,
+`dock()` prints a note and the layout stays inline.
+
+## Driver renderings
 
 The three driver renderings explain the OpenMDAO problem of the sizing
 context. A **driver iteration** is one model evaluation that the

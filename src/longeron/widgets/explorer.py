@@ -531,6 +531,9 @@ function render({ model, el }) {
   input.placeholder = "filter\\u2026";
   input.className = "lgx-tree-search";
   input.setAttribute("aria-label", "Filter the model tree");
+  // a second view of the same tree (a re-display, an undocked grand tour)
+  // shows the live query that its rows already apply
+  input.value = model.get("query") || "";
   // the relationship toggle: a compact icon button beside the search box
   // (two dots joined by a dashed line -- the row chips' dashed idiom);
   // pressed = relationships shown (the default)
