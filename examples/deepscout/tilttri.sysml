@@ -150,7 +150,8 @@ package TiltRotors {
         attribute fuselageLength : Real = 1.05;
         attribute fuselageDiameter : Real = 0.14;
         attribute wingSpan : Real = 2.4;  attribute wingChord : Real = 0.30;
-        attribute taper : Real = 0.5;     attribute wingArea : Real = 0.72;
+        attribute taper : Real = 0.5;
+        attribute clMax : Real = 1.2;     // cambered NACA 2412-class wing, NOMINAL
         attribute tailArea : Real = 0.14;   // m^2, tailplane + fin together
         // modest quarter-chord sweep: it carries the tip pivots aft of
         // the spar box, so the pivot bearing sits behind the structure
@@ -158,7 +159,6 @@ package TiltRotors {
         // exactly the way Arc B's does)
         attribute sweepDeg : Real = 10.0;
         attribute wingSection : String = "2412";   // drawn section (NACA)
-        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);
         attribute tipChord : Real = taper * rootChord;
 
         // ----- the tilt-pod chain: Arc B's clearance geometry, pivoted --

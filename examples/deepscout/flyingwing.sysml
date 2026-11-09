@@ -115,6 +115,8 @@ package FlyingWings {
                 formFactor = BodyFormFactor(length = bayLength,
                                             diameter = bayWidth)));
         attribute tipPropBonus : Real = 1.0;     // pushers ride the TE, not the tips
+        // the reflexed section trades lift for its nose-up trim: NOMINAL
+        attribute clMax : Real = 1.0;
         attribute hoverThrustFactor : Real = 0.0;   // catapult-launched: no hover
         attribute hoverOpsSec : Real = 0.0;         // ... and no hover budget
         // the catapult climb-out runs full throttle until the wing is
@@ -154,7 +156,6 @@ package FlyingWings {
         // the declared cgMac into metres aft of the root LE, and the
         // margin and volume calcs read the composed stations -- so one
         // CG feeds every check, whichever composition produced it.
-        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);
         attribute tipChord : Real = taper * rootChord;
         attribute mac : Real =
             MeanAeroChord(rootChord = rootChord, taper = taper);
@@ -192,8 +193,8 @@ package FlyingWings {
                of chasing the swept TE outboard (podTeRise 0).  The
                outer panels sweep as before; the crank reshapes the
                DRAWN planform and the S&C composition only -- the
-               declared performance closures (wingArea, wingSpan,
-               oswald) are untouched.
+               performance closures (wingArea, the straight-taper
+               span x mean chord; wingSpan; oswald) are untouched.
                The price of one propeller: its torque has no twin to
                cancel against, so the elevons carry a standing trim
                deflection -- that ride is in the Oswald factor, a
@@ -202,7 +203,7 @@ package FlyingWings {
                an ISR specialist, honestly excluded from the parcel
                trade the way the teardrop is. */
         attribute wingSpan : Real = 2.2;  attribute wingChord : Real = 0.32;
-        attribute taper : Real = 0.45;    attribute wingArea : Real = 0.704;
+        attribute taper : Real = 0.45;
         attribute wingletArea : Real = 0.030;
         attribute mass : Real = 1.15;   attribute cost : Real = 520.0;
 
@@ -330,7 +331,7 @@ package FlyingWings {
                mid-size parcel cradle; the winch bay is honestly past
                it. */
         attribute wingSpan : Real = 2.6;  attribute wingChord : Real = 0.327;
-        attribute taper : Real = 0.45;    attribute wingArea : Real = 0.85;
+        attribute taper : Real = 0.45;
         attribute wingletArea : Real = 0.040;
         attribute mass : Real = 1.55;   attribute cost : Real = 780.0;
         // the pushers ride the swept TE either side of the root bay,

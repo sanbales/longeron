@@ -15,7 +15,7 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 WINNERS = {
     "ISR": ("flyingWingSingle", 274.6),
     "logistics": ("flyingWingTwinTip", 187.0),
-    "intercept": ("dartInterceptor", 66.8),
+    "intercept": ("dartInterceptor", 66.9),
 }
 
 

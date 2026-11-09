@@ -385,13 +385,13 @@ def scene_for(
     if not isinstance(definition, M.Definition) or not definition.qualified_name:
         raise AnalysisError(f"scene_for needs a named definition (got {config!r})")
     qname = definition.qualified_name
-    knobs: dict[str, float] = {}
-    for name in _AIRFRAME_KNOBS:
-        try:
-            knobs[name] = float(interp.evaluate(f"{qname}::{name}"))
-        except Exception:
-            knobs = {}  # unvalued or absent knob: not a fleet shell
-            break
+    # the knobs come off an instance: an inherited derived attribute (the
+    # planform's wingArea) evaluates against the shell's own inputs only there
+    try:
+        slots = interp.instantiate(definition).slots
+        knobs = {name: float(slots[name]) for name in _AIRFRAME_KNOBS}
+    except Exception:
+        knobs = {}  # unvalued or absent knob: not a fleet shell
     if knobs:
         # the tailless S&C and pusher-installation knobs are optional:
         # only the flying wings declare them, and the zero-sweep,

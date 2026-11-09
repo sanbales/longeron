@@ -28,8 +28,10 @@ package WingedVtol {
         attribute fuselageLength : Real = 0.95;
         attribute fuselageDiameter : Real = 0.12;
         attribute wingSpan : Real = 2.6;  attribute wingChord : Real = 0.24;
-        attribute taper : Real = 0.6;     attribute wingArea : Real = 0.624;
-        attribute secondaryWingArea : Real = 0.387;  // 0.62-span pair, same chord
+        attribute taper : Real = 0.6;
+        attribute clMax : Real = 1.2;     // cambered NACA 2412 main pair, NOMINAL
+        // the 0.62-span pair, same chord (secondarySpan below)
+        attribute secondaryWingArea : Real = secondarySpan * wingChord;
         attribute dragArea : Real = 1.15 * (  // interference/excrescence
             SkinFrictionDrag(
                 wettedArea = BodyWettedArea(length = fuselageLength,
@@ -153,7 +155,8 @@ package WingedVtol {
         attribute fuselageLength : Real = 1.25;
         attribute fuselageDiameter : Real = 0.11;
         attribute wingSpan : Real = 1.05; attribute wingChord : Real = 0.17;
-        attribute taper : Real = 0.5;     attribute wingArea : Real = 0.179;
+        attribute taper : Real = 0.5;
+        attribute clMax : Real = 1.0;     // symmetric NACA 0009 wing, NOMINAL
         attribute tailArea : Real = 0.045;  // cruciform fin planform
         attribute dragArea : Real = 1.15 * (  // interference/excrescence
             SkinFrictionDrag(

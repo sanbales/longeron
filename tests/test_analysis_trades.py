@@ -674,7 +674,7 @@ MISSION_WINNERS = {
             "cargo": "parcelBayM",
         },
         "payloadRangeKgKm",
-        187.02,
+        186.99,
     ),
     "InterceptUav": (
         {
@@ -685,7 +685,7 @@ MISSION_WINNERS = {
             "material": "aluminum",
         },
         "maxTargetSpeed",
-        66.80,
+        66.93,
     ),
 }
 

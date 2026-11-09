@@ -174,6 +174,9 @@ class TestConstraintNetworkPayload:
             "bayFit",
             "launchLift",
             "canCatch",
+            # the dash's stall margin reads the dash speed, so the
+            # variables reach it
+            "dashAboveStall",
             # the target's declared ranges: they read only input
             # attributes, so no variable reaches them
             "targetSpeedLow",

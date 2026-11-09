@@ -173,9 +173,10 @@ class TestPodClearance:
         # twin's CdA carries the longer pods, +0.33% over the fixed
         # 0.09 m pods), and both shells now carry their blended bay
         # pod's exposed skin on top of the pre-bay buildup (single
-        # 0.014363, twin 0.017604)
+        # 0.014363, twin 0.017604); the twin's area is span x mean chord,
+        # 0.8502 m^2 (0.018463 at the former 0.85 literal)
         assert instances["FlyingWingSingle"].slots["dragArea"] == pytest.approx(0.015363, abs=2e-6)
-        assert instances["FlyingWingTwin"].slots["dragArea"] == pytest.approx(0.018463, abs=2e-6)
+        assert instances["FlyingWingTwin"].slots["dragArea"] == pytest.approx(0.018467, abs=2e-6)
 
 
 class TestRequirementVerdicts:
@@ -254,7 +255,7 @@ class TestArchitectureWiring:
         # reference design point stays exactly the T4 winners
         assert interp.evaluate("ScoutMissions::stationMinutes") == 274.6
         assert interp.evaluate("ScoutMissions::payloadRangeKgKm") == 187.0
-        assert interp.evaluate("ScoutMissions::maxTargetSpeed") == 66.8
+        assert interp.evaluate("ScoutMissions::maxTargetSpeed") == 66.9
         assert interp.evaluate("ScoutMissions::fleetCost") == 9706.5
 
 
@@ -338,7 +339,7 @@ class TestEngineOutYaw:
         # hand derivation: Cn = T y / (q S b) at the slowest wing-borne
         # point, vs the winglet volume times the side-force ceiling
         q = 0.5 * 1.225 * 15.0**2
-        required = 33.0 * 1.3 / (q * 0.85 * 2.6)
+        required = 33.0 * 1.3 / (q * 2.6 * 0.327 * 2.6)  # S = span x mean chord
         assert s["engineOutYawCn"] == pytest.approx(required)
         assert s["engineOutAuthorityCn"] == pytest.approx(0.8 * s["wingletYawVolume"])
         assert s["engineOutYawCn"] > 10.0 * s["engineOutAuthorityCn"]
@@ -350,7 +351,9 @@ class TestEngineOutYaw:
         q = 0.5 * 1.225 * 15.0**2
         required = 33.0 * 1.3 / (q * 0.624 * 2.6)
         assert s["engineOutYawCn"] == pytest.approx(required)
-        assert s["finYawVolume"] == pytest.approx(0.387 * 0.75 * 0.24 / (0.624 * 2.6))
+        # the secondary pair: 0.62 of the span at the same mean chord
+        secondary = 0.62 * 2.6 * 0.24
+        assert s["finYawVolume"] == pytest.approx(secondary * 0.75 * 0.24 / (0.624 * 2.6))
         assert s["engineOutYawCn"] > 5.0 * s["engineOutAuthorityCn"]
         assert not interp.check_requirement(self.REQ, subject=vtol).satisfied
 

@@ -409,19 +409,26 @@ class TestFrontJustificationsLive:
         # wing that beats it in the cost-MOE plane
         for index in (1056, 1057):
             assert dash.front[index]
-            why = whys[index]
-            assert why.startswith("front: maxTargetSpeed ")
-            assert why.endswith("tops every pick that beats it in this plane")
+            assert "maxTargetSpeed" in whys[index]
+        assert whys[1056].startswith("front: maxTargetSpeed ")
+        assert whys[1056].endswith("tops every pick that beats it in this plane")
+        # since the spar design-mass check (sparDesignMass) retired the
+        # heavy tail-sitter logistics seats, the second hauler's alibi is
+        # the dash OR the station time
+        assert whys[1057].startswith("front: every pick that beats it in this plane trails it")
         # the gust placard took the sprint twin's alibi with it: the root
         # twin's 63 m/s paper dash is a 30 m/s usable one, so the seat
         # its maxTargetSpeed once justified is gone
         assert not dash.front[1566]
-        # ... and among the top picks, the tip twins that trade a hair of
-        # invoice for a hair of placard margin carry the same dash alibi
-        assert 1668 in dash.picks
-        why = cards[1668]["why"]
-        assert why.startswith("front: maxTargetSpeed ")
-        assert why.endswith("tops every pick that beats it in this plane")
+        # ... and among the top picks, root twins carry the same dash
+        # alibi.  Since the spar design-mass check (sparDesignMass), the
+        # root twins hold these picks, and the tip twin 1668 left the top 8
+        assert 1668 not in dash.picks
+        for index in (1508, 1518):
+            assert index in dash.picks
+            why = cards[index]["why"]
+            assert why.startswith("front: maxTargetSpeed ")
+            assert why.endswith("tops every pick that beats it in this plane")
 
     def test_named_metrics_really_beat_all_plane_beaters(self, dash, data):
         """Honesty, brute-forced, over every front member in the pool:
@@ -626,13 +633,19 @@ class TestDashboardWiring:
         )
 
     def test_payload_floor_forces_bigger_bays(self, dash):
+        def picks_mixes():
+            return {
+                row["mission_mix"]["logistics"]["cargo"]
+                for row in dash.live
+                if row["feasible"]["logistics"]
+            }
+
+        dash.requirements["logistics"]["payloadKg"].value = 2.0
+        assert picks_mixes() == {"parcelBayM"}  # only the 2.5 kg cradle clears 2 kg
+        # the 4 kg winch bay flies only on the tail-sitter, whose spar is
+        # sized for 6 kg (sparDesignMass): no pick delivers 3 kg
         dash.requirements["logistics"]["payloadKg"].value = 3.0
-        picks_mixes = {
-            row["mission_mix"]["logistics"]["cargo"]
-            for row in dash.live
-            if row["feasible"]["logistics"]
-        }
-        assert picks_mixes == {"parcelBayL"}  # only the 4 kg bay clears 3 kg
+        assert picks_mixes() == set()
 
     def test_moe_front_highlights_the_pareto_set(self, dash):
         payload = json.loads(dash.scatter.payload_json)

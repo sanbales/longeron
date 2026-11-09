@@ -29,6 +29,29 @@
   `BoxQuad` and `RingOcto` carry it at the forward face of the bay.
   At the declared boresight, no shell sees its own airframe, so the
   ISR winner `flyingWingSingle` passes `clearView`
+- **The wing planform is one chain, and the missions check the stall,
+  the tilt cap and the spar mass**. The three trade winners do not
+  change:
+  - `Airframe` derives `wingArea = wingSpan * wingChord` and
+    `rootChord = 2 * wingChord / (1 + taper)`. `wingChord` is the mean
+    chord and the planform input. No shell states its area as a
+    literal. The dart's area falls from 0.179 to 0.1785 m^2, and the
+    twins' area rises from 0.85 to 0.8502 m^2
+  - `Airframe` declares `clMax`, the maximum lift coefficient of the
+    section: 1.2 for a cambered wing, 1.0 for the reflexed flying wings
+    and the symmetric dart wing, and 0 for a rotor-borne shell. These
+    values are NOMINAL. The new calc def `Aerodynamics::StallSpeed`
+    reads it
+  - `IsrUav`, `LogisticsUav` and `InterceptUav` assert a stall margin
+    of at least 1.2 for the speed each mission flies: the loiter, the
+    outbound cruise and the usable dash speed (`loiterAboveStall`,
+    `cruiseAboveStall`, `dashAboveStall`)
+  - `LogisticsUav` caps a rotor-borne cruise at `MaxCruiseSpeed` for
+    the shell's `maxTiltDeg` (`cruiseWithinTilt`). It also asserts that
+    the outbound mass does not exceed the spar's `designGrossKg`
+    (`sparDesignMass`). This check retires 83 logistics mixes, and the
+    `vtolWing` and `tiltTriWing` logistics presets now carry the small
+    parcel. No craft delivers the 4 kg winch parcel any more
 
 ### The grand tour
 

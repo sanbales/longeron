@@ -336,7 +336,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.78;   attribute cost : Real = 120.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 14.0;
@@ -397,7 +397,7 @@ package Rotorcraft {
                                             diameter = fuselageDiameter));
         attribute mass : Real = 0.98;   attribute cost : Real = 320.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 18.0;
@@ -449,7 +449,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.62;   attribute cost : Real = 260.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 11.0;      // the yaw-authority cap
@@ -497,7 +497,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 3.1;    attribute cost : Real = 1450.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 15.0;
@@ -542,7 +542,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.05;   attribute cost : Real = 380.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 16.0;
@@ -586,7 +586,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.5;    attribute cost : Real = 520.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 15.0;

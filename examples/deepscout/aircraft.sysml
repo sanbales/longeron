@@ -62,9 +62,21 @@ package DeepScout {
         attribute cost : Real;              // USD
         attribute dragArea : Real;          // parasite CdA, m^2 (buildup)
         attribute wingSpan : Real;          // m; 0 = rotor-borne only
-        attribute wingChord : Real;         // m, mean
+        attribute wingChord : Real;         // m, mean: the planform input
         attribute taper : Real;             // tip/root chord ratio
-        attribute wingArea : Real;          // m^2
+        // the planform chain, one formula for every shell: the span, the
+        // MEAN chord and the taper are the inputs.  The area is span x
+        // mean chord, and the root chord follows from the mean chord of
+        // a straight taper, mean = root x (1 + taper) / 2.  The drag
+        // buildups, the stall checks and the drawn mesh all read these
+        // two, so no shell states its area as a second literal.
+        attribute wingArea : Real = wingSpan * wingChord;   // m^2
+        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);   // m
+        // the section's maximum lift coefficient, the stall checks'
+        // input: NOMINAL 1.2 for a cambered section, 1.0 for a reflexed
+        // or symmetric one (the sensitivity study's assumption, no
+        // catalog source), 0 for a rotor-borne shell that never stalls
+        attribute clMax : Real;
         attribute oswald : Real;            // span efficiency e
         attribute tipPropBonus : Real;      // induced-drag recovery, >= 1
         attribute loiterSpeed : Real;       // m/s, on-station speed
@@ -290,6 +302,17 @@ package DeepScout {
             in span : Real;             // m
             in recoveryPerDiskSpan : Real = 2.0;   // NOMINAL slope
             return : Real = 1.0 + recoveryPerDiskSpan * diskDiameter / span;
+        }
+
+        calc def StallSpeed {
+            doc /* Level-flight stall speed: the speed at which the wing at
+                   its maximum lift coefficient carries the weight,
+                   V = sqrt(2 m g / (rho S CLmax)), at sea-level density. */
+            in massKg : Real;
+            in wingArea : Real;         // m^2, the lifting planform
+            in clMax : Real;            // section maximum lift coefficient
+            return : Real = sqrt(2.0 * massKg * 9.81
+                / (1.225 * wingArea * clMax));
         }
     }
 
