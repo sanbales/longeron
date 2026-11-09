@@ -73,6 +73,10 @@ pane at the bottom.  The panes, in layout order:
   regardless).  Its view-mode buttons track the drone (the default),
   stop the tracking, or look through the subject craft's declared camera
   (``'onboard'``).  The onboard view uses the camera what-if angles.
+  The subject's shell sets the flight profile
+  (:func:`longeron.analysis.mission3d.model_flight`): a multirotor climbs
+  vertically, a rail-launched wing climbs out along the first leg and
+  banks through the corners.
 
 WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
@@ -796,6 +800,7 @@ def grand_dashboard(
     """
 
     from ..diagrams import structure_diagram  # pulls in ipyelk
+    from ..replay import record_timeline
     from ..widgets import mission3d as mission3d_widget
     from ..widgets import viewer3d
     from ..widgets.explorer import (
@@ -871,6 +876,7 @@ def grand_dashboard(
             tilt = mission3d.model_tilt(interp, qname)
         except AnalysisError:  # no cruiseTilt: the shell flies level
             tilt = 0.0
+        profile, wing = mission3d.model_flight(interp, qname)
         instance = study.instance(subject.mix(), subject.overrides)
         return {
             "architecture": architecture,
@@ -884,6 +890,8 @@ def grand_dashboard(
             "cone_length": 0.45 * geometry._bounds_diagonal(mesh),
             "disc_overlap": disc_overlap,
             "tilt": tilt,
+            "profile": profile,
+            "wing": wing,
         }
 
     def _subject_board(
@@ -921,17 +929,23 @@ def grand_dashboard(
 
     # -- Cesium: the state machine's recorded execution over the route -------
     # FlightStates and the route are shared by every mission (no mission
-    # declares its own); the subject supplies the geometry and the tilt
-    replay = mission3d.from_replay(
-        interp,
-        states,
-        list(events),
-        waypoints=waypoints,
-        ground_alt=ground_alt,
-        tilt_deg=baked["tilt"],
-    )
+    # declares its own): one recording; the subject supplies the geometry,
+    # the tilt and the flight profile
+    timeline = record_timeline(interp, states, list(events))
+
+    def _track(pieces: dict[str, Any]) -> mission3d.MissionTrack:
+        return mission3d.track_from_timeline(
+            timeline,
+            waypoints=waypoints,
+            ground_alt=ground_alt,
+            tilt_deg=pieces["tilt"],
+            profile=pieces["profile"],
+            wing=pieces["wing"],
+            name=states.rsplit("::", 1)[-1],  # the machine's own name
+        )
+
     flight = mission3d_widget.mission_viewer(
-        replay,
+        _track(baked),
         mesh=baked["mesh"],
         label=f"{states} replay -- the subject's own geometry over {imagery} imagery",
         height_px=_MISSION_PX,
@@ -1003,7 +1017,7 @@ def grand_dashboard(
         box.requirements = dict(pieces["requirements"])
         live["cone_length"] = pieces["cone_length"]
         live["disc_overlap"] = pieces["disc_overlap"]
-        box.track = replace(replay, tilt_deg=pieces["tilt"])
+        box.track = _track(pieces)
         subject_card.value = _architecture_html(
             pieces["architecture"], DEFAULT_MISSIONS[subject.mission][1]
         )

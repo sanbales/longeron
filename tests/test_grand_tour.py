@@ -237,6 +237,24 @@ class TestComposition:
             json.dumps(dash.track.to_czml(mesh=dash.mesh))
         )
 
+    def test_flight_profile_follows_the_subject_shell(self, dash):
+        # the rail-launched flying wing banks through its turns ...
+        assert dash.track.profile == "wing" and dash.track.turns
+        takeoff = dash.track.samples[1:3]
+        assert takeoff[0][1:3] != takeoff[1][1:3]  # it climbs out along the first leg
+        dash.diagram.view.selection.ids = ["Rotorcraft::TeardropQuad"]
+        try:  # ... a quad subject climbs vertically and turns on the spot
+            assert dash.track.profile == "rotorcraft" and dash.track.turns == []
+            (_t0, *ground), (_t1, *top) = dash.track.samples[1:3]
+            assert ground[:2] == top[:2] and top[2] > ground[2]
+            assert json.loads(dash.mission.czml_json) == json.loads(
+                json.dumps(dash.track.to_czml(mesh=dash.mesh))
+            )
+        finally:
+            dash.diagram.view.selection.ids = [HOME]
+            dash.diagram.view.selection.ids = []
+        assert dash.track.profile == "wing"
+
     def test_scene_carries_the_view_cone_but_analysis_mesh_does_not(self, dash):
         scene = json.loads(dash.viewer.mesh_json)
         assert scene["parts"][-1]["name"] == "viewCone"

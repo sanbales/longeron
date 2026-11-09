@@ -84,6 +84,25 @@
   declared camera of the subject and the camera what-if sliders, so the
   onboard view looks where the occlusion measure looks
 
+- **The Cesium flight flies the flight profile of the subject**.
+  `mission3d.model_flight` reads the profile off the shell. A shell
+  with `wingSpan` 0 is a rotorcraft. A wing with `hoverThrustFactor` 0
+  is a rail-launched wing, and a wing with hover thrust is a VTOL wing:
+  - A rail-launched wing climbs out along the first leg and turns on an
+    arc at each waypoint, banked 30 deg. It orbits in a loiter state
+    and glides to the ground over the last waypoint
+  - A VTOL wing climbs and descends vertically up to 30 m above the
+    ground and flies as a wing between
+  - A rotorcraft flies as before, and its CZML does not change
+  - `track_from_timeline` and `from_replay` take `profile=` and
+    `wing=`, a `WingFlight` with the turn speed, the bank, the climb and
+    glide angles and the transition height. `MissionTrack` records the
+    `profile` and the banked `turns`
+  - `MissionTrack.attitude()` returns `(t, heading, pitch, roll)`
+    keyframes in place of `(t, heading, pitch)`
+  - A state name with loiter, hover, station or orbit maps to the new
+    `loiter` phase. A rotorcraft flies it as a `route` phase
+
 ### Verification and conformance
 
 - **Every z3 `Optimize` query has a time limit, and an independent

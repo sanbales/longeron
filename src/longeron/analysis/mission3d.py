@@ -22,24 +22,48 @@ same :class:`MissionTrack`:
   animation (the globe shows the ACTUAL executed behavior: state
   durations, interleavings, reentries), not flight-sim fidelity.  A
   state's phase comes from substring hints on its name, overridable per
-  state name via ``phases=``:
+  state name via ``phases=``.  The **flight profile** (``profile=``, a
+  :data:`FlightProfile`) sets how each phase flies:
+  ``"rotorcraft"`` (the default), ``"wing"`` (a rail-launched wing) or
+  ``"vtol_wing"`` (a wing that takes off and lands on its rotors).
+  :func:`model_flight` reads the profile off the airframe.  The wing-borne
+  profiles turn on a circle of the **turn radius**
+  (:attr:`WingFlight.turn_radius_m`):
 
   ``ground`` (idle, standby, parked, ...)
       hold the current position; the mission starts at the first
       waypoint at ``ground_alt`` (default 0: on the ground).
   ``takeoff`` (takingOff, launch, climb, ...)
-      vertical climb, in place, to the route altitude at the current
-      route position.
-  ``route`` (flying, cruise, loiter, hover, survey, ...)
+      ``"rotorcraft"``: vertical climb, in place, to the route altitude
+      at the current route position.  ``"wing"``: the craft flies on
+      along the route and climbs at ``climb_deg`` to the route altitude.
+      ``"vtol_wing"``: a vertical climb to ``transition_m`` above ground,
+      then the ``"wing"`` climb.
+  ``route`` (flying, cruise, survey, ...)
       advance along the waypoint polyline; each segment covers a
       distance proportional to its share of the total route-phase
-      time, so several flying/loiter states spend the one route
+      time, so several flying states spend the one route
       between them and the drone lands wherever the machine stopped
-      flying.
+      flying.  A wing-borne craft flies the polyline with each corner
+      replaced by an arc of the turn radius, and it banks in the arc.
+      Where a leg is too short for the arc, the arc radius shrinks so
+      that each arc uses at most half of each adjacent leg.
+  ``loiter`` (loiter, hover, station, orbit)
+      ``"rotorcraft"``: the same as ``route``.  Wing-borne: whole
+      right-hand laps of the turn radius at constant altitude.  The
+      circle touches the track at the **station point**, the position
+      where the state starts, so the craft leaves the orbit where it
+      entered.
   ``landing`` (landing, descend, ...)
-      vertical descent, in place, to ``ground_alt``.
+      ``"rotorcraft"``: vertical descent, in place, to ``ground_alt``.
+      ``"wing"``: a glide at ``glide_deg`` along the route to
+      ``ground_alt``.  The route phases leave the last part of the route
+      for this glide, so the glide ends over the last waypoint.
+      ``"vtol_wing"``: the glide to ``transition_m`` above ground, then a
+      vertical descent.
   ``hold`` (anything unrecognized)
-      hover in place.
+      hover in place.  A wing-borne craft in the air orbits as in
+      ``loiter``.
 
   Pure event cascades (no clock advance) record in *step mode*; each
   step then counts as ``seconds_per_step`` seconds of flight --  a
@@ -65,7 +89,7 @@ build) and the ACTUAL airframe geometry flies the route: the mesh
 exports to a self-contained binary glTF through :func:`mesh_to_glb`
 (in-house, stdlib-only -- see :mod:`longeron.analysis._glb` for the
 exact container), embeds in the CZML as a ``data:`` URI (tens of kB for
-the quad), flies with a MULTIROTOR ATTITUDE, and never shrinks below a
+the quad), flies with the attitude of its flight profile, and never shrinks below a
 legible pixel size however far the camera sits; ``model_scale`` blows it
 up beyond true scale when the route dwarfs the airframe.  Without a mesh
 the drone stays the point entity.
@@ -79,7 +103,10 @@ orientation into the CZML (``unitQuaternion`` keyframes, computed by
 0 wherever there is no horizontal motion (climb, descent, hover,
 ground) and the ``tilt_deg`` forward tilt while the drone advances
 along the route, roll stays 0, and orientation changes blend over a few
-seconds (Cesium slerps between adjacent quaternion samples).  A
+seconds (Cesium slerps between adjacent quaternion samples).  The
+wing-borne profiles pitch to the flight-path angle and roll to the bank
+angle in each arc, and the heading follows the direction of travel
+through the arc.  A
 CZML-sampled property is chosen over a front-end ``CallbackProperty``
 because the module's whole design bakes the payload kernel-side: the
 samples are deterministic, testable without a browser, and need no
@@ -117,10 +144,10 @@ from __future__ import annotations
 
 import base64
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..errors import SysMLError
 from ._expr import AnalysisError
@@ -134,16 +161,25 @@ if TYPE_CHECKING:
     from ..replay import Timeline
 
 __all__ = [
+    "FlightProfile",
     "MissionTrack",
+    "WingFlight",
     "from_replay",
     "mesh_to_glb",
     "mission_track",
     "mission_values",
     "model_epoch",
+    "model_flight",
     "model_tilt",
     "model_waypoints",
     "track_from_timeline",
 ]
+
+#: how the craft flies the track: ``"rotorcraft"`` (vertical climb and
+#: descent, hover, instant turns), ``"wing"`` (rail launch, banked turns,
+#: orbits, glide landing) or ``"vtol_wing"`` (rotor-borne climb and
+#: descent at both ends, wing-borne between)
+FlightProfile = Literal["rotorcraft", "wing", "vtol_wing"]
 
 #: names that moved to :mod:`longeron.widgets.mission3d`; forwarded with
 #: a DeprecationWarning by module ``__getattr__``
@@ -200,10 +236,12 @@ _ATTITUDE_BLEND_S = 3.0
 _ATTITUDE_MOVING_MPS = 0.2
 
 # state-name substring hints -> motion phase, checked in order (takeoff
-# before ground, so "takingOff" never matches the "off" ground hint)
+# before ground, so "takingOff" never matches the "off" ground hint;
+# loiter before route, so "stationKeeping" never reads as transit)
 _PHASE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("takingoff", "takeoff", "launch", "liftoff", "ascend", "climb"), "takeoff"),
     (("landing", "land", "descen", "touchdown", "recover", "rtl", "return"), "landing"),
+    (("loiter", "hover", "station", "orbit"), "loiter"),
     (
         (
             "fly",
@@ -213,12 +251,8 @@ _PHASE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
             "route",
             "ingress",
             "egress",
-            "loiter",
-            "hover",
             "survey",
-            "station",
             "search",
-            "orbit",
             "patrol",
         ),
         "route",
@@ -230,6 +264,47 @@ _PHASE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 # ---------------------------------------------------------------------------
 # track synthesis
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WingFlight:
+    """How a wing-borne track (profiles ``"wing"`` and ``"vtol_wing"``) flies.
+
+    ``speed_mps`` and ``bank_deg`` set the **turn radius**, the radius
+    of every waypoint fillet and loiter orbit: ``r = v^2 / (g tan(bank))``
+    (a level coordinated turn, g = 9.81 m/s^2).  ``climb_deg`` is the
+    climb angle after launch, ``glide_deg`` the descent angle of the
+    landing approach, and ``transition_m`` the height above ground at
+    which a ``"vtol_wing"`` craft changes between rotor-borne and
+    wing-borne flight.  The DeepScout shells state no bank limit, climb
+    angle, glide angle or transition height, so these defaults apply;
+    :func:`model_flight` reads the speed off the model.
+    """
+
+    speed_mps: float = 20.0
+    bank_deg: float = 30.0
+    climb_deg: float = 10.0
+    glide_deg: float = 8.0
+    transition_m: float = 30.0
+
+    def __post_init__(self) -> None:
+        if not self.speed_mps > 0.0:
+            raise AnalysisError(f"speed_mps must be positive (got {self.speed_mps!r})")
+        for label, angle in (
+            ("bank_deg", self.bank_deg),
+            ("climb_deg", self.climb_deg),
+            ("glide_deg", self.glide_deg),
+        ):
+            if not 0.0 < angle < 90.0:
+                raise AnalysisError(f"{label} must be in (0, 90) degrees (got {angle!r})")
+        if self.transition_m < 0.0:
+            raise AnalysisError(f"transition_m must be >= 0 (got {self.transition_m!r})")
+
+    @property
+    def turn_radius_m(self) -> float:
+        """The coordinated-turn radius ``v^2 / (g tan(bank))``, meters."""
+
+        return self.speed_mps**2 / (9.81 * math.tan(math.radians(self.bank_deg)))
 
 
 @dataclass
@@ -244,7 +319,11 @@ class MissionTrack:
     of the driving leaf state (empty for plain waypoint tracks);
     ``tilt_deg`` is the forward cruise tilt the airframe holds while it
     moves along the route (degrees nose-down; ideally the MODEL's own
-    number -- see :func:`model_tilt`).
+    number -- see :func:`model_tilt`).  ``profile`` is the
+    :data:`FlightProfile` that synthesized the samples, and it selects
+    the attitude rule (see :meth:`attitude`).  ``turns`` records the
+    banked intervals of a wing-borne track as ``(t0, t1, roll_deg)``:
+    positive roll is right wing down (a right turn).
     """
 
     name: str
@@ -253,6 +332,8 @@ class MissionTrack:
     waypoints: list[tuple[float, float, float]]
     phases: list[tuple[float, float, str, str]]
     tilt_deg: float = 0.0
+    profile: FlightProfile = "rotorcraft"
+    turns: list[tuple[float, float, float]] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -276,8 +357,8 @@ class MissionTrack:
         active state name through the phases.  With ``mesh`` (a
         geometry-module mesh dict) the drone entity is the airframe's
         own glTF model -- :func:`mesh_to_glb` output on a ``data:``
-        URI, nose steered along the track heading with the multirotor
-        attitude (see :meth:`attitude`), scaled by ``model_scale`` and
+        URI, nose steered along the track heading with the attitude of
+        the track's flight profile (see :meth:`attitude`), scaled by ``model_scale`` and
         clamped to a legible minimum pixel size -- instead of the
         fallback point.  Track heights are above ground: the drone and
         the pins use ``heightReference: RELATIVE_TO_GROUND`` (see the
@@ -408,17 +489,19 @@ class MissionTrack:
                 "minimumPixelSize": _MODEL_MIN_PIXELS,
                 "heightReference": _HEIGHT_REFERENCE,
             }
-            # the multirotor attitude, baked as sampled quaternions: yaw
-            # follows the track heading, pitch 0 in vertical/hover motion
-            # (props up), the model-derived forward tilt along the route,
-            # roll 0; Cesium slerps between adjacent samples.  NOT a
-            # velocityReference: VelocityOrientationProperty would pitch
-            # the quad vertical during climb and descent.
+            # the attitude, baked as sampled quaternions (see attitude()):
+            # a multirotor yaws along the track with pitch 0 in
+            # vertical/hover motion (props up) and the model-derived
+            # forward tilt along the route; a wing-borne craft pitches to
+            # its flight-path angle and banks in its turns.  Cesium slerps
+            # between adjacent samples.  NOT a velocityReference:
+            # VelocityOrientationProperty would pitch the quad vertical
+            # during climb and descent.
             quaternions: list[float] = []
             previous: tuple[float, float, float, float] | None = None
-            for t, heading, pitch in self.attitude():
+            for t, heading, pitch, roll in self.attitude():
                 lat, lon = self._position_at(t)
-                q = _attitude_quaternion(lat, lon, heading, pitch)
+                q = _attitude_quaternion(lat, lon, heading, pitch, roll)
                 if (
                     previous is not None
                     and sum(a * b for a, b in zip(q, previous, strict=True)) < 0.0
@@ -464,33 +547,44 @@ class MissionTrack:
             )
         return intervals
 
-    def attitude(self, *, blend_s: float = _ATTITUDE_BLEND_S) -> list[tuple[float, float, float]]:
-        """The orientation keyframes: ``(t, heading_deg, pitch_deg)``.
+    def attitude(
+        self, *, blend_s: float = _ATTITUDE_BLEND_S
+    ) -> list[tuple[float, float, float, float]]:
+        """The orientation keyframes: ``(t, heading_deg, pitch_deg, roll_deg)``.
 
         Heading follows the track's direction of travel (great-circle
         initial bearing per motion segment, degrees clockwise from true
         north); hover/vertical segments hold the last heading flown (or
         face the first leg before anything has moved).  Pitch is 0
-        wherever the drone has no horizontal motion -- a multirotor
-        climbs, descends, and hovers props-up -- and ``-tilt_deg``
-        (nose-down forward tilt) while it advances along the route.
-        Roll is always 0.  Orientation changes blend over ``blend_s``
-        seconds, half on each side of the motion change, clamped to the
-        neighboring segments' midpoints so keyframe times stay strictly
-        increasing.
+        wherever the craft has no horizontal motion -- a multirotor or a
+        ``"vtol_wing"`` on its rotors climbs, descends, and hovers
+        props-up.  With horizontal motion, the ``"rotorcraft"`` profile
+        pitches ``-tilt_deg`` (nose-down forward tilt) and the wing-borne
+        profiles pitch to the flight-path angle (the climb or descent
+        angle of the segment).  Roll is the signed bank of the
+        :attr:`turns` interval that holds the segment, and 0 elsewhere
+        (always 0 for ``"rotorcraft"``).  Orientation changes blend over
+        ``blend_s`` seconds, half on each side of the motion change,
+        clamped to the neighboring segments' midpoints so keyframe times
+        stay strictly increasing.
         """
 
         if len(self.samples) < 2:
             raise AnalysisError("a mission track needs at least two samples")
-        spans: list[list[float]] = []  # [t0, t1, heading|nan, pitch]
-        for (t0, lat0, lon0, _a0), (t1, lat1, lon1, _a1) in pairwise(self.samples):
+        spans: list[list[float]] = []  # [t0, t1, heading|nan, pitch, roll]
+        for (t0, lat0, lon0, alt0), (t1, lat1, lon1, alt1) in pairwise(self.samples):
             horizontal = _haversine_m(lat0, lon0, lat1, lon1)
             if horizontal / (t1 - t0) >= _ATTITUDE_MOVING_MPS:
                 heading = _initial_bearing_deg(lat0, lon0, lat1, lon1)
-                pitch = -self.tilt_deg
+                if self.profile == "rotorcraft":
+                    pitch, roll = -self.tilt_deg, 0.0
+                else:
+                    pitch = math.degrees(math.atan2(alt1 - alt0, horizontal))
+                    mid = (t0 + t1) / 2.0
+                    roll = next((r for a, b, r in self.turns if a <= mid <= b), 0.0)
             else:
-                heading, pitch = math.nan, 0.0
-            spans.append([t0, t1, heading, pitch])
+                heading, pitch, roll = math.nan, 0.0, 0.0
+            spans.append([t0, t1, heading, pitch, roll])
         last = math.nan
         for span in spans:  # hover holds the last heading flown
             if math.isnan(span[2]):
@@ -505,20 +599,21 @@ class MissionTrack:
                 ahead = span[2]
         merged = [spans[0]]
         for span in spans[1:]:  # merge same-orientation neighbors
-            if span[2] == merged[-1][2] and span[3] == merged[-1][3]:
+            if span[2:] == merged[-1][2:]:
                 merged[-1][1] = span[1]
             else:
                 merged.append(span)
-        keys: list[tuple[float, float, float]] = [(merged[0][0], merged[0][2], merged[0][3])]
+        first = merged[0]
+        keys: list[tuple[float, float, float, float]] = [(first[0], first[2], first[3], first[4])]
 
-        def append(t: float, heading: float, pitch: float) -> None:
+        def append(t: float, heading: float, pitch: float, roll: float) -> None:
             if t > keys[-1][0] + 1e-9:
-                keys.append((t, heading, pitch))
+                keys.append((t, heading, pitch, roll))
 
-        for (a0, a1, ah, ap), (b0, b1, bh, bp) in pairwise(merged):
-            append(a1 - min(blend_s / 2.0, (a1 - a0) / 2.0), ah, ap)
-            append(b0 + min(blend_s / 2.0, (b1 - b0) / 2.0), bh, bp)
-        append(merged[-1][1], merged[-1][2], merged[-1][3])
+        for (a0, a1, *a_att), (b0, b1, *b_att) in pairwise(merged):
+            append(a1 - min(blend_s / 2.0, (a1 - a0) / 2.0), *a_att)
+            append(b0 + min(blend_s / 2.0, (b1 - b0) / 2.0), *b_att)
+        append(merged[-1][1], *merged[-1][2:])
         return keys
 
     def _position_at(self, t: float) -> tuple[float, float]:
@@ -575,15 +670,15 @@ def _initial_bearing_deg(lat_a: float, lon_a: float, lat_b: float, lon_b: float)
 
 
 def _attitude_quaternion(
-    lat: float, lon: float, heading_deg: float, pitch_deg: float
+    lat: float, lon: float, heading_deg: float, pitch_deg: float, roll_deg: float = 0.0
 ) -> tuple[float, float, float, float]:
-    """The ECEF unit quaternion ``(x, y, z, w)`` for a zero-roll attitude.
+    """The ECEF unit quaternion ``(x, y, z, w)`` for a heading/pitch/roll attitude.
 
     Rotates the entity's body axes (+X nose, +Y left, +Z top -- the
     frame Cesium gives glTF models, our GLB exporter included) into the
     Earth-fixed frame at ``lat``/``lon``: ``heading_deg`` clockwise from
     true north, ``pitch_deg`` nose-up (so a multirotor's forward tilt is
-    a NEGATIVE pitch).
+    a NEGATIVE pitch), ``roll_deg`` about the nose, right wing down.
     """
 
     phi, lam = math.radians(lat), math.radians(lon)
@@ -595,6 +690,14 @@ def _attitude_quaternion(
     nose = (math.sin(a) * math.cos(p), math.cos(a) * math.cos(p), math.sin(p))
     right = (math.cos(a), -math.sin(a), 0.0)
     top = _cross(right, nose)
+    if roll_deg != 0.0:  # roll-free attitudes keep the exact zero-roll arithmetic
+        r = math.radians(roll_deg)
+        c, s = math.cos(r), math.sin(r)
+        top = (
+            top[0] * c + right[0] * s,
+            top[1] * c + right[1] * s,
+            top[2] * c + right[2] * s,
+        )
     left = _cross(top, nose)
 
     def ecef(v: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -641,6 +744,285 @@ def _leg_length_m(a: tuple[float, float, float], b: tuple[float, float, float]) 
     """3D leg length: great-circle horizontal plus altitude change."""
 
     return math.hypot(_haversine_m(a[0], a[1], b[0], b[1]), b[2] - a[2])
+
+
+#: arc and orbit samples are at most this many degrees of turn apart, so
+#: the linearly interpolated CZML positions stay close to the circle
+_ARC_STEP_DEG = 5.0
+
+
+class _WingPath:
+    """The horizontal route of a wing-borne craft, parameterized by distance.
+
+    The waypoint polyline with every interior corner filleted by a
+    circular arc of the turn radius, tangent to both legs.  A fillet
+    takes at most half of each adjacent leg: where a leg is shorter than
+    the two tangent lengths need, the fillet radius shrinks to fit.  The
+    route altitude is linear in distance between the waypoint stations
+    (the start, each fillet's midpoint, the end).  Past the end, the path
+    continues straight along the last bearing.
+    """
+
+    # shortcut: a flat local plane (equirectangular about the first waypoint);
+    # routes of hundreds of km need a geodesic fillet instead
+
+    def __init__(self, points: Sequence[tuple[float, float, float]], radius: float) -> None:
+        self.lat0, self.lon0 = points[0][0], points[0][1]
+        self.ky = math.radians(1.0) * _EARTH_RADIUS_M
+        self.kx = self.ky * math.cos(math.radians(self.lat0))
+        verts: list[tuple[float, float, float]] = []
+        for lat, lon, alt in points:
+            x, y = (lon - self.lon0) * self.kx, (lat - self.lat0) * self.ky
+            if verts and math.hypot(x - verts[-1][0], y - verts[-1][1]) < 1e-6:
+                verts[-1] = (x, y, alt)  # a vertical-only leg: keep the later altitude
+            else:
+                verts.append((x, y, alt))
+        # pieces: (s0, length, kind, data); kind "line": (x0, y0, ux, uy),
+        # kind "arc": (cx, cy, r, angle0, sign) with sign +1 counterclockwise
+        self.pieces: list[tuple[float, float, str, tuple[float, ...]]] = []
+        self.stations: list[tuple[float, float]] = [(0.0, verts[0][2])]
+        s, cursor = 0.0, (verts[0][0], verts[0][1])
+        self.end_dir = (0.0, 1.0)  # a single waypoint launches north
+        for index in range(1, len(verts)):
+            vx, vy, alt = verts[index]
+            ux, uy = vx - verts[index - 1][0], vy - verts[index - 1][1]
+            leg = math.hypot(ux, uy)
+            ux, uy = ux / leg, uy / leg
+            self.end_dir = (ux, uy)
+            if index == len(verts) - 1:
+                s = self._line(s, cursor, (vx, vy), (ux, uy))
+                self.stations.append((s, alt))
+                break
+            nx, ny = verts[index + 1][0] - vx, verts[index + 1][1] - vy
+            out = math.hypot(nx, ny)
+            nx, ny = nx / out, ny / out
+            turn = math.atan2(ux * ny - uy * nx, ux * nx + uy * ny)  # signed, + = left
+            if abs(turn) < 1e-9:
+                s = self._line(s, cursor, (vx, vy), (ux, uy))
+                cursor = (vx, vy)
+                self.stations.append((s, alt))
+                continue
+            half = math.tan(abs(turn) / 2.0)
+            tangent = min(radius * half, leg / 2.0, out / 2.0)
+            r = tangent / half
+            start = (vx - ux * tangent, vy - uy * tangent)
+            s = self._line(s, cursor, start, (ux, uy))
+            sign = 1.0 if turn > 0 else -1.0
+            cx, cy = start[0] - sign * uy * r, start[1] + sign * ux * r
+            angle0 = math.atan2(start[1] - cy, start[0] - cx)
+            length = r * abs(turn)
+            self.pieces.append((s, length, "arc", (cx, cy, r, angle0, sign)))
+            self.stations.append((s + length / 2.0, alt))
+            s += length
+            cursor = (vx + nx * tangent, vy + ny * tangent)
+        self.length = s
+        self.end = cursor if len(verts) == 1 else (verts[-1][0], verts[-1][1])
+
+    def _line(
+        self,
+        s: float,
+        a: tuple[float, float],
+        b: tuple[float, float],
+        direction: tuple[float, float],
+    ) -> float:
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        if length > 0.0:
+            self.pieces.append((s, length, "line", (a[0], a[1], direction[0], direction[1])))
+        return s + length
+
+    def latlon(self, x: float, y: float) -> tuple[float, float]:
+        return self.lat0 + y / self.ky, self.lon0 + x / self.kx
+
+    def xy(self, s: float) -> tuple[float, float]:
+        """Local (east, north) meters at distance ``s`` along the path."""
+
+        if s >= self.length or not self.pieces:  # straight on past the end
+            ex, ey = self.end
+            run = max(s - self.length, 0.0)
+            return ex + self.end_dir[0] * run, ey + self.end_dir[1] * run
+        for s0, length, kind, data in self.pieces:
+            if s <= s0 + length:
+                d = max(s - s0, 0.0)
+                if kind == "line":
+                    x0, y0, ux, uy = data
+                    return x0 + ux * d, y0 + uy * d
+                cx, cy, r, angle0, sign = data
+                angle = angle0 + sign * d / r
+                return cx + r * math.cos(angle), cy + r * math.sin(angle)
+        raise AssertionError("unreachable: s < length lies on a piece")
+
+    def heading(self, s: float) -> float:
+        """The direction of travel at ``s``: radians clockwise from north."""
+
+        for s0, length, kind, data in self.pieces:
+            if s0 <= s < s0 + length:
+                if kind == "line":
+                    return math.atan2(data[2], data[3])
+                _cx, _cy, r, angle0, sign = data
+                angle = angle0 + sign * (s - s0) / r
+                return math.atan2(-sign * math.sin(angle), sign * math.cos(angle))
+        return math.atan2(self.end_dir[0], self.end_dir[1])
+
+    def altitude(self, s: float) -> float:
+        """The route altitude at ``s`` (linear between waypoint stations)."""
+
+        stations = self.stations
+        if s <= stations[0][0]:
+            return stations[0][1]
+        for (s0, a0), (s1, a1) in pairwise(stations):
+            if s <= s1:
+                return a0 + (a1 - a0) * (s - s0) / (s1 - s0) if s1 > s0 else a1
+        return stations[-1][1]
+
+    def breaks(self, s0: float, s1: float) -> list[float]:
+        """Sample distances strictly inside (s0, s1): piece ends and arc steps."""
+
+        cuts: list[float] = []
+        for p0, length, kind, data in self.pieces:
+            steps = 1
+            if kind == "arc":
+                steps = max(1, math.ceil(math.degrees(length / data[2]) / _ARC_STEP_DEG))
+            cuts.extend(p0 + length * k / steps for k in range(steps + 1))
+        return sorted({c for c in cuts if s0 + 1e-9 < c < s1 - 1e-9})
+
+    def arcs(self, s0: float, s1: float) -> list[tuple[float, float, float]]:
+        """The fillet stretches inside [s0, s1] as ``(a, b, sign)``."""
+
+        return [
+            (max(p0, s0), min(p0 + length, s1), data[4])
+            for p0, length, kind, data in self.pieces
+            if kind == "arc" and p0 < s1 and p0 + length > s0
+        ]
+
+
+def _wing_synthesis(
+    classified: Sequence[tuple[float, float, str, str]],
+    points: Sequence[tuple[float, float, float]],
+    *,
+    ground_alt: float,
+    profile: FlightProfile,
+    wing: WingFlight,
+) -> tuple[list[tuple[float, float, float, float]], list[tuple[float, float, float]]]:
+    """The samples and banked turns of a wing-borne track (see the module docstring)."""
+
+    radius = wing.turn_radius_m
+    path = _WingPath(points, radius)
+    climb = math.tan(math.radians(wing.climb_deg))
+    glide = math.tan(math.radians(wing.glide_deg))
+    rotor_m = wing.transition_m if profile == "vtol_wing" else 0.0
+    # the launch run and the approach run sit at the two ends of the path,
+    # so the route states share what lies between and the approach ends
+    # over the last waypoint
+    phase_set = {phase for _t0, _t1, phase, _q in classified}
+    lead = tail = 0.0
+    for _ in range(50):  # fixed point: the run's own end sets its height
+        lead = max(path.altitude(lead) - ground_alt - rotor_m, 0.0) / climb
+        tail = max(path.altitude(path.length - tail) - ground_alt - rotor_m, 0.0) / glide
+    lead = lead if "takeoff" in phase_set else 0.0
+    tail = tail if "landing" in phase_set else 0.0
+    # shortcut: a route shorter than both runs squeezes them, so the climb and
+    # glide steepen; extend the runs past the route ends if short routes matter
+    if lead + tail > path.length > 0.0:
+        lead, tail = (
+            lead * path.length / (lead + tail),
+            tail * path.length / (lead + tail),
+        )
+    route_end = max(path.length - tail, lead)
+    route_time = sum(t1 - t0 for t0, t1, phase, _q in classified if phase == "route")
+
+    samples: list[tuple[float, float, float, float]] = []
+    turns: list[tuple[float, float, float]] = []
+    bank = wing.bank_deg
+
+    def append(t: float, x: float, y: float, alt: float) -> None:
+        lat, lon = path.latlon(x, y)
+        if samples and t <= samples[-1][0] + 1e-9:
+            samples[-1] = (samples[-1][0], lat, lon, alt)
+            return
+        samples.append((t, lat, lon, alt))
+
+    def fly(t0: float, t1: float, d0: float, d1: float, alt0: float, alt1: float) -> None:
+        """Fly the path from d0 to d1 over [t0, t1], altitude linear in distance."""
+
+        def at(d: float) -> tuple[float, float, float, float]:
+            f = (d - d0) / (d1 - d0) if d1 > d0 else 1.0
+            return (t0 + f * (t1 - t0), *path.xy(d), alt0 + f * (alt1 - alt0))
+
+        for d in (d0, *path.breaks(d0, d1), d1):
+            append(*at(d))
+        for a, b, sign in path.arcs(d0, d1):  # left turn (+) -> left wing down
+            turns.append((at(a)[0], at(b)[0], -sign * bank))
+
+    def fly_route(t0: float, t1: float, d0: float, d1: float) -> None:
+        """The route altitude profile between d0 and d1."""
+
+        cuts = [d0, *[s for s, _alt in path.stations if d0 < s < d1], d1]
+        span = d1 - d0
+        for a, b in pairwise(cuts):
+            ta = t0 + (t1 - t0) * (a - d0) / span
+            tb = t0 + (t1 - t0) * (b - d0) / span
+            fly(ta, tb, a, b, path.altitude(a), path.altitude(b))
+
+    def orbit(t0: float, t1: float, d: float, alt: float) -> None:
+        """Right-hand laps of the turn radius, tangent to the track at d."""
+
+        heading = path.heading(d)
+        x, y = path.xy(d)
+        cx, cy = x + radius * math.cos(heading), y - radius * math.sin(heading)
+        angle0 = math.atan2(y - cy, x - cx)
+        laps = max(1, round(wing.speed_mps * (t1 - t0) / (2.0 * math.pi * radius)))
+        steps = math.ceil(360.0 * laps / _ARC_STEP_DEG)
+        for k in range(steps + 1):
+            angle = angle0 - 2.0 * math.pi * laps * k / steps  # clockwise
+            append(
+                t0 + (t1 - t0) * k / steps,
+                cx + radius * math.cos(angle),
+                cy + radius * math.sin(angle),
+                alt,
+            )
+        turns.append((t0, t1, bank))
+
+    cursor, alt = 0.0, ground_alt
+    for t0, t1, phase, _qname in classified:
+        here = path.xy(cursor)
+        if phase == "takeoff":
+            hover_alt = max(min(ground_alt + rotor_m, path.altitude(cursor)), alt)
+            run = lead if cursor == 0.0 else max(path.altitude(cursor) - hover_alt, 0.0) / climb
+            top = path.altitude(cursor + run) if run > 0.0 else hover_alt
+            rise, flown = hover_alt - alt, math.hypot(run, top - hover_alt)
+            split = t0 + (t1 - t0) * rise / (rise + flown) if rise + flown > 0.0 else t1
+            append(t0, *here, alt)
+            append(split, *here, hover_alt)  # rotor-borne climb (vtol_wing only)
+            if run > 0.0:
+                fly(split, t1, cursor, cursor + run, hover_alt, top)
+            else:
+                append(t1, *here, hover_alt)
+            cursor, alt = cursor + run, top
+        elif phase == "landing":
+            flare_alt = min(ground_alt + rotor_m, alt)
+            done = cursor >= route_end - 1e-6 and cursor < path.length
+            run = path.length - cursor if done else max(alt - flare_alt, 0.0) / glide
+            fall, flown = flare_alt - ground_alt, math.hypot(run, alt - flare_alt)
+            split = t0 + (t1 - t0) * flown / (fall + flown) if fall + flown > 0.0 else t1
+            append(t0, *here, alt)
+            if run > 0.0:
+                fly(t0, split, cursor, cursor + run, alt, flare_alt)
+            cursor += run
+            append(t1, *path.xy(cursor), ground_alt)  # rotor-borne descent (vtol_wing only)
+            alt = ground_alt
+        elif phase == "route" and route_time > 0 and cursor < route_end - 1e-6:
+            d1 = min(route_end, cursor + (route_end - lead) * ((t1 - t0) / route_time))
+            if route_end - d1 < 1e-6:
+                d1 = route_end
+            append(t0, *here, path.altitude(cursor))
+            fly_route(t0, t1, cursor, d1)
+            cursor, alt = d1, path.altitude(d1)
+        elif phase in ("loiter", "hold", "route") and alt > ground_alt + 1e-6:
+            orbit(t0, t1, cursor, alt)  # a wing cannot hover
+        else:  # on the ground
+            append(t0, *here, alt)
+            append(t1, *here, alt)
+    return samples, turns
 
 
 def _parse_waypoints(
@@ -845,6 +1227,44 @@ def model_tilt(
     return _validate_tilt(float(value))
 
 
+def model_flight(
+    interpreter: Interpreter,
+    assembly: str | M.Definition | M.Usage,
+) -> tuple[FlightProfile, WingFlight]:
+    """The airframe's flight profile and wing numbers, read off the model.
+
+    Instantiates ``assembly`` and reads the two attributes the DeepScout
+    ``Airframe`` family states for this: ``wingSpan`` (0 = rotor-borne
+    only) and ``hoverThrustFactor`` (0 = rail-launched).  A span above 0
+    with no hover thrust is ``"wing"``, a span above 0 with hover thrust
+    is ``"vtol_wing"``, and anything else is ``"rotorcraft"`` (the
+    MultiRotor build family declares no wing at all).  The returned
+    :class:`WingFlight` carries the shell's ``cruiseSpeed`` for a
+    wing-borne profile and the defaults otherwise.
+    """
+
+    try:
+        instance = interpreter.instantiate(assembly)
+    except SysMLError as err:
+        raise AnalysisError(f"cannot instantiate {assembly!r}: {err}") from err
+    slots = instance.slots
+    if "wingSpan" not in slots:  # the MultiRotor build family states no wing
+        return "rotorcraft", WingFlight()
+    label = assembly if isinstance(assembly, str) else (assembly.qualified_name or "")
+    numbers: dict[str, float] = {}
+    for attribute in ("wingSpan", "hoverThrustFactor", "cruiseSpeed"):
+        value = slots.get(attribute)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise AnalysisError(
+                f"{label}::{attribute} did not evaluate to a number (got {value!r})"
+            )
+        numbers[attribute] = float(value)
+    if numbers["wingSpan"] <= 0.0:
+        return "rotorcraft", WingFlight()
+    profile: FlightProfile = "vtol_wing" if numbers["hoverThrustFactor"] > 0.0 else "wing"
+    return profile, WingFlight(speed_mps=numbers["cruiseSpeed"])
+
+
 def mission_values(
     interpreter: Interpreter,
     waypoints: Sequence[Sequence[float]],
@@ -987,6 +1407,8 @@ def track_from_timeline(
     seconds_per_step: float | Sequence[float] | Mapping[int, float] = 10.0,
     epoch: datetime | None = None,
     name: str = "mission",
+    profile: FlightProfile = "rotorcraft",
+    wing: WingFlight | None = None,
 ) -> MissionTrack:
     """A track synthesized from an EXISTING recording.
 
@@ -1010,7 +1432,11 @@ def track_from_timeline(
     sequence/mapping when steps take unequal durations
     (:func:`longeron.widgets.time.step_seconds`).  ``epoch`` anchors
     the track in UTC (:func:`model_epoch` reads it off the model;
-    ``None`` keeps the deterministic default).
+    ``None`` keeps the deterministic default).  ``profile`` selects the
+    flight profile (the phase table in the module docstring;
+    :func:`model_flight` reads it off the model), and ``wing`` the
+    turn, climb and glide numbers of the wing-borne profiles (default
+    :class:`WingFlight`).
     """
 
     points, _times = _parse_waypoints(waypoints, minimum=1, allow_times=False)
@@ -1022,7 +1448,28 @@ def track_from_timeline(
             "with a single step?)"
         )
     classified = [(t0, t1, _classify(qname, phases), qname) for t0, t1, qname in segments]
-    route_time = sum(t1 - t0 for t0, t1, phase, _qname in classified if phase == "route")
+    if profile != "rotorcraft":
+        wing_samples, turns = _wing_synthesis(
+            classified,
+            points,
+            ground_alt=ground_alt,
+            profile=profile,
+            wing=wing if wing is not None else WingFlight(),
+        )
+        return MissionTrack(
+            name=name,
+            epoch=epoch if epoch is not None else _DEFAULT_EPOCH,
+            samples=wing_samples,
+            waypoints=points,
+            phases=classified,
+            tilt_deg=_validate_tilt(tilt_deg),
+            profile=profile,
+            turns=turns,
+        )
+    # a multirotor loiters by flying on along the route
+    route_time = sum(
+        t1 - t0 for t0, t1, phase, _qname in classified if phase in ("route", "loiter")
+    )
 
     legs: list[tuple[float, float, tuple[float, float, float], tuple[float, float, float]]] = []
     cum = 0.0
@@ -1071,7 +1518,7 @@ def track_from_timeline(
             append(t0, position)
             position = (position[0], position[1], ground_alt)
             append(t1, position)
-        elif phase == "route" and route_time > 0 and total_length > 0:
+        elif phase in ("route", "loiter") and route_time > 0 and total_length > 0:
             d0 = route_cursor
             d1 = min(total_length, d0 + total_length * ((t1 - t0) / route_time))
             if total_length - d1 < 1e-6:
@@ -1111,6 +1558,8 @@ def from_replay(
     seconds_per_step: float | Sequence[float] | Mapping[int, float] = 10.0,
     epoch: datetime | None = None,
     name: str | None = None,
+    profile: FlightProfile = "rotorcraft",
+    wing: WingFlight | None = None,
 ) -> MissionTrack:
     """A track driven by the state machine's ACTUAL execution.
 
@@ -1119,7 +1568,8 @@ def from_replay(
     payload)`` tuples, plain numbers advance the clock) via
     :func:`longeron.replay.record_timeline`, then synthesizes the track
     with :func:`track_from_timeline` -- see there for ``waypoints``,
-    ``phases``, ``ground_alt``, ``seconds_per_step``, and ``epoch``.
+    ``phases``, ``ground_alt``, ``seconds_per_step``, ``epoch``,
+    ``profile``, and ``wing``.
     ``tilt_deg`` is the forward cruise tilt the airframe holds while it
     advances along the route (degrees nose-down; derive it from the
     model with :func:`model_tilt`, or pass any plain float).  ``name``
@@ -1147,4 +1597,6 @@ def from_replay(
         seconds_per_step=seconds_per_step,
         epoch=epoch,
         name=name,
+        profile=profile,
+        wing=wing,
     )
