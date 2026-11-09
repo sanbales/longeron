@@ -59,7 +59,12 @@ pane at the bottom.  The panes, in layout order:
   **sizing context**, a frozen sizing part such as
   ``ScoutSizing::IsrPrime``.  A loiter-speed slider re-runs it live, and
   a one-click driver run snaps the slider to the optimum.  The model
-  supplies the slider bounds and the optimizer bounds.  The strip title
+  supplies the slider bounds and the optimizer bounds.  Below the
+  slider, the strip shows the history of the last driver run (the
+  objective and each constraint margin per driver iteration), a table
+  of the design variables and constraints with their bounds and active
+  flags, and an N2 matrix of the problem's components and connections
+  (:func:`~longeron.analysis.mdao.problem_structure`).  The strip title
   names the sizing context;
 * row 2: a **Z3 verdict** strip -- requirement-consistency cards
   (:func:`longeron.analysis.smt.to_smt`) for the same sizing context: the
@@ -118,8 +123,10 @@ traitlets observers (so the whole surface works headless):
   the scoreboard recolors, and the header score updates.  The Cesium
   pane's ``onboard_camera`` takes the new angles, so the onboard view
   looks where the occlusion measure looks;
-* loiter slider -> ``run_model`` -> the sizing cards repaint; the
-  *maximize* button runs the optimization driver and snaps the slider.
+* loiter slider -> ``run_model`` -> the sizing cards and the table values
+  repaint; the *maximize* button runs the optimization driver
+  (:func:`~longeron.analysis.mdao.run_optimization`), fills the history
+  plot and the active flags, and snaps the slider.
 
 Requires the ``viz`` extra for the widgets and the ``mdao``/``smt``
 extras for the sizing and verdict strips:
@@ -134,7 +141,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
 from dataclasses import replace
 from math import cos, floor, log10, pi, radians, sin, tan
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .. import model as M
 from ..interpreter import Instance, Interpreter
@@ -146,6 +153,9 @@ from .knobs import derive_knobs
 from .subject import MissionName, Preset, Subject, craft_variant, preset, requirement_set
 from .trades import Architecture, TradeStudy
 from .verify import attribute_domains
+
+if TYPE_CHECKING:
+    from .mdao import Bound, OptimizationHistory, ProblemStructure
 
 __all__ = [
     "ATLANTA_LOOP",
@@ -684,6 +694,208 @@ def _sizing_html(problem: Any, station_var: str, margin_vars: Mapping[str, str])
     return "".join(rows)
 
 
+#: line colors of the constraint margins and the N2 groups, in order of first use
+_SERIES = ("#3b6fb6", "#c0812b", "#5f8f35", "#8a5bb5", "#b0413e", "#2a8a8a")
+_LINE = "var(--jp-brand-color1,#1976d2)"
+
+
+def _short(name: str, limit: int = 15) -> str:
+    """The last segment of a qualified name, cut to ``limit`` characters."""
+
+    leaf = name.split("::")[-1]
+    return leaf if len(leaf) <= limit else f"{leaf[: limit - 1]}&hellip;"
+
+
+def _points(
+    values: Sequence[float], x0: float, dx: float, y0: float, h: float, low: float, high: float
+) -> list[tuple[float, float]]:
+    """Plot coordinates of ``values``: one step ``dx`` apart, ``low..high`` over ``h``."""
+
+    span = (high - low) or 1.0
+    return [(x0 + i * dx, y0 + h - (value - low) / span * h) for i, value in enumerate(values)]
+
+
+def _polyline(points: list[tuple[float, float]]) -> str:
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+
+
+def _compact(html: str) -> str:
+    """``html`` at a text line height: an HTML widget sets 28 px per line."""
+
+    return f'<div style="line-height:1.35">{html}</div>'
+
+
+def _legend(entries: Sequence[str]) -> str:
+    return (
+        '<div style="font-size:10px; display:flex; flex-wrap:wrap; gap:0 8px">'
+        f"{''.join(entries)}</div>"
+    )
+
+
+def _history_html(history: OptimizationHistory | None) -> str:
+    """The driver's path: objective per iteration, then each constraint margin.
+
+    Each margin is scaled to its own range in the run.  Its dashed line
+    is its bound, margin 0.
+    """
+
+    if history is None:
+        return _compact(
+            f'<div style="color:{_DIM}; margin:4px 0">run maximize to see the driver\'s path</div>'
+        )
+    width, left, right = 260.0, 30.0, 6.0  # the sizing card's content width
+    n = history.iterations
+    dx = (width - left - right) / max(n - 1, 1)
+    low, high = min(history.objectives), max(history.objectives)
+    verb = "maximized" if history.maximize else "minimized"
+    path = _points(history.objectives, left, dx, 6, 54, low, high)
+    parts = [
+        f'<text x="{left - 3}" y="9" text-anchor="end">{high:.0f}</text>',
+        f'<text x="{left - 3}" y="62" text-anchor="end">{low:.0f}</text>',
+        f'<rect x="{left}" y="4" width="{width - left - right}" height="58" fill="none" '
+        'stroke="var(--jp-border-color2,#e0e0e0)"/>',
+        f'<polyline points="{_polyline(path)}" fill="none" stroke="{_LINE}" '
+        f'stroke-width="1.5"><title>{history.objective}</title></polyline>',
+        f'<text x="{left - 3}" y="78" text-anchor="end">margin</text>',
+        f'<rect x="{left}" y="70" width="{width - left - right}" height="40" fill="none" '
+        'stroke="var(--jp-border-color2,#e0e0e0)"/>',
+    ]
+    parts += [
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2" fill="{_LINE}">'
+        f"<title>iteration {i}: {history.objective} {value:.2f}</title></circle>"
+        for i, ((x, y), value) in enumerate(zip(path, history.objectives, strict=True))
+    ]
+    legend = []
+    for k, (name, margins) in enumerate(history.constraints.items()):
+        color = _SERIES[k % len(_SERIES)]
+        bottom, top = min(*margins, 0.0), max(*margins, 0.0)
+        (_, zero), *_ = _points([0.0], left, dx, 72, 36, bottom, top)
+        parts.append(
+            f'<line x1="{left}" y1="{zero:.1f}" x2="{width - right}" y2="{zero:.1f}" '
+            f'stroke="{color}" stroke-width="0.5" stroke-dasharray="2 2"/>'
+            f'<polyline points="{_polyline(_points(margins, left, dx, 72, 36, bottom, top))}" '
+            f'fill="none" stroke="{color}" stroke-width="1.2"><title>{name}: margin '
+            f"{margins[-1]:+.2f} at the last iteration</title></polyline>"
+        )
+        legend.append(f'<span style="color:{color}">&#9632; {_short(name)}</span>')
+    parts += [
+        f'<text x="{left + i * dx:.1f}" y="120" text-anchor="middle">{i}</text>'
+        for i in range(n)
+        if n <= 12 or i in (0, n - 1)
+    ]
+    svg = (
+        f'<svg viewBox="0 0 {width:.0f} 124" width="100%" style="display:block; '
+        f'max-width:{width:.0f}px; font-size:8px; fill:{_DIM}" role="img" '
+        'aria-label="driver iteration history">'
+        f"{''.join(parts)}</svg>"
+    )
+    return _compact(
+        _stat("driver iterations", str(n))
+        + _stat(f"{history.objective} ({verb})", f"{history.objectives[-1]:.1f}")
+        + svg
+        + _legend(legend)
+    )
+
+
+def _driver_table_html(
+    problem: Any,
+    bounds: Mapping[str, Bound],
+    margin_vars: Mapping[str, str],
+    history: OptimizationHistory | None,
+) -> str:
+    """The driver's design variables and constraints at the current point.
+
+    A constraint value is its margin.  The active flag marks a bound that
+    holds with equality at the optimum of the last *maximize* run.
+    """
+
+    active = set(history.active_constraints()) if history is not None else set()
+    cell = 'style="text-align:right; padding:1px 3px"'
+    rows = [
+        f'<tr style="color:{_DIM}"><th style="text-align:left; font-weight:600">name</th>'
+        f"<th {cell}>lower</th><th {cell}>value</th><th {cell}>upper</th>"
+        f'<th {cell} title="at a bound at the driver\'s optimum">active</th></tr>'
+    ]
+    for name, (lower, upper) in bounds.items():
+        value = float(problem.get_val(margin_vars.get(name, name))[0])
+        text = f"{value:+.1f}" if name in margin_vars else f"{value:.1f}"
+        flag = f'<b style="color:{_LINE}">&#9679;</b>' if name in active else ""
+        lo, hi = ("&ndash;" if b is None else f"{b:g}" for b in (lower, upper))
+        rows.append(
+            f'<tr><td title="{name}">{_short(name)}</td><td {cell}>{lo}</td>'
+            f"<td {cell}><b>{text}</b></td><td {cell}>{hi}</td><td {cell}>{flag}</td></tr>"
+        )
+    note = (
+        "active flags appear after maximize"
+        if history is None
+        else f"active: at a bound at the optimum of {history.iterations} driver iterations"
+    )
+    return _compact(
+        f'<table style="width:100%; border-collapse:collapse; font-size:11px; {_NUM}; '
+        f'margin-top:4px">{"".join(rows)}</table>'
+        f'<div style="color:{_DIM}; font-size:10px">{note}</div>'
+    )
+
+
+def _n2_html(structure: ProblemStructure) -> str:
+    """An N2 matrix: components on the diagonal, row output feeds column input.
+
+    A mark above the diagonal is a feed-forward connection, a mark below it
+    is a feedback.  The hover title names the connected variables.  Each
+    OpenMDAO group draws in its own color.
+    """
+
+    comps = structure.components
+    index = {path: i for i, path in enumerate(comps)}
+    groups = list(dict.fromkeys(path.rpartition(".")[0] for path in comps))
+    tint = {
+        group: (_DIM if not group else _SERIES[k % len(_SERIES)]) for k, group in enumerate(groups)
+    }
+    size, left = 12.0, 92.0
+    links: dict[tuple[int, int], list[str]] = {}
+    for source, target in structure.connections:
+        i, j = index.get(source.rpartition(".")[0]), index[target.rpartition(".")[0]]
+        if i is not None and i != j:  # an unconnected input reads OpenMDAO's _auto_ivc
+            links.setdefault((i, j), []).append(target.rpartition(".")[2])
+    parts = []
+    for i, path in enumerate(comps):
+        outs = structure.outputs[path]
+        label = outs[0] if len(outs) == 1 else path.rpartition(".")[2]
+        color = tint[path.rpartition(".")[0]]
+        y = i * size
+        parts.append(
+            f'<text x="{left - 4}" y="{y + 9}" text-anchor="end" fill="{color}">{_short(label, 16)}'
+            f"<title>{path}</title></text>"
+            f'<rect x="{left + i * size + 1}" y="{y + 1}" width="{size - 2}" height="{size - 2}" '
+            f'fill="{color}"><title>{path}: {len(structure.inputs[path])} inputs, '
+            f"{len(outs)} outputs</title></rect>"
+        )
+    for (i, j), names in links.items():
+        parts.append(
+            f'<rect x="{left + j * size + 3}" y="{i * size + 3}" width="{size - 6}" '
+            f'height="{size - 6}" fill="{_LINE}" opacity="0.75"><title>{", ".join(names)}: '
+            f"{comps[i]} -&gt; {comps[j]}</title></rect>"
+        )
+    width, height = left + len(comps) * size, len(comps) * size
+    legend = [
+        f'<span style="color:{tint[group]}">&#9632; {group}</span>' for group in groups if group
+    ]
+    return _compact(
+        f'<div style="color:{_DIM}; font-size:10px; margin-top:6px">N2 matrix: a row feeds a '
+        f"column ({len(comps)} components)</div>"
+        f'<svg viewBox="0 0 {width:.0f} {height:.0f}" width="100%" style="display:block; '
+        f'font-size:8.5px; max-width:{width:.0f}px" role="img" aria-label="N2 matrix">'
+        f'<g stroke="var(--jp-border-color2,#e0e0e0)" stroke-width="0.5">'
+        + "".join(
+            f'<line x1="{left}" y1="{k * size}" x2="{width}" y2="{k * size}"/>'
+            f'<line x1="{left + k * size}" y1="0" x2="{left + k * size}" y2="{height}"/>'
+            for k in range(len(comps) + 1)
+        )
+        + f"</g>{''.join(parts)}</svg>"
+        + _legend(legend)
+    )
+
+
 def _architecture_html(architecture: Architecture, metric: str) -> str:
     """The subject's mission metric and its verdict, one line each."""
 
@@ -784,7 +996,8 @@ def grand_dashboard(
     :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
     ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum`` /
-    ``.sizing_card`` and ``.smt_sat`` / ``.smt_what_if`` / ``.verdicts``
+    ``.sizing_card`` / ``.sizing_history`` / ``.sizing_table`` /
+    ``.sizing_n2`` and ``.smt_sat`` / ``.smt_what_if`` / ``.verdicts``
     (the current mission's sizing context, each ``None`` when the mission
     has none), ``.sizing_title`` / ``.verdict_title`` (the strip titles),
     ``.requirements`` (requirement qualified name -> the subject
@@ -1216,6 +1429,8 @@ def grand_dashboard(
             maximize=True,
         )
         optimum.problem.setup()
+        bounds = mdao.optimization_bounds(optimum)
+        runs: list[mdao.OptimizationHistory] = []  # one per maximize click
         smt_sat = smt.to_smt(sizing_model, sizer, requirements=(requirement,)).check()
         what_if_system = smt.to_smt(
             sizing_model, sizer, requirements=(requirement,), free=(loiter_var,)
@@ -1240,6 +1455,9 @@ def grand_dashboard(
             layout=widgets.Layout(width="98%"),
         )
         sizing_card = widgets.HTML()
+        sizing_history = widgets.HTML(_history_html(None))
+        sizing_table = widgets.HTML()
+        sizing_n2 = widgets.HTML(_n2_html(mdao.problem_structure(build)))
         verdicts = widgets.HTML(
             _verdict_html(
                 f"{requirement.split('::')[-1]} at the design point",
@@ -1266,12 +1484,16 @@ def grand_dashboard(
             build.problem.set_val(loiter_var, float(loiter.value))
             build.problem.run_model()
             sizing_card.value = _sizing_html(build.problem, station_var, build.constraints)
+            sizing_table.value = _driver_table_html(
+                build.problem, bounds, build.constraints, runs[-1] if runs else None
+            )
 
         def _on_optimize(_button: Any = None) -> None:
             with redirect_stdout(io.StringIO()):  # the scipy driver prints its epilogue
                 optimum.problem.set_val(loiter_var, float(loiter.value))
-                optimum.problem.run_driver()
-            loiter.value = round(float(optimum.problem.get_val(loiter_var)[0]), 2)
+                runs.append(mdao.run_optimization(optimum))
+            sizing_history.value = _history_html(runs[-1])
+            loiter.value = round(runs[-1].design_vars[loiter_var][-1], 2)
             _on_loiter()  # a no-op change (already-optimal slider) still repaints
 
         loiter.observe(_on_loiter, names="value")
@@ -1287,6 +1509,9 @@ def grand_dashboard(
             "loiter": loiter,
             "optimize": optimize,
             "sizing_card": sizing_card,
+            "sizing_history": sizing_history,
+            "sizing_table": sizing_table,
+            "sizing_n2": sizing_n2,
             "verdicts": verdicts,
         }
 
@@ -1308,6 +1533,9 @@ def grand_dashboard(
             "problem",
             "optimum",
             "sizing_card",
+            "sizing_history",
+            "sizing_table",
+            "sizing_n2",
             "smt_sat",
             "smt_what_if",
             "verdicts",
@@ -1329,7 +1557,17 @@ def grand_dashboard(
             f"OpenMDAO sizing -- {strip['sizer']}, the {name} context"
         )
         verdict_title.value = _strip_title(f"Z3 requirement consistency -- {strip['requirement']}")
-        sizing_body.children = [strip["loiter"], strip["sizing_card"], strip["optimize"]]
+        sizing_body.children = [
+            strip[key]
+            for key in (
+                "loiter",
+                "sizing_card",
+                "optimize",
+                "sizing_history",
+                "sizing_table",
+                "sizing_n2",
+            )
+        ]
         verdict_body.children = [strip["verdicts"]]
 
     syncing = {"active": False}  # reentrancy guard: diagram <-> scoreboard

@@ -676,8 +676,8 @@ def grand_tour_notebook() -> dict[str, Any]:
     Cell 1 is the checker: one JSON line of the subject, the 3D pane's
     label and scene digest, the diagram and tree selections, the header
     text, the knob names, the scored aggregates of the scoreboard rows,
-    the scoreboard selection, the diagram's resize refit count, and the
-    sizing strip title.  Cells 2 and 3 are the fit drivers of
+    the scoreboard selection, the diagram's resize refit count, the
+    sizing strip title and the loiter slider value.  Cells 2 and 3 are the fit drivers of
     :func:`config_view_notebook`: the whole-program diagram fits the pane
     below the label LOD threshold, so a test zooms onto the node it is
     about to click.
@@ -722,6 +722,7 @@ print(
                 for row in grand.scoreboard.table()
             },
             "sizing": " ".join(re.sub(r"<[^>]+>", " ", grand.sizing_title.value).split()),
+            "loiter": None if grand.loiter is None else grand.loiter.value,
         }
     )
 )

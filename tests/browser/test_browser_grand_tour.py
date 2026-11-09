@@ -38,7 +38,13 @@ Six scenarios, each on a fresh kernel:
    camera back to the user.  Cesium loads from the pinned CDN, so an
    offline front-end SKIPS this scenario.
 
-Scenarios 1, 2 and 4 collapse JupyterLab's left sidebar first.  At the
+6. the *maximize* button fills the sizing strip's driver renderings:
+   the history plot, the active flags of the table and the N2 matrix fit
+   the width of the sizing card.  Each one is no taller than the card,
+   so one scroll position of the card shows all of it.  The measurements go to
+   ``build/evidence/grand_tour_sizing.json``.
+
+Scenarios 1, 2, 4 and 6 collapse JupyterLab's left sidebar first.  At the
 harness viewport (1500 px) the open file browser leaves the output area
 about 1070 px wide, and the diagram then gets about 270 px.  Scenarios 3
 and 4 also record the layout (row-1 pane widths, and whether a row-2
@@ -739,5 +745,69 @@ def test_onboard_view_rides_the_declared_camera(lab: Any) -> None:
     assert parked["offset_m"] > 1000.0, parked  # no tick put it back on the drone
     record.append({"free": view, "parked": parked})
     (EVIDENCE / "grand_onboard_views.json").write_text(json.dumps(record, indent=1))
+
+    lab.assert_no_errors()
+
+
+#: the sizing card and its three driver renderings: each rendering's box
+#: against the card's content box, and the card's scroll extents
+_SIZING_JS = """() => {
+    const card = [...document.querySelectorAll('.lgn-grand-card')]
+        .find((el) => el.textContent.includes('OpenMDAO sizing'));
+    if (!card) return null;
+    const style = getComputedStyle(card);
+    const inner = card.clientWidth - parseFloat(style.paddingLeft)
+        - parseFloat(style.paddingRight);
+    const box = (selector) => {
+        const el = card.querySelector(selector);
+        if (!el) return null;
+        const r = el.closest('.widget-html').getBoundingClientRect();
+        return {width: Math.round(r.width), height: Math.round(r.height)};
+    };
+    return {
+        card: {width: Math.round(card.getBoundingClientRect().width), inner: Math.round(inner),
+               client_width: card.clientWidth, scroll_width: card.scrollWidth,
+               client_height: card.clientHeight, scroll_height: card.scrollHeight},
+        history: box('svg[aria-label="driver iteration history"]'),
+        table: box('table'),
+        n2: box('svg[aria-label="N2 matrix"]'),
+    };
+}"""
+
+#: the driver renderings: name -> the selector of an element inside each one
+_RENDERINGS = {
+    "history": 'svg[aria-label="driver iteration history"]',
+    "table": "table",
+    "n2": 'svg[aria-label="N2 matrix"]',
+}
+
+
+def test_maximize_draws_the_driver_history(lab: Any) -> None:
+    """Maximize -> the history plot, the active flags, the N2 matrix (scenario 6)."""
+
+    _open(lab)
+    button = lab.page.locator('button:text-is("maximize station time")').first
+    scroll_into_view(button)
+    button.click()
+    _poll_checker(lab, lambda s: s["loiter"] == 11.0)  # the stall floor binds
+    history = lab.page.locator(_RENDERINGS["history"]).first
+    history.wait_for(state="attached", timeout=60_000)
+
+    sizing = dict(lab.evaluate(_SIZING_JS, label="the sizing card renderings"))
+    (EVIDENCE / "grand_tour_sizing.json").write_text(json.dumps(sizing, indent=1))
+    card = sizing["card"]
+    assert card["scroll_width"] <= card["client_width"], sizing  # nothing clips in x
+    for name in _RENDERINGS:
+        assert sizing[name] is not None, sizing
+        assert sizing[name]["width"] <= card["inner"] + 1, sizing
+        assert sizing[name]["height"] <= card["client_height"], sizing
+    sizing_card = lab.page.locator(".lgn-grand-card", has_text="OpenMDAO sizing").first
+    table = sizing_card.locator("table").first
+    assert "\u25cf" in (table.text_content() or ""), "no active flag after maximize"
+    scroll_into_view(sizing_card)
+    sizing_card.screenshot(path=str(EVIDENCE / "grand_sizing_card.png"))
+    for name, selector in _RENDERINGS.items():
+        rendering = sizing_card.locator(".widget-html", has=lab.page.locator(selector)).first
+        rendering.screenshot(path=str(EVIDENCE / f"grand_sizing_{name}.png"))
 
     lab.assert_no_errors()

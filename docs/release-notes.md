@@ -60,7 +60,22 @@
   - Tutorial 9 tours the subject: the mission, the knobs, the
     requirement set, the camera what-if, the sizing context and the
     craft clicks
+  - The sizing strip shows the OpenMDAO process. A history plot shows
+    the objective and each constraint margin for each driver iteration
+    of the last *maximize* run. A table lists the design variables and
+    the constraints with their bounds, current values and active flags.
+    An N2 matrix shows the components of the problem and their
+    connections. The dashboard exposes them as `.sizing_history`,
+    `.sizing_table` and `.sizing_n2`
 - **The analysis API behind the tour**:
+  - `longeron.analysis.mdao`: `add_optimization` attaches an
+    `om.SqliteRecorder` to the driver. `run_optimization` runs the driver
+    and returns an `OptimizationHistory`, the objective, design variables
+    and constraint margins of each driver iteration.
+    `OptimizationHistory.active_constraints` names the bounds that hold
+    with equality at the optimum. `optimization_bounds` returns the
+    unscaled bounds, and `problem_structure` returns a `ProblemStructure`:
+    the components, their variables and the connections
   - `longeron.analysis.subject`: `Subject`, `preset`, `craft_variant`
     and `requirement_set`. `requirement_set` also collects the
     requirement usages that a package owns, for example

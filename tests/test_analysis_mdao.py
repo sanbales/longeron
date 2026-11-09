@@ -370,3 +370,77 @@ class TestOptimization:
         # takeoffMassLimit binds: totalMass = 1.21 + payload <= 1.5
         assert p.get_val("payloadMass")[0] == pytest.approx(0.29, abs=1e-6)
         assert p.get_val("totalMass")[0] == pytest.approx(1.5, abs=1e-6)
+
+
+@pytest.fixture(scope="module")
+def history(missions):
+    build = mdao.build_problem(
+        missions, "ScoutSizing::IsrPrime", setup=False, requirements=("ScoutSizing::IsrStation",)
+    )
+    mdao.add_optimization(
+        build, objective="stationMinutes", design_vars={"loiterSpeed": (11.0, 24.0)}, maximize=True
+    )
+    build.problem.setup()
+    build.problem.set_val("loiterSpeed", 16.0)
+    return build, mdao.run_optimization(build)
+
+
+class TestOptimizationHistory:
+    """The recorder that add_optimization attaches, read back per driver run."""
+
+    def test_the_driver_climbs_to_the_stall_floor(self, history):
+        _build, run = history
+        assert run.objective == "stationMinutes" and run.maximize and run.converged
+        assert run.iterations >= 2
+        assert run.design_vars["loiterSpeed"][0] == pytest.approx(16.0)
+        assert run.design_vars["loiterSpeed"][-1] == pytest.approx(11.0, abs=1e-6)
+        assert run.objectives[-1] == pytest.approx(279.7, abs=0.1)
+        assert run.objectives[-1] > run.objectives[0]
+
+    def test_bounds_and_names_come_from_the_model(self, history):
+        build, run = history
+        # IsrPrime's aboveStall / belowCruise asserts and the IsrStation floor
+        assert set(run.constraints) == set(build.constraints)
+        assert run.bounds["loiterSpeed"] == (11.0, 24.0)
+        assert run.bounds["IsrStation::stationFloor"] == (0.0, None)
+        assert mdao.optimization_bounds(build) == run.bounds
+
+    def test_the_stall_bound_is_active_at_the_optimum(self, history):
+        _build, run = history
+        # aboveStall { loiterSpeed >= 11.0 }: the bound the optimum snaps to
+        assert set(run.active_constraints()) == {"loiterSpeed", "aboveStall"}
+        assert run.constraints["aboveStall"][-1] == pytest.approx(0.0, abs=1e-6)
+
+    def test_each_run_records_only_itself(self, history):
+        build, _first = history
+        build.problem.set_val("loiterSpeed", 20.0)
+        second = mdao.run_optimization(build)
+        assert build.driver_runs >= 2
+        # the first run started at 16 m/s: this history starts at 20 m/s
+        assert second.design_vars["loiterSpeed"][0] == pytest.approx(20.0)
+        assert second.design_vars["loiterSpeed"][-1] == pytest.approx(11.0, abs=1e-6)
+
+    def test_without_add_optimization_is_loud(self, grouped):
+        with pytest.raises(longeron.analysis.AnalysisError, match="add_optimization"):
+            mdao.run_optimization(grouped)
+
+
+class TestProblemStructure:
+    def test_components_in_execution_order(self, grouped):
+        structure = mdao.problem_structure(grouped)
+        comps = structure.components
+        assert comps[0] == "consts"
+        assert "Aerodynamics.dragArea_comp" in comps
+        assert comps.index("Propulsion.loiterPowerW_comp") < comps.index(
+            "Performance.stationMinutes_comp"
+        )
+        assert structure.outputs["Performance.stationMinutes_comp"] == ("stationMinutes",)
+        assert "dragArea" in structure.inputs["Propulsion.loiterPowerW_comp"]
+
+    def test_connections_follow_the_attribute_references(self, grouped):
+        # loiterPowerW = CruisePower(..., dragArea = dragArea, ...)
+        connections = mdao.problem_structure(grouped).connections
+        assert ("Aerodynamics.dragArea_comp.dragArea", "Propulsion.loiterPowerW_comp.dragArea") in (
+            connections
+        )
+        assert ("consts.loiterSpeed", "aboveStall_margin_comp.loiterSpeed") in connections

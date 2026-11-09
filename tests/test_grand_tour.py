@@ -496,6 +496,20 @@ class TestSubjectScoreboard:
 
 
 class TestSizingStrip:
+    def test_the_history_waits_for_maximize(self, dash):
+        # first in the class: no maximize click has run on this fixture yet
+        assert "run maximize to see the driver's path" in dash.sizing_history.value
+        assert "active flags appear after maximize" in dash.sizing_table.value
+
+    def test_the_table_follows_the_slider(self, dash):
+        dash.loiter.value = 21.0
+        table = dash.sizing_table.value
+        # loiterSpeed between its model bounds, aboveStall's margin 21 - 11
+        assert "<b>21.0</b>" in table and ">11<" in table and ">24<" in table
+        assert "<b>+10.0</b>" in table and "stationFloor" in table
+        dash.loiter.value = 15.0
+        assert "<b>15.0</b>" in dash.sizing_table.value
+
     def test_loiter_slider_reruns_the_problem(self, dash):
         dash.loiter.value = 15.0
         at_15 = float(dash.problem.problem.get_val("stationMinutes")[0])
@@ -513,6 +527,28 @@ class TestSizingStrip:
         assert station == pytest.approx(279.7, abs=0.5)
         dash.loiter.value = 15.0
 
+    def test_maximize_fills_the_history_and_the_active_flags(self, dash):
+        dash.loiter.value = 16.0
+        dash.optimize.click()
+        history = dash.sizing_history.value
+        assert "driver iterations" in history and "stationMinutes (maximized)" in history
+        assert "<b>279.7</b>" in history and "<polyline" in history
+        assert "aboveStall: margin +0.00" in history  # the bound it reaches
+        table = dash.sizing_table.value
+        rows = {row.split("</td>")[0]: row for row in table.split('<tr><td title="')[1:]}
+        assert "&#9679;" in rows['loiterSpeed">loiterSpeed'] and "<b>11.0</b>" in table
+        assert "&#9679;" in rows['aboveStall">aboveStall']
+        assert "&#9679;" not in rows['belowCruise">belowCruise']
+        dash.loiter.value = 15.0
+
+    def test_the_n2_matrix_marks_the_connections(self, dash):
+        n2 = dash.sizing_n2.value
+        assert "12 components" in n2 and "<svg" in n2
+        # the drag feeds the cruise power: a mark titled with the variable
+        assert "dragArea: Aerodynamics.dragArea_comp -&gt; Propulsion.loiterPowerW_comp" in n2
+        for group in ("Aerodynamics", "Structures", "Propulsion", "Performance"):
+            assert f"&#9632; {group}</span>" in n2
+
     def test_margin_rows_render(self, dash):
         assert "stationFloor" in dash.sizing_card.value
 
@@ -529,6 +565,7 @@ class TestSizingStrip:
         isr_problem = dash.problem
         dash.mission_toggle.value = "logistics"
         assert dash.problem is None and dash.loiter is None and dash.smt_sat is None
+        assert dash.sizing_history is None and dash.sizing_table is None and dash.sizing_n2 is None
         assert "no context for logistics" in dash.sizing_title.value
         assert "no context for logistics" in dash.verdict_title.value
         assert dash.sizing_contexts == {"ISR": DEFAULT_SIZING_CONTEXTS["ISR"]}
