@@ -8,7 +8,7 @@ surfaces: a genuine click on a containment-tree row, on a sprotty
 diagram label, on a dropdown, a slider and a toggle button, each
 repainting the panes beside it.
 
-Five scenarios, each on a fresh kernel:
+Six scenarios, each on a fresh kernel:
 
 1. a tree row click changes the subject: the diagram repaints its
    selection and the 3D pane rebuilds its scene for the new craft;
@@ -25,6 +25,11 @@ Five scenarios, each on a fresh kernel:
    1900 px page.  The 3D canvas and the scoreboard SVG fill their panes
    and do not hang below the row, one re-share costs the diagram one
    refit, and a click on the scaled SVG selects the clicked requirement.
+6. the mission starts and ends on the drawn surface: at the first and
+   the last instant of the Cesium clock, the drone model sits less than
+   2 m above the globe under it (the track heights are above ground).
+   A front-end that cannot load CesiumJS from the CDN skips this
+   scenario.
 
 Scenarios 1, 2 and 4 collapse JupyterLab's left sidebar first.  At the
 harness viewport (1500 px) the open file browser leaves the output area
@@ -135,6 +140,72 @@ def _open(lab: Any, *, collapse_sidebar: bool = True) -> dict[str, Any]:
     assert state["mission"] == "ISR", state
     assert state["craft"] == state["current"], state
     return state
+
+
+#: the drone's height at the clock's start or stop.  ``track`` is the
+#: CZML position height (above ground), ``model`` the height where Cesium
+#: draws the model (the center of its bounding sphere, after the height
+#: reference), and ``surface`` the globe height under the model.  Null
+#: while the Cesium viewer or its data source is not there yet.
+_ALTITUDE_JS = """async (at) => {
+    const C = window.Cesium;
+    const stage = document.querySelector('.longeron-mission3d-stage');
+    const viewer = stage && stage.longeronViewer;
+    const source = viewer && viewer.dataSources.length ? viewer.dataSources.get(0) : null;
+    const drone = source && source.entities.getById('mission-drone');
+    if (!drone) return null;
+    const time = (at === 'stop' ? viewer.clock.stopTime : viewer.clock.startTime).clone();
+    viewer.clock.currentTime = time;
+    const sphere = new C.BoundingSphere();
+    let done = false;
+    for (let frame = 0; frame < 900 && !done; frame++) {
+        viewer.scene.requestRender();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        done = viewer.scene.globe.tilesLoaded && viewer.dataSourceDisplay
+            .getBoundingSphere(drone, false, sphere) === C.BoundingSphereState.DONE;
+    }
+    if (!done) return {done};
+    const drawn = C.Cartographic.fromCartesian(sphere.center);
+    const surface = viewer.scene.globe.getHeight(drawn);
+    return {
+        done,
+        seconds: C.JulianDate.secondsDifference(time, viewer.clock.startTime),
+        track: C.Cartographic.fromCartesian(drone.position.getValue(time)).height,
+        model: drawn.height,
+        surface: surface === undefined ? null : surface,
+    };
+}"""
+
+
+def _altitude(lab: Any, at: str) -> dict[str, Any]:
+    """The drone's height record at the clock's ``start`` or ``stop``."""
+
+    record = lab.evaluate(_ALTITUDE_JS, at, timeout=60.0, label=f"drone height at {at}")
+    assert record and record["done"], f"the globe never settled at {at}: {record}"
+    assert record["surface"] is not None, f"no globe height under the drone at {at}: {record}"
+    return dict(record)
+
+
+def _wait_for_cesium(lab: Any, timeout: float = 120.0) -> None:
+    """The mission pane boots its Cesium viewer or shows the offline
+    notice.  The offline notice is a skip, because the CDN is network."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = lab.evaluate(
+            """() => ({
+                cesium: Boolean(document.querySelector('.longeron-mission3d-stage')
+                    ?.longeronViewer?.dataSources.length),
+                offline: Boolean(document.querySelector('.longeron-mission3d-offline')),
+            })""",
+            label="the mission pane booted",
+        )
+        if found["cesium"]:
+            return
+        if found["offline"]:
+            pytest.skip("CesiumJS CDN unreachable: the mission pane shows the offline notice")
+        time.sleep(1.0)
+    raise TimeoutError("the Cesium viewer never loaded the mission")
 
 
 def _arm_rebuilds(lab: Any) -> None:
@@ -465,5 +536,25 @@ def test_row1_shares_its_width_and_the_panes_follow(lab: Any) -> None:
     record = {"open": narrow, "collapsed": wide, "wide_1900": big, "refits": [refits, after]}
     record["seconds"] = round(time.monotonic() - started, 1)
     (EVIDENCE / "grand_tour_row1_shares.json").write_text(json.dumps(record, indent=1))
+
+    lab.assert_no_errors()
+
+
+def test_the_mission_starts_and_ends_on_the_drawn_surface(lab: Any) -> None:
+    """Takeoff and landing sit on the globe, not in the air (scenario 6)."""
+
+    _open(lab)
+    stage = lab.page.locator(".longeron-mission3d-stage").first
+    scroll_into_view(stage)
+    _wait_for_cesium(lab)
+    takeoff = _altitude(lab, "start")
+    stage.screenshot(path=str(EVIDENCE / "grand_mission_takeoff.png"))
+    landing = _altitude(lab, "stop")
+    (EVIDENCE / "grand_mission_heights.json").write_text(
+        json.dumps({"takeoff": takeoff, "landing": landing}, indent=1)
+    )
+    for record in (takeoff, landing):
+        assert abs(record["track"]) < 2.0, record  # the CZML height above ground
+        assert abs(record["model"] - record["surface"]) < 2.0, record  # as drawn
 
     lab.assert_no_errors()

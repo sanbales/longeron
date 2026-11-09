@@ -583,6 +583,18 @@ class TestCzml:
         assert waypoint["point"]["pixelSize"] == 5
         assert waypoint["label"]["text"] == "WP0"
 
+    def test_heights_are_above_ground(self, track, mesh):
+        # the AGL contract: Cesium adds the drawn surface (terrain, or 0 on
+        # the bare ellipsoid) under the drone and the pins; a polyline has
+        # no height reference, so the route keeps its heights unclamped
+        czml = track.to_czml(mesh=mesh)
+        drone = czml[-1]
+        assert drone["model"]["heightReference"] == "RELATIVE_TO_GROUND"
+        assert drone["label"]["heightReference"] == "RELATIVE_TO_GROUND"
+        assert "clampToGround" not in czml[1]["polyline"]
+        assert {czml[i]["point"]["heightReference"] for i in range(2, 6)} == {"RELATIVE_TO_GROUND"}
+        assert track.to_czml()[-1]["point"]["heightReference"] == "RELATIVE_TO_GROUND"
+
     def test_static_label_for_plain_tracks(self):
         track = mission3d.mission_track(WAYPOINTS, name="survey")
         assert track.to_czml()[-1]["label"]["text"] == "survey"

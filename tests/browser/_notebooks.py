@@ -877,7 +877,6 @@ track = mission3d.track_from_timeline(
     timeline,
     waypoints=waypoints,
     phases={"airborne": "route"},
-    ground_alt=300.0,
     epoch=epoch,
     name="go-around sortie",
 )

@@ -5,7 +5,7 @@ animates a drone flying it over a real globe.  Two builders produce the
 same :class:`MissionTrack`:
 
 * :func:`mission_track` -- explicit waypoints ``(lat, lon, alt[, t])``
-  (degrees, meters above the ellipsoid, seconds).  Missing times derive
+  (degrees, meters above ground, seconds).  Missing times derive
   from a cruise speed over the 3D leg lengths.  :func:`model_waypoints`
   reads the same tuples off a mission part's children (attributes named
   ``lat``/``lon``/``alt``, optional ``t``) through the interpreter, so
@@ -26,7 +26,7 @@ same :class:`MissionTrack`:
 
   ``ground`` (idle, standby, parked, ...)
       hold the current position; the mission starts at the first
-      waypoint at ``ground_alt``.
+      waypoint at ``ground_alt`` (default 0: on the ground).
   ``takeoff`` (takingOff, launch, climb, ...)
       vertical climb, in place, to the route altitude at the current
       route position.
@@ -100,6 +100,17 @@ baked CZML on a Cesium ``Viewer`` -- lives in
 synthesis, deterministic and testable without a browser.  Importing
 ``mission_viewer`` (or the ``CESIUM_*`` CDN pins) from here still
 works but is deprecated.
+
+Height datum: every track height is the height above ground level
+(AGL), in meters.  The baked CZML sets the drone and the waypoint pins
+to ``heightReference: RELATIVE_TO_GROUND``, so Cesium adds the height of
+the drawn surface under each position.  Without a terrain provider, that
+surface is the WGS84 ellipsoid (height 0).  With Cesium World Terrain,
+the surface is the terrain.  In both cases a height of 0 puts the drone
+on the surface.  A Cesium polyline has no height reference, so the
+route polyline and the trail draw their heights above the ellipsoid.
+Without terrain, they connect the pins exactly.  With terrain, they
+sit below the terrain surface by the terrain height.
 """
 
 from __future__ import annotations
@@ -170,6 +181,10 @@ def __getattr__(name: str) -> Any:
 #: findable with the camera zoomed out to frame the whole route
 _MODEL_MIN_PIXELS = 48
 
+#: track heights are above ground: Cesium adds the drawn surface's
+#: height (terrain, or 0 on the bare ellipsoid) at every position
+_HEIGHT_REFERENCE = "RELATIVE_TO_GROUND"
+
 #: deterministic default epoch (identical CZML across runs; midday UTC
 #: lights the default camera view) -- pass ``epoch=`` for real dates
 _DEFAULT_EPOCH = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -222,7 +237,7 @@ class MissionTrack:
     """A timestamped geodetic flight path synthesized from the model.
 
     ``samples`` are ``(t, lat, lon, alt)`` keyframes (seconds past
-    ``epoch``, degrees, meters above the ellipsoid) with strictly
+    ``epoch``, degrees, meters above ground) with strictly
     increasing times; ``waypoints`` is the planned route the samples fly;
     ``phases`` records the motion segments as ``(t0, t1, phase, qname)``
     -- for replay-built tracks ``qname`` is the instance-qualified name
@@ -264,7 +279,9 @@ class MissionTrack:
         URI, nose steered along the track heading with the multirotor
         attitude (see :meth:`attitude`), scaled by ``model_scale`` and
         clamped to a legible minimum pixel size -- instead of the
-        fallback point.
+        fallback point.  Track heights are above ground: the drone and
+        the pins use ``heightReference: RELATIVE_TO_GROUND`` (see the
+        module docstring).
         """
 
         if len(self.samples) < 2:
@@ -317,9 +334,11 @@ class MissionTrack:
                         "color": {"rgba": [90, 95, 104, 255]},
                         "outlineColor": {"rgba": [255, 255, 255, 255]},
                         "outlineWidth": 1,
+                        "heightReference": _HEIGHT_REFERENCE,
                     },
                     "label": {
                         "text": f"WP{index}",
+                        "heightReference": _HEIGHT_REFERENCE,
                         "font": "10px Helvetica, Arial, sans-serif",
                         "pixelOffset": {"cartesian2": [0, -12]},
                         "fillColor": {"rgba": [255, 255, 255, 235]},
@@ -354,6 +373,10 @@ class MissionTrack:
                 "interpolationAlgorithm": "LAGRANGE",
                 "interpolationDegree": 1,
             },
+            # shortcut: a Cesium path (like the route polyline) has no height
+            # reference, so it draws AGL heights over the ellipsoid -- exact
+            # without terrain, below the surface with ion terrain; sample the
+            # terrain in the front-end if terrain becomes the default
             "path": {
                 "leadTime": 0,
                 "trailTime": round(self.duration, 3),
@@ -365,6 +388,7 @@ class MissionTrack:
             },
             "label": {
                 "text": self._label_text(),
+                "heightReference": _HEIGHT_REFERENCE,
                 "font": "12px Helvetica, Arial, sans-serif",
                 "pixelOffset": {"cartesian2": [0, -16]},
                 "fillColor": {"rgba": [255, 255, 255, 235]},
@@ -382,6 +406,7 @@ class MissionTrack:
                 "gltf": "data:model/gltf-binary;base64," + base64.b64encode(glb).decode("ascii"),
                 "scale": model_scale,
                 "minimumPixelSize": _MODEL_MIN_PIXELS,
+                "heightReference": _HEIGHT_REFERENCE,
             }
             # the multirotor attitude, baked as sampled quaternions: yaw
             # follows the track heading, pitch 0 in vertical/hover motion
@@ -414,6 +439,7 @@ class MissionTrack:
                 "color": {"rgba": [63, 122, 31, 255]},  # the replay active green
                 "outlineColor": {"rgba": [255, 255, 255, 255]},
                 "outlineWidth": 2,
+                "heightReference": _HEIGHT_REFERENCE,
             }
         packets.append(drone)
         return packets
@@ -675,7 +701,7 @@ def mission_track(
     """A track that flies explicit waypoints, one route phase.
 
     ``waypoints`` are ``(lat, lon, alt)`` or ``(lat, lon, alt, t)``
-    tuples (degrees, meters above the ellipsoid, seconds past
+    tuples (degrees, meters above ground, seconds past
     ``epoch``); either every waypoint carries a time or none does, in
     which case times derive from ``speed_mps`` over the 3D leg lengths.
     ``tilt_deg`` is the forward cruise tilt the airframe holds along
@@ -823,7 +849,7 @@ def mission_values(
     interpreter: Interpreter,
     waypoints: Sequence[Sequence[float]],
     *,
-    ground_alt: float,
+    ground_alt: float = 0.0,
     assembly: str | M.Definition | M.Usage = "Rotorcraft::QuadCopter",
     mission_calc: str | M.Definition | M.Usage = "DeepScout::MissionTime",
     payload_mass: float | None = None,
@@ -975,7 +1001,10 @@ def track_from_timeline(
 
     ``waypoints`` are ``(lat, lon, alt)`` tuples (no times -- timing
     comes from the recording); the mission starts at the first waypoint
-    at ``ground_alt``.  Timed timelines keep their instants 1:1 (track
+    at ``ground_alt``.  ``ground_alt`` is the height of the launch and
+    landing points above ground, in the datum of the waypoint heights.
+    The default 0 starts and ends the flight on the surface.  Timed
+    timelines keep their instants 1:1 (track
     seconds ARE trace seconds).  Step-mode timelines have no time axis,
     so ``seconds_per_step`` states one: a scalar, or a per-step
     sequence/mapping when steps take unequal durations

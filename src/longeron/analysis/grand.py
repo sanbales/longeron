@@ -151,13 +151,16 @@ __all__ = [
 ]
 
 #: default mission route: a small loop over Piedmont Park, midtown
-#: Atlanta -- ``(lat, lon, alt m MSL)``; the ground there sits ~300 m MSL
+#: Atlanta -- ``(lat, lon, alt)`` with ``alt`` in meters above ground
+#: level (AGL), the datum the Cesium globe draws (see
+#: :mod:`longeron.analysis.mission3d`).  The route flies 50-90 m above
+#: the ground.
 ATLANTA_LOOP: tuple[tuple[float, float, float], ...] = (
-    (33.7813, -84.3833, 350.0),
-    (33.7885, -84.3785, 390.0),
-    (33.7900, -84.3695, 380.0),
-    (33.7838, -84.3690, 360.0),
-    (33.7770, -84.3825, 350.0),
+    (33.7813, -84.3833, 50.0),
+    (33.7885, -84.3785, 90.0),
+    (33.7900, -84.3695, 80.0),
+    (33.7838, -84.3690, 60.0),
+    (33.7770, -84.3825, 50.0),
 )
 
 #: default event feed for the flight state machine replay
@@ -712,7 +715,7 @@ def grand_dashboard(
     values: Mapping[str, Any] | None = None,
     waypoints: Sequence[Sequence[float]] = ATLANTA_LOOP,
     events: Sequence[Any] = FLIGHT_EVENTS,
-    ground_alt: float = 300.0,
+    ground_alt: float = 0.0,
     imagery: Imagery = "satellite",
 ) -> Any:
     """The grand-tour dashboard (an ipywidgets ``VBox``) -- one call.
@@ -725,6 +728,9 @@ def grand_dashboard(
     variant, one variant per other variation point, and transient
     overrides), its requirement hierarchy is the scoreboard, and its
     ``states`` machine flies the Cesium mission over ``waypoints``.
+    The waypoint heights and ``ground_alt`` are heights above ground.
+    The default ``ground_alt`` 0 starts and ends the flight on the
+    surface.
     ``mission`` names the first subject's mission, and ``airframe`` its
     airframe variant.  The default airframe is the mission's winner: the
     airframe whose preset (:func:`~longeron.analysis.subject.preset`) has

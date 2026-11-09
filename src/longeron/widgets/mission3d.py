@@ -38,6 +38,9 @@ imagery at all -- a neutral dark-slate globe on which the route, trail,
 and model read cleanly; ``'osm'`` is OpenStreetMap street tiles.
 Passing ``ion_token=`` upgrades to Cesium World Terrain + imagery
 regardless of ``imagery``.
+Track heights are above ground (the CZML ``RELATIVE_TO_GROUND`` height
+reference), so the drone takes off from the drawn surface with or
+without terrain.
 
 Offline tradeoff: the front-end loads CesiumJS (~6 MB plus workers and
 assets) from the pinned jsDelivr CDN at view time -- the same judgment

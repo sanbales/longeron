@@ -242,6 +242,14 @@ class TestComposition:
         assert scene["parts"][-1]["name"] == "viewCone"
         assert all(part["name"] != "viewCone" for part in dash.mesh["parts"])
 
+    def test_track_starts_and_ends_on_the_ground(self, dash):
+        # heights are above ground: the default flight leaves the surface
+        # and comes back to it (the owner saw it start 300 m up in the air)
+        first, last = dash.track.samples[0], dash.track.samples[-1]
+        assert (first[3], last[3]) == (0.0, 0.0)
+        assert [alt for _lat, _lon, alt in ATLANTA_LOOP] == [50.0, 90.0, 80.0, 60.0, 50.0]
+        assert max(alt for *_t, alt in dash.track.samples) == 90.0
+
     def test_base_values_flow_into_the_scoreboard(self, dash):
         assert dash.scoreboard.values["answer"] == 42.0
 
