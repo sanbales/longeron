@@ -2,8 +2,25 @@
 
 One :func:`grand_dashboard` call composes the house widgets over a drone
 model (plus the multi-mission sizing model) into a single reactive
-dashboard -- the capability finale of the tutorial series (tutorial 9):
+dashboard -- the capability finale of the tutorial series (tutorial 9).
 
+Every pane follows one **subject**
+(:class:`longeron.analysis.subject.Subject`): one mission architecture.
+A subject is a mission (a key of
+:data:`longeron.analysis.dashboard.DEFAULT_MISSIONS`), one variant of the
+mission's ``airframe`` variation point, one variant for each other
+variation point, and transient overrides.  A transient override replaces
+a model value for the analysis only and never writes the model.  A
+**visiting craft** is a craft that the 3D pane shows but that is not the
+subject.  The panes:
+
+* a **header** that names the subject's mission, airframe and selection,
+  and says when the 3D pane shows a visiting craft;
+* a **subject card** -- a mission selector, the subject's mission metric
+  and verdict, and the **knobs** (:func:`longeron.analysis.knobs.
+  derive_knobs`): a dropdown per variation point other than the
+  airframe, and a slider per input attribute that the model bounds on
+  both sides;
 * a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
   compact toolbar on) -- the linked-selection hub;
 * a **containment tree** pane (:class:`longeron.widgets.explorer.ModelTree`,
@@ -11,19 +28,22 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
   lists every package, definition, usage and relationship by ownership;
 * a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
-  (tutorial 7's seam, promoted): clicking ANY craft in the diagram --
-  a build configuration, a fleet airframe shell, or the mission
-  catalog's variant usages -- renders THAT craft in the pane, while
+  (tutorial 7's seam, promoted).  It shows the subject craft, baked from
+  the subject's mix (:func:`longeron.analysis.geometry.mission_geometry`)
+  with the craft's declared camera.  Clicking ANY other craft in the
+  diagram -- a build configuration, a fleet airframe shell, or the
+  mission catalog's variant usages -- renders THAT craft, while
   selections inside the shown craft highlight per M0 individual; a
   translucent **view cone** follows the camera what-if sliders over
-  the home assembly;
+  the subject craft;
 * a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
   scoring the model's own requirement hierarchy, repainted live as the
   measured geometry changes;
 * a **camera what-if** card -- elevation/azimuth sliders that re-run the
   CAD-native occlusion measure (:func:`longeron.analysis.geometry.
-  occlusion_report`, deterministic mesh engine) on every move;
+  occlusion_report`, deterministic mesh engine) on the subject craft's
+  declared camera on every move;
 * an **OpenMDAO sizing** strip -- the sizing part's generated ``Problem``
   (:func:`longeron.analysis.mdao.build_problem`), re-run live from a
   loiter-speed slider, with a one-click driver run that snaps the slider
@@ -32,21 +52,39 @@ dashboard -- the capability finale of the tutorial series (tutorial 9):
   (:func:`longeron.analysis.smt.to_smt`): the design point's SAT witness
   beside an impossible what-if's UNSAT conflict core;
 * a **Cesium mission** pane (:mod:`longeron.widgets.mission3d`) flying
-  the drone's own geometry through its recorded state-machine execution
-  over satellite imagery (offline front-ends degrade to a printed note;
-  the dashboard composes regardless).
+  the subject's geometry through the recorded execution of the shared
+  ``FlightStates`` machine over the shared route, at satellite imagery
+  (offline front-ends degrade to a printed note; the dashboard composes
+  regardless).
 
 WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
 
+* mission selector -> the subject keeps its airframe, and the airframe's
+  preset for the new mission (:func:`longeron.analysis.subject.preset`)
+  fills the other variation points;
+* diagram or tree click on a catalog craft (a variant of the
+  ``airframe`` variation point, or the definition that types one) -> the
+  craft becomes the subject's airframe and its preset fills the other
+  variation points, and the mission-level overrides stay;
+* dropdown knob -> that variation point changes, and the others stay;
+* slider knob -> a transient override that reaches
+  :meth:`longeron.analysis.trades.TradeStudy.evaluate`;
+* any subject change -> the subject scene re-bakes (the stale entry of
+  :attr:`longeron.analysis.link.ConfigViewBinding.scenes` is replaced),
+  the 3D pane shows the subject, the camera card measures the subject's
+  declared camera, the Cesium pane flies the subject's mesh, and the
+  header names the new subject;
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
 * containment tree selection -> diagram selection of the element, or of
   its nearest drawn ancestor when the diagram does not draw the element
   (the diagram selection then drives the 3D pane and the scoreboard);
   diagram selection -> containment tree selection, with the row
   revealed;
-* diagram click on another craft -> the 3D pane bakes and shows THAT
-  craft (the camera what-if keeps measuring the home assembly);
+* diagram click on a build configuration (``Rotorcraft::QuadCopter`` and
+  its siblings, which are not catalog airframes) -> the 3D pane shows it
+  as a visiting craft, the subject does not change, and the camera
+  what-if keeps measuring the subject craft;
 * diagram click on a requirement -> scoreboard selection (and a
   scoreboard cell click -> diagram selection);
 * camera sliders -> occlusion re-measure -> the view cone repaints, the
@@ -66,15 +104,19 @@ import io
 import json
 from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
-from math import cos, pi, radians, sin, tan
-from typing import Any
+from dataclasses import replace
+from math import cos, floor, log10, pi, radians, sin, tan
+from typing import Any, cast
 
 from .. import model as M
 from ..interpreter import Interpreter
 from ..widgets.mission3d import Imagery
 from . import geometry
 from ._expr import AnalysisError
-from .dashboard import _ipywidgets
+from .dashboard import DEFAULT_MISSIONS, _ipywidgets
+from .knobs import derive_knobs
+from .subject import MissionName, Preset, Subject, craft_variant, preset
+from .trades import Architecture, TradeStudy
 
 __all__ = [
     "ATLANTA_LOOP",
@@ -265,7 +307,10 @@ def scene_for(
     matching part usage (``battery`` / ``flightController`` /
     ``camera`` -- every DeepScout fleet shell does) carries THAT
     usage's qualified name, so picking the battery in the scene
-    selects the battery element, not just the craft.  Anything else
+    selects the battery element, not just the craft.  A shell that
+    declares a ``camera`` part also carries that camera's parameters on
+    ``mesh["camera"]``, so :func:`longeron.analysis.geometry.
+    occlusion_report` measures every craft family.  Anything else
     goes to :func:`drone_scene`: the MultiRotor build family bakes
     from its own M0 population with per-individual identity keys, and
     non-assembly shapes fail loudly with :class:`AnalysisError`.
@@ -323,15 +368,9 @@ def scene_for(
                 extras[kw] = str(interp.evaluate(f"{qname}::{attr_name}"))
             except Exception:
                 pass
-        try:  # the declared mission camera: drawn (and occlusion-ready)
-            camera_usage = interp.resolve(f"{qname}::camera")
-            if isinstance(camera_usage, (M.Definition, M.Usage)):
-                slots = interp.instantiate(camera_usage).slots
-                extras["camera"] = {
-                    k: float(v) for k, v in slots.items() if isinstance(v, (int, float))
-                }
-        except Exception:
-            pass
+        camera = _declared_camera(interp, qname)
+        if camera is not None:  # drawn (and occlusion-ready, see _with_camera)
+            extras["camera"] = camera
         try:  # the declared flight controller sizes the drawn board
             fc_usage = interp.resolve(f"{qname}::flightController")
             if isinstance(fc_usage, (M.Definition, M.Usage)):
@@ -350,23 +389,58 @@ def scene_for(
             **extras,
             **_FLEET_DISPLAY,
         )
-        # the internals are selectable per element: a rendered battery,
-        # FC, or camera keys to the shell's own part usage when the
-        # shell declares one (every DeepScout fleet shell does)
-        internals = {"battery": "battery", "fc": "flightController", "camera": "camera"}
-        part_map = {}
-        for part in shell["parts"]:
-            key = qname
-            usage = internals.get(part["name"])
-            if usage is not None:
-                try:
-                    interp.resolve(f"{qname}::{usage}")
-                    key = f"{qname}::{usage}"
-                except Exception:
-                    pass
-            part_map[part["name"]] = key
-        return geometry.tag_parts(shell, part_map), part_map
+        part_map = _shell_part_map(interp, qname, shell)
+        return _with_camera(geometry.tag_parts(shell, part_map), camera), part_map
     return drone_scene(model, qname)
+
+
+def _declared_camera(interp: Interpreter, qname: str) -> dict[str, float] | None:
+    """The numeric slots of the ``camera`` part that ``qname`` declares, or ``None``."""
+
+    try:
+        camera_usage = interp.resolve(f"{qname}::camera")
+        if isinstance(camera_usage, (M.Definition, M.Usage)):
+            slots = interp.instantiate(camera_usage).slots
+            return {k: float(v) for k, v in slots.items() if isinstance(v, (int, float))}
+    except Exception:
+        pass
+    return None
+
+
+def _with_camera(mesh: dict[str, Any], camera: Mapping[str, float] | None) -> dict[str, Any]:
+    """``mesh`` with the declared camera's parameters on ``mesh["camera"]``.
+
+    Only the multirotor builder stamps the parameters itself. The other
+    families draw the camera body at a fixed station, so this stamp is what
+    lets :func:`longeron.analysis.geometry.occlusion_report` measure every
+    craft from its declared camera.
+    """
+
+    if camera is None or mesh.get("camera") is not None:
+        return mesh
+    return {**mesh, "camera": geometry._camera_params(camera)}
+
+
+def _shell_part_map(interp: Interpreter, qname: str, shell: Mapping[str, Any]) -> dict[str, str]:
+    """Identity keys for a fleet shell's parts: the craft, or a declared internal part.
+
+    A rendered battery, FC, or camera keys to the shell's own part usage
+    when the shell declares one (every DeepScout fleet shell does).
+    """
+
+    internals = {"battery": "battery", "fc": "flightController", "camera": "camera"}
+    part_map = {}
+    for part in shell["parts"]:
+        key = qname
+        usage = internals.get(part["name"])
+        if usage is not None:
+            try:
+                interp.resolve(f"{qname}::{usage}")
+                key = f"{qname}::{usage}"
+            except Exception:
+                pass
+        part_map[part["name"]] = key
+    return part_map
 
 
 def view_cone_part(
@@ -488,19 +562,33 @@ def _stat(label: str, value: str, *, color: str = "inherit") -> str:
     )
 
 
-def _header_html(assembly: str, score: float, occluded: float) -> str:
-    tone = _OK if occluded <= 0.0 else _BAD
+def _header_html(
+    subject: Subject, score: float, occluded: float | None, *, visiting: str | None
+) -> str:
+    """The header: the subject's mission, airframe and selection, then the scores."""
+
+    tone = _DIM if occluded is None else (_OK if occluded <= 0.0 else _BAD)
+    occluded_text = "no camera" if occluded is None else f"{occluded:.4f}"
+    picks = [f"{point} {variant}" for point, variant in subject.selection.items()]
+    picks += [f"{name} = {value:g}" for name, value in subject.overrides.items()]
+    visit = (
+        f'<span style="color:{_BAD}; font-size:11px">visiting <b>{visiting}</b>. '
+        "The subject did not change.</span>"
+        if visiting is not None
+        else ""
+    )
     return (
         f'<div style="{_CARD_STYLE.replace("height:100%", "height:auto")} ; '
         'display:flex; align-items:baseline; gap:14px; padding:9px 14px">'
-        f'<span style="font-size:14px"><b>{assembly}</b> &mdash; the grand tour</span>'
-        f'<span style="color:{_DIM}; font-size:11px">diagram &middot; CAD &middot; occlusion '
-        "&middot; scoreboard &middot; OpenMDAO &middot; Z3 &middot; Cesium</span>"
+        f'<span style="font-size:14px"><b>{subject.mission}</b> &middot; '
+        f"<b>{subject.airframe}</b> &mdash; the grand tour</span>"
+        f'<span style="color:{_DIM}; font-size:11px">{" &middot; ".join(picks)}</span>'
+        f"{visit}"
         '<span style="flex:1 1 0"></span>'
         f'<span style="{_NUM}; font-size:12px">requirements score '
         f"<b>{score * 100:.1f}%</b></span>"
         f'<span style="{_NUM}; font-size:12px; color:{tone}">occludedFraction '
-        f"<b>{occluded:.4f}</b></span></div>"
+        f"<b>{occluded_text}</b></span></div>"
     )
 
 
@@ -540,6 +628,17 @@ def _sizing_html(problem: Any, station_var: str, margin_vars: Mapping[str, str])
     return "".join(rows)
 
 
+def _architecture_html(architecture: Architecture, metric: str) -> str:
+    """The subject's mission metric and its verdict, one line each."""
+
+    verdict = (
+        _stat("verified", "all constraints hold", color=_OK)
+        if architecture.verified
+        else _stat("violates", ", ".join(architecture.violations), color=_BAD)
+    )
+    return _stat(metric, f"{architecture.metrics[metric]:.1f}") + verdict
+
+
 def _verdict_html(title: str, result: Any, detail: str) -> str:
     tone = _OK if result.status == "sat" else _BAD
     badge = f'<span style="color:{tone}; font-weight:600">{result.status.upper()}</span>'
@@ -558,7 +657,8 @@ def grand_dashboard(
     model: M.Model,
     sizing: M.Model | None = None,
     *,
-    assembly: str = "Rotorcraft::QuadCopter",
+    mission: MissionName = "ISR",
+    airframe: str | None = None,
     states: str = "DeepScout::FlightStates",
     sizer: str = "ScoutSizing::IsrPrime",
     station_requirement: str = "ScoutSizing::IsrStation",
@@ -573,32 +673,51 @@ def grand_dashboard(
 ) -> Any:
     """The grand-tour dashboard (an ipywidgets ``VBox``) -- one call.
 
-    ``model`` carries the drone: its structure feeds the diagram, its
-    interpreted M0 population sizes the 3D mesh, its requirement
-    hierarchy is the scoreboard, and its ``states`` machine flies the
-    Cesium mission over ``waypoints``.  ``sizing`` (default: ``model``
-    itself) carries the continuous side: ``sizer`` becomes the OpenMDAO
-    problem behind the loiter slider, and ``station_requirement`` the
-    Z3 consistency cards -- the what-if card demands ``station_var >=
-    what_if_station`` with ``loiter_var`` freed, an impossible floor
-    whose UNSAT core names the binding constraints.  ``values`` injects
-    extra measured scoreboard bindings (e.g. performance measures
-    computed through the interpreter); the live occlusion and
-    disc-overlap measures are merged on top.
+    ``model`` carries the drone program: its structure feeds the diagram
+    and the containment tree, its mission definitions
+    (:data:`~longeron.analysis.dashboard.DEFAULT_MISSIONS`) and their
+    trade studies supply the **subject** (a
+    :class:`~longeron.analysis.subject.Subject`: one mission, one airframe
+    variant, one variant per other variation point, and transient
+    overrides), its requirement hierarchy is the scoreboard, and its
+    ``states`` machine flies the Cesium mission over ``waypoints``.
+    ``mission`` names the first subject's mission, and ``airframe`` its
+    airframe variant.  The default airframe is the mission's winner: the
+    airframe whose preset (:func:`~longeron.analysis.subject.preset`) has
+    the best mission metric.  ``sizing`` (default: ``model`` itself)
+    carries the continuous side: ``sizer`` becomes the OpenMDAO problem
+    behind the loiter slider, and ``station_requirement`` the Z3
+    consistency cards -- the what-if card demands ``station_var >=
+    what_if_station`` with ``loiter_var`` freed, an impossible floor whose
+    UNSAT core names the binding constraints.  ``values`` injects extra
+    measured scoreboard bindings (e.g. performance measures computed
+    through the interpreter); the live occlusion and disc-overlap measures
+    of the subject craft are merged on top.
 
     See the module docstring for the pane list and the wiring map.  The
     returned layout exposes every piece for scripting and tests:
-    ``.diagram``, ``.tree`` (the containment tree, a
+    ``.subject`` (the current :class:`~longeron.analysis.subject.Subject`),
+    ``.architecture`` (its :meth:`TradeStudy.evaluate
+    <longeron.analysis.trades.TradeStudy.evaluate>` result, overrides
+    applied), ``.craft`` (the qualified name of the subject's airframe
+    definition), ``.studies`` (mission name -> trade study, built on first
+    use), ``.mission_toggle`` (the mission selector), ``.knobs`` (knob name
+    -> widget: a variation point name gives its dropdown, a slider name
+    such as ``minStationMinutes`` its slider), ``.knob_set`` (the
+    :class:`~longeron.analysis.knobs.KnobSet` behind them), ``.diagram``,
+    ``.tree`` (the containment tree, a
     :class:`~longeron.widgets.explorer.ModelTree`), ``.viewer``,
-    ``.board`` (+ ``.scoreboard``, the
-    current :class:`~longeron.analysis.scoreboard.Scoreboard`),
+    ``.board`` (+ ``.scoreboard``, the current
+    :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
     ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum``,
-    ``.smt_sat`` / ``.smt_what_if``, ``.mission`` / ``.track``,
-    ``.mesh`` / ``.part_map`` / ``.camera``, ``.header``,
-    ``.config_view`` (the :class:`~longeron.analysis.link.
-    ConfigViewBinding` behind the config-keyed 3D pane), and
-    ``.unlink`` (drops the diagram <-> 3D binding).
+    ``.smt_sat`` / ``.smt_what_if``, ``.mission`` (the Cesium viewer) /
+    ``.track``, ``.mesh`` / ``.part_map`` / ``.camera`` (the subject
+    scene, its identity keys, and its declared camera, ``None`` when the
+    craft declares none), ``.header``, ``.config_view`` (the
+    :class:`~longeron.analysis.link.ConfigViewBinding` behind the
+    config-keyed 3D pane), and ``.unlink`` (drops the diagram <-> 3D
+    binding).
     """
 
     from ..diagrams import structure_diagram  # pulls in ipyelk
@@ -617,14 +736,80 @@ def grand_dashboard(
     widgets = _ipywidgets()
     sizing_model = sizing if sizing is not None else model
     base_values = dict(values or {})
+    interp = Interpreter(model)
 
-    # -- the scene: mesh, identity keys, camera defaults ---------------------
-    mesh, part_map = drone_scene(model, assembly)
-    if mesh.get("camera") is None:
-        raise AnalysisError(f"{assembly} mounts no camera part; the occlusion what-if needs one")
-    camera0 = geometry._camera_params(mesh["camera"])
-    cone_length = 0.45 * geometry._bounds_diagonal(mesh)
-    disc_overlap = geometry.disc_overlap(mesh, engine="mesh")
+    # -- the subject: trade studies and presets, cached per mission ----------
+    studies: dict[str, TradeStudy] = {}
+    presets: dict[tuple[str, str], Preset] = {}
+
+    def _study(name: str) -> TradeStudy:
+        if name not in studies:
+            studies[name] = TradeStudy(model, DEFAULT_MISSIONS[name][0])
+        return studies[name]
+
+    def _preset(name: MissionName, variant: str) -> Subject:
+        # one preset evaluates every mix of the other points (~0.25 s for
+        # ISR), so each (mission, airframe) pair is computed once
+        if (name, variant) not in presets:
+            presets[name, variant] = preset(_study(name), variant, DEFAULT_MISSIONS[name][1])
+        return presets[name, variant].subject(name)
+
+    def _winner(name: MissionName) -> str:
+        metric = DEFAULT_MISSIONS[name][1]
+        for variant in _study(name).points["airframe"].variants:
+            _preset(name, variant)
+        found = [p for (m, _), p in presets.items() if m == name]
+        verified = [p for p in found if p.basis == "verified"]
+        best = (
+            max(verified, key=lambda p: p.architecture.metrics[metric])
+            if verified
+            else min(
+                found,
+                key=lambda p: (len(p.architecture.violations), -p.architecture.metrics[metric]),
+            )
+        )
+        return best.architecture.selection["airframe"]
+
+    def _craft_qname(study: TradeStudy, variant: str) -> str:
+        usage = study._variant_usage("airframe", variant)
+        typed = study.interp.resolver.resolve(usage.types[0], usage.owner or study.assembly)
+        if not (isinstance(typed, M.Definition) and typed.qualified_name):
+            raise AnalysisError(f"airframe variant {variant!r} is not typed by a named definition")
+        return typed.qualified_name
+
+    def _bake(subject: Subject) -> dict[str, Any]:
+        """Everything the panes need for one subject (no widget writes)."""
+
+        study = _study(subject.mission)
+        architecture = study.evaluate(subject.mix(), subject.overrides)
+        qname = _craft_qname(study, subject.airframe)
+        camera = _declared_camera(study.interp, qname)
+        raw = geometry.mission_geometry(study, architecture, camera=camera)
+        part_map = _shell_part_map(study.interp, qname, raw)
+        mesh = _with_camera(geometry.tag_parts(raw, part_map), camera)
+        try:
+            disc_overlap: float | None = geometry.disc_overlap(mesh, engine="mesh")
+        except AnalysisError:  # a shell mesh carries no rotor discs: unmeasured
+            disc_overlap = None
+        try:
+            tilt = mission3d.model_tilt(interp, qname)
+        except AnalysisError:  # no cruiseTilt: the shell flies level
+            tilt = 0.0
+        return {
+            "architecture": architecture,
+            "craft": qname,
+            "mesh": mesh,
+            "part_map": part_map,
+            "camera": None if mesh.get("camera") is None else dict(mesh["camera"]),
+            "cone_length": 0.45 * geometry._bounds_diagonal(mesh),
+            "disc_overlap": disc_overlap,
+            "tilt": tilt,
+        }
+
+    if mission not in DEFAULT_MISSIONS:
+        raise AnalysisError(f"unknown mission {mission!r} (have: {sorted(DEFAULT_MISSIONS)})")
+    first = _preset(mission, airframe if airframe is not None else _winner(mission))
+    baked = _bake(first)
 
     # -- panes ---------------------------------------------------------------
     diagram = structure_diagram(model, height=f"{_ROW1_PX}px")
@@ -633,8 +818,8 @@ def grand_dashboard(
     tree_ids = {id(element): node_id for node_id, element in tree_index.items()}
     tree = ModelTree(tree_nodes)
     viewer = viewer3d.mesh_viewer(
-        mesh,
-        label=f"{assembly} -- one M0 interpretation",
+        baked["mesh"],
+        label=f"{baked['craft']} -- the {mission} subject",
         width_px=_VIEWER_PX,
         height_px=_ROW1_PX,
     )
@@ -665,26 +850,20 @@ def grand_dashboard(
     smt_what_if = what_if_system.check()
 
     # -- Cesium: the state machine's recorded execution over the route -------
-    # the cruise attitude comes FROM THE MODEL where it carries one (the
-    # drone example's cruiseTilt calc); a model without the physics still
-    # flies, props level
-    interp = Interpreter(model)
-    try:
-        tilt_deg = mission3d.model_tilt(interp, assembly)
-    except AnalysisError:
-        tilt_deg = 0.0
-    track = mission3d.from_replay(
+    # FlightStates and the route are shared by every mission (no mission
+    # declares its own); the subject supplies the geometry and the tilt
+    replay = mission3d.from_replay(
         interp,
         states,
         list(events),
         waypoints=waypoints,
         ground_alt=ground_alt,
-        tilt_deg=tilt_deg,
+        tilt_deg=baked["tilt"],
     )
-    mission = mission3d_widget.mission_viewer(
-        track,
-        mesh=mesh,
-        label=f"{states} replay -- the drone's own geometry over {imagery} imagery",
+    flight = mission3d_widget.mission_viewer(
+        replay,
+        mesh=baked["mesh"],
+        label=f"{states} replay -- the subject's own geometry over {imagery} imagery",
         height_px=_MISSION_PX,
         imagery=imagery,
     )
@@ -695,6 +874,7 @@ def grand_dashboard(
         "style": {"description_width": "62px"},
         "layout": widgets.Layout(width="98%"),
     }
+    camera0 = baked["camera"] or {"elevation": 0.0, "azimuth": 0.0}
     elevation = widgets.FloatSlider(
         value=camera0["elevation"],
         min=-90.0,
@@ -727,49 +907,200 @@ def grand_dashboard(
         tooltip="run the OpenMDAO driver and snap the slider to the optimum",
         layout=widgets.Layout(width="98%"),
     )
+    mission_toggle = widgets.ToggleButtons(
+        options=list(DEFAULT_MISSIONS),
+        value=mission,
+        style={"button_width": "74px"},
+        layout=widgets.Layout(width="98%"),
+    )
     readout = widgets.HTML()
     sizing_card = widgets.HTML()
+    subject_card = widgets.HTML()
+    knob_grid = widgets.GridBox(
+        layout=widgets.Layout(width="98%", grid_template_columns="1fr 1fr", grid_gap="0 6px")
+    )
+    knob_sliders = widgets.VBox(layout=widgets.Layout(width="100%"))
     header = widgets.HTML()
 
     box = widgets.VBox()
     box.report = {}
     box.scoreboard = board_score
+    box.studies = studies
+    box.knobs = {}
+    live: dict[str, Any] = {"score": board_score.score, "occluded": None}
+    sync = {"knobs": False, "camera": False}  # programmatic writes, not user moves
+
+    def _install(subject: Subject, pieces: dict[str, Any]) -> None:
+        box.subject = subject
+        box.architecture = pieces["architecture"]
+        box.craft = pieces["craft"]
+        box.mesh = pieces["mesh"]
+        box.part_map = dict(pieces["part_map"])
+        box.camera = None if pieces["camera"] is None else dict(pieces["camera"])
+        live["cone_length"] = pieces["cone_length"]
+        live["disc_overlap"] = pieces["disc_overlap"]
+        box.track = replace(replay, tilt_deg=pieces["tilt"])
+        subject_card.value = _architecture_html(
+            pieces["architecture"], DEFAULT_MISSIONS[subject.mission][1]
+        )
 
     # -- wiring ---------------------------------------------------------------
-    def _repaint_board(occluded: float) -> None:
-        merged = {
-            **base_values,
-            "occludedFraction": occluded,
-            "discOverlapVolume": disc_overlap,
-        }
+    def _refresh_header() -> None:
+        visiting = binding.current if binding.current != box.craft else None
+        header.value = _header_html(box.subject, live["score"], live["occluded"], visiting=visiting)
+
+    def _repaint_board(occluded: float | None) -> None:
+        merged = dict(base_values)
+        if occluded is not None:
+            merged["occludedFraction"] = occluded
+        if live["disc_overlap"] is not None:
+            merged["discOverlapVolume"] = live["disc_overlap"]
         score = scoreboard(model, values=merged)
         box.scoreboard = score
         payload = json.dumps(score.payload())
         if board.nodes_json != payload:
             board.nodes_json = payload
-        header.value = _header_html(assembly, score.score, occluded)
+        live["score"], live["occluded"] = score.score, occluded
+        _refresh_header()
 
-    def _camera_now() -> dict[str, float]:
-        return {
-            **camera0,
-            "elevation": float(elevation.value),
-            "azimuth": float(azimuth.value),
-        }
+    def _camera_now() -> dict[str, float] | None:
+        if box.camera is None:
+            return None
+        return {**box.camera, "elevation": float(elevation.value), "azimuth": float(azimuth.value)}
 
     def _cone_scene(base: dict[str, Any]) -> dict[str, Any]:
-        cone = view_cone_part(_camera_now(), length=cone_length)
+        camera = _camera_now()
+        if camera is None:
+            return base
+        cone = view_cone_part(camera, length=live["cone_length"])
         return {**base, "parts": [*base["parts"], cone]}
 
     def _on_camera(_change: Any = None) -> None:
+        if sync["camera"]:
+            return
         camera = _camera_now()
-        report = geometry.occlusion_report(mesh, camera=camera, engine="mesh")
-        box.report = report
-        readout.value = _occlusion_html(report)
-        if binding.current == assembly:  # the pane may be showing another craft
-            viewer.mesh_json = json.dumps(_cone_scene(mesh))
-            offenders = sorted(part_map.get(name, name) for name in report["obstructions"])
+        offenders: list[str] = []
+        if camera is None:
+            box.report = {}
+            readout.value = f'<div style="color:{_DIM}">{box.craft} declares no camera</div>'
+            occluded = None
+        else:
+            report = geometry.occlusion_report(box.mesh, camera=camera, engine="mesh")
+            box.report = report
+            readout.value = _occlusion_html(report)
+            occluded = float(report["occludedFraction"])
+            offenders = sorted(box.part_map.get(name, name) for name in report["obstructions"])
+        if binding.current == box.craft:  # the pane may be showing a visiting craft
+            viewer.mesh_json = json.dumps(_cone_scene(box.mesh))
             viewer.highlight_json = json.dumps(offenders)
-        _repaint_board(float(report["occludedFraction"]))
+        _repaint_board(occluded)
+
+    def _render_knobs() -> None:
+        """Rebuild the knob widgets for the subject's mission and airframe."""
+
+        subject = box.subject
+        study = _study(subject.mission)
+        knob_set = derive_knobs(study.interp, study.assembly, study=study, selection=subject.mix())
+        box.knob_set = knob_set
+        made: dict[str, Any] = {}
+        for dropdown in knob_set.dropdowns:
+            widget = widgets.Dropdown(
+                options=list(dropdown.variants),
+                value=dropdown.selected,
+                description=dropdown.point,
+                style={"description_width": "56px"},
+                layout=widgets.Layout(width="auto"),
+            )
+            widget.observe(_dropdown_observer(dropdown.point), names="value")
+            made[dropdown.point] = widget
+        sliders = []
+        for knob in knob_set.sliders:
+            widget = widgets.FloatSlider(
+                value=subject.overrides.get(knob.name, knob.value),
+                min=knob.low,
+                max=knob.high,
+                step=knob.step,
+                description=knob.name.split(".")[-1],
+                readout_format=f".{max(0, -floor(log10(knob.step)))}f",
+                continuous_update=True,
+                style={"description_width": "116px"},
+                layout=widgets.Layout(width="98%"),
+            )
+            widget.observe(_slider_observer(knob.name), names="value")
+            made[knob.name] = widget
+            sliders.append(widget)
+        box.knobs = made
+        knob_grid.children = [made[d.point] for d in knob_set.dropdowns]
+        knob_sliders.children = sliders
+
+    def _dropdown_observer(point: str) -> Any:
+        def _observe(change: Any) -> None:
+            if sync["knobs"]:
+                return
+            subject = box.subject
+            _set_subject(replace(subject, selection={**subject.selection, point: change["new"]}))
+
+        return _observe
+
+    def _slider_observer(name: str) -> Any:
+        def _observe(change: Any) -> None:
+            if sync["knobs"]:
+                return
+            subject = box.subject
+            overrides = {**subject.overrides, name: float(change["new"])}
+            _set_subject(replace(subject, overrides=overrides))
+
+        return _observe
+
+    def _set_subject(subject: Subject) -> None:
+        """Make ``subject`` the tour's subject and repaint every pane that follows it."""
+
+        old_subject, old_craft = box.subject, box.craft
+        _install(subject, _bake(subject))
+        # the bake cache holds the old subject scene under its craft name
+        binding.scenes.pop(old_craft, None)
+        binding.scenes[box.craft] = (box.mesh, box.part_map)
+        binding.current = box.craft
+        viewer.label = f"{box.craft} -- the {subject.mission} subject"
+        flight.czml_json = json.dumps(box.track.to_czml(mesh=box.mesh))
+        if (subject.mission, subject.airframe) != (old_subject.mission, old_subject.airframe):
+            sync["knobs"] = True
+            try:
+                if mission_toggle.value != subject.mission:
+                    mission_toggle.value = subject.mission
+                _render_knobs()
+            finally:
+                sync["knobs"] = False
+            if box.camera is not None:  # the new craft's declared camera angles
+                sync["camera"] = True
+                try:
+                    elevation.value = box.camera["elevation"]
+                    azimuth.value = box.camera["azimuth"]
+                finally:
+                    sync["camera"] = False
+        _on_camera()
+
+    def _on_mission(change: Any) -> None:
+        if sync["knobs"]:
+            return
+        name = cast(MissionName, change["new"])
+        # the airframe stays; its preset for the new mission fills the rest
+        _set_subject(_preset(name, box.subject.airframe))
+
+    def _on_craft(elements: list[M.Element]) -> None:
+        """A catalog craft click fills the airframe; any other craft only visits."""
+
+        if not elements:
+            return
+        study = _study(box.subject.mission)
+        variant = craft_variant(study, elements[0])
+        if variant is None:
+            config = link.owning_config(model, elements[0])
+            variant = craft_variant(study, config) if config is not None else None
+        if variant is not None and variant != box.subject.airframe:
+            subject = _preset(box.subject.mission, variant)
+            plain = {k: v for k, v in box.subject.overrides.items() if "." not in k}
+            _set_subject(replace(subject, overrides=plain))
 
     def _on_loiter(_change: Any = None) -> None:
         build.problem.set_val(loiter_var, float(loiter.value))
@@ -843,26 +1174,36 @@ def grand_dashboard(
             tree_sync["active"] = False
         tree.reveal(node_id)
 
-    # the config-keyed 3D pane: any craft clicked in the diagram renders
-    # in the viewer (scene_for bakes it); the home assembly keeps its
-    # camera-what-if view cone through the decorate hook
+    def _scene(_model: M.Model, qname: str) -> tuple[dict[str, Any], dict[str, str]]:
+        if qname == box.craft:  # the subject craft bakes with its mix
+            return box.mesh, box.part_map
+        return scene_for(model, qname, interpreter=interp)
+
+    from ..diagrams import on_select
+
+    # a craft click changes the subject BEFORE the binding resolves the
+    # click, so the binding finds the new subject scene already showing
+    on_select(diagram, model, _on_craft)
+    _install(first, baked)
     binding = link.bind_config_view(
         diagram,
         viewer,
         model,
-        showing=assembly,
-        decorate=lambda qname, scene: _cone_scene(scene) if qname == assembly else scene,
+        showing=box.craft,
+        scene=_scene,
+        decorate=lambda qname, scene: _cone_scene(scene) if qname == box.craft else scene,
     )
-    from ..diagrams import on_select
-
     on_select(diagram, model, _on_diagram)
     on_select(diagram, model, _diagram_to_tree)
+    on_select(diagram, model, lambda _elements: _refresh_header())  # visiting or not
     tree.on_select(_on_tree)
     board.on_select(_on_board)
     elevation.observe(_on_camera, names="value")
     azimuth.observe(_on_camera, names="value")
     loiter.observe(_on_loiter, names="value")
     optimize.on_click(_on_optimize)
+    mission_toggle.observe(_on_mission, names="value")
+    _render_knobs()
 
     # -- layout ---------------------------------------------------------------
     # Sizing discipline (the diagram-beside-3D lesson, re-learned in
@@ -878,7 +1219,7 @@ def grand_dashboard(
     diagram.layout.flex = "1 1 auto"
     diagram.layout.min_width = "0"
     diagram.layout.overflow = "hidden"
-    mission.layout = widgets.Layout(width="100%")
+    flight.layout = widgets.Layout(width="100%")
     row1 = widgets.HBox(
         [tree, diagram, viewer, board],
         layout=widgets.Layout(
@@ -886,12 +1227,12 @@ def grand_dashboard(
         ),
     )
 
-    def _strip_card(title: str, children: list[Any]) -> Any:
+    def _strip_card(title: str, children: list[Any], *, flex: str = "1 1 0") -> Any:
         titled = widgets.HTML(f'<div style="{_TITLE_STYLE}">{title}</div>')
         card = widgets.VBox(
             [titled, *children],
             layout=widgets.Layout(
-                flex="1 1 0",
+                flex=flex,
                 min_width="0",
                 height=f"{_STRIP_PX}px",
                 overflow="hidden",
@@ -923,6 +1264,11 @@ def grand_dashboard(
     )
     row2 = widgets.HBox(
         [
+            _strip_card(
+                "subject (mission, knobs)",
+                [mission_toggle, subject_card, knob_grid, knob_sliders],
+                flex="1.6 1 0",
+            ),
             _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
             _strip_card(
                 f"OpenMDAO sizing -- {sizer.split('::')[-1]}", [loiter, sizing_card, optimize]
@@ -937,7 +1283,7 @@ def grand_dashboard(
         header,
         row1,
         row2,
-        mission,
+        flight,
     ]
     box.layout = widgets.Layout(width="100%")
 
@@ -946,8 +1292,9 @@ def grand_dashboard(
     box.tree = tree
     box.viewer = viewer
     box.board = board
-    box.mission = mission
-    box.track = track
+    box.mission = flight
+    box.mission_toggle = mission_toggle
+    box.subject_card = subject_card
     box.header = header
     box.readout = readout
     box.sizing_card = sizing_card
@@ -960,9 +1307,6 @@ def grand_dashboard(
     box.optimum = optimum
     box.smt_sat = smt_sat
     box.smt_what_if = smt_what_if
-    box.mesh = mesh
-    box.part_map = dict(part_map)
-    box.camera = dict(camera0)
     box.values = base_values
     box.config_view = binding
     box.unlink = binding.unbind

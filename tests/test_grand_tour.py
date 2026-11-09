@@ -2,18 +2,20 @@
 
 Everything runs kernel-side (the house widgets are dumb painters over
 synced traitlets), so the full reaction graph is testable headless:
-containment tree <-> diagram <-> 3D <-> scoreboard selection, the camera what-if -> occlusion
--> scoreboard recolor chain, the OpenMDAO loiter slider, the Z3 verdict
-strip, and the Cesium finale's presence.
+containment tree <-> diagram <-> 3D <-> scoreboard selection, the subject
+(mission selector, catalog craft clicks, the derived knobs) -> 3D, camera
+and flight, the camera what-if -> occlusion -> scoreboard recolor chain,
+the OpenMDAO loiter slider, the Z3 verdict strip, and the Cesium finale.
 """
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 import longeron
-from longeron.analysis import AnalysisError, geometry
+from longeron.analysis import AnalysisError, geometry, trades
 from longeron.analysis.grand import (
     ATLANTA_LOOP,
     drone_scene,
@@ -27,6 +29,10 @@ pytest.importorskip("openmdao")
 pytest.importorskip("z3")
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
+
+#: the default subject: the ISR mission's winner (PLAN section 8)
+HOME = "FlyingWings::FlyingWingSingle"
+TWIN = "ScoutMissions::Catalog::AirframeChoice::flyingWingTwin"
 
 
 @pytest.fixture(scope="module")
@@ -122,6 +128,14 @@ class TestSceneFor:
         assert part_map == expected
         assert all(part["key"] == expected[part["name"]] for part in mesh["parts"])
 
+    @pytest.mark.parametrize("qname", sorted(FLEET_PARTS))
+    def test_fleet_shell_stamps_its_declared_camera(self, drone, qname):
+        # every family, not only the multirotor builder, carries the
+        # declared camera, so the occlusion measure needs no camera= argument
+        mesh, _ = scene_for(drone, qname)
+        assert mesh["camera"]["fieldOfView"] > 0.0
+        assert 0.0 <= geometry.occlusion_report(mesh, engine="mesh")["occludedFraction"] <= 1.0
+
     def test_definition_object_and_qname_agree(self, drone):
         by_name, _ = scene_for(drone, "Rotorcraft::TeardropQuad")
         by_def, _ = scene_for(drone, drone.find("Rotorcraft::TeardropQuad"))
@@ -173,14 +187,18 @@ class TestComposition:
         assert json.loads(dash.mission.czml_json)  # the finale pane is baked
 
     def test_defaults_are_the_demo_mission(self, dash):
-        assert dash.camera["elevation"] == -15.0
+        assert dash.camera["elevation"] == -15.0  # the subject's declared camera
         assert ATLANTA_LOOP[0][0] == pytest.approx(33.7813)
-        assert dash.report["occludedFraction"] == 0.0  # stock camera: clear
+        # the declared camera sits inside the wing's bay: measured, not clear
+        assert list(dash.report["obstructions"]) == ["bay"]
 
-    def test_track_flies_the_model_tilt(self, dash):
-        # the Cesium pane's cruise attitude comes FROM THE MODEL: cruiseTilt
-        # = min(arccos continuous-thrust ceiling ~52.8 deg, 25 deg ops cap)
-        assert dash.track.tilt_deg == 25.0
+    def test_track_flies_the_subject(self, dash):
+        # a fleet shell declares no cruiseTilt, so the subject flies level;
+        # the CZML carries the subject's own mesh
+        assert dash.track.tilt_deg == 0.0
+        assert json.loads(dash.mission.czml_json) == json.loads(
+            json.dumps(dash.track.to_czml(mesh=dash.mesh))
+        )
 
     def test_scene_carries_the_view_cone_but_analysis_mesh_does_not(self, dash):
         scene = json.loads(dash.viewer.mesh_json)
@@ -190,44 +208,48 @@ class TestComposition:
     def test_base_values_flow_into_the_scoreboard(self, dash):
         assert dash.scoreboard.values["answer"] == 42.0
 
-    def test_header_names_model_and_score(self, dash):
-        assert "Rotorcraft::QuadCopter" in dash.header.value
+    def test_header_names_the_subject_and_score(self, dash):
+        assert "<b>ISR</b>" in dash.header.value
+        assert "<b>flyingWingSingle</b>" in dash.header.value
+        assert "battery liion6s6p" in dash.header.value
         assert "requirements score" in dash.header.value
+        assert "visiting" not in dash.header.value
 
 
 class TestSelectionWiring:
     def test_diagram_click_highlights_the_meshes(self, dash):
-        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter::propellers"]
-        expected = sorted(dash.part_map[f"prop{i}"] for i in (1, 2, 3, 4))
-        assert json.loads(dash.viewer.highlight_json) == expected
+        dash.diagram.view.selection.ids = [f"{HOME}::battery"]
+        assert json.loads(dash.viewer.highlight_json) == [dash.part_map["battery"]]
+        assert dash.config_view.current == HOME  # inside the subject: no swap
         dash.diagram.view.selection.ids = []
 
     def test_click_another_craft_swaps_the_3d_pane(self, dash):
         dash.diagram.view.selection.ids = ["Rotorcraft::HexaCopter::motors"]
         assert dash.config_view.current == "Rotorcraft::HexaCopter"
         assert len(json.loads(dash.viewer.mesh_json)["discs"]) == 6
-        dash.diagram.view.selection.ids = ["Rotorcraft::TeardropQuad"]  # a fleet shell
-        parts = json.loads(dash.viewer.mesh_json)["parts"]
+        dash.diagram.view.selection.ids = ["Rotorcraft::TeardropQuad"]  # a catalog shell
+        assert dash.subject.airframe == "teardropQuad"  # ... becomes the subject
+        parts = [p for p in json.loads(dash.viewer.mesh_json)["parts"] if "key" in p]
         # the shell carries the craft identity; the clickable internals
         # carry their own part-usage identities
         assert all(part["key"].startswith("Rotorcraft::TeardropQuad") for part in parts)
         assert {p["key"] for p in parts if p["name"] == "fc"} == {
             "Rotorcraft::TeardropQuad::flightController"
         }
-        # home again: the quad returns WITH its view cone, in one write
-        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
-        assert dash.config_view.current == "Rotorcraft::QuadCopter"
+        # home again: the subject returns WITH its view cone
+        dash.diagram.view.selection.ids = [HOME]
+        assert dash.config_view.current == HOME
         assert json.loads(dash.viewer.mesh_json)["parts"][-1]["name"] == "viewCone"
         dash.diagram.view.selection.ids = []
 
     def test_camera_what_if_never_clobbers_a_visiting_craft(self, dash):
-        dash.diagram.view.selection.ids = ["WingedVtol::VtolWing"]
+        dash.diagram.view.selection.ids = ["Rotorcraft::HexaCopter"]
         shown = dash.viewer.mesh_json
-        dash.elevation.value = -30.0  # measures the HOME assembly ...
+        dash.elevation.value = -30.0  # measures the SUBJECT craft ...
         assert dash.report["occludedFraction"] >= 0.0  # ... report still updates
         assert dash.viewer.mesh_json is shown  # ... the visiting craft stays
         dash.elevation.value = -15.0
-        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        dash.diagram.view.selection.ids = [HOME]
         dash.diagram.view.selection.ids = []
 
     def test_requirement_click_selects_the_scoreboard_cell(self, dash):
@@ -250,7 +272,7 @@ class TestTreeWiring:
 
     @staticmethod
     def _home(dash):
-        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        dash.diagram.view.selection.ids = [HOME]
         dash.diagram.view.selection.ids = []
         dash.tree.selected = []
 
@@ -258,7 +280,9 @@ class TestTreeWiring:
         dash.tree.selected = ["Rotorcraft::TeardropQuad"]
         assert list(dash.diagram.view.selection.ids) == ["Rotorcraft::TeardropQuad"]
         assert dash.config_view.current == "Rotorcraft::TeardropQuad"
+        assert dash.subject.airframe == "teardropQuad"  # a catalog craft
         self._home(dash)
+        assert dash.subject.airframe == "flyingWingSingle"
 
     def test_tree_selection_of_a_requirement_reaches_the_scoreboard(self, dash):
         dash.tree.selected = ["DeepScout::installation::propClearance"]
@@ -329,21 +353,22 @@ class TestCameraWhatIf:
         assert calls[-1]["elevation"] == -15.0
 
     def test_occlusion_flips_the_scoreboard_and_paints_offenders(self, dash):
-        dash.azimuth.value = 180.0
-        dash.elevation.value = -20.0
+        dash.azimuth.value = 180.0  # looking aft through the wing
+        dash.elevation.value = -15.0
         assert dash.report["occludedFraction"] > 0.0
-        assert "battery" in dash.report["obstructions"]
+        assert "wing" in dash.report["obstructions"]
         clear_view = _leaf(json.loads(dash.board.nodes_json), "clearView")
         assert clear_view["raw"] == pytest.approx(dash.report["occludedFraction"])
         assert clear_view["utility"] == 0.0  # red
-        assert dash.part_map["battery"] in json.loads(dash.viewer.highlight_json)
-        assert "occludedFraction" in dash.readout.value and "battery" in dash.readout.value
-        # ... and back: the stock camera is clear, the highlight releases
+        assert dash.part_map["wing"] in json.loads(dash.viewer.highlight_json)
+        assert "occludedFraction" in dash.readout.value and "wing" in dash.readout.value
+        # ... and clear: looking up and forward, the highlight releases
         dash.azimuth.value = 0.0
-        dash.elevation.value = -15.0
+        dash.elevation.value = 30.0
         assert dash.report["occludedFraction"] == 0.0
         assert json.loads(dash.viewer.highlight_json) == []
         assert _leaf(json.loads(dash.board.nodes_json), "clearView")["utility"] == 1.0
+        dash.elevation.value = -15.0
 
     def test_cone_follows_the_boresight(self, dash):
         dash.elevation.value = -90.0  # straight down
@@ -387,7 +412,133 @@ class TestVerdictStrip:
         assert "aboveStall" in dash.verdicts.value
         assert "420" in dash.verdicts.value
 
-    def test_camera_missing_is_loud(self, drone, missions):
+    def test_camera_missing_is_an_honest_absence(self, drone):
+        # the rotor shells declare `part camera : Camera;`: without it the
+        # camera card says so and the occlusion leaf stays unmeasured
         cameraless = longeron.loads(longeron.to_sysml(drone).replace("part camera : Camera;", ""))
-        with pytest.raises(AnalysisError, match="camera"):
-            grand_dashboard(cameraless, missions)
+        dash = grand_dashboard(cameraless, airframe="boxQuad")
+        assert dash.camera is None and dash.report == {}
+        assert "declares no camera" in dash.readout.value
+        assert "no camera" in dash.header.value
+        assert _leaf(json.loads(dash.board.nodes_json), "clearView")["measured"] is False
+
+
+class TestSubject:
+    """The subject (mission, airframe, selection, overrides) drives the 3D
+    pane, the camera what-if, the knobs and the flight."""
+
+    @staticmethod
+    def _home(dash):
+        dash.mission_toggle.value = "ISR"
+        dash.diagram.view.selection.ids = [HOME]
+        dash.diagram.view.selection.ids = []
+
+    def test_default_subject_is_the_isr_winner(self, dash):
+        assert (dash.subject.mission, dash.subject.airframe) == ("ISR", "flyingWingSingle")
+        assert dash.craft == HOME and dash.config_view.current == HOME
+        assert dash.architecture.verified
+        assert dash.architecture.metrics["stationMinutes"] == pytest.approx(274.6, abs=0.05)
+        assert "stationMinutes" in dash.subject_card.value
+
+    def test_knobs_come_from_the_model(self, dash):
+        assert list(dash.knobs) == [
+            "sensor",
+            "motors",
+            "props",
+            "battery",
+            "material",
+            "minStationMinutes",
+        ]
+        assert dash.knobs["battery"].value == dash.subject.selection["battery"]
+        slider = dash.knobs["minStationMinutes"]
+        assert (slider.min, slider.max, slider.value) == (25.0, 240.0, 25.0)
+
+    def test_catalog_click_changes_subject_mesh_and_camera_readout(self, dash, monkeypatch):
+        measured = []
+        real = geometry.occlusion_report
+
+        def spy(mesh, camera=None, **kwargs):
+            measured.append(mesh)
+            return real(mesh, camera=camera, **kwargs)
+
+        monkeypatch.setattr(geometry, "occlusion_report", spy)
+        mesh0, readout0 = dash.viewer.mesh_json, dash.readout.value
+        dash.diagram.view.selection.ids = [TWIN]
+        assert dash.subject.airframe == "flyingWingTwin"
+        assert dash.craft == "FlyingWings::FlyingWingTwin"
+        assert dash.config_view.current == dash.craft
+        assert dash.viewer.mesh_json != mesh0
+        assert dash.readout.value != readout0
+        assert measured[-1] is dash.mesh  # the camera what-if measures the subject
+        # the preset filled the other points; the old subject scene is gone
+        assert dash.knobs["battery"].value == dash.subject.selection["battery"]
+        assert HOME not in dash.config_view.scenes
+        assert dash.config_view.scenes[dash.craft][0] is dash.mesh
+        self._home(dash)
+        assert dash.subject.airframe == "flyingWingSingle"
+
+    def test_dropdown_change_rewrites_the_mesh_and_keeps_the_others(self, dash):
+        before = dict(dash.subject.selection)
+        mesh0, czml0 = dash.viewer.mesh_json, dash.mission.czml_json
+        dash.knobs["battery"].value = "tattu16000"
+        assert dash.subject.selection == {**before, "battery": "tattu16000"}
+        assert dash.subject.airframe == "flyingWingSingle"
+        assert dash.viewer.mesh_json != mesh0
+        assert dash.mission.czml_json != czml0  # the flight flies the new mesh
+        assert dash.architecture.selection["battery"] == "tattu16000"
+        dash.knobs["battery"].value = before["battery"]
+        assert dash.subject.selection == before
+
+    def test_build_configuration_click_only_visits(self, dash):
+        subject = dash.subject
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        assert dash.subject == subject
+        assert dash.config_view.current == "Rotorcraft::QuadCopter"
+        assert "visiting <b>Rotorcraft::QuadCopter</b>" in dash.header.value
+        assert "The subject did not change." in dash.header.value
+        self._home(dash)
+        assert "visiting" not in dash.header.value
+
+    def test_slider_change_reaches_the_trade_study_override(self, dash, monkeypatch):
+        calls = []
+        real = trades.TradeStudy.evaluate
+
+        def spy(study, selection, overrides=None):
+            calls.append(dict(overrides or {}))
+            return real(study, selection, overrides)
+
+        monkeypatch.setattr(trades.TradeStudy, "evaluate", spy)
+        dash.knobs["minStationMinutes"].value = 240.0
+        assert calls[-1] == {"minStationMinutes": 240.0}
+        assert dash.subject.overrides == {"minStationMinutes": 240.0}
+        assert dash.architecture.verified  # 274.6 min clears the 240 min floor
+        dash.knobs["battery"].value = "tattu3s"  # ... a small pack does not
+        assert calls[-1] == {"minStationMinutes": 240.0}  # the override survives
+        assert "stationReq" in dash.architecture.violations
+        dash.knobs["battery"].value = "liion6s6p"
+        dash.knobs["minStationMinutes"].value = 25.0
+        assert dash.architecture.verified
+
+    def test_mission_toggle_keeps_the_airframe(self, dash):
+        dash.mission_toggle.value = "logistics"
+        assert dash.subject.mission == "logistics"
+        assert dash.subject.airframe == "flyingWingSingle"
+        assert "cargo" in dash.knobs and "sensor" not in dash.knobs
+        assert "<b>logistics</b>" in dash.header.value
+        self._home(dash)
+        assert dash.subject.mission == "ISR" and "sensor" in dash.knobs
+
+    def test_each_reaction_stays_under_the_continuous_update_budget(self, dash):
+        # PLAN risk: a reaction over 300 ms needs continuous_update=False
+        reactions = {
+            "dropdown": lambda: setattr(dash.knobs["props"], "value", "apc13x65"),
+            "slider": lambda: setattr(dash.knobs["minStationMinutes"], "value", 30.0),
+            "camera": lambda: setattr(dash.elevation, "value", -20.0),
+        }
+        for name, react in reactions.items():
+            start = time.perf_counter()
+            react()
+            assert time.perf_counter() - start < 1.0, name  # CI slack over the 300 ms budget
+        dash.elevation.value = -15.0
+        dash.knobs["minStationMinutes"].value = 25.0
+        dash.knobs["props"].value = "apc11x55"

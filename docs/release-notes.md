@@ -23,6 +23,22 @@
     in place of `drone : MultiRotor`. The camera occlusion requirement
     now applies to every craft and to every mission architecture
 
+### The grand tour
+
+- **The grand tour follows a subject**: `grand_dashboard` shows one
+  mission architecture, the subject. A subject is a mission, an
+  airframe variant, one variant for each other variation point, and
+  transient overrides. A mission selector and the knobs change the
+  subject. The model supplies the knobs: a dropdown for each variation
+  point, and a slider for each input attribute with a two-sided range.
+  A click on a catalog airframe makes it the subject's airframe, with
+  its best mix for the mission. The 3D pane, the camera what-if and the
+  Cesium flight show the subject craft. A build configuration such as
+  `Rotorcraft::QuadCopter` only visits the 3D pane
+- **`scene_for` stamps the declared camera on every craft family**:
+  `occlusion_report` measures a fleet shell without a `camera=`
+  argument
+
 ### Verification and conformance
 
 - **Every z3 `Optimize` query has a time limit, and an independent
@@ -99,6 +115,9 @@
   the pixi environments require ipykernel 7.4. If slider updates lag
   with ipykernel 7.4 and JupyterLab 4.6, set `commsOverSubshells` to
   `disabled` (an ipyelk 3.0 known issue)
+- **`grand_dashboard(assembly=...)` is gone**: pass `mission=` and
+  `airframe=`, a variant name of `AirframeChoice`. The default subject
+  is the ISR winner
 
 ## 0.11.0 (2026-08-29)
 

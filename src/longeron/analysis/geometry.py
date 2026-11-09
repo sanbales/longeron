@@ -2878,7 +2878,9 @@ def mission_geometry(
     metrics carry the load-sized ``armOuterDiameter`` (the assembly's
     structural sizing), the quad families draw their arms at that
     diameter -- a sprint-motor aluminum build genuinely looks beefier
-    than a carbon eco build.
+    than a carbon eco build.  A ``camera=`` override (the slot mapping
+    of a declared camera part) reaches :func:`airframe_geometry`'s
+    ``camera``.
     """
 
     p = {**mission_params(study, architecture), **overrides}
@@ -2913,6 +2915,7 @@ def mission_geometry(
         bay_width=p["bay_width"],
         bay_height=p["bay_height"],
         fc_mass=p["fc_mass"],
+        camera=p.get("camera"),
         **arm_kw,
     )
 
