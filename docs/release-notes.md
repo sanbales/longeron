@@ -92,6 +92,10 @@
     the subject. A mission without a sizing context shows an honest
     absence. The model supplies the bounds of the loiter and camera
     sliders
+  - A knob that changes the shape of the craft, for example the span,
+    the mean chord or the hull diameter, also changes the mesh of the 3D
+    pane, the view cone, the occlusion measure and the Cesium model.
+    The mesh reads the same instance of the subject as the metrics
   - Tutorial 9 tours the subject: the mission, the knobs, the
     requirement set, the camera what-if, the sizing context and the
     craft clicks
@@ -125,6 +129,12 @@
   - `TradeStudy.evaluate(selection, overrides=...)` applies transient
     overrides, and the new `TradeStudy.instance(selection, overrides=...)`
     returns the instantiated assembly
+  - `geometry.mission_params` and `geometry.mission_geometry` accept
+    `instance=`, the instance of a mix. The geometry inputs then come
+    from that instance, with its overrides. `winged_vtol_geometry`
+    accepts `fuselage_diameter=`, and the mission bridge draws the
+    declared hull of `VtolWing` (0.12 m) instead of a hull sized to the
+    battery
   - `scoreboard()` accepts a sequence of requirements, and its
     `subjects=` keyword scores each requirement for a given instance
 - **`scene_for` stamps the declared camera on every craft family**:

@@ -51,6 +51,19 @@ def dash(drone, missions):
     return grand_dashboard(drone, missions, values={"answer": 42.0})
 
 
+def _part_extent(mesh, part, axis):
+    lo, hi = geometry._part_aabb(next(p for p in mesh["parts"] if p["name"] == part))
+    return hi[axis] - lo[axis]
+
+
+def _wing_span(mesh):
+    return _part_extent(mesh, "wing", 2)
+
+
+def _frame_width(mesh):
+    return _part_extent(mesh, "frame", 0)
+
+
 def _leaf(node, name):
     if node["label"] == name:
         return node
@@ -708,6 +721,79 @@ class TestSubject:
         dash.knobs["battery"].value = "liion6s6p"
         dash.knobs["minStationMinutes"].value = 25.0
         assert dash.architecture.verified
+
+    def test_span_slider_widens_the_mesh_the_cone_and_the_flight(self, dash, monkeypatch):
+        measured, cones = [], []
+        real_report, real_cone = geometry.occlusion_report, view_cone_part
+
+        def report_spy(mesh, camera=None, **kwargs):
+            measured.append(mesh)
+            return real_report(mesh, camera=camera, **kwargs)
+
+        def cone_spy(camera, *, length, **kwargs):
+            cones.append(length)
+            return real_cone(camera, length=length, **kwargs)
+
+        monkeypatch.setattr(geometry, "occlusion_report", report_spy)
+        monkeypatch.setattr("longeron.analysis.grand.view_cone_part", cone_spy)
+        span = dash.knobs["airframe.wingSpan"]
+        default = span.value
+        mesh0, czml0, wing0 = dash.viewer.mesh_json, dash.mission.czml_json, _wing_span(dash.mesh)
+        span.value = span.max
+        assert dash.subject.overrides["airframe.wingSpan"] == span.max
+        assert _wing_span(dash.mesh) / wing0 == pytest.approx(span.max / default)
+        shown = json.loads(dash.viewer.mesh_json)
+        assert _wing_span(shown) == pytest.approx(_wing_span(dash.mesh))  # the 3D pane
+        assert dash.mission.czml_json != czml0  # the Cesium glTF flies the wider wing
+        # the camera what-if measures the new mesh, and its cone scales with it
+        assert measured[-1] is dash.mesh
+        assert cones[-1] == pytest.approx(0.45 * geometry._bounds_diagonal(dash.mesh))
+        assert "view cone clear of the airframe" in dash.readout.value
+        span.value = default
+        assert dash.viewer.mesh_json == mesh0 and dash.mission.czml_json == czml0
+        assert len(cones) >= 2 and cones[-1] < cones[-2]
+
+    def test_chord_slider_moves_the_planform_and_the_nose_camera(self, dash):
+        chord = dash.knobs["airframe.wingChord"]
+        default, camera0 = chord.value, dict(dash.camera)
+        chord.value = chord.max
+        study = dash.studies["ISR"]
+        airframe = study.instance(dash.subject.mix(), dash.subject.overrides).get("airframe")
+        assert airframe.slots["wingArea"] == pytest.approx(airframe.slots["wingSpan"] * chord.max)
+        root = airframe.slots["rootChord"]
+        assert root == pytest.approx(2.0 * chord.max / (1.0 + airframe.slots["taper"]))
+        # the camera sits at the nose, which the deeper root chord moves forward
+        assert dash.camera["x"] == pytest.approx(0.25 * root + 0.03)
+        assert dash.camera["x"] > camera0["x"]
+        assert "view cone clear of the airframe" in dash.readout.value
+        chord.value = default
+        assert dash.camera == camera0
+
+    def test_fuselage_slider_reshapes_the_vtol_hull(self, dash):
+        dash.diagram.view.selection.ids = ["ScoutMissions::Catalog::AirframeChoice::vtolWing"]
+        try:
+            assert dash.subject.airframe == "vtolWing"
+            hull = dash.knobs["airframe.fuselageDiameter"]
+            assert _frame_width(dash.mesh) == pytest.approx(hull.value)  # the declared hull
+            mesh0 = dash.viewer.mesh_json
+            hull.value = hull.max
+            assert _frame_width(dash.mesh) == pytest.approx(hull.max)
+            assert dash.viewer.mesh_json != mesh0
+        finally:
+            self._home(dash)
+
+    def test_a_build_configuration_visit_ignores_the_subject_overrides(self, dash):
+        span = dash.knobs["airframe.wingSpan"]
+        default = span.value
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        quad = dash.viewer.mesh_json
+        self._home(dash)
+        span.value = span.max
+        dash.diagram.view.selection.ids = ["Rotorcraft::QuadCopter"]
+        assert dash.viewer.mesh_json == quad  # the visited craft draws its own shell
+        self._home(dash)
+        assert _wing_span(dash.mesh) == pytest.approx(span.max)  # the subject keeps its what-if
+        span.value = default
 
     def test_mission_toggle_keeps_the_airframe(self, dash):
         dash.mission_toggle.value = "logistics"

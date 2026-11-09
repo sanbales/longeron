@@ -15,7 +15,8 @@ Six scenarios, each on a fresh kernel:
 2. a diagram click on a catalog craft reveals its tree row and changes
    the subject, while a build configuration only visits;
 3. a knob change repaints the 3D pane (the battery dropdown) and
-   re-scores the scoreboard (the station-time slider);
+   re-scores the scoreboard (the station-time slider), and a span
+   slider rebuilds the 3D scene and the Cesium model (scenario 3b);
 4. the mission toggle to logistics shows the honest-absence card in the
    sizing strip and swaps the knob card;
 5. row 1 shares its width: after the 240 px tree, the diagram, the 3D
@@ -413,6 +414,27 @@ def test_knob_changes_repaint_the_3d_pane_and_rescore_the_board(lab: Any) -> Non
         label="the IsrTasking cell repainted",
     )
     lab.page.screenshot(path=str(EVIDENCE / "grand_knob_station.png"), full_page=True)
+
+    lab.assert_no_errors()
+
+
+def test_span_slider_widens_the_3d_wing_and_the_flight(lab: Any) -> None:
+    """The span slider rebuilds the 3D scene and the Cesium model (scenario 3b)."""
+
+    state = _open(lab)
+    assert state["airframe"] == "flyingWingSingle", state
+    assert "airframe.wingSpan" in state["knobs"], state
+    pane = lab.page.locator(".longeron-viewer3d").first
+    scroll_into_view(pane)
+    pane.screenshot(path=str(EVIDENCE / "grand_span_default.png"))
+    _arm_rebuilds(lab)
+    _drag_slider(lab, "wingSpan", 1.0)
+    after = _poll_checker(lab, lambda s: s["overrides"].get("airframe.wingSpan", 0) >= 2.8)
+    assert after["mesh"] != state["mesh"], after  # the subject mesh follows the what-if
+    assert after["czml"] != state["czml"], after  # ... and so does the Cesium glTF
+    _wait_rebuilt(lab, "the 3D pane rebuilt the wider wing")
+    scroll_into_view(pane)
+    pane.screenshot(path=str(EVIDENCE / "grand_span_max.png"))
 
     lab.assert_no_errors()
 

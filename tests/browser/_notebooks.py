@@ -674,7 +674,7 @@ def grand_tour_notebook() -> dict[str, Any]:
     Cell 0 builds and displays the grand tour over the DeepScout program
     (the default subject: the ISR mission with its computed winner).
     Cell 1 is the checker: one JSON line of the subject, the 3D pane's
-    label and scene digest, the diagram and tree selections, the header
+    label and scene digest, the Cesium scene digest, the diagram and tree selections, the header
     text, the knob names, the scored aggregates of the scoreboard rows,
     the scoreboard selection, the diagram's resize refit count, the
     sizing strip title and the loiter slider value.  Cells 2 and 3 are the fit drivers of
@@ -711,6 +711,7 @@ print(
             "current": grand.config_view.current,
             "label": grand.viewer.label,
             "mesh": hashlib.sha1(grand.viewer.mesh_json.encode()).hexdigest(),
+            "czml": hashlib.sha1(grand.mission.czml_json.encode()).hexdigest(),
             "diagram": list(grand.diagram.view.selection.ids),
             "tree": list(grand.tree.selected),
             "board": list(grand.board.selected),

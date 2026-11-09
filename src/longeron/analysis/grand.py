@@ -461,11 +461,18 @@ def _declared_camera(interp: Interpreter, qname: str) -> dict[str, float] | None
     try:
         shell = interp.resolve(qname)
         if isinstance(shell, M.Definition):
-            camera = interp.instantiate(shell).slots.get("camera")
-            if isinstance(camera, Instance):
-                return {k: float(v) for k, v in camera.slots.items() if isinstance(v, (int, float))}
+            return _camera_slots(interp.instantiate(shell))
     except Exception:
         pass
+    return None
+
+
+def _camera_slots(shell: Instance) -> dict[str, float] | None:
+    """The numeric slots of the ``camera`` part on a shell instance, or ``None``."""
+
+    camera = shell.slots.get("camera")
+    if isinstance(camera, Instance):
+        return {k: float(v) for k, v in camera.slots.items() if isinstance(v, (int, float))}
     return None
 
 
@@ -1076,9 +1083,13 @@ def grand_dashboard(
 
         study = _study(subject.mission)
         architecture = study.evaluate(subject.mix(), subject.overrides)
+        # the instance carries the what-if overrides: the mesh and the camera
+        # read the same airframe the metrics and the requirements read
+        instance = study.instance(subject.mix(), subject.overrides)
+        airframe_slot = instance.get("airframe")
         qname = _craft_qname(study, subject.airframe)
-        camera = _declared_camera(study.interp, qname)
-        raw = geometry.mission_geometry(study, architecture, camera=camera)
+        camera = _camera_slots(airframe_slot) if isinstance(airframe_slot, Instance) else None
+        raw = geometry.mission_geometry(study, architecture, instance=instance, camera=camera)
         part_map = _shell_part_map(study.interp, qname, raw)
         mesh = _with_camera(geometry.tag_parts(raw, part_map), camera)
         try:
@@ -1090,12 +1101,9 @@ def grand_dashboard(
         except AnalysisError:  # no cruiseTilt: the shell flies level
             tilt = 0.0
         profile, wing = mission3d.model_flight(interp, qname)
-        instance = study.instance(subject.mix(), subject.overrides)
         return {
             "architecture": architecture,
-            "requirements": requirement_set(
-                instance, instance.get("airframe"), interp=study.interp
-            ),
+            "requirements": requirement_set(instance, airframe_slot, interp=study.interp),
             "craft": qname,
             "mesh": mesh,
             "part_map": part_map,

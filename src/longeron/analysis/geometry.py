@@ -79,7 +79,8 @@ from importlib.util import find_spec
 from math import atan, atan2, ceil, cos, degrees, floor, pi, radians, sin, sqrt, tan
 from typing import Any, Literal
 
-from ..errors import MissingExtraError
+from ..errors import EvaluationError, MissingExtraError
+from ..interpreter import Instance
 from ._expr import AnalysisError
 from .trades import Architecture, TradeStudy
 
@@ -1657,6 +1658,7 @@ def winged_vtol_geometry(
     motor_mass: float,
     battery_mass: float,
     fc_mass: float | None = None,
+    fuselage_diameter: float | None = None,
     segments: int = 24,
 ) -> dict[str, Any]:
     """A to-scale cruciform tail-sitter VTOL, baked in its hover attitude.
@@ -1675,12 +1677,16 @@ def winged_vtol_geometry(
     separate tail: the cruciform panels are the tail.  The main-pair
     tips carry the catalog props, the secondary tips
     ``_SECONDARY_PROP_RATIO``-scaled ones (that ratio is baked into the
-    catalog's diskAreaFactor).  Fuselage radius follows the battery
-    brick, drawn as an indigo sleeve at its true station.
+    catalog's diskAreaFactor).  The fuselage is ``fuselage_diameter``
+    across, the model's declared hull, when given; without it the
+    fuselage is just wide enough for the battery brick.  The battery is
+    drawn as an indigo sleeve at its true station.
     """
 
     if min(wing_span, wing_area, fuselage_length, prop_diameter, taper) <= 0:
         raise AnalysisError("winged VTOL dimensions must be positive")
+    if fuselage_diameter is not None and fuselage_diameter <= 0:
+        raise AnalysisError("winged VTOL fuselage_diameter must be positive")
     mean_chord = wing_area / wing_span
     root = 2.0 * mean_chord / (1.0 + taper)
     tip = root * taper
@@ -1689,8 +1695,10 @@ def winged_vtol_geometry(
     motor_d, motor_h = motor_size(motor_mass)
     bat_l, bat_w, _bat_h = battery_size(battery_mass)
 
-    # not much of a body: just wide enough for the battery brick
-    body_r = max(0.040, bat_w / 2 + 0.010)
+    # the declared hull; without one, just wide enough for the battery brick
+    body_r = (
+        fuselage_diameter / 2 if fuselage_diameter is not None else max(0.040, bat_w / 2 + 0.010)
+    )
     half = fuselage_length / 2
     fuselage = _tube(
         [
@@ -2600,7 +2608,9 @@ def tag_parts(
     return out
 
 
-def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, Any]:
+def mission_params(
+    study: TradeStudy, architecture: Architecture, *, instance: Instance | None = None
+) -> dict[str, Any]:
     """Geometry inputs from a mission-catalog mix.
 
     Expects variation points ``airframe`` (attributes ``wingSpan``,
@@ -2611,13 +2621,28 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
     S&C knobs (``sweepDeg``, ``washoutDeg``, ``wingSection``) ride
     along when the selected airframe declares them and default to the
     unswept legacy planform when it does not.
+
+    ``instance`` is the mix's assembly instance
+    (:meth:`~longeron.analysis.trades.TradeStudy.instance`).  When it is
+    given, each variation point's attributes come from that instance's
+    slot, so the overrides the instance was built with (a span or chord
+    what-if) and the attributes the interpreter derives from them
+    (``wingArea``) reach the mesh.  Without it the attributes come from
+    the variant catalog, the declared values.
     """
+
+    def table(point: str) -> Mapping[str, Any]:
+        if instance is not None:
+            slot = instance.get(point)
+            if not isinstance(slot, Instance):
+                raise AnalysisError(f"instance slot {point!r} is not a part instance")
+            return slot.slots
+        return study.points[point].variants[architecture.selection[point]]
 
     def attr(point: str, name: str) -> float:
         try:
-            variant = architecture.selection[point]
-            return float(study.points[point].variants[variant][name])
-        except KeyError as err:
+            return float(table(point)[name])
+        except (KeyError, EvaluationError) as err:
             raise AnalysisError(
                 f"cannot read '{point}.{name}' for this mix (missing "
                 f"variation point, variant, or attribute: {err})"
@@ -2625,8 +2650,8 @@ def mission_params(study: TradeStudy, architecture: Architecture) -> dict[str, A
 
     def optional(point: str, name: str, default: Any) -> Any:
         try:
-            value = study.points[point].variants[architecture.selection[point]][name]
-        except KeyError:
+            value = table(point)[name]
+        except (KeyError, EvaluationError):
             return default
         return float(value) if isinstance(value, (int, float)) else value
 
@@ -2753,6 +2778,7 @@ def airframe_geometry(
     ``tilt_arm``, ``nose_arm``, ``tilt_deg``, with ``fuselage_diameter``
     and ``tail_area`` riding along) reach :func:`tilt_tri_geometry`
     only, the one family whose model declares a pivot chain.
+    ``fuselage_diameter`` also sets the hull of :func:`winged_vtol_geometry`.
     The declared payload bay rides along per family
     (``bay_shape`` and dimensions, the ``Airframe`` def's ``bayShape``
     vocabulary -- :data:`BayShape`): a ``"box"`` reaches the multirotor
@@ -2865,11 +2891,16 @@ def airframe_geometry(
         motor_mass=motor_mass,
         battery_mass=battery_mass,
         fc_mass=fc_mass,
+        fuselage_diameter=fuselage_diameter,
     )
 
 
 def mission_geometry(
-    study: TradeStudy, architecture: Architecture, **overrides: Any
+    study: TradeStudy,
+    architecture: Architecture,
+    *,
+    instance: Instance | None = None,
+    **overrides: Any,
 ) -> dict[str, Any]:
     """Family-dispatched geometry for a mission-catalog mix.
 
@@ -2880,10 +2911,11 @@ def mission_geometry(
     diameter -- a sprint-motor aluminum build genuinely looks beefier
     than a carbon eco build.  A ``camera=`` override (the slot mapping
     of a declared camera part) reaches :func:`airframe_geometry`'s
-    ``camera``.
+    ``camera``.  ``instance`` reaches :func:`mission_params`: pass the
+    mix's assembly instance so its overrides shape the mesh.
     """
 
-    p = {**mission_params(study, architecture), **overrides}
+    p = {**mission_params(study, architecture, instance=instance), **overrides}
     sized_arm = float(architecture.metrics.get("armOuterDiameter", 0.0) or 0.0)
     arm_kw: dict[str, Any] = (
         {"arm_thickness": sized_arm, "arm_width": sized_arm} if sized_arm > 0 else {}
