@@ -12,49 +12,56 @@ mission's ``airframe`` variation point, one variant for each other
 variation point, and transient overrides.  A transient override replaces
 a model value for the analysis only and never writes the model.  A
 **visiting craft** is a craft that the 3D pane shows but that is not the
-subject.  The panes:
+subject.  The layout has a header, two rows of panes and the Cesium
+pane at the bottom.  The panes, in layout order:
 
 * a **header** that names the subject's mission, airframe and selection,
-  and says when the 3D pane shows a visiting craft;
-* a **subject card** -- a mission selector, the subject's mission metric
-  and verdict, and the **knobs** (:func:`longeron.analysis.knobs.
-  derive_knobs`): a dropdown per variation point other than the
-  airframe, and a slider per input attribute that the model bounds on
-  both sides;
-* a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
-  compact toolbar on) -- the linked-selection hub;
-* a **containment tree** pane (:class:`longeron.widgets.explorer.ModelTree`,
-  the model explorer's tree) beside the diagram.  The containment tree
-  lists every package, definition, usage and relationship by ownership;
-* a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
+  shows the requirements score, and says when the 3D pane shows a
+  visiting craft;
+* row 1: a **containment tree** pane
+  (:class:`longeron.widgets.explorer.ModelTree`, the model explorer's
+  tree).  The containment tree lists every package, definition, usage
+  and relationship by ownership;
+* row 1: a **structure diagram** pane
+  (:func:`longeron.diagrams.structure_diagram`, compact toolbar on) --
+  the linked-selection hub;
+* row 1: a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
   (tutorial 7's seam, promoted).  It shows the subject craft, baked from
   the subject's mix (:func:`longeron.analysis.geometry.mission_geometry`)
-  with the craft's declared camera.  Clicking ANY other craft in the
-  diagram -- a build configuration, a fleet airframe shell, or the
-  mission catalog's variant usages -- renders THAT craft, while
-  selections inside the shown craft highlight per M0 individual; a
-  translucent **view cone** follows the camera what-if sliders over
-  the subject craft;
-* a **requirements scoreboard** pane
+  with the craft's declared camera.  A click on any other craft -- a
+  build configuration, a fleet airframe shell, or a variant usage of
+  the mission catalog -- renders THAT craft.  A catalog craft becomes
+  the subject's airframe (see the wiring map), and any other craft is a
+  visiting craft.  Selections inside the shown craft highlight per M0
+  individual.  A translucent **view cone** follows the camera what-if
+  sliders over the subject craft;
+* row 1: a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
   scoring the subject's requirement set
   (:func:`longeron.analysis.subject.requirement_set`).  Each requirement
   scores for the subject instance where it applies: the mission
   architecture, or its airframe.  The board repaints live as the subject
   and the measured geometry change;
-* a **camera what-if** card -- elevation/azimuth sliders that re-run the
-  CAD-native occlusion measure (:func:`longeron.analysis.geometry.
-  occlusion_report`, deterministic mesh engine) on the subject craft's
-  declared camera on every move;
-* an **OpenMDAO sizing** strip -- the generated ``Problem``
+* row 2: a **subject card** -- a mission selector, the subject's mission
+  metric and verdict, and the **knobs**
+  (:func:`longeron.analysis.knobs.derive_knobs`): a dropdown per
+  variation point other than the airframe, and a slider per input attribute that the model bounds on
+  both sides;
+* row 2: a **camera what-if** card -- elevation/azimuth sliders that
+  re-run the CAD-native occlusion measure
+  (:func:`longeron.analysis.geometry.occlusion_report`, deterministic
+  mesh engine) on the subject craft's declared camera on every move.  The assume constraints of the
+  ``camera_case`` analysis case bound the sliders.  A craft that
+  declares no camera shows an honest absence;
+* row 2: an **OpenMDAO sizing** strip -- the generated ``Problem``
   (:func:`longeron.analysis.mdao.build_problem`) of the mission's
   **sizing context**, a frozen sizing part such as
   ``ScoutSizing::IsrPrime``.  A loiter-speed slider re-runs it live, and
   a one-click driver run snaps the slider to the optimum.  The model
   supplies the slider bounds and the optimizer bounds.  The strip title
   names the sizing context;
-* a **Z3 verdict** strip -- requirement-consistency cards
+* row 2: a **Z3 verdict** strip -- requirement-consistency cards
   (:func:`longeron.analysis.smt.to_smt`) for the same sizing context: the
   design point's SAT witness beside an impossible what-if's UNSAT
   conflict core.  A mission without a sizing context shows an honest
@@ -70,7 +77,8 @@ traitlets observers (so the whole surface works headless):
 
 * mission selector -> the subject keeps its airframe, and the airframe's
   preset for the new mission (:func:`longeron.analysis.subject.preset`)
-  fills the other variation points;
+  fills the other variation points.  The overrides of the old mission
+  are dropped;
 * diagram or tree click on a catalog craft (a variant of the
   ``airframe`` variation point, or the definition that types one) -> the
   craft becomes the subject's airframe and its preset fills the other
@@ -81,7 +89,8 @@ traitlets observers (so the whole surface works headless):
 * any subject change -> the subject scene re-bakes (the stale entry of
   :attr:`longeron.analysis.link.ConfigViewBinding.scenes` is replaced),
   the 3D pane shows the subject, the camera card measures the subject's
-  declared camera, the scoreboard re-scores the subject's requirement
+  declared camera (a new airframe resets the sliders to its declared
+  angles), the scoreboard re-scores the subject's requirement
   set, the Cesium pane flies the subject's mesh, and the header names
   the new subject;
 * mission change -> the sizing and Z3 strips show the new mission's

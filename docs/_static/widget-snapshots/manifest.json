@@ -194,11 +194,11 @@
   ],
   "09_grand_tour": [
    {
-    "nb_cell_index": 11,
-    "code_cell_index": 5,
+    "nb_cell_index": 15,
+    "code_cell_index": 7,
     "output_index": 0,
     "alt": "VBox",
-    "image": "09_grand_tour/cell-05.png"
+    "image": "09_grand_tour/cell-07.png"
    }
   ],
   "notation_gallery": [

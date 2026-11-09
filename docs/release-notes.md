@@ -25,27 +25,49 @@
 
 ### The grand tour
 
-- **The grand tour follows a subject**: `grand_dashboard` shows one
-  mission architecture, the subject. A subject is a mission, an
-  airframe variant, one variant for each other variation point, and
-  transient overrides. A mission selector and the knobs change the
-  subject. The model supplies the knobs: a dropdown for each variation
-  point, and a slider for each input attribute with a two-sided range.
-  A click on a catalog airframe makes it the subject's airframe, with
-  its best mix for the mission. The 3D pane, the camera what-if and the
-  Cesium flight show the subject craft. A build configuration such as
-  `Rotorcraft::QuadCopter` only visits the 3D pane
+- **Grand tour v2: every pane follows one mission architecture**.
+  `grand_dashboard` shows one subject. The subject is a mission
+  architecture: a mission definition, one airframe variant, one variant
+  for each other variation point, and transient overrides. A transient
+  override changes a value for the analysis only and never writes the
+  model:
+  - A containment tree pane, the `ModelTree` of the explorer, opens row
+    1. A tree selection selects the element in the structure diagram, or
+    its nearest drawn ancestor. A diagram selection selects the tree row
+    and reveals it
+  - A mission selector sets the mission. A click on a catalog airframe
+    in the tree or in the diagram makes it the airframe of the subject.
+    Its preset, the best mix of the other variation points for that
+    airframe in that mission, fills the rest. A build configuration such
+    as `Rotorcraft::QuadCopter` only visits the 3D pane
+  - The model supplies the knobs: a dropdown for each variation point,
+    and a slider for each input attribute that constraints bound on both
+    sides. No annotation or Python table declares a knob
+  - The 3D pane, the camera what-if and the Cesium flight show the
+    subject craft. The scoreboard scores each requirement that applies
+    to the subject, for the mission architecture or for its airframe.
+    The sizing and Z3 strips show the sizing context of the mission of
+    the subject. A mission without a sizing context shows an honest
+    absence. The model supplies the bounds of the loiter and camera
+    sliders
+  - Tutorial 9 tours the subject: the mission, the knobs, the
+    requirement set, the camera what-if, the sizing context and the
+    craft clicks
+- **The analysis API behind the tour**:
+  - `longeron.analysis.subject`: `Subject`, `preset`, `craft_variant`
+    and `requirement_set`. `requirement_set` also collects the
+    requirement usages that a package owns, for example
+    `DeepScout::installation`
+  - `longeron.analysis.knobs`: `derive_knobs` returns a `KnobSet` of
+    sliders, dropdowns and the skipped one-sided bounds
+  - `TradeStudy.evaluate(selection, overrides=...)` applies transient
+    overrides, and the new `TradeStudy.instance(selection, overrides=...)`
+    returns the instantiated assembly
+  - `scoreboard()` accepts a sequence of requirements, and its
+    `subjects=` keyword scores each requirement for a given instance
 - **`scene_for` stamps the declared camera on every craft family**:
   `occlusion_report` measures a fleet shell without a `camera=`
   argument
-- **The grand tour scores the subject**: the scoreboard scores each
-  requirement that applies to the subject, for the mission architecture
-  or for its airframe. The sizing and Z3 strips show the sizing context
-  of the subject's mission. A mission without a sizing context shows an
-  honest absence. The model supplies the bounds of the loiter and
-  camera sliders
-- **`requirement_set` includes the requirement usages that a package
-  owns**, for example `DeepScout::installation`
 
 ### Verification and conformance
 
@@ -128,7 +150,11 @@
   is the ISR winner
 - **`grand_dashboard(sizer=..., station_requirement=...,
   station_var=...)` are gone**: pass `sizing_contexts={"ISR":
-  (sizer, requirement, station_attribute)}`
+  (sizer, requirement, station_attribute)}`. The default is
+  `DEFAULT_SIZING_CONTEXTS`. A new `camera_case=` keyword names the
+  analysis case that bounds the camera sliders
+- **The `.mission` attribute of the grand tour is still the Cesium
+  viewer**: the mission selector is `.mission_toggle`
 
 ## 0.11.0 (2026-08-29)
 
