@@ -628,22 +628,31 @@ def _expected_view(attitude: list[float], camera: dict[str, float]) -> tuple[flo
     """The heading and pitch (degrees) of the declared boresight in the world.
 
     The craft frame is the one ``mission3d._attitude_quaternion`` bakes:
-    nose along the heading at the pitch, zero roll.  Azimuth yaws the
-    boresight left of the nose and elevation pitches it above the nose.
+    nose along the heading at the pitch, roll about the nose with the
+    right wing down.  Azimuth yaws the boresight left of the nose and
+    elevation pitches it above the nose.
     """
 
-    _t, heading, pitch = (math.radians(v) for v in attitude)
+    _t, heading, pitch, roll = (math.radians(v) for v in attitude)
     az, el = math.radians(camera["azimuth"]), math.radians(camera["elevation"])
     nose = (
         math.sin(heading) * math.cos(pitch),
         math.cos(heading) * math.cos(pitch),
         math.sin(pitch),
     )
-    left = (-math.cos(heading), math.sin(heading), 0.0)
-    top = (  # nose x left
-        nose[1] * left[2] - nose[2] * left[1],
-        nose[2] * left[0] - nose[0] * left[2],
-        nose[0] * left[1] - nose[1] * left[0],
+    right = (math.cos(heading), -math.sin(heading), 0.0)
+    top = (  # right x nose, then rolled toward right (right wing down)
+        right[1] * nose[2] - right[2] * nose[1],
+        right[2] * nose[0] - right[0] * nose[2],
+        right[0] * nose[1] - right[1] * nose[0],
+    )
+    top = tuple(
+        tp * math.cos(roll) + rt * math.sin(roll) for tp, rt in zip(top, right, strict=True)
+    )
+    left = (  # top x nose
+        top[1] * nose[2] - top[2] * nose[1],
+        top[2] * nose[0] - top[0] * nose[2],
+        top[0] * nose[1] - top[1] * nose[0],
     )
     look = [
         math.cos(el) * math.cos(az) * n + math.cos(el) * math.sin(az) * lf + math.sin(el) * tp
