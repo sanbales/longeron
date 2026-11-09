@@ -51,7 +51,6 @@ Requires the ``viz`` extra for the widgets:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast
@@ -65,6 +64,7 @@ from ..views import expose_closure
 from ._expr import AnalysisError
 from .dashboard import _ipywidgets
 from .grand import _BAD, _CARD_STYLE, _DIM, _GRAND_CSS, _NUM, _OK, _TITLE_STYLE
+from .knobs import _slider_step
 from .verify import _FALLBACK_BOUNDS, Domain, attribute_domains
 
 __all__ = [
@@ -521,22 +521,6 @@ def _range_source(dom: Domain, overridden: bool) -> str:
     if mined:
         return f"{RANGE_MINED} {', '.join(mined)}"
     return f"{RANGE_MINED} (z3 assumption-derived)"
-
-
-def _slider_step(lo: float, hi: float) -> float:
-    """A power-of-ten step, ~100-1000 positions across the span.
-
-    Powers of ten keep the model's own defaults representable on the
-    front-end's step grid (a FloatSlider snaps its value to ``min + k *
-    step``): with span 180 the step is 1.0, so a declared ``-15.0``
-    survives; a coarser 4.5-ish step would snap it to -14 and re-fire
-    the measure with a value the model never stated (browser-verified).
-    """
-
-    span = hi - lo
-    if span <= 0.0:
-        return 1.0
-    return 10.0 ** (math.floor(math.log10(span)) - 2)
 
 
 class _Overrides:
