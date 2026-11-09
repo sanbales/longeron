@@ -70,7 +70,9 @@ pane at the bottom.  The panes, in layout order:
   the subject's geometry through the recorded execution of the shared
   ``FlightStates`` machine over the shared route, at satellite imagery
   (offline front-ends degrade to a printed note; the dashboard composes
-  regardless).
+  regardless).  Its view-mode buttons track the drone (the default),
+  stop the tracking, or look through the subject craft's declared camera
+  (``'onboard'``).  The onboard view uses the camera what-if angles.
 
 WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
@@ -109,7 +111,9 @@ traitlets observers (so the whole surface works headless):
   scoreboard cell click -> diagram selection);
 * camera sliders -> occlusion re-measure -> the view cone repaints, the
   obstructing parts highlight in 3D, the occlusion readout lists them,
-  the scoreboard recolors, and the header score updates;
+  the scoreboard recolors, and the header score updates.  The Cesium
+  pane's ``onboard_camera`` takes the new angles, so the onboard view
+  looks where the occlusion measure looks;
 * loiter slider -> ``run_model`` -> the sizing cards repaint; the
   *maximize* button runs the optimization driver and snaps the slider.
 
@@ -780,8 +784,10 @@ def grand_dashboard(
     (the current mission's sizing context, each ``None`` when the mission
     has none), ``.sizing_title`` / ``.verdict_title`` (the strip titles),
     ``.requirements`` (requirement qualified name -> the subject
-    instance it scores), ``.mission`` (the Cesium viewer) /
-    ``.track``, ``.mesh`` / ``.part_map`` / ``.camera`` (the subject
+    instance it scores), ``.mission`` (the Cesium viewer: set
+    ``.mission.view_mode`` to ``'onboard'`` to look through
+    ``.mission.onboard_camera``, the subject's camera at the slider
+    angles) / ``.track``, ``.mesh`` / ``.part_map`` / ``.camera`` (the subject
     scene, its identity keys, and its declared camera, ``None`` when the
     craft declares none), ``.header``, ``.config_view`` (the
     :class:`~longeron.analysis.link.ConfigViewBinding` behind the
@@ -1039,6 +1045,10 @@ def grand_dashboard(
         if sync["camera"]:
             return
         camera = _camera_now()
+        # the onboard view of the Cesium pane looks through the same camera
+        flight.onboard_camera = (
+            flight.trait_defaults("onboard_camera") if camera is None else camera
+        )
         offenders: list[str] = []
         if camera is None:
             box.report = {}

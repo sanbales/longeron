@@ -75,6 +75,14 @@
 - **`scene_for` stamps the declared camera on every craft family**:
   `occlusion_report` measures a fleet shell without a `camera=`
   argument
+- **The Cesium flight can look through the declared camera**:
+  `mission_viewer` has a `view_mode` trait (`ViewMode`: `'free'`,
+  `'follow'` or `'onboard'`) and a mode button for each value in its
+  stage. `'follow'` stays the default. In `'onboard'`, the Cesium camera
+  rides the drone at the placement, boresight and field of view of the
+  `onboard_camera` trait. The grand tour sets `onboard_camera` from the
+  declared camera of the subject and the camera what-if sliders, so the
+  onboard view looks where the occlusion measure looks
 
 ### Verification and conformance
 

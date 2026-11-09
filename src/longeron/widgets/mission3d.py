@@ -28,6 +28,29 @@ tolerance ``1e-3``).  The stage keeps a fixed explicit height
 (``height_px``, default 480) at 98% width, so it never overflows a
 notebook cell or the sidebar.
 
+View modes: the ``view_mode`` trait (:data:`ViewMode`) picks how the
+Cesium camera moves, and a three-button control in the stage's top-left
+corner sets the same trait.
+
+* ``'follow'`` (the default) tracks the drone from the CZML ``viewFrom``
+  offset (Cesium ``Viewer.trackedEntity``).
+* ``'free'`` stops the tracking.  The camera stays where it is, and the
+  user drags it.
+* ``'onboard'`` looks through the drone's mission camera.  On every
+  clock tick the widget places the Cesium camera at the mission camera's
+  position on the drone and points it along the mission camera's
+  boresight (the optical axis).  User camera input is off in this mode.
+
+The ``onboard_camera`` trait holds the mission camera: the attribute
+names of the DeepScout program's ``ScoutParts::F450Kit::Camera`` part.
+``x``/``y``/``z`` are metres from the airframe origin in the geometry
+frame (+x forward, +y up, +z right).  ``azimuth`` yaws the boresight left
+of the nose and ``elevation`` pitches it above the horizon, in degrees.
+``fieldOfView`` (degrees) is the angle of the Cesium frustum across the
+wider dimension of the stage.  The drone's attitude comes from the baked
+CZML orientation.  A track baked without a mesh carries no orientation,
+so the onboard view then faces north from the drone's position.
+
 No Cesium ion token is required: every ``imagery`` base is tokenless
 on the plain WGS84 ellipsoid.  The default ``'satellite'`` is Esri
 World Imagery -- the keyless ArcGIS Online ``World_Imagery`` tile
@@ -77,6 +100,7 @@ __all__ = [
     "CESIUM_JS_URL",
     "CESIUM_VERSION",
     "Imagery",
+    "ViewMode",
     "mission_viewer",
 ]
 
@@ -87,6 +111,10 @@ __all__ = [
 Imagery = Literal["satellite", "plain", "osm"]
 
 _IMAGERY_BASES: tuple[Imagery, ...] = get_args(Imagery)
+
+#: how the Cesium camera moves: the user's own camera, tracking the drone
+#: from the CZML viewFrom offset, or riding the drone's mission camera
+ViewMode = Literal["free", "follow", "onboard"]
 
 #: pinned CDN release (monthly Cesium train); bump deliberately, with the
 #: evidence capture re-run -- never float a `latest` tag
@@ -220,8 +248,107 @@ async function render({ model, el }) {
     "to scrub \u00b7 click the drone to pick";
   stage.appendChild(hint);
 
+  // --- view modes: free (the user's camera), follow (trackedEntity and
+  // the CZML viewFrom offset), onboard (the camera rides the drone's
+  // mission camera).  Cesium API (engine 26.2 / cesium 1.144):
+  // Entity.computeModelMatrix(time, result) is the body-to-ECEF matrix
+  // (east-north-up when the entity has no orientation);
+  // Camera.setView({destination, orientation: {direction, up},
+  // endTransform}); PerspectiveFrustum.fov in radians across the wider
+  // canvas dimension; ScreenSpaceCameraController.enableInputs.
+  let drone;  // the loaded mission-drone entity
+  const defaultFov = viewer.camera.frustum.fov;
+  const modes = document.createElement("div");
+  modes.className = "longeron-mission3d-modes";
+  const modeButtons = {};
+  for (const [mode, tip] of [
+    ["free", "stop tracking: drag the camera yourself"],
+    ["follow", "track the drone from behind and above"],
+    ["onboard", "look through the drone's mission camera"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = mode;
+    button.title = tip;
+    button.addEventListener("click", () => {
+      model.set("view_mode", mode);
+      model.save_changes();
+    });
+    modeButtons[mode] = button;
+    modes.appendChild(button);
+  }
+  stage.appendChild(modes);
+
+  // the mission camera in the drone's body frame (+X nose, +Y left,
+  // +Z top: the glTF frame of the baked model).  The geometry frame is
+  // +x forward, +y up, +z right, so a placement (x, y, z) sits at body
+  // (x, -z, y); azimuth yaws the boresight left, elevation pitches it up.
+  let lens;
+  function relens() {
+    const c = model.get("onboard_camera");
+    const az = Cesium.Math.toRadians(c.azimuth);
+    const el = Cesium.Math.toRadians(c.elevation);
+    lens = {
+      offset: new Cesium.Cartesian3(c.x, -c.z, c.y),
+      look: new Cesium.Cartesian3(
+        Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az),
+        Math.sin(el)),
+      up: new Cesium.Cartesian3(
+        -Math.sin(el) * Math.cos(az), -Math.sin(el) * Math.sin(az),
+        Math.cos(el)),
+      fov: Cesium.Math.toRadians(c.fieldOfView),
+    };
+  }
+  relens();
+  const body = new Cesium.Matrix4();
+  function ride() {
+    if (model.get("view_mode") !== "onboard" || !drone) return;
+    // a double-click on an entity makes Cesium track it: undo that here
+    if (viewer.trackedEntity) viewer.trackedEntity = undefined;
+    if (!drone.computeModelMatrix(viewer.clock.currentTime, body)) return;
+    const destination = Cesium.Matrix4.multiplyByPoint(
+      body, lens.offset, new Cesium.Cartesian3());
+    const direction = Cesium.Cartesian3.normalize(
+      Cesium.Matrix4.multiplyByPointAsVector(
+        body, lens.look, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3());
+    const up = Cesium.Cartesian3.normalize(
+      Cesium.Matrix4.multiplyByPointAsVector(
+        body, lens.up, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3());
+    viewer.camera.frustum.fov = lens.fov;
+    viewer.camera.setView({
+      destination,
+      orientation: { direction, up },
+      endTransform: Cesium.Matrix4.IDENTITY,
+    });
+  }
+  // registered after the widget's own onTick, so the data sources are
+  // already at the current time; the frame renders after the tick
+  const unRide = viewer.clock.onTick.addEventListener(ride);
+  function applyViewMode() {
+    const mode = model.get("view_mode");
+    for (const [name, button] of Object.entries(modeButtons)) {
+      button.classList.toggle("active", name === mode);
+    }
+    viewer.scene.screenSpaceCameraController.enableInputs =
+      mode !== "onboard";
+    if (mode !== "onboard") viewer.camera.frustum.fov = defaultFov;
+    viewer.trackedEntity = mode === "follow" ? drone : undefined;
+    ride();
+    viewer.scene.requestRender();
+  }
+  model.on("change:view_mode", applyViewMode);
+  model.on("change:onboard_camera", () => {
+    relens();
+    ride();
+    viewer.scene.requestRender();
+  });
+  applyViewMode();
+
   async function load() {
     viewer.trackedEntity = undefined;
+    drone = undefined;
     viewer.dataSources.removeAll(true);
     let packets;
     try { packets = JSON.parse(model.get("czml_json") || "[]"); }
@@ -229,8 +356,10 @@ async function render({ model, el }) {
     if (!packets.length) return;
     const source = await viewer.dataSources.add(
       Cesium.CzmlDataSource.load(packets));
-    // the camera follows the drone; the CZML viewFrom sets the offset
-    viewer.trackedEntity = source.entities.getById("mission-drone");
+    drone = source.entities.getById("mission-drone");
+    // the view mode places the camera: follow tracks the drone from the
+    // CZML viewFrom offset, onboard rides its mission camera
+    applyViewMode();
     viewer.timeline.zoomTo(viewer.clock.startTime, viewer.clock.stopTime);
     // the CZML document clock carries a baked multiplier as the initial
     // rate; a linked clock's stated state overrides it (the time seam),
@@ -342,6 +471,7 @@ async function render({ model, el }) {
     clearInterval(watchDial);
     seam.dispose();
     unTick();
+    unRide();
     handler.destroy();
     viewer.destroy();
   };
@@ -368,6 +498,15 @@ _CSS = """
   padding: 2px 8px; border-radius: 9px; pointer-events: none;
   user-select: none; z-index: 1;
 }
+.longeron-mission3d-modes {
+  position: absolute; left: 8px; top: 6px; z-index: 1; display: flex;
+  border-radius: 9px; overflow: hidden; background: rgba(11, 21, 34, 0.55);
+}
+.longeron-mission3d-modes button {
+  font: 10px Helvetica, Arial, sans-serif; color: #d5d9de;
+  background: transparent; border: 0; padding: 2px 8px; cursor: pointer;
+}
+.longeron-mission3d-modes button.active { color: #ffffff; background: #e05a00; }
 .longeron-mission3d-caption {
   margin-top: 6px; font-size: 12px; color: #555555;
   font-variant-numeric: tabular-nums;
@@ -422,6 +561,26 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         #: (track seconds per wall second); 0.0 means "no stated rate",
         #: leaving the CZML document clock's baked multiplier in charge
         rate = traitlets.Float(0.0).tag(sync=True)
+        #: how the Cesium camera moves (:data:`ViewMode`): 'follow' tracks
+        #: the drone, 'free' stops the tracking, 'onboard' looks through the
+        #: mission camera in ``onboard_camera``; the stage's mode buttons
+        #: write it too
+        view_mode = traitlets.Enum(get_args(ViewMode), default_value="follow").tag(sync=True)
+        #: the mission camera the 'onboard' mode looks through: the
+        #: ``ScoutParts::F450Kit::Camera`` attribute names (placement in
+        #: metres in the geometry frame, boresight and field of view in
+        #: degrees); the default sits at the airframe origin, looks along
+        #: the nose, and keeps Cesium's own 60 degree field of view
+        onboard_camera = traitlets.Dict(
+            {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "azimuth": 0.0,
+                "elevation": 0.0,
+                "fieldOfView": 60.0,
+            }
+        ).tag(sync=True)
         #: bounded-drift reconciliation tolerance while animating, in
         #: track seconds (``link_time`` scales it for step-mode bindings)
         drift_s = traitlets.Float(0.25).tag(sync=True)
@@ -431,6 +590,12 @@ def _viewer_class() -> type[anywidget.AnyWidget]:
         _seam_gen = traitlets.Int(0).tag(sync=True)
         _seam_ack = traitlets.Int(0).tag(sync=True)
         _seam_intent = traitlets.Int(0).tag(sync=True)
+
+        @traitlets.validate("onboard_camera")
+        def _check_onboard_camera(self, proposal: Any) -> dict[str, float]:
+            from ..analysis.geometry import _camera_params
+
+            return _camera_params(proposal["value"])
 
     _VIEWER_CLS = MissionViewer
     return MissionViewer
@@ -463,7 +628,9 @@ def mission_viewer(
     drone (or a waypoint pin) to report its CZML id on ``picked_json``;
     drive or observe the playhead through the bidirectional ``time``
     trait.  Assign a new JSON string to ``czml_json`` to swap the
-    mission in place.
+    mission in place.  Set ``view_mode`` to ``'onboard'`` and
+    ``onboard_camera`` to the craft's mission camera to fly the mission
+    as that camera sees it (see the module docstring).
     """
 
     if imagery not in _IMAGERY_BASES:

@@ -17,7 +17,7 @@ import struct
 from datetime import datetime, timezone
 from itertools import pairwise
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, get_args
 
 import pytest
 
@@ -891,6 +891,68 @@ class TestMissionViewer:
             "save_changes",
             "change:time",
             "secondsDifference",
+        ):
+            assert token in widget._esm, token
+
+    def test_view_mode_contract(self, track):
+        """Three view modes, a closed vocabulary; 'follow' (the drone
+        tracked from the CZML viewFrom offset) stays the default."""
+
+        pytest.importorskip("anywidget")
+        import traitlets
+
+        widget = mission3d_widget.mission_viewer(track)
+        assert get_args(mission3d_widget.ViewMode) == ("free", "follow", "onboard")
+        assert widget.view_mode == "follow"
+        for mode in get_args(mission3d_widget.ViewMode):
+            widget.view_mode = mode
+            assert widget.view_mode == mode
+        with pytest.raises(traitlets.TraitError):
+            widget.view_mode = "cockpit"
+        assert {"view_mode", "onboard_camera"} <= set(widget.keys)  # both synced
+
+    def test_onboard_camera_contract(self, track):
+        """The onboard camera carries exactly the Camera part's attribute
+        names; extra slots drop and a malformed camera is loud."""
+
+        pytest.importorskip("anywidget")
+        widget = mission3d_widget.mission_viewer(track)
+        assert widget.onboard_camera == {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "azimuth": 0.0,
+            "elevation": 0.0,
+            "fieldOfView": 60.0,
+        }
+        camera = {"x": 0.3, "y": 0.01, "z": 0.0, "azimuth": 15, "elevation": -15}
+        widget.onboard_camera = {**camera, "fieldOfView": 50, "mass": 0.02}
+        assert widget.onboard_camera == {**camera, "fieldOfView": 50.0}
+        with pytest.raises(AnalysisError, match="missing"):
+            widget.onboard_camera = {"x": 0.3}
+        with pytest.raises(AnalysisError, match="fieldOfView"):
+            widget.onboard_camera = {**camera, "fieldOfView": 180.0}
+
+    def test_esm_view_mode_contract(self, track):
+        """The onboard ride, encoded: every clock tick sets the camera from
+        the drone's model matrix and the mission camera, user input stays
+        off while onboard, and the other modes restore the field of view."""
+
+        pytest.importorskip("anywidget")
+        widget = mission3d_widget.mission_viewer(track)
+        for token in (
+            "longeron-mission3d-modes",  # the mode buttons in the stage
+            'model.set("view_mode", mode)',
+            "change:view_mode",
+            "change:onboard_camera",
+            "computeModelMatrix",
+            "multiplyByPointAsVector",
+            "endTransform: Cesium.Matrix4.IDENTITY",
+            "screenSpaceCameraController.enableInputs",
+            "frustum.fov = lens.fov",
+            "frustum.fov = defaultFov",
+            "onTick.addEventListener(ride)",
+            "unRide()",  # no tick lock outlives the view
         ):
             assert token in widget._esm, token
 

@@ -31,6 +31,13 @@ Six scenarios, each on a fresh kernel:
    A front-end that cannot load CesiumJS from the CDN skips this
    scenario.
 
+6. the Cesium pane's onboard view: the kernel switches the view mode to
+   ``'onboard'`` and seeks the playhead, and the Cesium camera sits on
+   the drone and looks along the subject's declared camera at the
+   slider angles.  A click on the stage's ``free`` button gives the
+   camera back to the user.  Cesium loads from the pinned CDN, so an
+   offline front-end SKIPS this scenario.
+
 Scenarios 1, 2 and 4 collapse JupyterLab's left sidebar first.  At the
 harness viewport (1500 px) the open file browser leaves the output area
 about 1070 px wide, and the diagram then gets about 270 px.  Scenarios 3
@@ -44,6 +51,7 @@ saves a PNG under ``build/evidence/``.
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any
 
@@ -99,13 +107,15 @@ _LAYOUT_JS = """() => {
 }"""
 
 
-def _poll_checker(lab: Any, predicate: Any, timeout: float = 60.0) -> dict[str, Any]:
+def _poll_checker(
+    lab: Any, predicate: Any, timeout: float = 60.0, *, cell: int = 1
+) -> dict[str, Any]:
     """Re-run the checker cell until the kernel state satisfies ``predicate``."""
 
     deadline = time.monotonic() + timeout
     state: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        state = lab.run_cell_json(1)
+        state = lab.run_cell_json(cell)
         if predicate(state):
             return state
         time.sleep(1.0)
@@ -123,10 +133,10 @@ def _collapse_sidebar(lab: Any) -> None:
     assert lab.evaluate(_COLLAPSE_LEFT_JS, label="collapse the left sidebar")
 
 
-def _open(lab: Any, *, collapse_sidebar: bool = True) -> dict[str, Any]:
+def _open(lab: Any, *, collapse_sidebar: bool = True, notebook: str = NOTEBOOK) -> dict[str, Any]:
     """Run the scenario notebook; return the settled checker state."""
 
-    lab.open_notebook(NOTEBOOK)
+    lab.open_notebook(notebook)
     if collapse_sidebar:
         _collapse_sidebar(lab)
     lab.run_all()
@@ -556,5 +566,178 @@ def test_the_mission_starts_and_ends_on_the_drawn_surface(lab: Any) -> None:
     for record in (takeoff, landing):
         assert abs(record["track"]) < 2.0, record  # the CZML height above ground
         assert abs(record["model"] - record["surface"]) < 2.0, record  # as drawn
+
+    lab.assert_no_errors()
+
+
+ONBOARD_NOTEBOOK = "grand_tour_onboard_scenario.ipynb"
+
+#: the Cesium camera against the drone entity at the current clock time:
+#: the distance between them, the camera angles in degrees, the field of
+#: view, whether the user drives the camera, and the active mode button
+_ONBOARD_JS = """() => {
+    const stage = document.querySelector('.longeron-mission3d-stage');
+    const viewer = stage && stage.longeronViewer;
+    if (!viewer) return {
+        cesium: false,
+        offline: Boolean(document.querySelector('.longeron-mission3d-offline')),
+    };
+    const C = window.Cesium;
+    const time = viewer.clock.currentTime;
+    const source = viewer.dataSources.length ? viewer.dataSources.get(0) : null;
+    const drone = source ? source.entities.getById('mission-drone') : null;
+    const at = drone ? drone.position.getValue(time) : null;
+    const camera = viewer.camera;
+    return {
+        cesium: true,
+        seconds: C.JulianDate.secondsDifference(time, viewer.clock.startTime),
+        offset_m: at ? C.Cartesian3.distance(camera.positionWC, at) : null,
+        height_m: camera.positionCartographic.height,
+        heading: C.Math.toDegrees(camera.heading),
+        pitch: C.Math.toDegrees(camera.pitch),
+        roll: C.Math.toDegrees(camera.roll),
+        fov: C.Math.toDegrees(camera.frustum.fov),
+        inputs: viewer.scene.screenSpaceCameraController.enableInputs,
+        tracked: Boolean(viewer.trackedEntity),
+        tiles: viewer.scene.globe.tilesLoaded,
+        active: [...stage.querySelectorAll('.longeron-mission3d-modes button.active')]
+            .map((button) => button.textContent),
+    };
+}"""
+
+#: put the free camera 2.5 km above the drone, looking down
+_PARK_JS = """() => {
+    const viewer = document.querySelector('.longeron-mission3d-stage').longeronViewer;
+    const C = window.Cesium;
+    const drone = viewer.dataSources.get(0).entities.getById('mission-drone');
+    const at = C.Cartographic.fromCartesian(drone.position.getValue(viewer.clock.currentTime));
+    viewer.camera.setView({destination: C.Cartesian3.fromRadians(
+        at.longitude, at.latitude, 2500.0)});
+    viewer.scene.requestRender();
+    return true;
+}"""
+
+
+def _expected_view(attitude: list[float], camera: dict[str, float]) -> tuple[float, float]:
+    """The heading and pitch (degrees) of the declared boresight in the world.
+
+    The craft frame is the one ``mission3d._attitude_quaternion`` bakes:
+    nose along the heading at the pitch, zero roll.  Azimuth yaws the
+    boresight left of the nose and elevation pitches it above the nose.
+    """
+
+    _t, heading, pitch = (math.radians(v) for v in attitude)
+    az, el = math.radians(camera["azimuth"]), math.radians(camera["elevation"])
+    nose = (
+        math.sin(heading) * math.cos(pitch),
+        math.cos(heading) * math.cos(pitch),
+        math.sin(pitch),
+    )
+    left = (-math.cos(heading), math.sin(heading), 0.0)
+    top = (  # nose x left
+        nose[1] * left[2] - nose[2] * left[1],
+        nose[2] * left[0] - nose[0] * left[2],
+        nose[0] * left[1] - nose[1] * left[0],
+    )
+    look = [
+        math.cos(el) * math.cos(az) * n + math.cos(el) * math.sin(az) * lf + math.sin(el) * tp
+        for n, lf, tp in zip(nose, left, top, strict=True)
+    ]
+    return math.degrees(math.atan2(look[0], look[1])) % 360.0, math.degrees(math.asin(look[2]))
+
+
+def _angle_gap(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _onboard(lab: Any, predicate: Any, label: str) -> dict[str, Any]:
+    lab.wait_until(
+        lambda _s: predicate(lab.evaluate(_ONBOARD_JS, label=label)), timeout=60, label=label
+    )
+    return dict(lab.evaluate(_ONBOARD_JS, label=label))
+
+
+def _assert_onboard(
+    view: dict[str, Any], state: dict[str, Any], record: list[dict[str, Any]]
+) -> None:
+    """The Cesium camera rides the drone along the declared boresight."""
+
+    start, end = state["attitude"]
+    assert start[1:] == end[1:], state  # the playhead sits on a held attitude
+    heading, pitch = _expected_view(start, state["camera"])
+    record.append({"kernel": state, "expected": [heading, pitch], "browser": view})
+    assert view["offset_m"] < 3.0, view  # the placement offset, a few centimetres
+    assert _angle_gap(view["heading"], heading) <= 2.0, (view, heading)
+    assert abs(view["pitch"] - pitch) <= 2.0, (view, pitch)
+    assert abs(view["fov"] - state["camera"]["fieldOfView"]) <= 0.01, view
+    assert view["inputs"] is False and view["tracked"] is False, view
+    assert view["active"] == ["onboard"], view
+
+
+def _shoot_stage(lab: Any, name: str) -> None:
+    """Save the Cesium stage once its imagery tiles load (a record, not asserted)."""
+
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline and not lab.evaluate(_ONBOARD_JS, label="tiles")["tiles"]:
+        time.sleep(0.5)
+    stage = lab.page.locator(".longeron-mission3d-stage").first
+    stage.screenshot(path=str(EVIDENCE / name))
+
+
+def test_onboard_view_rides_the_declared_camera(lab: Any) -> None:
+    """Kernel onboard switch -> the camera rides the drone; free -> the user's (scenario 6)."""
+
+    _open(lab, notebook=ONBOARD_NOTEBOOK)
+    record: list[dict[str, Any]] = []
+    stage = lab.page.locator(".longeron-mission3d-stage").first
+    scroll_into_view(stage)
+    deadline = time.monotonic() + 120.0
+    while not lab.evaluate(_ONBOARD_JS, label="cesium boots")["cesium"]:
+        if lab.evaluate(_ONBOARD_JS, label="cesium boots").get("offline"):
+            pytest.skip("CesiumJS CDN unreachable: the globe degraded to the offline notice")
+        assert time.monotonic() < deadline, "the Cesium viewer never appeared"
+        time.sleep(1.0)
+
+    # -- the kernel switches to onboard at 60 s, the declared angles --------
+    lab.run_cell(5)
+    state = lab.run_cell_json(4)
+    assert state["view_mode"] == "onboard" and state["time"] == 60.0, state
+    assert state["camera"]["elevation"] == state["elevation"], state
+    view = _onboard(lab, lambda v: abs(v["seconds"] - 60.0) < 1e-3, "the clock at 60 s")
+    _assert_onboard(view, state, record)
+    _shoot_stage(lab, "grand_onboard_60s.png")
+
+    # -- a later playhead: the camera follows the drone onto the next leg ---
+    lab.run_cell(6)
+    state = lab.run_cell_json(4)
+    view = _onboard(lab, lambda v: abs(v["seconds"] - 90.0) < 1e-3, "the clock at 90 s")
+    _assert_onboard(view, state, record)
+    _shoot_stage(lab, "grand_onboard_90s.png")
+
+    # -- the camera what-if sliders turn the onboard view -------------------
+    lab.run_cell(7)
+    state = lab.run_cell_json(4)
+    angles = (state["camera"]["elevation"], state["camera"]["azimuth"])
+    assert angles == pytest.approx((30.0, 45.0)), state  # the slider snaps to its step
+    view = _onboard(lab, lambda v: v["pitch"] > 20.0, "the onboard view tilted up")
+    _assert_onboard(view, state, record)
+    _shoot_stage(lab, "grand_onboard_90s_elevation30.png")
+    lab.run_cell(8)
+    state = lab.run_cell_json(4)
+    view = _onboard(lab, lambda v: abs(v["pitch"]) < 5.0, "the onboard view on the horizon")
+    _assert_onboard(view, state, record)
+    _shoot_stage(lab, "grand_onboard_90s_elevation0.png")
+
+    # -- the stage's free button: the user's camera, no tick lock -----------
+    button = lab.page.locator('.longeron-mission3d-modes button:text-is("free")').first
+    button.click()
+    _poll_checker(lab, lambda s: s["view_mode"] == "free", cell=4)  # the click reached the kernel
+    view = _onboard(lab, lambda v: v["inputs"] and v["active"] == ["free"], "free mode")
+    assert view["tracked"] is False and abs(view["fov"] - 60.0) <= 0.01, view
+    assert lab.evaluate(_PARK_JS, label="park the free camera")
+    parked = _onboard(lab, lambda v: v["height_m"] > 2000.0, "the parked camera holds")
+    assert parked["offset_m"] > 1000.0, parked  # no tick put it back on the drone
+    record.append({"free": view, "parked": parked})
+    (EVIDENCE / "grand_onboard_views.json").write_text(json.dumps(record, indent=1))
 
     lab.assert_no_errors()

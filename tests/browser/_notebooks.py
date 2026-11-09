@@ -737,6 +737,74 @@ print("fitted Rotorcraft::QuadCopter")
     )
 
 
+def grand_tour_onboard_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour's Cesium pane in its onboard view mode.
+
+    Cells 0 to 3 are the cells of :func:`grand_tour_notebook`.  Cell 4 is
+    the onboard checker: one JSON line of the Cesium pane's view mode, its
+    onboard camera, its playhead, the camera what-if angles, and the two
+    attitude keyframes (time, heading, pitch) that hold the playhead
+    between them.  Cells 5 to 8 are drivers.  Each driver states
+    absolute values, not steps, so a re-run shows the same state whatever
+    ran before it:
+
+    * cell 5: the declared camera angles, the onboard view, and the
+      playhead at 60 s (the first held heading of the route);
+    * cell 6: the playhead at 90 s (the second held heading);
+    * cell 7: the camera what-if at elevation +30 and azimuth +45;
+    * cell 8: the camera what-if at elevation 0 and azimuth 0 (the
+      boresight on the horizon).
+    """
+
+    cells = [cell["source"] for cell in grand_tour_notebook()["cells"]]
+    return _notebook(
+        *cells,
+        """
+import json
+
+flight = grand.mission
+now = flight.time
+keys = grand.track.attitude()
+print(
+    json.dumps(
+        {
+            "view_mode": flight.view_mode,
+            "camera": dict(flight.onboard_camera),
+            "time": now,
+            "elevation": grand.elevation.value,
+            "azimuth": grand.azimuth.value,
+            "attitude": [
+                max((k for k in keys if k[0] <= now), key=lambda k: k[0]),
+                min((k for k in keys if k[0] >= now), key=lambda k: k[0]),
+            ],
+        }
+    )
+)
+""",
+        """
+grand.elevation.value = grand.camera["elevation"]
+grand.azimuth.value = grand.camera["azimuth"]
+grand.mission.view_mode = "onboard"
+grand.mission.time = 60.0
+print("onboard at 60 s")
+""",
+        """
+grand.mission.time = 90.0
+print("playhead at 90 s")
+""",
+        """
+grand.elevation.value = 30.0
+grand.azimuth.value = 45.0
+print("camera at elevation 30, azimuth 45")
+""",
+        """
+grand.elevation.value = 0.0
+grand.azimuth.value = 0.0
+print("camera at elevation 0, azimuth 0")
+""",
+    )
+
+
 def tilt_notebook() -> dict[str, Any]:
     """Scenario: the tilt-rotor conversion affordance (grand.tilt_viewer).
 
@@ -1168,6 +1236,7 @@ SCENARIO_NOTEBOOKS = {
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
     "grand_tour_scenario.ipynb": grand_tour_notebook,
+    "grand_tour_onboard_scenario.ipynb": grand_tour_onboard_notebook,
     "tilt_scenario.ipynb": tilt_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
     "lossy_seam_scenario.ipynb": lossy_seam_notebook,

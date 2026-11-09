@@ -415,6 +415,20 @@ class TestCameraWhatIf:
         assert _leaf(json.loads(dash.board.nodes_json), "clearView")["utility"] == 1.0
         dash.elevation.value = -15.0
 
+    def test_onboard_view_shares_the_camera(self, dash):
+        """The Cesium pane's onboard view looks through the subject's
+        declared camera at the slider angles; the view mode stays 'follow'."""
+
+        assert dash.mission.view_mode == "follow"
+        declared = geometry._camera_params(dash.camera)
+        angles = {"elevation": dash.elevation.value, "azimuth": dash.azimuth.value}
+        assert dash.mission.onboard_camera == {**declared, **angles}
+        dash.elevation.value = 30.0
+        dash.azimuth.value = 45.0
+        assert dash.mission.onboard_camera == {**declared, "elevation": 30.0, "azimuth": 45.0}
+        dash.azimuth.value, dash.elevation.value = angles["azimuth"], angles["elevation"]
+        assert dash.mission.onboard_camera == {**declared, **angles}
+
     def test_cone_follows_the_boresight(self, dash):
         dash.elevation.value = -90.0  # straight down
         cone = json.loads(dash.viewer.mesh_json)["parts"][-1]
@@ -576,6 +590,9 @@ class TestSubject:
         assert dash.viewer.mesh_json != mesh0
         assert "view cone clear of the airframe" in dash.readout.value  # the twin's nose camera
         assert measured[-1] is dash.mesh  # the camera what-if measures the subject
+        angles = {"elevation": dash.elevation.value, "azimuth": dash.azimuth.value}
+        twin_camera = {**geometry._camera_params(dash.camera), **angles}
+        assert dash.mission.onboard_camera == twin_camera  # ... and the onboard view
         # the preset filled the other points; the old subject scene is gone
         assert dash.knobs["battery"].value == dash.subject.selection["battery"]
         assert HOME not in dash.config_view.scenes
