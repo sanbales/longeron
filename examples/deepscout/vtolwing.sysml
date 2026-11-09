@@ -135,7 +135,15 @@ package WingedVtol {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera.  The scene stands the tail-sitter on its
+                   tail (hover attitude), so the nose tip is fuselageLength / 2
+                   up the +y axis, and the F450 mount's 15 deg depression
+                   below the body axis looks 75 deg above the horizon. */
+            attribute :>> x = 0.0 [SI::m];
+            attribute :>> y = fuselageLength / 2;
+            attribute :>> elevation = 90.0 + ScoutParts::F450Kit::Camera::elevation;
+        }
     }
 
     part def DartInterceptor :> Airframe {
@@ -189,6 +197,10 @@ package WingedVtol {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera: the lens at the lathed body's nose tip,
+                   fuselageLength / 2 ahead of the airframe origin. */
+            attribute :>> x = fuselageLength / 2;
+        }
     }
 }

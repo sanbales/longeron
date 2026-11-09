@@ -331,7 +331,14 @@ package TiltRotors {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The chin camera: the lens at the fuselage apex station
+                   (fuselageLength / 2), a quarter fuselageDiameter below
+                   the axis, under the nose tractor's pivot housing that
+                   occupies the apex itself. */
+            attribute :>> x = fuselageLength / 2;
+            attribute :>> y = -0.25 * fuselageDiameter;
+        }
     }
 
     requirement def CruiseEngineOut {

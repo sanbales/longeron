@@ -301,7 +301,15 @@ package FlyingWings {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera: the lens at the ogive pod's nose tip,
+                   which the mesh places 0.03 m ahead of the root leading
+                   edge (0.25 rootChord ahead of the origin) at the pod's
+                   axis height (its crown at 0.85 of the root half-thickness,
+                   one bayWidth radius above the axis). */
+            attribute :>> x = 0.25 * rootChord + 0.03;
+            attribute :>> y = 0.85 * rootThickness * rootChord / 2 - bayWidth / 2;
+        }
     }
 
     part def FlyingWingTwin :> FlyingWing {
@@ -357,7 +365,15 @@ package FlyingWings {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera: the lens at the ogive pod's nose tip,
+                   which the mesh places 0.03 m ahead of the root leading
+                   edge (0.25 rootChord ahead of the origin) at the pod's
+                   axis height (its crown at 0.85 of the root half-thickness,
+                   one bayWidth radius above the axis). */
+            attribute :>> x = 0.25 * rootChord + 0.03;
+            attribute :>> y = 0.85 * rootThickness * rootChord / 2 - bayWidth / 2;
+        }
     }
 
     part def FlyingWingTwinTip :> FlyingWingTwin {

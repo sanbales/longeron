@@ -367,7 +367,15 @@ package Rotorcraft {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : FlightController;
-        part camera : Camera;
+        part camera : Camera {
+            doc /* The bay-face camera: the slung box bay reaches ahead of
+                   the F450 top-plate mount and fills the lower half of its
+                   view, so the lens rides on the bay's forward face
+                   (bayLength / 2 ahead of the origin, bayHeight / 2 below
+                   the plate), under the forward rotor discs. */
+            attribute :>> x = bayLength / 2;
+            attribute :>> y = -bayHeight / 2;
+        }
     }
 
     part def TeardropQuad :> Airframe {
@@ -605,6 +613,14 @@ package Rotorcraft {
 
         part battery : ScoutParts::Battery;
         part flightController : FlightController;
-        part camera : Camera;
+        part camera : Camera {
+            doc /* The bay-face camera: the slung box bay reaches ahead of
+                   the F450 top-plate mount and fills the lower half of its
+                   view, so the lens rides on the bay's forward face
+                   (bayLength / 2 ahead of the origin, bayHeight / 2 below
+                   the plate), under the forward rotor discs. */
+            attribute :>> x = bayLength / 2;
+            attribute :>> y = -bayHeight / 2;
+        }
     }
 }

@@ -425,13 +425,19 @@ def scene_for(
 
 
 def _declared_camera(interp: Interpreter, qname: str) -> dict[str, float] | None:
-    """The numeric slots of the ``camera`` part that ``qname`` declares, or ``None``."""
+    """The numeric slots of the ``camera`` part that ``qname`` declares, or ``None``.
+
+    The camera is read off an instance of the whole shell, so a placement
+    that the shell derives from its own geometry (the wings' nose station)
+    evaluates against that shell's attribute values.
+    """
 
     try:
-        camera_usage = interp.resolve(f"{qname}::camera")
-        if isinstance(camera_usage, (M.Definition, M.Usage)):
-            slots = interp.instantiate(camera_usage).slots
-            return {k: float(v) for k, v in slots.items() if isinstance(v, (int, float))}
+        shell = interp.resolve(qname)
+        if isinstance(shell, M.Definition):
+            camera = interp.instantiate(shell).slots.get("camera")
+            if isinstance(camera, Instance):
+                return {k: float(v) for k, v in camera.slots.items() if isinstance(v, (int, float))}
     except Exception:
         pass
     return None

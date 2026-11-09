@@ -22,6 +22,13 @@
   - `DeepScout::installation` takes `craft : Aircraft` as its subject
     in place of `drone : MultiRotor`. The camera occlusion requirement
     now applies to every craft and to every mission architecture
+- **The wing-borne crafts carry their camera at the nose**. Each shell
+  places the camera lens from its own geometry: the pod nose of the
+  flying wings, the nose tip of `VtolWing` and `DartInterceptor`, and
+  the fuselage apex of `TiltTriWing`. The box-bay rotorcraft
+  `BoxQuad` and `RingOcto` carry it at the forward face of the bay.
+  At the declared boresight, no shell sees its own airframe, so the
+  ISR winner `flyingWingSingle` passes `clearView`
 
 ### The grand tour
 

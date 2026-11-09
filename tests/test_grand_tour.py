@@ -102,6 +102,17 @@ FLEET_PARTS = {
     "FlyingWings::FlyingWingSingle": WING_SHELL,
     "FlyingWings::FlyingWingTwin": WING_SHELL,
 }
+#: the wing-borne shells' nose: the body part whose forward extreme
+#: carries the camera lens, and the scene axis that points forward (the
+#: tail-sitter is baked nose-up in hover, so its nose is +y)
+NOSE_BODY = {
+    "WingedVtol::VtolWing": ("frame", 1),
+    "WingedVtol::DartInterceptor": ("frame", 0),
+    "FlyingWings::FlyingWingSingle": ("bay", 0),
+    "FlyingWings::FlyingWingTwin": ("bay", 0),
+    "FlyingWings::FlyingWingTwinTip": ("bay", 0),
+    "TiltRotors::TiltTriWing": ("frame", 0),
+}
 #: the clickable internals: rendered part -> the shell's own part usage
 INTERNAL_USAGES = {"battery": "battery", "fc": "flightController", "camera": "camera"}
 
@@ -129,13 +140,25 @@ class TestSceneFor:
         assert part_map == expected
         assert all(part["key"] == expected[part["name"]] for part in mesh["parts"])
 
-    @pytest.mark.parametrize("qname", sorted(FLEET_PARTS))
+    @pytest.mark.parametrize("qname", sorted({*FLEET_PARTS, *NOSE_BODY}))
     def test_fleet_shell_stamps_its_declared_camera(self, drone, qname):
         # every family, not only the multirotor builder, carries the
-        # declared camera, so the occlusion measure needs no camera= argument
+        # declared camera, so the occlusion measure needs no camera= argument;
+        # at the declared boresight no shell sees its own airframe
         mesh, _ = scene_for(drone, qname)
         assert mesh["camera"]["fieldOfView"] > 0.0
-        assert 0.0 <= geometry.occlusion_report(mesh, engine="mesh")["occludedFraction"] <= 1.0
+        report = geometry.occlusion_report(mesh, engine="mesh")
+        assert report["occludedFraction"] == 0.0, report["obstructions"]
+
+    @pytest.mark.parametrize("qname", sorted(NOSE_BODY))
+    def test_wing_borne_camera_sits_at_the_nose(self, drone, qname):
+        # the lens at the body's forward extreme, on the centreline: the
+        # model derives the station from the shell's own geometry
+        mesh, _ = scene_for(drone, qname)
+        part, axis = NOSE_BODY[qname]
+        forward = next(p for p in mesh["parts"] if p["name"] == part)["vertices"][axis::3]
+        assert mesh["camera"]["xyz"[axis]] >= max(forward) - 1e-3
+        assert mesh["camera"]["z"] == 0.0
 
     def test_definition_object_and_qname_agree(self, drone):
         by_name, _ = scene_for(drone, "Rotorcraft::TeardropQuad")
@@ -190,8 +213,9 @@ class TestComposition:
     def test_defaults_are_the_demo_mission(self, dash):
         assert dash.camera["elevation"] == -15.0  # the subject's declared camera
         assert ATLANTA_LOOP[0][0] == pytest.approx(33.7813)
-        # the declared camera sits inside the wing's bay: measured, not clear
-        assert list(dash.report["obstructions"]) == ["bay"]
+        # the declared camera sits at the wing's nose: measured and clear
+        assert dash.report["occludedFraction"] == 0.0
+        assert _leaf(json.loads(dash.board.nodes_json), "clearView")["utility"] == 1.0
 
     def test_track_flies_the_subject(self, dash):
         # a fleet shell declares no cruiseTilt, so the subject flies level;
@@ -475,10 +499,10 @@ class TestVerdictStrip:
         assert "420" in dash.verdicts.value
 
     def test_camera_missing_is_an_honest_absence(self, drone):
-        # the rotor shells declare `part camera : Camera;`: without it the
+        # the open tri declares `part camera : Camera;`: without it the
         # camera card says so and the occlusion leaf stays unmeasured
         cameraless = longeron.loads(longeron.to_sysml(drone).replace("part camera : Camera;", ""))
-        dash = grand_dashboard(cameraless, airframe="boxQuad")
+        dash = grand_dashboard(cameraless, airframe="openTri")
         assert dash.camera is None and dash.report == {}
         assert "declares no camera" in dash.readout.value
         assert "no camera" in dash.header.value
@@ -515,7 +539,7 @@ class TestSubject:
         slider = dash.knobs["minStationMinutes"]
         assert (slider.min, slider.max, slider.value) == (25.0, 240.0, 25.0)
 
-    def test_catalog_click_changes_subject_mesh_and_camera_readout(self, dash, monkeypatch):
+    def test_catalog_click_changes_subject_mesh_and_remeasures_the_camera(self, dash, monkeypatch):
         measured = []
         real = geometry.occlusion_report
 
@@ -524,13 +548,13 @@ class TestSubject:
             return real(mesh, camera=camera, **kwargs)
 
         monkeypatch.setattr(geometry, "occlusion_report", spy)
-        mesh0, readout0 = dash.viewer.mesh_json, dash.readout.value
+        mesh0 = dash.viewer.mesh_json
         dash.diagram.view.selection.ids = [TWIN]
         assert dash.subject.airframe == "flyingWingTwin"
         assert dash.craft == "FlyingWings::FlyingWingTwin"
         assert dash.config_view.current == dash.craft
         assert dash.viewer.mesh_json != mesh0
-        assert dash.readout.value != readout0
+        assert "view cone clear of the airframe" in dash.readout.value  # the twin's nose camera
         assert measured[-1] is dash.mesh  # the camera what-if measures the subject
         # the preset filled the other points; the old subject scene is gone
         assert dash.knobs["battery"].value == dash.subject.selection["battery"]
