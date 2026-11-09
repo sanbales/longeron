@@ -623,6 +623,10 @@ class TestSubject:
             "battery",
             "material",
             "minStationMinutes",
+            # the flying wing's own range asserts
+            "airframe.wingSpan",
+            "airframe.wingChord",
+            "airframe.loiterSpeed",
         ]
         assert dash.knobs["battery"].value == dash.subject.selection["battery"]
         slider = dash.knobs["minStationMinutes"]

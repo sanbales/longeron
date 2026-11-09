@@ -52,6 +52,16 @@
     (`sparDesignMass`). This check retires 83 logistics mixes, and the
     `vtolWing` and `tiltTriWing` logistics presets now carry the small
     parcel. No craft delivers the 4 kg winch parcel any more
+- **The fleet shells bound their design inputs**, one named
+  constraint per bound, and the doc of each bound names the source of
+  its number. `VtolWing` and `TiltTriWing` bound `loiterSpeed`,
+  `cruiseSpeed`, `wingSpan`, `wingChord` and `fuselageDiameter`.
+  `FlyingWingSingle` bounds `loiterSpeed`, `wingSpan` and `wingChord`.
+  `FlyingWingTwin` bounds `loiterSpeed`, `cruiseSpeed`, `wingSpan` and
+  `wingChord`. `BoxQuad`, `OpenTri`, `CoaxOcto` and `RingOcto` bound
+  `cruiseSpeed`. The stall floors use 1.2 times the stall speed at the
+  preset mass, and the span and chord tops are owner assumptions
+
 
 ### The grand tour
 

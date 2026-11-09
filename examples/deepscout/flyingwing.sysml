@@ -291,6 +291,38 @@ package FlyingWings {
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 4.6;  // shell + big pack + gimbal
 
+        // ----- the design ranges: the grand tour's sliders ----------
+        // One constraint per bound (the ScoutMissions threshold idiom);
+        // each doc names the source of its number.  The stall figures
+        // read 1.2 x the stall speed at this shell's clMax and planform.
+        assert constraint loiterSpeedLow {
+            doc /* The loiter is at least 11.5 m/s: 1.2 x the stall
+                   speed at the 4.1 kg ISR preset mass is 11.6 m/s. */
+            loiterSpeed >= 11.5 }
+        assert constraint loiterSpeedHigh {
+            doc /* The loiter is at most 19 m/s, the declared
+                   cruiseSpeed: a loiter is not faster than the transit. */
+            loiterSpeed <= 19.0 }
+        assert constraint wingSpanLow {
+            doc /* The span is at least 1.6 m: below 1.52 m the
+                   14 m/s loiter is under 1.2 x the stall speed at the
+                   ISR preset mass and the 0.32 m chord. */
+            wingSpan >= 1.6 }
+        assert constraint wingSpanHigh {
+            doc /* The span is at most 2.8 m, an OWNER ASSUMPTION
+                   (the sensitivity study's range, under the courier's
+                   3.0 m).  The model declares no span limit. */
+            wingSpan <= 2.8 }
+        assert constraint wingChordLow {
+            doc /* The mean chord is at least 0.26 m, about 80% of
+                   the 0.32 m default (a chord Reynolds number of 2e5 at
+                   the loiter needs only 0.21 m). */
+            wingChord >= 0.26 }
+        assert constraint wingChordHigh {
+            doc /* The mean chord is at most 0.40 m, about 25%
+                   above the default, an OWNER ASSUMPTION. */
+            wingChord <= 0.40 }
+
         // the ISR bay: a sensor-pod ogive under the root, sized so the
         // Zenmuse-class gimbal, the endurance pack, and the avionics
         // stow together; the root cell is the cranked center section's
@@ -353,6 +385,50 @@ package FlyingWings {
         attribute payloadCapacity : Real = 2.8;
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 7.0;  // parcel + the heavy pack
+
+        // ----- the design ranges: the grand tour's sliders ----------
+        // One constraint per bound (the ScoutMissions threshold idiom);
+        // each doc names the source of its number.  The stall figures
+        // read 1.2 x the stall speed at this shell's clMax and planform.
+        assert constraint loiterSpeedLow {
+            doc /* The loiter is at least 11.5 m/s: 1.2 x the stall
+                   speed at the ISR preset mass is 11.2 m/s (11.4 m/s
+                   for the tip variant). */
+            loiterSpeed >= 11.5 }
+        assert constraint loiterSpeedHigh {
+            doc /* The loiter is at most 22 m/s, the declared
+                   cruiseSpeed: a loiter is not faster than the transit. */
+            loiterSpeed <= 22.0 }
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 14 m/s: 1.2 x the stall
+                   speed at the logistics preset's outbound mass is
+                   13.5 m/s (13.7 m/s for the tip variant). */
+            cruiseSpeed >= 14.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 25 m/s, the declared
+                   fidelity limit of the fixed-pitch props (pitch speeds
+                   13 to 25 m/s, ScoutMissions::InterceptUav). */
+            cruiseSpeed <= 25.0 }
+        assert constraint wingSpanLow {
+            doc /* The span is at least 2.0 m, the sensitivity
+                   study's floor: the stall floor of the 15 m/s loiter
+                   is 1.46 m (1.51 m for the tip variant), and the
+                   courier stays wider than the ISR single. */
+            wingSpan >= 2.0 }
+        assert constraint wingSpanHigh {
+            doc /* The span is at most 3.0 m, an OWNER ASSUMPTION
+                   (a wing that fits a car).  The model declares no
+                   transport or structural span limit. */
+            wingSpan <= 3.0 }
+        assert constraint wingChordLow {
+            doc /* The mean chord is at least 0.26 m, about 80% of
+                   the 0.327 m default (a chord Reynolds number of 2e5
+                   at the loiter needs only 0.195 m). */
+            wingChord >= 0.26 }
+        assert constraint wingChordHigh {
+            doc /* The mean chord is at most 0.40 m, about 20%
+                   above the default, an OWNER ASSUMPTION. */
+            wingChord <= 0.40 }
 
         // the courier bay: the root cell does the carrying (0.72 m of
         // root span between the pushers, the mid-chord cell of the 15%

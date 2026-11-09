@@ -352,6 +352,20 @@ package Rotorcraft {
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
 
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 7 m/s, about half the
+                   14 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 7.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 24.4 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 4.4 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 24.0 }
+
         // the payload bay: an open box slung under the hub plates --
         // cheap volume, but its face pays bluff drag above and the
         // battery rides the hub stack, not the box
@@ -465,6 +479,18 @@ package Rotorcraft {
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
 
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 6 m/s, about half the
+                   11 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 6.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 11 m/s, the shell's declared
+                   yaw-authority cap (the cruiseSpeed comment above). */
+            cruiseSpeed <= 11.0 }
+
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.20;
         attribute bayWidth : Real = 0.16;
@@ -558,6 +584,20 @@ package Rotorcraft {
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
 
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 8 m/s, about half the
+                   16 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 8.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 28.8 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 6.7 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 28.0 }
+
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.26;
         attribute bayWidth : Real = 0.20;
@@ -601,6 +641,20 @@ package Rotorcraft {
         attribute armCount : Integer = 8;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 8 m/s, about half the
+                   15 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 8.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 21.1 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 5.6 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 21.0 }
 
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.30;

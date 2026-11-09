@@ -30,6 +30,38 @@ TABLE = {
 }
 
 
+#: airframe -> {attribute: (low, high)}, the shell range asserts of the
+#: knobs-model commit; the dart, the teardrop and the hex lifter have none
+_WING = {"wingSpan": (2.0, 3.0), "loiterSpeed": (11.5, 22.0), "cruiseSpeed": (14.0, 25.0)}
+AIRFRAME_TABLE = {
+    "boxQuad": {"cruiseSpeed": (7.0, 24.0)},
+    "openTri": {"cruiseSpeed": (6.0, 11.0)},
+    "coaxOcto": {"cruiseSpeed": (8.0, 28.0)},
+    "ringOcto": {"cruiseSpeed": (8.0, 21.0)},
+    "vtolWing": {
+        "fuselageDiameter": (0.10, 0.16),
+        "wingSpan": (2.0, 3.0),
+        "wingChord": (0.20, 0.30),
+        "loiterSpeed": (13.0, 21.0),
+        "cruiseSpeed": (17.5, 25.0),
+    },
+    "flyingWingSingle": {
+        "wingSpan": (1.6, 2.8),
+        "wingChord": (0.26, 0.40),
+        "loiterSpeed": (11.5, 19.0),
+    },
+    "flyingWingTwin": {**_WING, "wingChord": (0.26, 0.40)},
+    "flyingWingTwinTip": {**_WING, "wingChord": (0.26, 0.40)},
+    "tiltTriWing": {
+        "fuselageDiameter": (0.12, 0.18),
+        "wingSpan": (2.0, 3.0),
+        "wingChord": (0.24, 0.36),
+        "loiterSpeed": (12.5, 20.0),
+        "cruiseSpeed": (15.0, 25.0),
+    },
+}
+
+
 @pytest.fixture(scope="module")
 def model():
     return longeron.load(EXAMPLES / "deepscout")
@@ -66,7 +98,7 @@ class TestDeepScoutTable:
             assert (s.value - s.low) / s.step == pytest.approx(round((s.value - s.low) / s.step))
             assert 100 <= (s.high - s.low) / s.step <= 1000
 
-    def test_every_airframe_has_no_knobs(self, studies):
+    def test_every_airframe_row(self, studies):
         study = studies["ISR"]
         variants = list(study.points["airframe"].variants)
         assert len(variants) == 12
@@ -74,14 +106,35 @@ class TestDeepScoutTable:
             usage = study._variant_usage("airframe", name)
             definition = study.interp.resolver.resolve(usage.types[0], usage.owner)
             for element in (usage, definition):
-                assert derive_knobs(study.interp, element) == KnobSet((), (), ())
+                knobs = derive_knobs(study.interp, element)
+                rows = {s.name: (s.low, s.high) for s in knobs.sliders}
+                assert rows == AIRFRAME_TABLE.get(name, {}), name
+                assert knobs.skipped == () and knobs.dropdowns == ()
 
-    def test_selected_airframe_adds_no_slider(self, studies):
-        # the airframe point is never a dropdown, and no airframe is bounded
+    def test_airframe_defaults_sit_inside_their_ranges(self, studies):
+        study = studies["ISR"]
+        for name in AIRFRAME_TABLE:
+            knobs = derive_knobs(study.interp, study._variant_usage("airframe", name))
+            for s in knobs.sliders:
+                assert s.low <= s.value <= s.high, (name, s.name)
+                assert s.value == study.points["airframe"].variants[name][s.name]
+                assert (s.value - s.low) / s.step == pytest.approx(
+                    round((s.value - s.low) / s.step)
+                )
+                assert 100 <= round((s.high - s.low) / s.step) <= 1000
+
+    def test_selected_airframe_adds_its_sliders(self, studies):
+        # the airframe point is never a dropdown; its bounded inputs join
+        # as override keys
         study = studies["ISR"]
         mix = {"airframe": "flyingWingSingle", "battery": "liion6s6p"}
         knobs = derive_knobs(study.interp, study.assembly, study=study, selection=mix)
-        assert _rows(knobs) == TABLE["ISR"][0]
+        assert _rows(knobs) == [
+            *TABLE["ISR"][0],
+            ("airframe.wingSpan", 1.6, 2.8, 2.2),
+            ("airframe.wingChord", 0.26, 0.4, 0.32),
+            ("airframe.loiterSpeed", 11.5, 19.0, 14.0),
+        ]
         assert "airframe" not in {d.point for d in knobs.dropdowns}
         assert {d.point: d.selected for d in knobs.dropdowns}["battery"] == "liion6s6p"
 

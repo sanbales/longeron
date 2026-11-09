@@ -291,6 +291,57 @@ package TiltRotors {
         attribute sparRadius : Real = 0.013;   // fits the 12% root section
         attribute designGrossKg : Real = 6.6;  // shell + heavy pack + parcel
 
+        // ----- the design ranges: the grand tour's sliders ----------
+        // One constraint per bound (the ScoutMissions threshold idiom);
+        // each doc names the source of its number.  The stall figures
+        // read 1.2 x the stall speed at this shell's clMax and planform.
+        assert constraint loiterSpeedLow {
+            doc /* The loiter is at least 12.5 m/s: 1.2 x the stall
+                   speed at the 5.9 kg ISR preset mass is 12.5 m/s. */
+            loiterSpeed >= 12.5 }
+        assert constraint loiterSpeedHigh {
+            doc /* The loiter is at most 20 m/s, the declared
+                   cruiseSpeed: a loiter is not faster than the transit. */
+            loiterSpeed <= 20.0 }
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 15 m/s: 1.2 x the stall
+                   speed at the 8.4 kg outbound mass of the sensitivity
+                   study's logistics preset is 14.9 m/s. */
+            cruiseSpeed >= 15.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 25 m/s, the declared
+                   fidelity limit of the fixed-pitch props (pitch speeds
+                   13 to 25 m/s, ScoutMissions::InterceptUav). */
+            cruiseSpeed <= 25.0 }
+        assert constraint wingSpanLow {
+            doc /* The span is at least 2.0 m: below 1.92 m the
+                   14 m/s loiter is under 1.2 x the stall speed at the
+                   ISR preset mass and the 0.30 m chord. */
+            wingSpan >= 2.0 }
+        assert constraint wingSpanHigh {
+            doc /* The span is at most 3.0 m, an OWNER ASSUMPTION
+                   (a wing that fits a car).  The model declares no
+                   transport or structural span limit. */
+            wingSpan <= 3.0 }
+        assert constraint wingChordLow {
+            doc /* The mean chord is at least 0.24 m, the larger of
+                   80% of the 0.30 m default and a chord Reynolds
+                   number of 2e5 at the 14 m/s loiter (0.209 m). */
+            wingChord >= 0.24 }
+        assert constraint wingChordHigh {
+            doc /* The mean chord is at most 0.36 m, about 20%
+                   above the default, an OWNER ASSUMPTION. */
+            wingChord <= 0.36 }
+        assert constraint fuselageDiameterLow {
+            doc /* The hull is at least 0.12 m across, about
+                   15% under the 0.14 m default (the sensitivity study's
+                   range).  bayFit holds down to 0.103 m at the ISR preset. */
+            fuselageDiameter >= 0.12 }
+        assert constraint fuselageDiameterHigh {
+            doc /* The hull is at most 0.18 m across, about
+                   30% above the default (the sensitivity study's range). */
+            fuselageDiameter <= 0.18 }
+
         // ----- prize 3: the centerline cruise engine-out story -----------
         // One tip engine dead in cruise: the mixer shuts the mirror tip
         // (the multirotor idiom -- keep the balanced set) and the nose
