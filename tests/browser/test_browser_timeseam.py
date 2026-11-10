@@ -265,12 +265,24 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
         f"{samples[-1]['wall']}ms of sampling): the dial drive never engaged "
         f"the clock; samples: {samples}"
     )
-    # the scrubber engaged and TRACKED the dial-driven clock: its advance
-    # is proportional to Cesium's observed advance.  On a fast box
-    # cesium_delta ~= wall time (rate 1.0), so this is exactly as strong
-    # as the old wall-clock check; on a starved runner it asserts the
-    # seam's contract (tracking) instead of the runner's speed.
-    assert scrub_delta >= 0.7 * cesium_delta, (
+    # the scrubber ENGAGED (its first move after the dial started) within a
+    # bounded latency, then TRACKED the dial-driven clock: from its first
+    # move on, its advance is proportional to Cesium's observed advance.
+    # The two are separate contracts: a starved 2-core runner can deliver
+    # the first scrubber update ~1 s late (the 7b50336 CI run: 0.8 s) and
+    # still track at rate 0.99 afterwards; folding the latency into the
+    # rate read as "did not track".
+    engaged = [i for i, s in enumerate(samples) if abs(s["scrub"] - before["scrub"]) > 0.05]
+    assert engaged, f"the scrubber never engaged the dial-driven clock; samples: {samples}"
+    first = engaged[0]
+    assert samples[first]["wall"] <= 1500, (
+        f"the scrubber engaged {samples[first]['wall']}ms after the dial started; "
+        f"samples: {samples}"
+    )
+    if len(samples) - first >= 2:  # measure the rate from the first move, not from the latency
+        cesium_delta = samples[-1]["cesium"] - samples[first]["cesium"]
+        scrub_delta = samples[-1]["scrub"] - samples[first]["scrub"]
+    assert cesium_delta >= 0.0 and scrub_delta >= 0.7 * cesium_delta, (
         f"the scrubber did not track the dial-driven clock: scrub advanced "
         f"{scrub_delta:.2f}s against cesium's {cesium_delta:.2f}s; samples: {samples}"
     )
