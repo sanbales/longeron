@@ -1378,10 +1378,11 @@ def optimization_bounds(build: ProblemBuild) -> dict[str, Bound]:
     names = {margin: name for name, margin in build.constraints.items()}
 
     def unscaled(meta: Mapping[str, Any]) -> Bound:
-        # the driver stores scaled bounds: physical = scaled / scaler - adder
+        # the driver stores scaled bounds: physical = scaled / scaler - adder;
+        # an unset bound is None (OpenMDAO >= 3.45.2) or +-INF_BOUND (earlier)
         lower, upper = (
             None
-            if abs(meta[side]) >= INF_BOUND
+            if meta[side] is None or abs(meta[side]) >= INF_BOUND
             else float(meta[side]) / meta["total_scaler"] - meta["total_adder"]
             for side in ("lower", "upper")
         )
@@ -1403,7 +1404,7 @@ def run_optimization(build: ProblemBuild) -> OptimizationHistory:
     comes back through the documented case-reader API of OpenMDAO:
     ``om.CaseReader`` over the recorder file, ``get_cases("driver")``, and
     ``Case.get_objectives()``, ``get_design_vars()`` and
-    ``get_constraints()``.
+    ``get_constraints()``, each with ``scaled=False`` (physical values).
     """
 
     if build.recording is None:
@@ -1424,13 +1425,15 @@ def run_optimization(build: ProblemBuild) -> OptimizationHistory:
         objective=objective,
         maximize=meta["total_scaler"] < 0.0,
         converged=converged,
-        objectives=tuple(float(case.get_objectives()[objective][0]) for case in cases),
+        objectives=tuple(float(case.get_objectives(scaled=False)[objective][0]) for case in cases),
         design_vars={
-            name: tuple(float(case.get_design_vars()[name][0]) for case in cases)
+            name: tuple(float(case.get_design_vars(scaled=False)[name][0]) for case in cases)
             for name in prob.model.get_design_vars()
         },
         constraints={
-            names[margin]: tuple(float(case.get_constraints()[margin][0]) for case in cases)
+            names[margin]: tuple(
+                float(case.get_constraints(scaled=False)[margin][0]) for case in cases
+            )
             for margin in prob.model.get_constraints()
         },
         bounds=optimization_bounds(build),
