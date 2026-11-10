@@ -44,7 +44,7 @@ that warn once and will be removed in a future release.
 | `replay_widget` | Simulate an element and replay the run over its diagram. | `replay`, `diagrams`, node | [Replay widget reference](replay.md) |
 | `scoreboard` | The MAUT requirements scoreboard: area is importance, color is utility. | `viz` (the widget; scoring needs none) | {doc}`Tutorial 6 </tutorials/06_requirements_score_hunt_prove>` |
 | `mission_dashboard` | The linked mission-compromise dashboard. | `viz` | {doc}`Tutorial 4 </tutorials/04_trades_sizing_the_fleet>` |
-| `grand_dashboard` | The grand tour: diagram, CAD, scoreboard, sizing, consistency, and the mission globe on one surface. | `viz`, `mdao`, `smt`, `diagrams` | {doc}`Tutorial 9 </tutorials/09_grand_tour>` |
+| `grand_dashboard` | The grand tour: the containment tree, diagram, CAD, scoreboard, sizing, consistency, and mission globe follow one mission architecture. | `viz`, `mdao`, `smt`, `diagrams` | {doc}`Tutorial 9 </tutorials/09_grand_tour>` |
 | `mesh_viewer` | Baked geometry meshes in a three.js canvas, at true scale. | `viz` | {doc}`Tutorial 4 </tutorials/04_trades_sizing_the_fleet>` |
 | `mission_viewer` | Fly a mission track on a Cesium globe. | `viz` | {doc}`Tutorial 7 </tutorials/07_geometry_and_the_mission>` |
 | `graph_viewer` | The RDF projection as an interactive 3D force graph. | `rdf`, `viz` | {doc}`Tutorial 8 </tutorials/08_the_knowledge_graph>` |

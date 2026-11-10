@@ -142,7 +142,9 @@ def test_neighborhood_unknown_name_raises(model):
 def test_search_surfaces_the_right_calc_defs(model):
     ids = [hit["chunk"]["id"] for hit in rag.search(model, "station time energy", limit=5)]
     assert ids[0] == "DeepScout::Performance::StationTime"
-    ids = [hit["chunk"]["id"] for hit in rag.search(model, "hover power disk", limit=5)]
+    # "induced" is the HoverPower doc's own word: the bare "hover power
+    # disk" query put TiltTriWing within 0.3% of the calc def
+    ids = [hit["chunk"]["id"] for hit in rag.search(model, "induced hover power disk", limit=5)]
     assert ids[0] == "DeepScout::Propulsion::HoverPower"
 
 

@@ -51,6 +51,7 @@ on the interpreter alone).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from itertools import product
@@ -60,7 +61,7 @@ from typing import Any, ClassVar
 from .. import ast as A
 from .. import model as M
 from ..errors import EvaluationError, MissingExtraError
-from ..interpreter import BUILTINS, Interpreter
+from ..interpreter import BUILTINS, Instance, Interpreter
 from ._expr import AnalysisError, QName, constraint_expr, free_refs, is_scalar, named_members
 
 __all__ = ["Architecture", "TradeStudy", "VariationPoint", "pareto"]
@@ -593,6 +594,14 @@ def _path(expr: A.Expr) -> QName:
     raise AnalysisError(f"unsupported reference form '{expr.to_text()}'")
 
 
+def _is_literal(expr: A.Expr) -> bool:
+    """A literal value, unary minus included (the mark of an input attribute)."""
+
+    if isinstance(expr, A.Unary) and expr.op == "-":
+        expr = expr.operand
+    return isinstance(expr, A.Literal)
+
+
 # ---------------------------------------------------------------------------
 # the trade study
 # ---------------------------------------------------------------------------
@@ -611,6 +620,10 @@ class TradeStudy:
         if not self.points:
             raise AnalysisError(f"{target.label} has no variation points")
         self.derived_order = self._derived_attributes()
+        #: derived orders under plain overrides, keyed by the overridden names
+        self._override_orders: dict[frozenset[str], list[tuple[str, A.Expr]]] = {
+            frozenset(): self.derived_order
+        }
         self.constraint_names = [
             c.name or c.label
             for c in named_members(self.interp, target, ("constraint",))
@@ -657,13 +670,16 @@ class TradeStudy:
             points[member.name] = VariationPoint(member.name, count, variants)
         return points
 
-    def _derived_attributes(self) -> list[tuple[str, A.Expr]]:
+    def _derived_attributes(self, inputs: frozenset[str] = frozenset()) -> list[tuple[str, A.Expr]]:
         """Assembly attributes whose values depend on variant selections.
 
         Detection runs to a fixed point and the result is ordered by
         dependency (an attribute comes after every derived attribute it
         references), so a specialization's own metrics may reference
         inherited ones -- and vice versa -- regardless of member order.
+        ``inputs`` names overridden input attributes: an attribute that
+        depends on one of them is derived too, so that the override
+        reaches its value.
         """
 
         exprs: dict[str, A.Expr] = {}
@@ -681,7 +697,7 @@ class TradeStudy:
         while changed:  # fixed point: member order must not matter
             changed = False
             for name in order:
-                if name not in derived and refs[name] & (set(self.points) | derived):
+                if name not in derived and refs[name] & (set(self.points) | inputs | derived):
                     derived.add(name)
                     changed = True
 
@@ -697,6 +713,66 @@ class TradeStudy:
                 placed.add(name)
             remaining = [n for n in remaining if n not in placed]
         return out
+
+    def dependents(self, key: str, variant: str | None = None) -> set[str]:
+        """The assembly attributes and constraints whose value depends on ``key``.
+
+        ``key`` takes the form of an :meth:`evaluate` override. A dotted key
+        (``airframe.wingSpan``) names an input attribute of ``variant``, a
+        variant of that point. The walk is the reference closure that
+        :meth:`_derived_attributes` runs, on whole feature paths. It first
+        closes over the variant attributes that read the input, such as the
+        ``wingArea`` that reads ``wingSpan``. It then closes over the
+        assembly attributes that read the input or a reached attribute. A
+        constraint is in the result if its body reads one of them.
+        """
+
+        pname, dot, attr = key.partition(".")
+        seeds: set[QName] = set()
+        reached: set[str] = set()
+        if dot:
+            if pname not in self.points or variant not in self.points[pname].variants:
+                raise AnalysisError(f"{key!r} needs a variant of point {pname!r}")
+            inner = {attr}
+            exprs = {
+                a.name: a.value.expr
+                for a in named_members(
+                    self.interp, self._variant_usage(pname, variant), ("attribute",)
+                )
+                if a.name and a.value is not None
+            }
+            changed = True
+            while changed:  # fixed point: member order must not matter
+                changed = False
+                for name, expr in exprs.items():
+                    if name not in inner and {p[0] for p in free_refs(expr)} & inner:
+                        inner.add(name)
+                        changed = True
+            seeds = {(pname, name) for name in inner}
+        else:
+            reached.add(key)
+
+        def reads(expr: A.Expr) -> bool:
+            return any(p[:2] in seeds or p[0] in reached for p in free_refs(expr))
+
+        exprs = {
+            a.name: a.value.expr
+            for a in named_members(self.interp, self.assembly, ("attribute",))
+            if a.name and a.value is not None
+        }
+        changed = True
+        while changed:
+            changed = False
+            for name, expr in exprs.items():
+                if name not in reached and reads(expr):
+                    reached.add(name)
+                    changed = True
+        for con in named_members(self.interp, self.assembly, ("constraint",)):
+            body = constraint_expr(self.interp, con)
+            if body is not None and reads(body):
+                reached.add(con.name or con.label)
+        reached.discard(key)
+        return reached
 
     # -- CP-SAT build -----------------------------------------------------------
 
@@ -785,31 +861,90 @@ class TradeStudy:
 
     # -- exact reporting ---------------------------------------------------------
 
-    def _bindings(self, selection: dict[str, str]) -> dict[str, Any]:
+    def _bindings(
+        self, selection: dict[str, str], overrides: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Interpreter bindings (variant instances + derived values)."""
 
-        bindings: dict[str, Any] = {}
-        for pname, vname in selection.items():
-            typ = self._namespace(
-                self.interp.resolver.resolve(self._point_type(pname), self.assembly)
-            )
-            usage = None
-            for var in typ.members:
-                if isinstance(var, M.Usage) and var.name == vname:
-                    usage = var
-                    break
-            assert usage is not None
-            # the variant usage, not its type: body redefinitions must
-            # survive into the interpreter-exact re-evaluation too
-            bindings[pname] = self.interp.instantiate(usage)
-        for name, expr in self.derived_order:
+        bindings = self._slots(selection, overrides)
+        inputs = frozenset(k for k in overrides or () if "." not in k)
+        order = self._override_orders.get(inputs)
+        if order is None:
+            order = self._override_orders[inputs] = self._derived_attributes(inputs)
+        for name, expr in order:
             bindings[name] = self.interp.evaluate(expr, self.assembly, **bindings)
         return bindings
 
-    def _architecture(self, selection: dict[str, str]) -> Architecture:
+    def _slots(
+        self, selection: dict[str, str], overrides: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """The bound slots of one mix: variant instances plus overrides.
+
+        A plain override key binds an input attribute of the assembly. A
+        dotted key (``airframe.loiterSpeed``) binds an input attribute of
+        the selected variant, through ``Interpreter.instantiate``. Each
+        binding lives in this mix only and never writes the model.
+        """
+
+        plain: dict[str, Any] = {}
+        nested: dict[str, dict[str, Any]] = {}
+        for key, value in (overrides or {}).items():
+            pname, dot, attr = key.partition(".")
+            if not dot:
+                inputs = self._input_names(self.assembly)
+                if key not in inputs:
+                    raise AnalysisError(
+                        f"override {key!r} is not an input attribute of "
+                        f"{self.assembly.label} (inputs: {inputs}; a variant input takes "
+                        f"the form '<point>.<attribute>', points: {sorted(self.points)})"
+                    )
+                plain[key] = value
+                continue
+            if pname not in self.points:
+                raise AnalysisError(
+                    f"override {key!r} names no variation point (points: {sorted(self.points)})"
+                )
+            variant = self._variant_usage(pname, selection[pname])
+            inputs = self._input_names(variant)
+            if attr not in inputs:
+                raise AnalysisError(
+                    f"override {key!r} is not an input attribute of {pname} = "
+                    f"{variant.label} (inputs: {inputs})"
+                )
+            nested.setdefault(pname, {})[attr] = value
+
+        slots: dict[str, Any] = {}
+        for pname, vname in selection.items():
+            # the variant usage, not its type: body redefinitions must
+            # survive into the interpreter-exact re-evaluation too
+            slots[pname] = self.interp.instantiate(
+                self._variant_usage(pname, vname), nested.get(pname)
+            )
+        slots.update(plain)
+        return slots
+
+    def _input_names(self, owner: M.Definition | M.Usage) -> list[str]:
+        """The input attributes of ``owner``: a literal value, not a derived expression."""
+
+        return sorted(
+            a.name
+            for a in named_members(self.interp, owner, ("attribute",))
+            if a.name and a.value is not None and _is_literal(a.value.expr)
+        )
+
+    def _variant_usage(self, pname: str, vname: str) -> M.Usage:
+        typ = self._namespace(self.interp.resolver.resolve(self._point_type(pname), self.assembly))
+        for var in typ.members:
+            if isinstance(var, M.Usage) and var.name == vname:
+                return var
+        raise AssertionError(f"{pname}={vname} passed the selection check")
+
+    def _architecture(
+        self, selection: dict[str, str], overrides: Mapping[str, Any] | None = None
+    ) -> Architecture:
         """Re-evaluate a selection exactly with the interpreter."""
 
-        bindings = self._bindings(selection)
+        bindings = self._bindings(selection, overrides)
         metrics = {name: float(bindings[name]) for name, _ in self.derived_order}
         violations: list[str] = []
         for con in named_members(self.interp, self.assembly, ("constraint",)):
@@ -841,16 +976,40 @@ class TradeStudy:
 
     # -- public API -----------------------------------------------------------
 
-    def evaluate(self, selection: dict[str, str]) -> Architecture:
+    def evaluate(
+        self, selection: dict[str, str], overrides: Mapping[str, Any] | None = None
+    ) -> Architecture:
         """Interpreter-exact metrics for any mix, feasible or not.
 
         ``selection`` maps every variation-point name to a variant name;
         the returned ``verified`` flag reports whether all constraints
         hold.  No solver runs -- this needs only the interpreter.
+
+        ``overrides`` maps a name to a value for this evaluation only.
+        A plain key (``minStationMinutes``) overrides an input attribute
+        of the assembly. A dotted key (``airframe.loiterSpeed``) overrides
+        an input attribute of the selected variant. An input attribute
+        has a literal value, not a derived expression. Any other key
+        raises :class:`AnalysisError`. An override never writes the model.
         """
 
         self._check_selection(selection)
-        return self._architecture({p: selection[p] for p in self.points})
+        return self._architecture({p: selection[p] for p in self.points}, overrides)
+
+    def instance(
+        self, selection: dict[str, str], overrides: Mapping[str, Any] | None = None
+    ) -> Instance:
+        """The assembly instantiated for one mix, with the same ``overrides``
+        as :meth:`evaluate`.
+
+        The variant instances and the overrides bind first. The
+        interpreter then computes every other feature on the instance, so
+        the instance agrees with :meth:`evaluate` for the same arguments.
+        """
+
+        self._check_selection(selection)
+        slots = self._slots({p: selection[p] for p in self.points}, overrides)
+        return self.interp.instantiate(self.assembly, slots)
 
     def margins(self, selection: dict[str, str]) -> dict[str, dict[str, Any]]:
         """Numeric constraint margins for one mix (>= 0 iff it holds).

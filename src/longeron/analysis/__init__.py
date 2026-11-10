@@ -43,6 +43,12 @@ third-party dependencies):
   scoreboard, an OpenMDAO sizing strip, Z3 consistency verdicts, and the
   Cesium mission replay on ONE reactive surface (``viz`` extra plus
   ``mdao``/``smt`` for the solver strips).
+* :mod:`longeron.analysis.knobs` -- the grand tour's knobs, derived from
+  the model: a slider for each input attribute with two literal bounds,
+  and a dropdown for each variation point (stdlib only).
+* :mod:`longeron.analysis.subject` -- the grand tour's subject (one
+  mission architecture), the trade study's preset for each airframe, and
+  the requirement set that the subject's scoreboard scores (stdlib only).
 * :mod:`longeron.analysis.surfaces` -- model-declared analysis surfaces:
   a dashboard stated as a standard view usage (exposes select the
   subject and its cases, renderings name the panels) and derived from
@@ -68,12 +74,14 @@ __all__ = [
     "dashboard",
     "geometry",
     "grand",
+    "knobs",
     "link",
     "mdao",
     "mission3d",
     "scoreboard",
     "smt",
     "structure",
+    "subject",
     "surfaces",
     "trades",
     "verify",

@@ -17,7 +17,7 @@ import struct
 from datetime import datetime, timezone
 from itertools import pairwise
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, get_args
 
 import pytest
 
@@ -301,13 +301,14 @@ def tilted(interp):
 
 class TestAttitude:
     def test_keyframes_strictly_increasing(self, tilted):
-        times = [t for t, _h, _p in tilted.attitude()]
+        times = [t for t, _h, _p, _r in tilted.attitude()]
         assert times == sorted(times) and len(set(times)) == len(times)
         assert times[0] == 0.0 and times[-1] == tilted.duration
 
     def test_pitch_zero_in_climb_and_descent_tilt_on_route(self, tilted):
         # phases: takeoff 0-20, route 20-140, landing 140-170, ground 170-180
-        for t, _heading, pitch in tilted.attitude():
+        for t, _heading, pitch, roll in tilted.attitude():
+            assert roll == 0.0  # a multirotor never banks
             if t <= 20.0 or t >= 140.0:  # vertical/ground: props up
                 assert pitch == 0.0, (t, pitch)
             elif 25.0 <= t <= 135.0:  # cruise, clear of the blends
@@ -320,7 +321,7 @@ class TestAttitude:
         keys = tilted.attitude()
         # the drone faces the first leg from the ground up
         assert keys[0][1] == pytest.approx(legs[0])
-        headings = [heading for _t, heading, _p in keys]
+        headings = [heading for _t, heading, _p, _r in keys]
         for leg in legs:  # every leg heading is flown
             assert any(h == pytest.approx(leg) for h in headings), leg
         # landing and the final ground hold keep the last leg's heading
@@ -329,7 +330,7 @@ class TestAttitude:
     def test_blends_are_short_and_monotonic(self, tilted):
         keys = tilted.attitude()
         changes = 0
-        for (t0, h0, p0), (t1, h1, p1) in pairwise(keys):
+        for (t0, h0, p0, _r0), (t1, h1, p1, _r1) in pairwise(keys):
             if p0 == p1 and h0 == h1:
                 continue
             changes += 1
@@ -357,11 +358,11 @@ class TestAttitude:
             tilt_deg=25.0,
         )
         # no horizontal motion anywhere: the tilt never engages
-        assert {pitch for _t, _h, pitch in track.attitude()} == {0.0}
+        assert {pitch for _t, _h, pitch, _r in track.attitude()} == {0.0}
 
     def test_plain_route_track_holds_the_tilt(self):
         track = mission3d.mission_track(WAYPOINTS, tilt_deg=10.0)
-        assert {pitch for _t, _h, pitch in track.attitude()} == {-10.0}
+        assert {pitch for _t, _h, pitch, _r in track.attitude()} == {-10.0}
 
     def test_tilt_validation(self, interp):
         with pytest.raises(AnalysisError, match="tilt_deg"):
@@ -372,9 +373,9 @@ class TestAttitude:
             )
 
     def test_quaternion_is_unit_and_roll_free(self, tilted):
-        for t, heading, pitch in tilted.attitude():
+        for t, heading, pitch, roll in tilted.attitude():
             lat, lon = tilted._position_at(t)
-            q = mission3d._attitude_quaternion(lat, lon, heading, pitch)
+            q = mission3d._attitude_quaternion(lat, lon, heading, pitch, roll)
             assert math.hypot(*q) == pytest.approx(1.0)
             got_heading, got_pitch, roll = recover_attitude(q, lat, lon)
             assert got_pitch == pytest.approx(pitch, abs=1e-9)
@@ -528,6 +529,250 @@ class TestModelPhysics:
 # -- CZML payload --------------------------------------------------------------
 
 
+# -- flight profiles -------------------------------------------------------------
+
+#: a wing that turns at 20 m/s and 30 deg of bank: r = 400 / (9.81 tan 30) ~ 70.6 m
+WING = mission3d.WingFlight(speed_mps=20.0)
+
+# an ISR sortie: transit to the station, loiter there, then land
+LOITER_MODEL = """
+package Isr {
+    state def IsrStates {
+        entry; then idle;
+        state idle;
+        transition first idle accept launch then takingOff;
+        state takingOff;
+        transition first takingOff accept airborne then transit;
+        state transit;
+        transition first transit accept onStation then loiter;
+        state loiter;
+        transition first loiter accept bingo then landing;
+        state landing;
+        transition first landing accept touchdown then idle;
+    }
+}
+"""
+# takeoff 0-20, transit 20-80, loiter 80-170, landing 170-200, ground 200-210
+LOITER_EVENTS = ["launch", 20.0, "airborne", 60.0, "onStation", 90.0, "bingo", 30.0]
+LOITER_EVENTS += ["touchdown", 10.0]
+
+#: the rotorcraft regression pin: sha256 of the QuadCopter track's CZML
+#: (tutorial 7's sortie, the drone packet's glTF dropped) as it was
+#: before the flight profiles existed (heights above ground, 29721d5).
+#: Regenerate only for an intended change of the rotorcraft output.
+QUAD_CZML_SHA256 = "5ccf6d449b54ac1d2540676bb3b602b6fb521a52d129e7c44def7f5830bf0df3"
+
+
+def local_xy(track, lat, lon):
+    """East/north meters from the first waypoint (flat local plane)."""
+
+    lat0, lon0, _alt = track.waypoints[0]
+    ky = math.radians(1.0) * mission3d._EARTH_RADIUS_M
+    return (lon - lon0) * ky * math.cos(math.radians(lat0)), (lat - lat0) * ky
+
+
+def circumradius(a, b, c):
+    ab, bc, ca = math.dist(a, b), math.dist(b, c), math.dist(c, a)
+    area = abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2.0
+    return ab * bc * ca / (4.0 * area)
+
+
+def vertical_runs(track):
+    """Groups of consecutive sample pairs that change altitude in place."""
+
+    runs, current = [], []
+    for a, b in pairwise(track.samples):
+        horizontal = mission3d._haversine_m(a[1], a[2], b[1], b[2])
+        if abs(b[3] - a[3]) > 1e-6 and horizontal / (b[0] - a[0]) < 0.2:
+            current.append((a, b))
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    return runs
+
+
+@pytest.fixture(scope="module")
+def wing(interp):
+    return mission3d.from_replay(
+        interp,
+        "Mission::FlightStates",
+        EVENTS,
+        waypoints=WAYPOINTS,
+        ground_alt=1650.0,
+        profile="wing",
+        wing=WING,
+    )
+
+
+@pytest.fixture(scope="module")
+def loiter_interp():
+    return longeron.Interpreter(longeron.loads(LOITER_MODEL))
+
+
+class TestFlightProfiles:
+    def test_turn_radius_is_the_coordinated_turn(self):
+        assert WING.turn_radius_m == pytest.approx(20.0**2 / (9.81 * math.tan(math.radians(30))))
+        for bad in ({"speed_mps": 0.0}, {"bank_deg": 0.0}, {"climb_deg": 90.0}):
+            with pytest.raises(AnalysisError, match=next(iter(bad))):
+                mission3d.WingFlight(**bad)
+        with pytest.raises(AnalysisError, match="transition_m"):
+            mission3d.WingFlight(transition_m=-1.0)
+
+    def test_wing_never_climbs_or_descends_in_place(self, wing):
+        assert wing.profile == "wing"
+        assert vertical_runs(wing) == []
+        # the launch leaves from the first waypoint on the ground
+        assert wing.samples[0][1:] == (WAYPOINTS[0][0], WAYPOINTS[0][1], 1650.0)
+
+    def test_wing_heading_is_continuous_at_the_waypoints(self, wing, track):
+        def jumps(keys):
+            return [abs((b[1] - a[1] + 180.0) % 360.0 - 180.0) for a, b in pairwise(keys)]
+
+        assert max(jumps(wing.attitude())) <= 5.0 + 1e-9  # one arc step
+        assert max(jumps(track.attitude())) > 15.0  # the rotorcraft turns on the spot
+
+    def test_arcs_have_the_turn_radius(self, wing):
+        assert len(wing.turns) >= 2  # both interior corners are filleted
+        for t0, t1, _roll in wing.turns:
+            arc = [local_xy(wing, lat, lon) for t, lat, lon, _a in wing.samples if t0 <= t <= t1]
+            assert len(arc) >= 3
+            radius = circumradius(arc[0], arc[len(arc) // 2], arc[-1])
+            assert radius == pytest.approx(WING.turn_radius_m, rel=1e-3)
+
+    def test_roll_is_the_bank_in_arcs_and_zero_on_straights(self, wing):
+        # WAYPOINTS turn right at WP1, then left at WP2
+        rolls = [roll for _t0, _t1, roll in wing.turns]
+        assert rolls[0] == 30.0 and rolls[-1] == -30.0
+        inside = outside = 0
+        for t, _heading, pitch, roll in wing.attitude():
+            assert abs(pitch) < 20.0  # never nose-up vertical
+            held = [r for t0, t1, r in wing.turns if t0 + 1e-6 < t < t1 - 1e-6]
+            if held:
+                inside += 1
+                assert roll == held[0]
+            elif not any(abs(t - edge) < 1e-6 for turn in wing.turns for edge in turn[:2]):
+                outside += 1
+                assert roll == 0.0
+        assert inside and outside
+
+    def test_bank_rolls_the_quaternion_about_the_nose(self):
+        q = mission3d._attitude_quaternion(40.0, -105.0, 70.0, 0.0, 30.0)
+        heading, pitch, left_z = recover_attitude(q, 40.0, -105.0)
+        assert (heading, pitch) == (pytest.approx(70.0), pytest.approx(0.0, abs=1e-9))
+        assert left_z == pytest.approx(0.5)  # right wing down: the left wing rises
+
+    def test_wing_lands_on_the_ground_over_the_last_waypoint(self, wing):
+        # phases: takeoff 0-20, route 20-140, landing 140-170, ground 170-180
+        landed = [s for s in wing.samples if s[0] >= 170.0]
+        assert landed and all(s[3] == 1650.0 for s in landed)
+        for _t, lat, lon, _alt in landed:
+            assert mission3d._haversine_m(lat, lon, *WAYPOINTS[-1][:2]) < 0.01
+        glide = [s for s in wing.samples if 140.0 <= s[0] <= 170.0]
+        run = sum(mission3d._haversine_m(a[1], a[2], b[1], b[2]) for a, b in pairwise(glide))
+        drop = glide[0][3] - glide[-1][3]
+        assert math.degrees(math.atan2(drop, run)) == pytest.approx(WING.glide_deg, abs=0.5)
+
+    def test_loiter_orbits_the_station_point(self, loiter_interp):
+        track = mission3d.from_replay(
+            loiter_interp,
+            "Isr::IsrStates",
+            LOITER_EVENTS,
+            waypoints=WAYPOINTS,
+            ground_alt=1650.0,
+            profile="wing",
+            wing=WING,
+        )
+        assert [p[2] for p in track.phases][:3] == ["takeoff", "route", "loiter"]
+        orbit = [s for s in track.samples if 80.0 <= s[0] <= 170.0]
+        points = [local_xy(track, lat, lon) for _t, lat, lon, _alt in orbit]
+        a, b, c = points[0], points[len(points) // 3], points[2 * len(points) // 3]
+        radius = circumradius(a, b, c)
+        assert radius == pytest.approx(WING.turn_radius_m, rel=1e-3)
+        # every orbit sample lies on that circle, at one altitude, and the
+        # craft leaves the orbit at the station point where it entered
+        d2 = (a[0] ** 2 + a[1] ** 2, b[0] ** 2 + b[1] ** 2, c[0] ** 2 + c[1] ** 2)
+        det = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
+        center = (
+            (d2[0] * (b[1] - c[1]) + d2[1] * (c[1] - a[1]) + d2[2] * (a[1] - b[1])) / det,
+            (d2[0] * (c[0] - b[0]) + d2[1] * (a[0] - c[0]) + d2[2] * (b[0] - a[0])) / det,
+        )
+        for point in points:
+            assert math.dist(point, center) == pytest.approx(radius, rel=1e-6)
+        assert {s[3] for s in orbit} == {orbit[0][3]}
+        assert math.dist(points[0], points[-1]) < 1e-6
+        assert (80.0, 170.0, 30.0) in track.turns  # a right-hand orbit
+
+    def test_rotorcraft_flies_loiter_as_route(self, loiter_interp):
+        kwargs = {"waypoints": WAYPOINTS, "ground_alt": 1650.0, "tilt_deg": 25.0}
+        track = mission3d.from_replay(loiter_interp, "Isr::IsrStates", LOITER_EVENTS, **kwargs)
+        as_route = mission3d.from_replay(
+            loiter_interp, "Isr::IsrStates", LOITER_EVENTS, phases={"loiter": "route"}, **kwargs
+        )
+        assert track.samples == as_route.samples and track.turns == []
+
+    def test_vtol_wing_is_rotor_borne_only_at_the_ends(self, interp):
+        track = mission3d.from_replay(
+            interp,
+            "Mission::FlightStates",
+            EVENTS,
+            waypoints=WAYPOINTS,
+            ground_alt=1650.0,
+            profile="vtol_wing",
+            wing=WING,
+        )
+        runs = vertical_runs(track)
+        assert len(runs) == 2
+        (climb_from, _), (_, climb_to) = runs[0][0], runs[0][-1]
+        (descent_from, _), (_, descent_to) = runs[1][0], runs[1][-1]
+        assert climb_from[1:] == (WAYPOINTS[0][0], WAYPOINTS[0][1], 1650.0)
+        assert climb_to[3] == 1650.0 + WING.transition_m
+        assert descent_from[3] == pytest.approx(1650.0 + WING.transition_m)
+        assert descent_to[3] == 1650.0
+        assert mission3d._haversine_m(*descent_to[1:3], *WAYPOINTS[-1][:2]) < 0.01
+        assert track.samples.index(descent_to) == len(track.samples) - 2  # then the ground hold
+        # rotor-borne: props level; wing-borne: the turns bank
+        assert {pitch for t, _h, pitch, _r in track.attitude() if t <= climb_to[0]} == {0.0}
+        assert len(track.turns) >= 2
+
+    def test_model_flight_reads_the_shell(self, drone_interp):
+        expected = {
+            "Rotorcraft::QuadCopter": "rotorcraft",  # the bench family: no wing
+            "Rotorcraft::TeardropQuad": "rotorcraft",  # wingSpan 0
+            "FlyingWings::FlyingWingSingle": "wing",  # hoverThrustFactor 0
+            "WingedVtol::DartInterceptor": "wing",
+            "WingedVtol::VtolWing": "vtol_wing",
+            "TiltRotors::TiltTriWing": "vtol_wing",
+        }
+        for qname, profile in expected.items():
+            got, wing = mission3d.model_flight(drone_interp, qname)
+            assert got == profile, qname
+            if profile != "rotorcraft":
+                speed = drone_interp.instantiate(qname).slots["cruiseSpeed"]
+                assert wing == mission3d.WingFlight(speed_mps=speed)
+
+    def test_rotorcraft_czml_is_unchanged(self, drone_interp, mesh):
+        import hashlib
+
+        profile, wing = mission3d.model_flight(drone_interp, "Rotorcraft::QuadCopter")
+        track = mission3d.from_replay(
+            drone_interp,
+            "DeepScout::FlightStates",
+            [2.0, "launch", 6.0, "airborne", 150.0, "low_battery", 10.0],
+            waypoints=ATLANTA,
+            ground_alt=300.0,
+            tilt_deg=mission3d.model_tilt(drone_interp, "Rotorcraft::QuadCopter"),
+            profile=profile,
+            wing=wing,
+        )
+        czml = track.to_czml(mesh=mesh)
+        for packet in czml:
+            packet.pop("model", None)  # the glTF follows the geometry module
+        digest = hashlib.sha256(json.dumps(czml, sort_keys=True).encode()).hexdigest()
+        assert digest == QUAD_CZML_SHA256
+
+
 class TestCzml:
     def test_document_clock_spans_the_mission(self, track):
         czml = track.to_czml()
@@ -582,6 +827,18 @@ class TestCzml:
         waypoint = czml[2]
         assert waypoint["point"]["pixelSize"] == 5
         assert waypoint["label"]["text"] == "WP0"
+
+    def test_heights_are_above_ground(self, track, mesh):
+        # the AGL contract: Cesium adds the drawn surface (terrain, or 0 on
+        # the bare ellipsoid) under the drone and the pins; a polyline has
+        # no height reference, so the route keeps its heights unclamped
+        czml = track.to_czml(mesh=mesh)
+        drone = czml[-1]
+        assert drone["model"]["heightReference"] == "RELATIVE_TO_GROUND"
+        assert drone["label"]["heightReference"] == "RELATIVE_TO_GROUND"
+        assert "clampToGround" not in czml[1]["polyline"]
+        assert {czml[i]["point"]["heightReference"] for i in range(2, 6)} == {"RELATIVE_TO_GROUND"}
+        assert track.to_czml()[-1]["point"]["heightReference"] == "RELATIVE_TO_GROUND"
 
     def test_static_label_for_plain_tracks(self):
         track = mission3d.mission_track(WAYPOINTS, name="survey")
@@ -879,6 +1136,68 @@ class TestMissionViewer:
             "save_changes",
             "change:time",
             "secondsDifference",
+        ):
+            assert token in widget._esm, token
+
+    def test_view_mode_contract(self, track):
+        """Three view modes, a closed vocabulary; 'follow' (the drone
+        tracked from the CZML viewFrom offset) stays the default."""
+
+        pytest.importorskip("anywidget")
+        import traitlets
+
+        widget = mission3d_widget.mission_viewer(track)
+        assert get_args(mission3d_widget.ViewMode) == ("free", "follow", "onboard")
+        assert widget.view_mode == "follow"
+        for mode in get_args(mission3d_widget.ViewMode):
+            widget.view_mode = mode
+            assert widget.view_mode == mode
+        with pytest.raises(traitlets.TraitError):
+            widget.view_mode = "cockpit"
+        assert {"view_mode", "onboard_camera"} <= set(widget.keys)  # both synced
+
+    def test_onboard_camera_contract(self, track):
+        """The onboard camera carries exactly the Camera part's attribute
+        names; extra slots drop and a malformed camera is loud."""
+
+        pytest.importorskip("anywidget")
+        widget = mission3d_widget.mission_viewer(track)
+        assert widget.onboard_camera == {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "azimuth": 0.0,
+            "elevation": 0.0,
+            "fieldOfView": 60.0,
+        }
+        camera = {"x": 0.3, "y": 0.01, "z": 0.0, "azimuth": 15, "elevation": -15}
+        widget.onboard_camera = {**camera, "fieldOfView": 50, "mass": 0.02}
+        assert widget.onboard_camera == {**camera, "fieldOfView": 50.0}
+        with pytest.raises(AnalysisError, match="missing"):
+            widget.onboard_camera = {"x": 0.3}
+        with pytest.raises(AnalysisError, match="fieldOfView"):
+            widget.onboard_camera = {**camera, "fieldOfView": 180.0}
+
+    def test_esm_view_mode_contract(self, track):
+        """The onboard ride, encoded: every clock tick sets the camera from
+        the drone's model matrix and the mission camera, user input stays
+        off while onboard, and the other modes restore the field of view."""
+
+        pytest.importorskip("anywidget")
+        widget = mission3d_widget.mission_viewer(track)
+        for token in (
+            "longeron-mission3d-modes",  # the mode buttons in the stage
+            'model.set("view_mode", mode)',
+            "change:view_mode",
+            "change:onboard_camera",
+            "computeModelMatrix",
+            "multiplyByPointAsVector",
+            "endTransform: Cesium.Matrix4.IDENTITY",
+            "screenSpaceCameraController.enableInputs",
+            "frustum.fov = lens.fov",
+            "frustum.fov = defaultFov",
+            "onTick.addEventListener(ride)",
+            "unRide()",  # no tick lock outlives the view
         ):
             assert token in widget._esm, token
 

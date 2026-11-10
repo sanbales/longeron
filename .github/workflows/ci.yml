@@ -86,6 +86,7 @@ jobs:
               tests/browser/test_browser_timeseam.py
               tests/browser/test_browser_lossy_seam.py
               tests/browser/test_browser_replay.py
+              tests/browser/test_browser_grand_tour.py
     runs-on: ubuntu-latest
     # cold runners pay env-solve + chromium download before the ~8 min of
     # scenarios (and a timeout-cancel skips the cache save, keeping the

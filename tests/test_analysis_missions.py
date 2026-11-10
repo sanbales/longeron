@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import longeron
-from longeron.analysis import AnalysisError, trades
+from longeron.analysis import AnalysisError, surfaces, trades
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
@@ -27,6 +27,14 @@ MISSIONS = {
 #: the catapult-launched branch of 0.12 (never hover-capable); the tip-prop
 #: twin of 0.13 crosses the courier's pusher stations root-against-tip
 FLYING_WINGS = {"flyingWingSingle", "flyingWingTwin", "flyingWingTwinTip"}
+
+#: the five tasking floors and the range each mission def asserts on it
+#: (``<attr>Low`` / ``<attr>High``, one constraint per bound)
+THRESHOLD_RANGES = {
+    "isr": {"minStationMinutes": (25.0, 240.0)},
+    "logistics": {"minPayloadKg": (0.5, 2.0), "minDeliveryRadiusKm": (4.0, 16.0)},
+    "intercept": {"targetSpeed": (25.0, 75.0), "targetDistance": (1500.0, 6000.0)},
+}
 
 
 @pytest.fixture(scope="module")
@@ -173,8 +181,11 @@ class TestFronts:
         # the tilt-tri's own seats (ISR +34, logistics +52, intercept
         # +28 -- three tilted stations hover only the LiPo punch packs,
         # so the li-ion mixes bust packPower or the lift floors, and the
-        # winch parcel outruns three stations' thrust outright)
-        assert counts == {"isr": 362, "logistics": 449, "intercept": 344}
+        # winch parcel outruns three stations' thrust outright).  The
+        # spar design-mass check (sparDesignMass) then retires the 83
+        # logistics mixes whose outbound mass overloads the spar:
+        # vtolWing 20, tiltTriWing 26, flyingWingTwin 11, TwinTip 26
+        assert counts == {"isr": 362, "logistics": 366, "intercept": 344}
 
     def test_crossing_is_purely_additive(self, spaces):
         # every pre-crossing mix keeps its verdict axes: restricted to
@@ -183,14 +194,16 @@ class TestFronts:
         # reasons -- the dash envelope retires the legacy catchers that
         # only ever caught on paper speed (166 -> 120), and the
         # tail-sitter's tip-structure mass costs it six courier margins
-        # (64 -> 58)
+        # (64 -> 58).  The spar design-mass check retires 14 more
+        # tail-sitter seats whose outbound mass passes its 6 kg spar
+        # (58 -> 44)
         def legacy(arch):
             return all(arch.selection[k] in v for k, v in self.LEGACY.items())
 
         counts = {
             name: sum(a.verified for a in archs if legacy(a)) for name, archs in spaces.items()
         }
-        assert counts == {"isr": 54, "logistics": 58, "intercept": 120}
+        assert counts == {"isr": 54, "logistics": 44, "intercept": 120}
 
     def test_intercept_front_pits_wings_against_the_teardrop(self, spaces):
         """The design-space answer to "are wings necessary?": both the
@@ -258,8 +271,10 @@ class TestFamilyWinners:
             key=lambda a: a.metrics["payloadRangeKgKm"],
         )
         assert best.selection["airframe"] == "vtolWing"
-        # punch over chemistry: the parcel lift wants LiPo watts
-        assert best.selection["battery"] == "tattu16000"
+        # the spar is sized for 6 kg (sparDesignMass): the crown carries
+        # the small parcel on the light li-ion pack, not the LiPo punch
+        assert best.selection["battery"] == "liion6s6p"
+        assert best.metrics["outboundMass"] <= 6.0
 
     def test_interceptor_wins_the_dash(self, spaces):
         feasible = [a for a in spaces["intercept"] if a.verified]
@@ -321,9 +336,10 @@ class TestFamilyWinners:
         """Before the flying wings joined, one winged-VTOL base mix sat
         on both the ISR and logistics fronts -- the buy-once bird.  The
         specialists ended that: the single wing owns the whole ISR
-        front, the tip-station twin takes the logistics top (its root
-        sibling is dominated seat for seat: same invoice, less radius),
-        and no base mix sits on two fronts anymore, let alone three."""
+        front, the tip-station twin takes the logistics top, and no base
+        mix sits on two fronts anymore, let alone three.  The root twin
+        keeps front seats where the tip twin's tip structure puts the
+        outbound mass past the shared 7 kg spar (sparDesignMass)."""
 
         fronts = {
             name: {base_mix(a) for a in front_2d(spaces[name], MISSIONS[name][1])}
@@ -332,7 +348,7 @@ class TestFamilyWinners:
         assert {dict(mix)["airframe"] for mix in fronts["isr"]} == {"flyingWingSingle"}
         log_airframes = {dict(mix)["airframe"] for mix in fronts["logistics"]}
         assert "flyingWingTwinTip" in log_airframes
-        assert "flyingWingTwin" not in log_airframes  # dominated by its tip variant
+        assert "flyingWingTwin" in log_airframes  # the seats the tip spar cannot carry
         assert not (fronts["isr"] & fronts["logistics"])
         assert not (fronts["isr"] & fronts["logistics"] & fronts["intercept"])
 
@@ -349,6 +365,135 @@ class TestFamilyWinners:
         assert mats["isr"] == {"aluminum", "carbonFiber"}
         assert mats["logistics"] == {"aluminum", "carbonFiber"}
         assert mats["intercept"] == {"aluminum"}
+
+
+class TestThresholdRanges:
+    """Each tasking floor is an input attribute with a two-sided range in
+    the model, so a what-if slider reads its bounds from the model."""
+
+    @pytest.mark.parametrize("name", sorted(MISSIONS))
+    def test_each_floor_has_a_named_range_around_its_default(self, studies, spaces, name):
+        mix = next(a for a in spaces[name] if a.verified)
+        margins = studies[name].margins(mix.selection)
+        for attr, (lo, hi) in THRESHOLD_RANGES[name].items():
+            low, high = margins[f"{attr}Low"], margins[f"{attr}High"]
+            assert (low["text"], high["text"]) == (f"{attr} >= {lo}", f"{attr} <= {hi}")
+            assert low["ok"] and high["ok"], attr  # the declared default is inside
+
+    def test_ramped_floors_span_their_scoring_ramps(self, studies):
+        interp = studies["isr"].interp
+        leaf = "ScoutMissions::scoring::effectiveness::{}::ramp{}"
+        for ramp, (name, attr) in {
+            "isrStation": ("isr", "minStationMinutes"),
+            "interceptCatch": ("intercept", "targetSpeed"),
+        }.items():
+            ends = (interp.evaluate(leaf.format(ramp, 0)), interp.evaluate(leaf.format(ramp, 1)))
+            assert ends == THRESHOLD_RANGES[name][attr], ramp
+
+
+#: the planform area each wing shell stated as a literal before the area
+#: became span x mean chord (the derived value must agree within 1%)
+FORMER_AREAS = {
+    "vtolWing": 0.624,
+    "dartInterceptor": 0.179,
+    "flyingWingSingle": 0.704,
+    "flyingWingTwin": 0.85,
+    "flyingWingTwinTip": 0.85,
+    "tiltTriWing": 0.72,
+}
+
+
+class TestPlanformAndStall:
+    """The planform chain, the stall margins, the tilt cap and the spar mass."""
+
+    @staticmethod
+    def slots(study, airframe):
+        return study.points["airframe"].variants[airframe]
+
+    def test_the_area_and_root_chord_follow_the_planform(self, studies):
+        study = studies["isr"]
+        for name in study.points["airframe"].variants:
+            s = self.slots(study, name)
+            assert s["wingArea"] == pytest.approx(s["wingSpan"] * s["wingChord"]), name
+            assert s["rootChord"] * (1.0 + s["taper"]) / 2.0 == pytest.approx(s["wingChord"])
+            if name in FORMER_AREAS:
+                assert s["wingArea"] == pytest.approx(FORMER_AREAS[name], rel=0.01), name
+            else:
+                assert s["wingArea"] == 0.0 and s["clMax"] == 0.0, name  # rotor-borne
+        # a span override moves the area, so the skin drag follows the span
+        inst = study.interp.instantiate(
+            study._variant_usage("airframe", "flyingWingSingle"), {"wingSpan": 2.6}
+        )
+        assert inst.slots["wingArea"] == pytest.approx(2.6 * 0.32)
+        assert inst.slots["dragArea"] > self.slots(study, "flyingWingSingle")["dragArea"]
+
+    @pytest.mark.parametrize(
+        ("name", "margin"),
+        [
+            ("isr", "loiterStallMargin"),
+            ("logistics", "cruiseStallMargin"),
+            ("intercept", "dashStallMargin"),
+        ],
+    )
+    def test_every_verified_mix_flies_clear_of_the_stall(self, spaces, name, margin):
+        for arch in spaces[name]:
+            if arch.verified:
+                assert arch.metrics[margin] >= 1.2
+            if arch.selection["airframe"] not in FORMER_AREAS:
+                assert arch.metrics[margin] == 2.0  # rotor-borne: no stall
+
+    def test_a_slow_loiter_stalls_the_wing(self, studies, spaces):
+        study = studies["isr"]
+        best = max(
+            (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
+        )
+        slow = study.evaluate(best.selection, {"airframe.loiterSpeed": 9.5})
+        # the slow loiter buys station time and stalls: the margin forbids it
+        assert slow.metrics["stationMinutes"] > best.metrics["stationMinutes"]
+        assert slow.violations == ["loiterAboveStall"]
+
+    def test_the_rotor_cruise_stays_inside_the_tilt_cap(self, studies, spaces):
+        study = studies["logistics"]
+        mix = next(
+            a for a in spaces["logistics"] if a.verified and a.selection["airframe"] == "openTri"
+        )
+        # the range peaks near 18.5 m/s, past the 11 deg yaw-servo tilt cap
+        fast = study.evaluate(mix.selection, {"airframe.cruiseSpeed": 18.5})
+        assert fast.metrics["cruiseTiltCap"] < 18.5
+        assert "cruiseWithinTilt" in fast.violations
+
+
+class TestRequirementSubjects:
+    def test_isr_tasking_scores_the_flying_wing_winner(self, studies, spaces):
+        """Holding station needs no hover: the catapult-launched ISR
+        winner is a subject of IsrTasking, measured, not excluded."""
+
+        study = studies["isr"]
+        best = max(
+            (a for a in spaces["isr"] if a.verified), key=lambda a: a.metrics["stationMinutes"]
+        )
+        assert best.selection["airframe"] == "flyingWingSingle"
+        uav = study.interp.instantiate(study.assembly, study._bindings(best.selection))
+        result = study.interp.check_requirement(
+            "ScoutMissions::MissionRequirements::IsrTasking", subject=uav
+        )
+        assert not result.assumptions
+        assert result.applicable and result.satisfied
+
+    def test_installation_admits_every_craft(self, studies):
+        interp = studies["isr"].interp
+        installation = interp.resolve("DeepScout::installation")
+        for craft in (
+            "Rotorcraft::QuadCopter",
+            "FlyingWings::FlyingWingSingle",
+            "WingedVtol::DartInterceptor",
+            "ScoutMissions::IsrUav",
+        ):
+            assert surfaces._admits(interp, installation, interp.resolve(craft)) == (True, "")
+        admitted, reason = surfaces._admits(
+            interp, installation, interp.resolve("ScoutSizing::IsrPrime")
+        )
+        assert not admitted and reason == "installation applies to DeepScout::Aircraft"
 
 
 class TestVolumeLedger:
@@ -422,8 +567,9 @@ class TestVolumeLedger:
 
     def test_winch_hangs_where_the_cradle_cannot_stow(self, studies):
         # the tail-sitter's 0.12 m fuselage refuses the mid-size cradle's
-        # parcel envelope, but the winch bay stows only its mechanism --
-        # the 4 kg slung load keeps flying
+        # parcel envelope, but the winch bay stows only its mechanism.
+        # Both parcels overload the spar sized for 6 kg (sparDesignMass),
+        # so the 4 kg slung load fits the bay and still does not fly
         base = {
             "airframe": "vtolWing",
             "motors": "x4112s",
@@ -432,9 +578,9 @@ class TestVolumeLedger:
             "material": "carbonFiber",
         }
         cradle = studies["logistics"].evaluate({**base, "cargo": "parcelBayM"})
-        assert cradle.violations == ["bayFit"]
+        assert cradle.violations == ["sparDesignMass", "bayFit"]
         winch = studies["logistics"].evaluate({**base, "cargo": "parcelBayL"})
-        assert winch.verified
+        assert winch.violations == ["sparDesignMass"]
 
     def test_winner_bays_close_with_margin(self, studies):
         # the mission winners keep flying because their bays genuinely
@@ -621,7 +767,8 @@ class TestExplainableInfeasibility:
             }
         )
         assert arch.verified and arch.violations == []
-        assert arch.metrics["stationMinutes"] == pytest.approx(200.351, abs=0.01)
+        # 200.351 before the secondary pair's area was derived (0.387 -> 0.38688 m^2)
+        assert arch.metrics["stationMinutes"] == pytest.approx(200.363, abs=0.01)
 
 
 class TestPhysicsSanity:
@@ -761,8 +908,9 @@ class TestDashEnvelope:
         # spar chain's design point n = 2.5 at gustU = 2.0
         arch = studies["intercept"].evaluate(self.DART)
         m = arch.metrics
-        ws = m["missionMass"] * 9.81 / 0.179  # the dart's declared wingArea
-        ar = 1.05 * 1.05 / 0.179
+        area = 1.05 * 0.17  # the dart's planform: span x mean chord
+        ws = m["missionMass"] * 9.81 / area
+        ar = 1.05 * 1.05 / area
         a = 2.0 * 3.141592653589793 * ar / (ar + 2.0)
         mu = 2.0 * ws / (1.225 * 0.17 * a * 9.81)  # mean chord 0.17
         kg = 0.88 * mu / (5.3 + mu)
@@ -782,7 +930,7 @@ class TestDashEnvelope:
         assert best.selection["airframe"] == "dartInterceptor"
         assert best.metrics["dashPlacard"] < best.metrics["dashSpeed"]
         assert best.metrics["usableDashSpeed"] == best.metrics["dashPlacard"]
-        assert best.metrics["maxTargetSpeed"] == pytest.approx(66.80, abs=0.05)
+        assert best.metrics["maxTargetSpeed"] == pytest.approx(66.93, abs=0.05)
 
     def test_placard_has_teeth_for_the_wing(self, studies):
         """THE TEACHING BEAT: unplacarded, the 55 N/m^2 courier wing
@@ -961,7 +1109,8 @@ class TestTiltRotorTrade:
     def test_winch_outruns_three_stations(self, studies):
         # the 4 kg slung load the tail-sitter delivers is honestly past
         # the tri: the capacity ledger refuses the winch AND the lift
-        # floor busts even on the 2 kW sprint motors
+        # floor busts even on the 2 kW sprint motors, and the outbound
+        # mass overloads the 6.6 kg spar
         arch = studies["logistics"].evaluate(
             {
                 "airframe": "tiltTriWing",
@@ -973,7 +1122,7 @@ class TestTiltRotorTrade:
             }
         )
         assert not arch.verified
-        assert set(arch.violations) == {"cargoFits", "logLift"}
+        assert set(arch.violations) == {"cargoFits", "logLift", "sparDesignMass"}
 
     def test_vtol_intercept_seat_is_real_but_modest(self, spaces):
         # no rail anywhere: the tilt-tri launches from a hover and still

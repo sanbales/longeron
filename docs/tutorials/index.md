@@ -52,7 +52,7 @@ notebook itself explains.
 | {doc}`6. Requirements: score, hunt, prove <06_requirements_score_hunt_prove>` | how good is the fleet, and where does it break: the MAUT scoreboard with model-declared weights and utility shapes, what-if injection, the trade-study bridge, `verify` hunting violations (hunt, sequences, cover, prove), Z3 requirement consistency |
 | {doc}`7. Geometry and the mission <07_geometry_and_the_mission>` | who measured the geometry claims: the 3D scene as a rendering of the M0 population, per-configuration geometry in the linked views, view-cone occlusion and disc clearance, the violating variant painted where it hurts, the mission on the globe |
 | {doc}`8. The knowledge graph <08_the_knowledge_graph>` | three questions grep cannot answer: SPARQL over the model's RDF projection, the retrieval substrate, how an agent consumes the model, answers verified against tutorial 4's dashboard |
-| {doc}`9. The grand tour <09_grand_tour>` | one dashboard, every seam: structure diagram, linked 3D CAD with a live camera-occlusion what-if, the requirements scoreboard recoloring live, an OpenMDAO sizing strip, Z3 consistency verdicts, and the Cesium mission replay -- one `grand_dashboard` call |
+| {doc}`9. The grand tour <09_grand_tour>` | one mission architecture, every pane: pick the mission, click a craft in the containment tree or the structure diagram, and set the knobs that the model declares. The 3D CAD with its camera-occlusion what-if, the requirements scoreboard, the OpenMDAO and Z3 strips, and the Cesium flight follow the subject. One `grand_dashboard` call builds it all |
 
 The notation gallery is reference material, not a tutorial. It lives in
 the reference section: {doc}`../reference/notation_gallery`.

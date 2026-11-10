@@ -2,50 +2,133 @@
 
 One :func:`grand_dashboard` call composes the house widgets over a drone
 model (plus the multi-mission sizing model) into a single reactive
-dashboard -- the capability finale of the tutorial series (tutorial 9):
+dashboard -- the capability finale of the tutorial series (tutorial 9).
 
-* a **structure diagram** pane (:func:`longeron.diagrams.structure_diagram`,
-  compact toolbar on) -- the linked-selection hub;
-* a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
+Every pane follows one **subject**
+(:class:`longeron.analysis.subject.Subject`): one mission architecture.
+A subject is a mission (a key of
+:data:`longeron.analysis.dashboard.DEFAULT_MISSIONS`), one variant of the
+mission's ``airframe`` variation point, one variant for each other
+variation point, and transient overrides.  A transient override replaces
+a model value for the analysis only and never writes the model.  A
+**visiting craft** is a craft that the 3D pane shows but that is not the
+subject.  The layout has a header, two rows of panes and the Cesium
+pane at the bottom.  The panes, in layout order:
+
+* a **header** that names the subject's mission, airframe and selection,
+  shows the requirements score, and says when the 3D pane shows a
+  visiting craft;
+* row 1: a **containment tree** pane
+  (:class:`longeron.widgets.explorer.ModelTree`, the model explorer's
+  tree).  The containment tree lists every package, definition, usage
+  and relationship by ownership;
+* row 1: a **structure diagram** pane
+  (:func:`longeron.diagrams.structure_diagram`, compact toolbar on) --
+  the linked-selection hub;
+* row 1: a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
-  (tutorial 7's seam, promoted): clicking ANY craft in the diagram --
-  a build configuration, a fleet airframe shell, or the mission
-  catalog's variant usages -- renders THAT craft in the pane, while
-  selections inside the shown craft highlight per M0 individual; a
-  translucent **view cone** follows the camera what-if sliders over
-  the home assembly;
-* a **requirements scoreboard** pane
+  (tutorial 7's seam, promoted).  It shows the subject craft, baked from
+  the subject's mix (:func:`longeron.analysis.geometry.mission_geometry`)
+  with the craft's declared camera.  A click on any other craft -- a
+  build configuration, a fleet airframe shell, or a variant usage of
+  the mission catalog -- renders THAT craft.  A catalog craft becomes
+  the subject's airframe (see the wiring map), and any other craft is a
+  visiting craft.  Selections inside the shown craft highlight per M0
+  individual.  A translucent **view cone** follows the camera what-if
+  sliders over the subject craft;
+* row 1: a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
-  scoring the model's own requirement hierarchy, repainted live as the
-  measured geometry changes;
-* a **camera what-if** card -- elevation/azimuth sliders that re-run the
-  CAD-native occlusion measure (:func:`longeron.analysis.geometry.
-  occlusion_report`, deterministic mesh engine) on every move;
-* an **OpenMDAO sizing** strip -- the sizing part's generated ``Problem``
-  (:func:`longeron.analysis.mdao.build_problem`), re-run live from a
-  loiter-speed slider, with a one-click driver run that snaps the slider
-  to the optimum;
-* a **Z3 verdict** strip -- requirement-consistency cards
-  (:func:`longeron.analysis.smt.to_smt`): the design point's SAT witness
-  beside an impossible what-if's UNSAT conflict core;
+  scoring the subject's requirement set
+  (:func:`longeron.analysis.subject.requirement_set`).  Each requirement
+  scores for the subject instance where it applies: the mission
+  architecture, or its airframe.  The board repaints live as the subject
+  and the measured geometry change;
+* row 2: a **subject card** -- a mission selector, the subject's mission
+  metric and verdict, and the **knobs**
+  (:func:`longeron.analysis.knobs.derive_knobs`): a dropdown per
+  variation point other than the airframe, and a slider per input attribute that the model bounds on
+  both sides;
+* row 2: a **camera what-if** card -- elevation/azimuth sliders that
+  re-run the CAD-native occlusion measure
+  (:func:`longeron.analysis.geometry.occlusion_report`, deterministic
+  mesh engine) on the subject craft's declared camera on every move.  The assume constraints of the
+  ``camera_case`` analysis case bound the sliders.  A craft that
+  declares no camera shows an honest absence;
+* row 2: an **OpenMDAO sizing** strip -- the generated ``Problem``
+  (:func:`longeron.analysis.mdao.build_problem`) of the mission's
+  **sizing context**, a frozen sizing part such as
+  ``ScoutSizing::IsrPrime``.  A loiter-speed slider re-runs it live, and
+  a one-click driver run snaps the slider to the optimum.  The model
+  supplies the slider bounds and the optimizer bounds.  Below the
+  slider, the strip shows the history of the last driver run (the
+  objective and each constraint margin per driver iteration), a table
+  of the design variables and constraints with their bounds and active
+  flags, and an N2 matrix of the problem's components and connections
+  (:func:`~longeron.analysis.mdao.problem_structure`).  The strip title
+  names the sizing context;
+* row 2: a **Z3 verdict** strip -- requirement-consistency cards
+  (:func:`longeron.analysis.smt.to_smt`) for the same sizing context: the
+  design point's SAT witness beside an impossible what-if's UNSAT
+  conflict core.  A mission without a sizing context shows an honest
+  absence in both strips;
 * a **Cesium mission** pane (:mod:`longeron.widgets.mission3d`) flying
-  the drone's own geometry through its recorded state-machine execution
-  over satellite imagery (offline front-ends degrade to a printed note;
-  the dashboard composes regardless).
+  the subject's geometry through the recorded execution of the shared
+  ``FlightStates`` machine over the shared route, at satellite imagery
+  (offline front-ends degrade to a printed note; the dashboard composes
+  regardless).  Its view-mode buttons track the drone (the default),
+  stop the tracking, or look through the subject craft's declared camera
+  (``'onboard'``).  The onboard view uses the camera what-if angles.
+  The subject's shell sets the flight profile
+  (:func:`longeron.analysis.mission3d.model_flight`): a multirotor climbs
+  vertically, a rail-launched wing climbs out along the first leg and
+  banks through the corners.
 
 WIRING MAP -- everything reacts to everything, kernel-side, through
 traitlets observers (so the whole surface works headless):
 
+* mission selector -> the subject keeps its airframe, and the airframe's
+  preset for the new mission (:func:`longeron.analysis.subject.preset`)
+  fills the other variation points.  The overrides of the old mission
+  are dropped;
+* diagram or tree click on a catalog craft (a variant of the
+  ``airframe`` variation point, or the definition that types one) -> the
+  craft becomes the subject's airframe and its preset fills the other
+  variation points, and the mission-level overrides stay;
+* dropdown knob -> that variation point changes, and the others stay;
+* slider knob -> a transient override that reaches
+  :meth:`longeron.analysis.trades.TradeStudy.evaluate`;
+* any subject change -> the subject scene re-bakes (the stale entry of
+  :attr:`longeron.analysis.link.ConfigViewBinding.scenes` is replaced),
+  the 3D pane shows the subject, the camera card measures the subject's
+  declared camera (a new airframe resets the sliders to its declared
+  angles), the scoreboard re-scores the subject's requirement
+  set, the Cesium pane flies the subject's mesh, and the header names
+  the new subject.  The 3D pane re-fits its camera only if it showed
+  another craft before.  A knob change of the shown craft keeps the
+  camera, so a wider wing draws wider;
+* mission change -> the sizing and Z3 strips show the new mission's
+  sizing context, built on its first use, or an honest absence;
 * diagram click -> 3D highlight (and mesh pick -> diagram selection);
-* diagram click on another craft -> the 3D pane bakes and shows THAT
-  craft (the camera what-if keeps measuring the home assembly);
+* containment tree selection -> diagram selection of the element, or of
+  its nearest drawn ancestor when the diagram does not draw the element
+  (the diagram selection then drives the 3D pane and the scoreboard);
+  diagram selection -> containment tree selection, with the row
+  revealed;
+* diagram click on a build configuration (``Rotorcraft::QuadCopter`` and
+  its siblings, which are not catalog airframes) -> the 3D pane shows it
+  as a visiting craft, the subject does not change, and the camera
+  what-if keeps measuring the subject craft;
 * diagram click on a requirement -> scoreboard selection (and a
   scoreboard cell click -> diagram selection);
 * camera sliders -> occlusion re-measure -> the view cone repaints, the
   obstructing parts highlight in 3D, the occlusion readout lists them,
-  the scoreboard recolors, and the header score updates;
-* loiter slider -> ``run_model`` -> the sizing cards repaint; the
-  *maximize* button runs the optimization driver and snaps the slider.
+  the scoreboard recolors, and the header score updates.  The 3D pane
+  keeps its camera.  The Cesium pane's ``onboard_camera`` takes the new
+  angles, so the onboard view looks where the occlusion measure looks;
+* loiter slider -> ``run_model`` -> the sizing cards and the table values
+  repaint; the *maximize* button runs the optimization driver
+  (:func:`~longeron.analysis.mdao.run_optimization`), fills the history
+  plot and the active flags, and snaps the slider.
 
 Requires the ``viz`` extra for the widgets and the ``mdao``/``smt``
 extras for the sizing and verdict strips:
@@ -56,21 +139,34 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import redirect_stdout
-from math import cos, pi, radians, sin, tan
-from typing import Any
+from dataclasses import replace
+from functools import cache
+from math import cos, floor, log10, pi, radians, sin, tan
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .. import model as M
-from ..interpreter import Interpreter
+from ..interpreter import Instance, Interpreter
 from ..widgets.mission3d import Imagery
 from . import geometry
 from ._expr import AnalysisError
-from .dashboard import _ipywidgets
+from .dashboard import DEFAULT_MISSIONS, _ipywidgets
+from .knobs import derive_knobs
+from .subject import MissionName, Preset, Subject, craft_variant, preset, requirement_set
+from .trades import Architecture, TradeStudy
+from .verify import attribute_domains
+
+if TYPE_CHECKING:
+    from .mdao import Bound, OptimizationHistory, ProblemStructure
 
 __all__ = [
     "ATLANTA_LOOP",
+    "DEFAULT_SIZING_CONTEXTS",
     "FLIGHT_EVENTS",
+    "DockPane",
+    "GrandDock",
     "drone_scene",
     "grand_dashboard",
     "scene_for",
@@ -79,27 +175,44 @@ __all__ = [
 ]
 
 #: default mission route: a small loop over Piedmont Park, midtown
-#: Atlanta -- ``(lat, lon, alt m MSL)``; the ground there sits ~300 m MSL
+#: Atlanta -- ``(lat, lon, alt)`` with ``alt`` in meters above ground
+#: level (AGL), the datum the Cesium globe draws (see
+#: :mod:`longeron.analysis.mission3d`).  The route flies 50-90 m above
+#: the ground.
 ATLANTA_LOOP: tuple[tuple[float, float, float], ...] = (
-    (33.7813, -84.3833, 350.0),
-    (33.7885, -84.3785, 390.0),
-    (33.7900, -84.3695, 380.0),
-    (33.7838, -84.3690, 360.0),
-    (33.7770, -84.3825, 350.0),
+    (33.7813, -84.3833, 50.0),
+    (33.7885, -84.3785, 90.0),
+    (33.7900, -84.3695, 80.0),
+    (33.7838, -84.3690, 60.0),
+    (33.7770, -84.3825, 50.0),
 )
 
 #: default event feed for the flight state machine replay
 #: (the ``Interpreter.simulate`` protocol: numbers advance the clock)
 FLIGHT_EVENTS: tuple[Any, ...] = (2.0, "launch", 6.0, "airborne", 150.0, "low_battery", 10.0)
 
+#: default sizing contexts of :func:`grand_dashboard`: mission name ->
+#: ``(sizing part, station requirement, station attribute)``.  Only the ISR
+#: mission has a frozen sizing context in the DeepScout program today, so
+#: the logistics and intercept strips show an honest absence.
+DEFAULT_SIZING_CONTEXTS: dict[MissionName, tuple[str, str, str]] = {
+    "ISR": ("ScoutSizing::IsrPrime", "ScoutSizing::IsrStation", "stationMinutes"),
+}
+
 #: the 30.5 mm stack heuristic -- the demo model carries no ESC part
 _ESC_MASS = 0.012
 
 # -- layout constants (explicit heights: the composed surface must fit a
 # ~1600x900 recording viewport together with the notebook chrome) --------
-_ROW1_PX = 430  # diagram / 3D / scoreboard
-_VIEWER_PX = 400  # fixed 3D pane width (canvas height = width / aspect)
-_BOARD_PX = 400  # fixed scoreboard pane width
+_ROW1_PX = 430  # tree / diagram / 3D / scoreboard
+_TREE_PX = 240  # fixed containment tree pane width
+# the diagram, the 3D pane and the scoreboard share the rest of row 1,
+# 2 : 1 : 1.  The 3D pane and the scoreboard stay between these widths.
+# The minimum is also their model width (the 3D aspect, the scoreboard
+# viewBox), so both draw at 1:1 there.  Both keep that aspect, so above
+# the maximum they would outgrow the row height
+_PANE_MIN_PX = 280
+_PANE_MAX_PX = 300
 _STRIP_PX = 200  # what-if / sizing / verdict cards
 _MISSION_PX = 330  # the Cesium finale
 
@@ -256,7 +369,10 @@ def scene_for(
     matching part usage (``battery`` / ``flightController`` /
     ``camera`` -- every DeepScout fleet shell does) carries THAT
     usage's qualified name, so picking the battery in the scene
-    selects the battery element, not just the craft.  Anything else
+    selects the battery element, not just the craft.  A shell that
+    declares a ``camera`` part also carries that camera's parameters on
+    ``mesh["camera"]``, so :func:`longeron.analysis.geometry.
+    occlusion_report` measures every craft family.  Anything else
     goes to :func:`drone_scene`: the MultiRotor build family bakes
     from its own M0 population with per-individual identity keys, and
     non-assembly shapes fail loudly with :class:`AnalysisError`.
@@ -275,13 +391,13 @@ def scene_for(
     if not isinstance(definition, M.Definition) or not definition.qualified_name:
         raise AnalysisError(f"scene_for needs a named definition (got {config!r})")
     qname = definition.qualified_name
-    knobs: dict[str, float] = {}
-    for name in _AIRFRAME_KNOBS:
-        try:
-            knobs[name] = float(interp.evaluate(f"{qname}::{name}"))
-        except Exception:
-            knobs = {}  # unvalued or absent knob: not a fleet shell
-            break
+    # the knobs come off an instance: an inherited derived attribute (the
+    # planform's wingArea) evaluates against the shell's own inputs only there
+    try:
+        slots = interp.instantiate(definition).slots
+        knobs = {name: float(slots[name]) for name in _AIRFRAME_KNOBS}
+    except Exception:
+        knobs = {}  # unvalued or absent knob: not a fleet shell
     if knobs:
         # the tailless S&C and pusher-installation knobs are optional:
         # only the flying wings declare them, and the zero-sweep,
@@ -314,15 +430,9 @@ def scene_for(
                 extras[kw] = str(interp.evaluate(f"{qname}::{attr_name}"))
             except Exception:
                 pass
-        try:  # the declared mission camera: drawn (and occlusion-ready)
-            camera_usage = interp.resolve(f"{qname}::camera")
-            if isinstance(camera_usage, (M.Definition, M.Usage)):
-                slots = interp.instantiate(camera_usage).slots
-                extras["camera"] = {
-                    k: float(v) for k, v in slots.items() if isinstance(v, (int, float))
-                }
-        except Exception:
-            pass
+        camera = _declared_camera(interp, qname)
+        if camera is not None:  # drawn (and occlusion-ready, see _with_camera)
+            extras["camera"] = camera
         try:  # the declared flight controller sizes the drawn board
             fc_usage = interp.resolve(f"{qname}::flightController")
             if isinstance(fc_usage, (M.Definition, M.Usage)):
@@ -341,23 +451,71 @@ def scene_for(
             **extras,
             **_FLEET_DISPLAY,
         )
-        # the internals are selectable per element: a rendered battery,
-        # FC, or camera keys to the shell's own part usage when the
-        # shell declares one (every DeepScout fleet shell does)
-        internals = {"battery": "battery", "fc": "flightController", "camera": "camera"}
-        part_map = {}
-        for part in shell["parts"]:
-            key = qname
-            usage = internals.get(part["name"])
-            if usage is not None:
-                try:
-                    interp.resolve(f"{qname}::{usage}")
-                    key = f"{qname}::{usage}"
-                except Exception:
-                    pass
-            part_map[part["name"]] = key
-        return geometry.tag_parts(shell, part_map), part_map
+        part_map = _shell_part_map(interp, qname, shell)
+        return _with_camera(geometry.tag_parts(shell, part_map), camera), part_map
     return drone_scene(model, qname)
+
+
+def _declared_camera(interp: Interpreter, qname: str) -> dict[str, float] | None:
+    """The numeric slots of the ``camera`` part that ``qname`` declares, or ``None``.
+
+    The camera is read off an instance of the whole shell, so a placement
+    that the shell derives from its own geometry (the wings' nose station)
+    evaluates against that shell's attribute values.
+    """
+
+    try:
+        shell = interp.resolve(qname)
+        if isinstance(shell, M.Definition):
+            return _camera_slots(interp.instantiate(shell))
+    except Exception:
+        pass
+    return None
+
+
+def _camera_slots(shell: Instance) -> dict[str, float] | None:
+    """The numeric slots of the ``camera`` part on a shell instance, or ``None``."""
+
+    camera = shell.slots.get("camera")
+    if isinstance(camera, Instance):
+        return {k: float(v) for k, v in camera.slots.items() if isinstance(v, (int, float))}
+    return None
+
+
+def _with_camera(mesh: dict[str, Any], camera: Mapping[str, float] | None) -> dict[str, Any]:
+    """``mesh`` with the declared camera's parameters on ``mesh["camera"]``.
+
+    Only the multirotor builder stamps the parameters itself. The other
+    families draw the camera body at a fixed station, so this stamp is what
+    lets :func:`longeron.analysis.geometry.occlusion_report` measure every
+    craft from its declared camera.
+    """
+
+    if camera is None or mesh.get("camera") is not None:
+        return mesh
+    return {**mesh, "camera": geometry._camera_params(camera)}
+
+
+def _shell_part_map(interp: Interpreter, qname: str, shell: Mapping[str, Any]) -> dict[str, str]:
+    """Identity keys for a fleet shell's parts: the craft, or a declared internal part.
+
+    A rendered battery, FC, or camera keys to the shell's own part usage
+    when the shell declares one (every DeepScout fleet shell does).
+    """
+
+    internals = {"battery": "battery", "fc": "flightController", "camera": "camera"}
+    part_map = {}
+    for part in shell["parts"]:
+        key = qname
+        usage = internals.get(part["name"])
+        if usage is not None:
+            try:
+                interp.resolve(f"{qname}::{usage}")
+                key = f"{qname}::{usage}"
+            except Exception:
+                pass
+        part_map[part["name"]] = key
+    return part_map
 
 
 def view_cone_part(
@@ -471,6 +629,10 @@ def _card(title: str, body: str) -> str:
     return f'<div style="{_CARD_STYLE}"><div style="{_TITLE_STYLE}">{title}</div>{body}</div>'
 
 
+def _strip_title(title: str) -> str:
+    return f'<div style="{_TITLE_STYLE}">{title}</div>'
+
+
 def _stat(label: str, value: str, *, color: str = "inherit") -> str:
     return (
         '<div style="display:flex; justify-content:space-between; gap:8px; margin:1px 0">'
@@ -479,19 +641,33 @@ def _stat(label: str, value: str, *, color: str = "inherit") -> str:
     )
 
 
-def _header_html(assembly: str, score: float, occluded: float) -> str:
-    tone = _OK if occluded <= 0.0 else _BAD
+def _header_html(
+    subject: Subject, score: float, occluded: float | None, *, visiting: str | None
+) -> str:
+    """The header: the subject's mission, airframe and selection, then the scores."""
+
+    tone = _DIM if occluded is None else (_OK if occluded <= 0.0 else _BAD)
+    occluded_text = "no camera" if occluded is None else f"{occluded:.4f}"
+    picks = [f"{point} {variant}" for point, variant in subject.selection.items()]
+    picks += [f"{name} = {value:g}" for name, value in subject.overrides.items()]
+    visit = (
+        f'<span style="color:{_BAD}; font-size:11px">visiting <b>{visiting}</b>. '
+        "The subject did not change.</span>"
+        if visiting is not None
+        else ""
+    )
     return (
         f'<div style="{_CARD_STYLE.replace("height:100%", "height:auto")} ; '
         'display:flex; align-items:baseline; gap:14px; padding:9px 14px">'
-        f'<span style="font-size:14px"><b>{assembly}</b> &mdash; the grand tour</span>'
-        f'<span style="color:{_DIM}; font-size:11px">diagram &middot; CAD &middot; occlusion '
-        "&middot; scoreboard &middot; OpenMDAO &middot; Z3 &middot; Cesium</span>"
+        f'<span style="font-size:14px"><b>{subject.mission}</b> &middot; '
+        f"<b>{subject.airframe}</b> &mdash; the grand tour</span>"
+        f'<span style="color:{_DIM}; font-size:11px">{" &middot; ".join(picks)}</span>'
+        f"{visit}"
         '<span style="flex:1 1 0"></span>'
         f'<span style="{_NUM}; font-size:12px">requirements score '
         f"<b>{score * 100:.1f}%</b></span>"
         f'<span style="{_NUM}; font-size:12px; color:{tone}">occludedFraction '
-        f"<b>{occluded:.4f}</b></span></div>"
+        f"<b>{occluded_text}</b></span></div>"
     )
 
 
@@ -531,6 +707,219 @@ def _sizing_html(problem: Any, station_var: str, margin_vars: Mapping[str, str])
     return "".join(rows)
 
 
+#: line colors of the constraint margins and the N2 groups, in order of first use
+_SERIES = ("#3b6fb6", "#c0812b", "#5f8f35", "#8a5bb5", "#b0413e", "#2a8a8a")
+_LINE = "var(--jp-brand-color1,#1976d2)"
+
+
+def _short(name: str, limit: int = 15) -> str:
+    """The last segment of a qualified name, cut to ``limit`` characters."""
+
+    leaf = name.split("::")[-1]
+    return leaf if len(leaf) <= limit else f"{leaf[: limit - 1]}&hellip;"
+
+
+def _points(
+    values: Sequence[float], x0: float, dx: float, y0: float, h: float, low: float, high: float
+) -> list[tuple[float, float]]:
+    """Plot coordinates of ``values``: one step ``dx`` apart, ``low..high`` over ``h``."""
+
+    span = (high - low) or 1.0
+    return [(x0 + i * dx, y0 + h - (value - low) / span * h) for i, value in enumerate(values)]
+
+
+def _polyline(points: list[tuple[float, float]]) -> str:
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+
+
+def _compact(html: str) -> str:
+    """``html`` at a text line height: an HTML widget sets 28 px per line."""
+
+    return f'<div style="line-height:1.35">{html}</div>'
+
+
+def _legend(entries: Sequence[str]) -> str:
+    return (
+        '<div style="font-size:10px; display:flex; flex-wrap:wrap; gap:0 8px">'
+        f"{''.join(entries)}</div>"
+    )
+
+
+def _history_html(history: OptimizationHistory | None) -> str:
+    """The driver's path: objective per iteration, then each constraint margin.
+
+    Each margin is scaled to its own range in the run.  Its dashed line
+    is its bound, margin 0.
+    """
+
+    if history is None:
+        return _compact(
+            f'<div style="color:{_DIM}; margin:4px 0">run maximize to see the driver\'s path</div>'
+        )
+    width, left, right = 260.0, 30.0, 6.0  # the sizing card's content width
+    n = history.iterations
+    dx = (width - left - right) / max(n - 1, 1)
+    low, high = min(history.objectives), max(history.objectives)
+    verb = "maximized" if history.maximize else "minimized"
+    path = _points(history.objectives, left, dx, 6, 54, low, high)
+    parts = [
+        f'<text x="{left - 3}" y="9" text-anchor="end">{high:.0f}</text>',
+        f'<text x="{left - 3}" y="62" text-anchor="end">{low:.0f}</text>',
+        f'<rect x="{left}" y="4" width="{width - left - right}" height="58" fill="none" '
+        'stroke="var(--jp-border-color2,#e0e0e0)"/>',
+        f'<polyline points="{_polyline(path)}" fill="none" stroke="{_LINE}" '
+        f'stroke-width="1.5"><title>{history.objective}</title></polyline>',
+        f'<text x="{left - 3}" y="78" text-anchor="end">margin</text>',
+        f'<rect x="{left}" y="70" width="{width - left - right}" height="40" fill="none" '
+        'stroke="var(--jp-border-color2,#e0e0e0)"/>',
+    ]
+    parts += [
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2" fill="{_LINE}">'
+        f"<title>iteration {i}: {history.objective} {value:.2f}</title></circle>"
+        for i, ((x, y), value) in enumerate(zip(path, history.objectives, strict=True))
+    ]
+    legend = []
+    for k, (name, margins) in enumerate(history.constraints.items()):
+        color = _SERIES[k % len(_SERIES)]
+        bottom, top = min(*margins, 0.0), max(*margins, 0.0)
+        (_, zero), *_ = _points([0.0], left, dx, 72, 36, bottom, top)
+        parts.append(
+            f'<line x1="{left}" y1="{zero:.1f}" x2="{width - right}" y2="{zero:.1f}" '
+            f'stroke="{color}" stroke-width="0.5" stroke-dasharray="2 2"/>'
+            f'<polyline points="{_polyline(_points(margins, left, dx, 72, 36, bottom, top))}" '
+            f'fill="none" stroke="{color}" stroke-width="1.2"><title>{name}: margin '
+            f"{margins[-1]:+.2f} at the last iteration</title></polyline>"
+        )
+        legend.append(f'<span style="color:{color}">&#9632; {_short(name)}</span>')
+    parts += [
+        f'<text x="{left + i * dx:.1f}" y="120" text-anchor="middle">{i}</text>'
+        for i in range(n)
+        if n <= 12 or i in (0, n - 1)
+    ]
+    svg = (
+        f'<svg viewBox="0 0 {width:.0f} 124" width="100%" style="display:block; '
+        f'max-width:{width:.0f}px; font-size:8px; fill:{_DIM}" role="img" '
+        'aria-label="driver iteration history">'
+        f"{''.join(parts)}</svg>"
+    )
+    return _compact(
+        _stat("driver iterations", str(n))
+        + _stat(f"{history.objective} ({verb})", f"{history.objectives[-1]:.1f}")
+        + svg
+        + _legend(legend)
+    )
+
+
+def _driver_table_html(
+    problem: Any,
+    bounds: Mapping[str, Bound],
+    margin_vars: Mapping[str, str],
+    history: OptimizationHistory | None,
+) -> str:
+    """The driver's design variables and constraints at the current point.
+
+    A constraint value is its margin.  The active flag marks a bound that
+    holds with equality at the optimum of the last *maximize* run.
+    """
+
+    active = set(history.active_constraints()) if history is not None else set()
+    cell = 'style="text-align:right; padding:1px 3px"'
+    rows = [
+        f'<tr style="color:{_DIM}"><th style="text-align:left; font-weight:600">name</th>'
+        f"<th {cell}>lower</th><th {cell}>value</th><th {cell}>upper</th>"
+        f'<th {cell} title="at a bound at the driver\'s optimum">active</th></tr>'
+    ]
+    for name, (lower, upper) in bounds.items():
+        value = float(problem.get_val(margin_vars.get(name, name))[0])
+        text = f"{value:+.1f}" if name in margin_vars else f"{value:.1f}"
+        flag = f'<b style="color:{_LINE}">&#9679;</b>' if name in active else ""
+        lo, hi = ("&ndash;" if b is None else f"{b:g}" for b in (lower, upper))
+        rows.append(
+            f'<tr><td title="{name}">{_short(name)}</td><td {cell}>{lo}</td>'
+            f"<td {cell}><b>{text}</b></td><td {cell}>{hi}</td><td {cell}>{flag}</td></tr>"
+        )
+    note = (
+        "active flags appear after maximize"
+        if history is None
+        else f"active: at a bound at the optimum of {history.iterations} driver iterations"
+    )
+    return _compact(
+        f'<table style="width:100%; border-collapse:collapse; font-size:11px; {_NUM}; '
+        f'margin-top:4px">{"".join(rows)}</table>'
+        f'<div style="color:{_DIM}; font-size:10px">{note}</div>'
+    )
+
+
+def _n2_html(structure: ProblemStructure) -> str:
+    """An N2 matrix: components on the diagonal, row output feeds column input.
+
+    A mark above the diagonal is a feed-forward connection, a mark below it
+    is a feedback.  The hover title names the connected variables.  Each
+    OpenMDAO group draws in its own color.
+    """
+
+    comps = structure.components
+    index = {path: i for i, path in enumerate(comps)}
+    groups = list(dict.fromkeys(path.rpartition(".")[0] for path in comps))
+    tint = {
+        group: (_DIM if not group else _SERIES[k % len(_SERIES)]) for k, group in enumerate(groups)
+    }
+    size, left = 12.0, 92.0
+    links: dict[tuple[int, int], list[str]] = {}
+    for source, target in structure.connections:
+        i, j = index.get(source.rpartition(".")[0]), index[target.rpartition(".")[0]]
+        if i is not None and i != j:  # an unconnected input reads OpenMDAO's _auto_ivc
+            links.setdefault((i, j), []).append(target.rpartition(".")[2])
+    parts = []
+    for i, path in enumerate(comps):
+        outs = structure.outputs[path]
+        label = outs[0] if len(outs) == 1 else path.rpartition(".")[2]
+        color = tint[path.rpartition(".")[0]]
+        y = i * size
+        parts.append(
+            f'<text x="{left - 4}" y="{y + 9}" text-anchor="end" fill="{color}">{_short(label, 16)}'
+            f"<title>{path}</title></text>"
+            f'<rect x="{left + i * size + 1}" y="{y + 1}" width="{size - 2}" height="{size - 2}" '
+            f'fill="{color}"><title>{path}: {len(structure.inputs[path])} inputs, '
+            f"{len(outs)} outputs</title></rect>"
+        )
+    for (i, j), names in links.items():
+        parts.append(
+            f'<rect x="{left + j * size + 3}" y="{i * size + 3}" width="{size - 6}" '
+            f'height="{size - 6}" fill="{_LINE}" opacity="0.75"><title>{", ".join(names)}: '
+            f"{comps[i]} -&gt; {comps[j]}</title></rect>"
+        )
+    width, height = left + len(comps) * size, len(comps) * size
+    legend = [
+        f'<span style="color:{tint[group]}">&#9632; {group}</span>' for group in groups if group
+    ]
+    return _compact(
+        f'<div style="color:{_DIM}; font-size:10px; margin-top:6px">N2 matrix: a row feeds a '
+        f"column ({len(comps)} components)</div>"
+        f'<svg viewBox="0 0 {width:.0f} {height:.0f}" width="100%" style="display:block; '
+        f'font-size:8.5px; max-width:{width:.0f}px" role="img" aria-label="N2 matrix">'
+        f'<g stroke="var(--jp-border-color2,#e0e0e0)" stroke-width="0.5">'
+        + "".join(
+            f'<line x1="{left}" y1="{k * size}" x2="{width}" y2="{k * size}"/>'
+            f'<line x1="{left + k * size}" y1="0" x2="{left + k * size}" y2="{height}"/>'
+            for k in range(len(comps) + 1)
+        )
+        + f"</g>{''.join(parts)}</svg>"
+        + _legend(legend)
+    )
+
+
+def _architecture_html(architecture: Architecture, metric: str) -> str:
+    """The subject's mission metric and its verdict, one line each."""
+
+    verdict = (
+        _stat("verified", "all constraints hold", color=_OK)
+        if architecture.verified
+        else _stat("violates", ", ".join(architecture.violations), color=_BAD)
+    )
+    return _stat(metric, f"{architecture.metrics[metric]:.1f}") + verdict
+
+
 def _verdict_html(title: str, result: Any, detail: str) -> str:
     tone = _OK if result.status == "sat" else _BAD
     badge = f'<span style="color:{tone}; font-weight:600">{result.status.upper()}</span>'
@@ -538,6 +927,205 @@ def _verdict_html(title: str, result: Any, detail: str) -> str:
         f'<div style="margin:2px 0 4px"><span style="color:{_DIM}">{title}</span> {badge}</div>'
         f"{detail}"
     )
+
+
+# ---------------------------------------------------------------------------
+# docking: the panes as JupyterLab main-area panels
+# ---------------------------------------------------------------------------
+
+#: the panes that :meth:`GrandDock.dock` moves into the JupyterLab main area.
+#: Each pane's tab carries ``data-lgxkey="grand-<pane>"``
+DockPane = Literal[
+    "mission", "structure", "subject", "3d", "scoreboard", "tree", "sizing", "camera", "z3"
+]
+
+#: the Lab dock modes that :data:`_DOCK_PLAN` uses
+_DockMode = Literal["tab-after", "split-top", "split-left", "split-right"]
+
+#: the docking order: pane, tab label, Lab dock mode, and the pane that the
+#: mode is relative to (``None``: the Lab's current widget, the notebook).
+#: Lumino halves the reference pane's share on every split, so this order
+#: gives row 1 and row 2 four equal columns each.  Row 1 takes half of the
+#: main-area height, and row 2 and the notebook row a quarter each
+_DOCK_PLAN: tuple[tuple[DockPane, str, _DockMode, DockPane | None], ...] = (
+    ("mission", "Mission", "tab-after", None),
+    ("structure", "Structure", "split-top", "mission"),
+    ("subject", "Subject", "split-top", "mission"),
+    ("3d", "3D", "split-right", "structure"),
+    ("scoreboard", "Scoreboard", "split-right", "3d"),
+    ("tree", "Tree", "split-left", "structure"),
+    ("sizing", "Sizing", "split-right", "subject"),
+    ("camera", "Camera what-if", "split-right", "subject"),
+    ("z3", "Z3", "split-right", "sizing"),
+)
+
+_DOCKED_NOTE = (
+    '<em class="lgn-grand-docked" style="font-size:12px; color:var(--jp-ui-font-color2,#666)">'
+    "The grand tour is docked in the JupyterLab main area. "
+    "Call <code>undock()</code> to show it here again.</em>"
+)
+
+
+@cache
+def _layoutless_panel() -> type:
+    """An :class:`ipylab.Panel` class without a ``Layout`` model.
+
+    The Lab dock writes the panel's geometry (``top``, ``left``, ``width``
+    and ``height``) on the panel node when the panel joins the dock.  The
+    ipywidgets front end then builds the panel's layout view, and that view
+    removes every inline style property that its ``Layout`` leaves unset.
+    A visible panel thus loses its geometry and collapses.  A panel with no
+    ``Layout`` model has no layout view, so the geometry stays.
+    """
+
+    import ipylab
+    import ipywidgets
+    import traitlets
+
+    class LayoutlessPanel(ipylab.Panel):
+        layout = traitlets.Instance(ipywidgets.Layout, allow_none=True).tag(
+            sync=True, **ipywidgets.widget_serialization
+        )
+
+    return LayoutlessPanel
+
+
+class GrandDock:
+    """The dock state of one grand tour: :meth:`dock` and :meth:`undock`.
+
+    A **docked pane** is a group of dashboard widgets in its own JupyterLab
+    main-area panel (an :class:`ipylab.Panel`) with a titled tab.  The Lab
+    dock puts a **split bar** on each edge that two docked panes share, and a
+    drag of the split bar resizes the two panes.  A drag of a tab moves its
+    pane to another place in the dock.  The panels hold the SAME widget
+    instances as the inline layout, so the kernel-side selection hub keeps
+    working wherever the widgets show.  ``panes`` maps each
+    :data:`DockPane` to its widgets, each with the layout keywords it takes
+    while docked (``None`` keeps its layout).
+    """
+
+    def __init__(
+        self,
+        box: Any,
+        panes: Mapping[DockPane, Sequence[tuple[Any, Mapping[str, str] | None]]],
+        *,
+        style: Any,
+    ) -> None:
+        widgets = _ipywidgets()
+        self._box = box
+        self._inline = tuple(box.children)
+        self._style = style
+        self._panes = {pane: tuple(members) for pane, members in panes.items()}
+        self._inline_layouts = [
+            (widget, widget.layout) for members in self._panes.values() for widget, _ in members
+        ]
+        self._frontend: Any = None
+        self._icon: Any = None
+        #: pane -> its :class:`ipylab.Panel` while docked, empty while inline
+        self.panels: dict[DockPane, Any] = {}
+        self.note = widgets.HTML(_DOCKED_NOTE)
+
+    def dock(self) -> None:
+        """Move the panes into the JupyterLab main area, nine panels.
+
+        The first view follows the inline layout: the tree, the structure
+        diagram, the 3D pane and the scoreboard in the top row, and the
+        subject, camera what-if, sizing and Z3 cards in the next row.  The
+        Cesium pane is the current tab of the notebook's tab area, below the
+        cards, and the notebook tab stays beside it.  The inline layout shows
+        a note in place of the panes.
+
+        A second ``dock()`` closes the open panels and docks all nine
+        panes again in the first view.  Thus ``dock()`` also re-opens a
+        pane whose tab the user closed.  A closed tab does not change the
+        widgets, so the selection hub keeps working.  The tabs carry the
+        explorer's dock identity (:class:`~longeron.widgets.explorer._DockSweeper`),
+        so a dock after a kernel restart closes the panels of the dead
+        kernel.  If no JupyterLab front end hosts the kernel, ``dock()``
+        prints a note and keeps the inline layout.
+        """
+
+        from ..widgets.explorer import _DockSweeper, _lab_frontend_detected
+
+        if not _lab_frontend_detected():
+            print("No JupyterLab front end hosts this kernel: the grand tour stays inline.")
+            return
+        try:
+            import ipylab
+        except ImportError as err:
+            from ..errors import MissingExtraError
+
+            raise MissingExtraError("the grand tour's dock()", "ipylab", "explorer") from err
+        from ..widgets.app import _ICON_SVG
+
+        widgets = _ipywidgets()
+        self._close_panels()
+        self._box.children = (self._style, self.note)  # the inline views go first
+        stamp = str(time.time_ns())
+        if self._icon is None:
+            self._icon = ipylab.Icon(name="longeron:grand", svgstr=_ICON_SVG)
+        for pane, label, _mode, _ref in _DOCK_PLAN:
+            members = self._panes[pane]
+            for widget, docked in members:
+                if docked is not None:
+                    widget.layout = widgets.Layout(**docked)
+            panel = _layoutless_panel()()
+            panel.title.label = label
+            panel.title.icon = self._icon
+            panel.title.dataset = {"lgxkey": f"grand-{pane}", "lgxstamp": stamp}
+            panel.add_class("lgn-grand-pane")
+            sweeper = _DockSweeper(
+                key=f"grand-{pane}", stamp=stamp, layout=widgets.Layout(display="none")
+            )
+            panel.children = (*(widget for widget, _ in members), sweeper)
+            self.panels[pane] = panel
+        if self._frontend is None:
+            self._frontend = ipylab.JupyterFrontEnd()
+        ids = {pane: f"lgn-grand-{pane}-{stamp}" for pane in self.panels}
+        for pane, _label, mode, ref in _DOCK_PLAN:
+            # the Cesium pane becomes the current tab of the notebook's tab
+            # area.  The other panes each open a tab area of their own
+            args: dict[str, Any] = {"mode": mode, "activate": pane == "mission"}
+            if ref is not None:
+                args["ref"] = ids[ref]
+            # ipylab 1.1's Shell.add with one more payload key: the front
+            # end's ShellModel._add gives the Lumino widget the payload's
+            # ``id``, so a later add names this panel as its ``ref``
+            self._frontend.shell.send(
+                {
+                    "func": "add",
+                    "payload": {
+                        "serializedWidget": f"IPY_MODEL_{self.panels[pane].model_id}",
+                        "area": "main",
+                        "args": args,
+                        "id": ids[pane],
+                    },
+                }
+            )
+
+    def undock(self) -> None:
+        """Close the panels and show the inline layout again.
+
+        The widgets take back their inline layouts.  If the tour is not
+        docked, ``undock()`` does nothing.
+        """
+
+        if not self.panels:
+            return
+        self._close_panels()
+        for widget, layout in self._inline_layouts:
+            widget.layout = layout
+        self._box.children = self._inline
+
+    def _close_panels(self) -> None:
+        """Close the panel widgets.  The pane widgets inside stay open."""
+
+        for panel in self.panels.values():
+            sweeper = panel.children[-1]
+            panel.close()  # the front end removes the panel's tab
+            panel.title.close()
+            sweeper.close()
+        self.panels.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -549,120 +1137,250 @@ def grand_dashboard(
     model: M.Model,
     sizing: M.Model | None = None,
     *,
-    assembly: str = "Rotorcraft::QuadCopter",
+    mission: MissionName = "ISR",
+    airframe: str | None = None,
     states: str = "DeepScout::FlightStates",
-    sizer: str = "ScoutSizing::IsrPrime",
-    station_requirement: str = "ScoutSizing::IsrStation",
-    station_var: str = "stationMinutes",
+    sizing_contexts: Mapping[MissionName, tuple[str, str, str]] = DEFAULT_SIZING_CONTEXTS,
     loiter_var: str = "loiterSpeed",
     what_if_station: float = 420.0,
+    camera_case: str = "ScoutSurfaces::CameraWhatIf",
     values: Mapping[str, Any] | None = None,
     waypoints: Sequence[Sequence[float]] = ATLANTA_LOOP,
     events: Sequence[Any] = FLIGHT_EVENTS,
-    ground_alt: float = 300.0,
+    ground_alt: float = 0.0,
     imagery: Imagery = "satellite",
+    dock: bool = False,
 ) -> Any:
     """The grand-tour dashboard (an ipywidgets ``VBox``) -- one call.
 
-    ``model`` carries the drone: its structure feeds the diagram, its
-    interpreted M0 population sizes the 3D mesh, its requirement
-    hierarchy is the scoreboard, and its ``states`` machine flies the
-    Cesium mission over ``waypoints``.  ``sizing`` (default: ``model``
-    itself) carries the continuous side: ``sizer`` becomes the OpenMDAO
-    problem behind the loiter slider, and ``station_requirement`` the
-    Z3 consistency cards -- the what-if card demands ``station_var >=
-    what_if_station`` with ``loiter_var`` freed, an impossible floor
-    whose UNSAT core names the binding constraints.  ``values`` injects
-    extra measured scoreboard bindings (e.g. performance measures
-    computed through the interpreter); the live occlusion and
-    disc-overlap measures are merged on top.
+    ``model`` carries the drone program: its structure feeds the diagram
+    and the containment tree, its mission definitions
+    (:data:`~longeron.analysis.dashboard.DEFAULT_MISSIONS`) and their
+    trade studies supply the **subject** (a
+    :class:`~longeron.analysis.subject.Subject`: one mission, one airframe
+    variant, one variant per other variation point, and transient
+    overrides), its requirement hierarchy is the scoreboard, and its
+    ``states`` machine flies the Cesium mission over ``waypoints``.
+    The waypoint heights and ``ground_alt`` are heights above ground.
+    The default ``ground_alt`` 0 starts and ends the flight on the
+    surface.
+    ``mission`` names the first subject's mission, and ``airframe`` its
+    airframe variant.  The default airframe is the mission's winner: the
+    airframe whose preset (:func:`~longeron.analysis.subject.preset`) has
+    the best mission metric.
+
+    The scoreboard scores the subject's requirement set
+    (:func:`~longeron.analysis.subject.requirement_set`), each requirement
+    for the subject instance where it applies.  ``values`` injects extra
+    measured scoreboard bindings, for example performance measures that
+    the interpreter computes.  The live occlusion and disc-overlap
+    measures of the subject craft merge on top.
+
+    ``sizing`` (default: ``model`` itself) carries the continuous side.
+    ``sizing_contexts`` maps a mission to its **sizing context**: the
+    sizing part, the station requirement, and the station attribute.  For
+    the subject's mission, the sizing part becomes the OpenMDAO problem
+    behind the ``loiter_var`` slider, and the requirement becomes the Z3
+    consistency cards.  The what-if card demands ``station attribute >=
+    what_if_station`` with ``loiter_var`` freed.  That floor is
+    impossible, and its UNSAT core names the binding constraints.  The
+    model supplies the slider bounds and the optimizer bounds
+    (:func:`~longeron.analysis.knobs.derive_knobs` on the sizing part).
+    Each context builds once, when its mission first becomes the
+    subject's mission.  A mission without a sizing context shows an
+    honest absence in both strips.  ``camera_case`` names the analysis
+    case whose assume constraints bound the camera sliders
+    (:func:`~longeron.analysis.verify.attribute_domains`).
 
     See the module docstring for the pane list and the wiring map.  The
     returned layout exposes every piece for scripting and tests:
-    ``.diagram``, ``.viewer``, ``.board`` (+ ``.scoreboard``, the
-    current :class:`~longeron.analysis.scoreboard.Scoreboard`),
+    ``.subject`` (the current :class:`~longeron.analysis.subject.Subject`),
+    ``.architecture`` (its :meth:`TradeStudy.evaluate
+    <longeron.analysis.trades.TradeStudy.evaluate>` result, overrides
+    applied), ``.craft`` (the qualified name of the subject's airframe
+    definition), ``.studies`` (mission name -> trade study, built on first
+    use), ``.mission_toggle`` (the mission selector), ``.knobs`` (knob name
+    -> widget: a variation point name gives its dropdown, a slider name
+    such as ``minStationMinutes`` its slider), ``.knob_set`` (the
+    :class:`~longeron.analysis.knobs.KnobSet` behind them), ``.diagram``,
+    ``.tree`` (the containment tree, a
+    :class:`~longeron.widgets.explorer.ModelTree`), ``.viewer``,
+    ``.board`` (+ ``.scoreboard``, the current
+    :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
-    ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum``,
-    ``.smt_sat`` / ``.smt_what_if``, ``.mission`` / ``.track``,
-    ``.mesh`` / ``.part_map`` / ``.camera``, ``.header``,
-    ``.config_view`` (the :class:`~longeron.analysis.link.
-    ConfigViewBinding` behind the config-keyed 3D pane), and
-    ``.unlink`` (drops the diagram <-> 3D binding).
+    ``.loiter`` / ``.optimize`` / ``.problem`` / ``.optimum`` /
+    ``.sizing_card`` / ``.sizing_history`` / ``.sizing_table`` /
+    ``.sizing_n2`` and ``.smt_sat`` / ``.smt_what_if`` / ``.verdicts``
+    (the current mission's sizing context, each ``None`` when the mission
+    has none), ``.sizing_title`` / ``.verdict_title`` (the strip titles),
+    ``.requirements`` (requirement qualified name -> the subject
+    instance it scores), ``.mission`` (the Cesium viewer: set
+    ``.mission.view_mode`` to ``'onboard'`` to look through
+    ``.mission.onboard_camera``, the subject's camera at the slider
+    angles) / ``.track``, ``.mesh`` / ``.part_map`` / ``.camera`` (the subject
+    scene, its identity keys, and its declared camera, ``None`` when the
+    craft declares none), ``.header``, ``.config_view`` (the
+    :class:`~longeron.analysis.link.ConfigViewBinding` behind the
+    config-keyed 3D pane), ``.unlink`` (drops the diagram <-> 3D
+    binding), ``.dock`` / ``.undock`` (:meth:`GrandDock.dock` and
+    :meth:`GrandDock.undock`: move the panes into the JupyterLab main area
+    as nine resizable, rearrangeable panels, and back), and ``.panels``
+    (:data:`DockPane` -> its ``ipylab.Panel`` while docked, empty while
+    inline).  ``dock=True`` docks the dashboard when it is built.  The
+    inline layout is the default, so a notebook without a JupyterLab front
+    end renders as before.
     """
 
     from ..diagrams import structure_diagram  # pulls in ipyelk
+    from ..replay import record_timeline
     from ..widgets import mission3d as mission3d_widget
     from ..widgets import viewer3d
+    from ..widgets.explorer import (
+        ModelTree,
+        _diagram_node_ids,
+        _nearest_drawn,
+        _nearest_tree_id,
+        _tree_data,
+    )
     from . import link, mdao, mission3d, smt
-    from .scoreboard import scoreboard
+    from .scoreboard import Scoreboard, scoreboard
+    from .surfaces import _absence_html  # surfaces imports this module
 
     widgets = _ipywidgets()
     sizing_model = sizing if sizing is not None else model
     base_values = dict(values or {})
+    interp = Interpreter(model)
 
-    # -- the scene: mesh, identity keys, camera defaults ---------------------
-    mesh, part_map = drone_scene(model, assembly)
-    if mesh.get("camera") is None:
-        raise AnalysisError(f"{assembly} mounts no camera part; the occlusion what-if needs one")
-    camera0 = geometry._camera_params(mesh["camera"])
-    cone_length = 0.45 * geometry._bounds_diagonal(mesh)
-    disc_overlap = geometry.disc_overlap(mesh, engine="mesh")
+    # -- the subject: trade studies and presets, cached per mission ----------
+    studies: dict[str, TradeStudy] = {}
+    presets: dict[tuple[str, str], Preset] = {}
+
+    def _study(name: str) -> TradeStudy:
+        if name not in studies:
+            studies[name] = TradeStudy(model, DEFAULT_MISSIONS[name][0])
+        return studies[name]
+
+    def _preset(name: MissionName, variant: str) -> Subject:
+        # one preset evaluates every mix of the other points (~0.25 s for
+        # ISR), so each (mission, airframe) pair is computed once
+        if (name, variant) not in presets:
+            presets[name, variant] = preset(_study(name), variant, DEFAULT_MISSIONS[name][1])
+        return presets[name, variant].subject(name)
+
+    def _winner(name: MissionName) -> str:
+        metric = DEFAULT_MISSIONS[name][1]
+        for variant in _study(name).points["airframe"].variants:
+            _preset(name, variant)
+        found = [p for (m, _), p in presets.items() if m == name]
+        verified = [p for p in found if p.basis == "verified"]
+        best = (
+            max(verified, key=lambda p: p.architecture.metrics[metric])
+            if verified
+            else min(
+                found,
+                key=lambda p: (len(p.architecture.violations), -p.architecture.metrics[metric]),
+            )
+        )
+        return best.architecture.selection["airframe"]
+
+    def _craft_qname(study: TradeStudy, variant: str) -> str:
+        usage = study._variant_usage("airframe", variant)
+        typed = study.interp.resolver.resolve(usage.types[0], usage.owner or study.assembly)
+        if not (isinstance(typed, M.Definition) and typed.qualified_name):
+            raise AnalysisError(f"airframe variant {variant!r} is not typed by a named definition")
+        return typed.qualified_name
+
+    def _bake(subject: Subject) -> dict[str, Any]:
+        """Everything the panes need for one subject (no widget writes)."""
+
+        study = _study(subject.mission)
+        architecture = study.evaluate(subject.mix(), subject.overrides)
+        # the instance carries the what-if overrides: the mesh and the camera
+        # read the same airframe the metrics and the requirements read
+        instance = study.instance(subject.mix(), subject.overrides)
+        airframe_slot = instance.get("airframe")
+        qname = _craft_qname(study, subject.airframe)
+        camera = _camera_slots(airframe_slot) if isinstance(airframe_slot, Instance) else None
+        raw = geometry.mission_geometry(study, architecture, instance=instance, camera=camera)
+        part_map = _shell_part_map(study.interp, qname, raw)
+        mesh = _with_camera(geometry.tag_parts(raw, part_map), camera)
+        try:
+            disc_overlap: float | None = geometry.disc_overlap(mesh, engine="mesh")
+        except AnalysisError:  # a shell mesh carries no rotor discs: unmeasured
+            disc_overlap = None
+        try:
+            tilt = mission3d.model_tilt(interp, qname)
+        except AnalysisError:  # no cruiseTilt: the shell flies level
+            tilt = 0.0
+        profile, wing = mission3d.model_flight(interp, qname)
+        return {
+            "architecture": architecture,
+            "requirements": requirement_set(instance, airframe_slot, interp=study.interp),
+            "craft": qname,
+            "mesh": mesh,
+            "part_map": part_map,
+            "camera": None if mesh.get("camera") is None else dict(mesh["camera"]),
+            "cone_length": 0.45 * geometry._bounds_diagonal(mesh),
+            "disc_overlap": disc_overlap,
+            "tilt": tilt,
+            "profile": profile,
+            "wing": wing,
+        }
+
+    def _subject_board(
+        requirements: Mapping[str, Instance], measured: Mapping[str, Any]
+    ) -> Scoreboard:
+        """The subject's requirement set, each scored for its own instance."""
+
+        targets = [
+            element
+            for qname in requirements
+            if isinstance(element := interp.resolve(qname), (M.Definition, M.Usage))
+        ]
+        return scoreboard(targets, values=measured, subjects=requirements)
+
+    if mission not in DEFAULT_MISSIONS:
+        raise AnalysisError(f"unknown mission {mission!r} (have: {sorted(DEFAULT_MISSIONS)})")
+    first = _preset(mission, airframe if airframe is not None else _winner(mission))
+    baked = _bake(first)
 
     # -- panes ---------------------------------------------------------------
     diagram = structure_diagram(model, height=f"{_ROW1_PX}px")
+    drawn = _diagram_node_ids(diagram)
+    tree_nodes, tree_index = _tree_data(model)
+    tree_ids = {id(element): node_id for node_id, element in tree_index.items()}
+    tree = ModelTree(tree_nodes)
     viewer = viewer3d.mesh_viewer(
-        mesh,
-        label=f"{assembly} -- one M0 interpretation",
-        width_px=_VIEWER_PX,
-        height_px=_ROW1_PX,
+        baked["mesh"],
+        label=f"{baked['craft']} -- the {mission} subject",
+        width_px=_PANE_MIN_PX,
+        height_px=_ROW1_PX - 46,  # the caption line still fits at _PANE_MAX_PX
     )
-    board_score = scoreboard(model, values={**base_values, "occludedFraction": 0.0})
-    board = board_score.widget("voronoi", width_px=_BOARD_PX, height_px=_ROW1_PX - 26, seed=42)
+    board_score = _subject_board(baked["requirements"], base_values)
+    board = board_score.widget("voronoi", width_px=_PANE_MIN_PX, height_px=_ROW1_PX - 26, seed=42)
     board_qnames = {row.qname for row in board_score.table()}
 
-    # -- OpenMDAO: the generated sizing problem + its optimization twin ------
-    build = mdao.build_problem(sizing_model, sizer, requirements=(station_requirement,))
-    build.problem.run_model()
-    optimum = mdao.build_problem(
-        sizing_model, sizer, setup=False, requirements=(station_requirement,)
-    )
-    mdao.add_optimization(
-        optimum, objective=station_var, design_vars={loiter_var: (11.0, 24.0)}, maximize=True
-    )
-    optimum.problem.setup()
-
-    # -- Z3: the design point's witness beside an impossible what-if ---------
-    smt_sat = smt.to_smt(sizing_model, sizer, requirements=(station_requirement,)).check()
-    what_if_system = smt.to_smt(
-        sizing_model, sizer, requirements=(station_requirement,), free=(loiter_var,)
-    )
-    what_if_label = f"{station_var} &ge; {what_if_station:g} (what-if)"
-    what_if_system.assertions.append(
-        (what_if_label, what_if_system.variables[station_var] >= float(what_if_station))
-    )
-    smt_what_if = what_if_system.check()
-
     # -- Cesium: the state machine's recorded execution over the route -------
-    # the cruise attitude comes FROM THE MODEL where it carries one (the
-    # drone example's cruiseTilt calc); a model without the physics still
-    # flies, props level
-    interp = Interpreter(model)
-    try:
-        tilt_deg = mission3d.model_tilt(interp, assembly)
-    except AnalysisError:
-        tilt_deg = 0.0
-    track = mission3d.from_replay(
-        interp,
-        states,
-        list(events),
-        waypoints=waypoints,
-        ground_alt=ground_alt,
-        tilt_deg=tilt_deg,
-    )
-    mission = mission3d_widget.mission_viewer(
-        track,
-        mesh=mesh,
-        label=f"{states} replay -- the drone's own geometry over {imagery} imagery",
+    # FlightStates and the route are shared by every mission (no mission
+    # declares its own): one recording; the subject supplies the geometry,
+    # the tilt and the flight profile
+    timeline = record_timeline(interp, states, list(events))
+
+    def _track(pieces: dict[str, Any]) -> mission3d.MissionTrack:
+        return mission3d.track_from_timeline(
+            timeline,
+            waypoints=waypoints,
+            ground_alt=ground_alt,
+            tilt_deg=pieces["tilt"],
+            profile=pieces["profile"],
+            wing=pieces["wing"],
+            name=states.rsplit("::", 1)[-1],  # the machine's own name
+        )
+
+    flight = mission3d_widget.mission_viewer(
+        _track(baked),
+        mesh=baked["mesh"],
+        label=f"{states} replay -- the subject's own geometry over {imagery} imagery",
         height_px=_MISSION_PX,
         imagery=imagery,
     )
@@ -673,10 +1391,19 @@ def grand_dashboard(
         "style": {"description_width": "62px"},
         "layout": widgets.Layout(width="98%"),
     }
+    camera0 = baked["camera"] or {"elevation": 0.0, "azimuth": 0.0}
+    # the camera bounds are the case's assume constraints, mined from the model
+    case = interp.resolve(camera_case)
+    if not isinstance(case, (M.Definition, M.Usage)):
+        raise AnalysisError(f"camera case {camera_case!r} is not a definition")
+    angles = attribute_domains(interp, case, ("elevation", "azimuth"))
+    for name, dom in angles.items():
+        if dom.lo is None or dom.hi is None:
+            raise AnalysisError(f"{camera_case} bounds {name} on fewer than two sides")
     elevation = widgets.FloatSlider(
         value=camera0["elevation"],
-        min=-90.0,
-        max=90.0,
+        min=angles["elevation"].lo,
+        max=angles["elevation"].hi,
         step=5.0,
         description="elevation",
         readout_format=".0f",
@@ -684,82 +1411,397 @@ def grand_dashboard(
     )
     azimuth = widgets.FloatSlider(
         value=camera0["azimuth"],
-        min=-180.0,
-        max=180.0,
+        min=angles["azimuth"].lo,
+        max=angles["azimuth"].hi,
         step=15.0,
         description="azimuth",
         readout_format=".0f",
         **slider_kw,
     )
-    loiter = widgets.FloatSlider(
-        value=float(build.problem.get_val(loiter_var)[0]),
-        min=11.0,
-        max=24.0,
-        step=0.5,
-        description="loiter m/s",
-        readout_format=".1f",
-        **slider_kw,
-    )
-    optimize = widgets.Button(
-        description="maximize station time",
-        tooltip="run the OpenMDAO driver and snap the slider to the optimum",
+    mission_toggle = widgets.ToggleButtons(
+        options=list(DEFAULT_MISSIONS),
+        value=mission,
+        style={"button_width": "74px"},
         layout=widgets.Layout(width="98%"),
     )
     readout = widgets.HTML()
-    sizing_card = widgets.HTML()
+    subject_card = widgets.HTML()
+    knob_grid = widgets.GridBox(
+        layout=widgets.Layout(width="98%", grid_template_columns="1fr 1fr", grid_gap="0 6px")
+    )
+    knob_sliders = widgets.VBox(layout=widgets.Layout(width="100%"))
     header = widgets.HTML()
 
     box = widgets.VBox()
     box.report = {}
     box.scoreboard = board_score
+    box.studies = studies
+    box.knobs = {}
+    live: dict[str, Any] = {"score": board_score.score, "occluded": None}
+    sync = {"knobs": False, "camera": False}  # programmatic writes, not user moves
+
+    def _install(subject: Subject, pieces: dict[str, Any]) -> None:
+        box.subject = subject
+        box.architecture = pieces["architecture"]
+        box.craft = pieces["craft"]
+        box.mesh = pieces["mesh"]
+        box.part_map = dict(pieces["part_map"])
+        box.camera = None if pieces["camera"] is None else dict(pieces["camera"])
+        box.requirements = dict(pieces["requirements"])
+        live["cone_length"] = pieces["cone_length"]
+        live["disc_overlap"] = pieces["disc_overlap"]
+        box.track = _track(pieces)
+        subject_card.value = _architecture_html(
+            pieces["architecture"], DEFAULT_MISSIONS[subject.mission][1]
+        )
 
     # -- wiring ---------------------------------------------------------------
-    def _repaint_board(occluded: float) -> None:
-        merged = {
-            **base_values,
-            "occludedFraction": occluded,
-            "discOverlapVolume": disc_overlap,
-        }
-        score = scoreboard(model, values=merged)
+    def _refresh_header() -> None:
+        visiting = binding.current if binding.current != box.craft else None
+        header.value = _header_html(box.subject, live["score"], live["occluded"], visiting=visiting)
+
+    def _repaint_board(occluded: float | None) -> None:
+        merged = dict(base_values)
+        if occluded is not None:
+            merged["occludedFraction"] = occluded
+        if live["disc_overlap"] is not None:
+            merged["discOverlapVolume"] = live["disc_overlap"]
+        score = _subject_board(box.requirements, merged)
         box.scoreboard = score
+        board_qnames.clear()
+        board_qnames.update(row.qname for row in score.table())
         payload = json.dumps(score.payload())
         if board.nodes_json != payload:
             board.nodes_json = payload
-        header.value = _header_html(assembly, score.score, occluded)
+        live["score"], live["occluded"] = score.score, occluded
+        _refresh_header()
 
-    def _camera_now() -> dict[str, float]:
-        return {
-            **camera0,
-            "elevation": float(elevation.value),
-            "azimuth": float(azimuth.value),
-        }
+    def _camera_now() -> dict[str, float] | None:
+        if box.camera is None:
+            return None
+        return {**box.camera, "elevation": float(elevation.value), "azimuth": float(azimuth.value)}
 
     def _cone_scene(base: dict[str, Any]) -> dict[str, Any]:
-        cone = view_cone_part(_camera_now(), length=cone_length)
+        camera = _camera_now()
+        if camera is None:
+            return base
+        cone = view_cone_part(camera, length=live["cone_length"])
         return {**base, "parts": [*base["parts"], cone]}
 
-    def _on_camera(_change: Any = None) -> None:
+    def _on_camera(_change: Any = None, *, refit: bool = False) -> None:
+        """Re-measure the occlusion; ``refit`` re-frames the 3D pane on the new scene."""
+
+        if sync["camera"]:
+            return
         camera = _camera_now()
-        report = geometry.occlusion_report(mesh, camera=camera, engine="mesh")
-        box.report = report
-        readout.value = _occlusion_html(report)
-        if binding.current == assembly:  # the pane may be showing another craft
-            viewer.mesh_json = json.dumps(_cone_scene(mesh))
-            offenders = sorted(part_map.get(name, name) for name in report["obstructions"])
+        # the onboard view of the Cesium pane looks through the same camera
+        flight.onboard_camera = (
+            flight.trait_defaults("onboard_camera") if camera is None else camera
+        )
+        offenders: list[str] = []
+        if camera is None:
+            box.report = {}
+            readout.value = f'<div style="color:{_DIM}">{box.craft} declares no camera</div>'
+            occluded = None
+        else:
+            report = geometry.occlusion_report(box.mesh, camera=camera, engine="mesh")
+            box.report = report
+            readout.value = _occlusion_html(report)
+            occluded = float(report["occludedFraction"])
+            offenders = sorted(box.part_map.get(name, name) for name in report["obstructions"])
+        if binding.current == box.craft:  # the pane may be showing a visiting craft
+            # a what-if scene keeps the camera; the binding's visits re-fit (the default)
+            viewer.refit_on_rebuild = refit
+            try:
+                viewer.mesh_json = json.dumps(_cone_scene(box.mesh))
+            finally:
+                viewer.refit_on_rebuild = True
             viewer.highlight_json = json.dumps(offenders)
-        _repaint_board(float(report["occludedFraction"]))
+        _repaint_board(occluded)
 
-    def _on_loiter(_change: Any = None) -> None:
-        build.problem.set_val(loiter_var, float(loiter.value))
+    def _render_knobs() -> None:
+        """Rebuild the knob widgets for the subject's mission and airframe."""
+
+        subject = box.subject
+        study = _study(subject.mission)
+        knob_set = derive_knobs(
+            study.interp,
+            study.assembly,
+            study=study,
+            selection=subject.mix(),
+            metric=DEFAULT_MISSIONS[subject.mission][1],
+        )
+        box.knob_set = knob_set
+        made: dict[str, Any] = {}
+        for dropdown in knob_set.dropdowns:
+            widget = widgets.Dropdown(
+                options=list(dropdown.variants),
+                value=dropdown.selected,
+                description=dropdown.point,
+                style={"description_width": "56px"},
+                layout=widgets.Layout(width="auto"),
+            )
+            widget.observe(_dropdown_observer(dropdown.point), names="value")
+            made[dropdown.point] = widget
+        sliders = []
+        for knob in knob_set.sliders:
+            widget = widgets.FloatSlider(
+                value=subject.overrides.get(knob.name, knob.value),
+                min=knob.low,
+                max=knob.high,
+                step=knob.step,
+                description=knob.name.split(".")[-1],
+                readout_format=f".{max(0, -floor(log10(knob.step)))}f",
+                continuous_update=True,
+                style={"description_width": "116px"},
+                layout=widgets.Layout(width="98%"),
+            )
+            widget.observe(_slider_observer(knob.name), names="value")
+            made[knob.name] = widget
+            sliders.append(widget)
+        box.knobs = made
+        knob_grid.children = [made[d.point] for d in knob_set.dropdowns]
+        knob_sliders.children = sliders
+
+    def _dropdown_observer(point: str) -> Any:
+        def _observe(change: Any) -> None:
+            if sync["knobs"]:
+                return
+            subject = box.subject
+            _set_subject(replace(subject, selection={**subject.selection, point: change["new"]}))
+
+        return _observe
+
+    def _slider_observer(name: str) -> Any:
+        def _observe(change: Any) -> None:
+            if sync["knobs"]:
+                return
+            subject = box.subject
+            overrides = {**subject.overrides, name: float(change["new"])}
+            _set_subject(replace(subject, overrides=overrides))
+
+        return _observe
+
+    def _set_subject(subject: Subject) -> None:
+        """Make ``subject`` the tour's subject and repaint every pane that follows it."""
+
+        old_subject, old_craft, shown = box.subject, box.craft, binding.current
+        _install(subject, _bake(subject))
+        # the bake cache holds the old subject scene under its craft name
+        binding.scenes.pop(old_craft, None)
+        binding.scenes[box.craft] = (box.mesh, box.part_map)
+        binding.current = box.craft
+        viewer.label = f"{box.craft} -- the {subject.mission} subject"
+        flight.czml_json = json.dumps(box.track.to_czml(mesh=box.mesh))
+        if (subject.mission, subject.airframe) != (old_subject.mission, old_subject.airframe):
+            sync["knobs"] = True
+            try:
+                if mission_toggle.value != subject.mission:
+                    mission_toggle.value = subject.mission
+                _render_knobs()
+            finally:
+                sync["knobs"] = False
+            if subject.mission != old_subject.mission:
+                _show_strips(subject.mission)
+            if box.camera is not None:  # the new craft's declared camera angles
+                sync["camera"] = True
+                try:
+                    elevation.value = box.camera["elevation"]
+                    azimuth.value = box.camera["azimuth"]
+                finally:
+                    sync["camera"] = False
+        _on_camera(refit=shown != box.craft)  # the pane showed another craft: re-frame
+
+    def _on_mission(change: Any) -> None:
+        if sync["knobs"]:
+            return
+        name = cast(MissionName, change["new"])
+        # the airframe stays; its preset for the new mission fills the rest
+        _set_subject(_preset(name, box.subject.airframe))
+
+    def _on_craft(elements: list[M.Element]) -> None:
+        """A catalog craft click fills the airframe; any other craft only visits."""
+
+        if not elements:
+            return
+        study = _study(box.subject.mission)
+        variant = craft_variant(study, elements[0])
+        if variant is None:
+            config = link.owning_config(model, elements[0])
+            variant = craft_variant(study, config) if config is not None else None
+        if variant is not None and variant != box.subject.airframe:
+            subject = _preset(box.subject.mission, variant)
+            plain = {k: v for k, v in box.subject.overrides.items() if "." not in k}
+            _set_subject(replace(subject, overrides=plain))
+
+    # -- the sizing and Z3 strips: one sizing context per mission ----------
+    sizing_interp = Interpreter(sizing_model)
+    strips: dict[str, dict[str, Any] | None] = {}
+
+    def _build_strip(sizer: str, requirement: str, station_var: str) -> dict[str, Any]:
+        """The OpenMDAO problem, its optimization twin, and the Z3 cards of one context."""
+
+        context = sizing_interp.resolve(sizer)
+        if not isinstance(context, (M.Definition, M.Usage)):
+            raise AnalysisError(f"sizing context {sizer!r} is not a definition")
+        knob = next(
+            (k for k in derive_knobs(sizing_interp, context).sliders if k.name == loiter_var), None
+        )
+        if knob is None:
+            raise AnalysisError(
+                f"{sizer} bounds no input attribute {loiter_var!r} on both sides "
+                "(the loiter slider and the optimizer take their bounds from the model)"
+            )
+        build = mdao.build_problem(sizing_model, sizer, requirements=(requirement,))
         build.problem.run_model()
-        sizing_card.value = _sizing_html(build.problem, station_var, build.constraints)
+        optimum = mdao.build_problem(sizing_model, sizer, setup=False, requirements=(requirement,))
+        mdao.add_optimization(
+            optimum,
+            objective=station_var,
+            design_vars={loiter_var: (knob.low, knob.high)},
+            maximize=True,
+        )
+        optimum.problem.setup()
+        bounds = mdao.optimization_bounds(optimum)
+        runs: list[mdao.OptimizationHistory] = []  # one per maximize click
+        smt_sat = smt.to_smt(sizing_model, sizer, requirements=(requirement,)).check()
+        what_if_system = smt.to_smt(
+            sizing_model, sizer, requirements=(requirement,), free=(loiter_var,)
+        )
+        what_if_label = f"{station_var} &ge; {what_if_station:g} (what-if)"
+        what_if_system.assertions.append(
+            (what_if_label, what_if_system.variables[station_var] >= float(what_if_station))
+        )
+        smt_what_if = what_if_system.check()
+        loiter = widgets.FloatSlider(
+            value=float(build.problem.get_val(loiter_var)[0]),
+            min=knob.low,
+            max=knob.high,
+            step=knob.step,
+            description="loiter m/s",
+            readout_format=".1f",
+            **slider_kw,
+        )
+        optimize = widgets.Button(
+            description="maximize station time",
+            tooltip="run the OpenMDAO driver and snap the slider to the optimum",
+            layout=widgets.Layout(width="98%"),
+        )
+        sizing_card = widgets.HTML()
+        sizing_history = widgets.HTML(_history_html(None))
+        sizing_table = widgets.HTML()
+        sizing_n2 = widgets.HTML(_n2_html(mdao.problem_structure(build)))
+        verdicts = widgets.HTML(
+            _verdict_html(
+                f"{requirement.split('::')[-1]} at the design point",
+                smt_sat,
+                "".join(
+                    _stat(path, f"{smt_sat.witness[path]:.1f}")
+                    for path in (loiter_var, station_var)
+                    if path in smt_sat.witness
+                ),
+            )
+            + _verdict_html(
+                what_if_label,
+                smt_what_if,
+                "".join(
+                    f'<div style="color:{_BAD}; {_NUM}">&#10007; {name}</div>'
+                    for name in smt_what_if.core
+                    if not name.endswith(".value")
+                )
+                or f'<div style="color:{_DIM}">no conflict core</div>',
+            )
+        )
 
-    def _on_optimize(_button: Any = None) -> None:
-        with redirect_stdout(io.StringIO()):  # the scipy driver prints its epilogue
-            optimum.problem.set_val(loiter_var, float(loiter.value))
-            optimum.problem.run_driver()
-        loiter.value = round(float(optimum.problem.get_val(loiter_var)[0]), 2)
-        _on_loiter()  # a no-op change (already-optimal slider) still repaints
+        def _on_loiter(_change: Any = None) -> None:
+            build.problem.set_val(loiter_var, float(loiter.value))
+            build.problem.run_model()
+            sizing_card.value = _sizing_html(build.problem, station_var, build.constraints)
+            sizing_table.value = _driver_table_html(
+                build.problem, bounds, build.constraints, runs[-1] if runs else None
+            )
+
+        def _on_optimize(_button: Any = None) -> None:
+            with redirect_stdout(io.StringIO()):  # the scipy driver prints its epilogue
+                optimum.problem.set_val(loiter_var, float(loiter.value))
+                runs.append(mdao.run_optimization(optimum))
+            sizing_history.value = _history_html(runs[-1])
+            loiter.value = round(runs[-1].design_vars[loiter_var][-1], 2)
+            _on_loiter()  # a no-op change (already-optimal slider) still repaints
+
+        loiter.observe(_on_loiter, names="value")
+        optimize.on_click(_on_optimize)
+        _on_loiter()
+        return {
+            "sizer": sizer,
+            "requirement": requirement,
+            "problem": build,
+            "optimum": optimum,
+            "smt_sat": smt_sat,
+            "smt_what_if": smt_what_if,
+            "loiter": loiter,
+            "optimize": optimize,
+            "sizing_card": sizing_card,
+            "sizing_history": sizing_history,
+            "sizing_table": sizing_table,
+            "sizing_n2": sizing_n2,
+            "verdicts": verdicts,
+        }
+
+    sizing_title = widgets.HTML()
+    verdict_title = widgets.HTML()
+    sizing_body = widgets.VBox(layout=widgets.Layout(width="100%"))
+    verdict_body = widgets.VBox(layout=widgets.Layout(width="100%"))
+
+    def _show_strips(name: MissionName) -> None:
+        """Show the sizing context of mission ``name``, built on first use."""
+
+        if name not in strips:
+            entry = sizing_contexts.get(name)
+            strips[name] = None if entry is None else _build_strip(*entry)
+        strip = strips[name]
+        for attr in (
+            "loiter",
+            "optimize",
+            "problem",
+            "optimum",
+            "sizing_card",
+            "sizing_history",
+            "sizing_table",
+            "sizing_n2",
+            "smt_sat",
+            "smt_what_if",
+            "verdicts",
+        ):
+            setattr(box, attr, None if strip is None else strip[attr])
+        if strip is None:
+            absent = _absence_html(
+                f"no sizing context for {name}",
+                f"The model declares no frozen sizing context for the {name} mission.",
+            )
+            sizing_title.value = _strip_title(f"OpenMDAO sizing -- no context for {name}")
+            verdict_title.value = _strip_title(
+                f"Z3 requirement consistency -- no context for {name}"
+            )
+            sizing_body.children = [widgets.HTML(absent)]
+            verdict_body.children = [widgets.HTML(absent)]
+            return
+        sizing_title.value = _strip_title(
+            f"OpenMDAO sizing -- {strip['sizer']}, the {name} context"
+        )
+        verdict_title.value = _strip_title(f"Z3 requirement consistency -- {strip['requirement']}")
+        sizing_body.children = [
+            strip[key]
+            for key in (
+                "loiter",
+                "sizing_card",
+                "optimize",
+                "sizing_history",
+                "sizing_table",
+                "sizing_n2",
+            )
+        ]
+        verdict_body.children = [strip["verdicts"]]
 
     syncing = {"active": False}  # reentrancy guard: diagram <-> scoreboard
 
@@ -789,126 +1831,182 @@ def grand_dashboard(
         finally:
             syncing["active"] = False
 
-    # the config-keyed 3D pane: any craft clicked in the diagram renders
-    # in the viewer (scene_for bakes it); the home assembly keeps its
-    # camera-what-if view cone through the decorate hook
+    # tree <-> diagram has its own guard: a tree-originated diagram write
+    # must still reach the scoreboard through _on_diagram
+    tree_sync = {"active": False}
+
+    def _on_tree(ids: list[str]) -> None:
+        if tree_sync["active"] or not ids:
+            return
+        element = tree_index.get(ids[0])
+        if element is None:
+            return
+        qname = _nearest_drawn(element, drawn)
+        want = [qname] if qname is not None else []
+        if list(diagram.view.selection.ids) != want:
+            tree_sync["active"] = True
+            try:
+                diagram.view.selection.ids = want
+            finally:
+                tree_sync["active"] = False
+
+    def _diagram_to_tree(elements: list[M.Element]) -> None:
+        if tree_sync["active"] or not elements:
+            return  # the echo of a tree selection stops here
+        node_id = _nearest_tree_id(elements[0], tree_ids)
+        if node_id is None or list(tree.selected) == [node_id]:
+            return
+        tree_sync["active"] = True
+        try:
+            tree.selected = [node_id]
+        finally:
+            tree_sync["active"] = False
+        tree.reveal(node_id)
+
+    def _scene(_model: M.Model, qname: str) -> tuple[dict[str, Any], dict[str, str]]:
+        if qname == box.craft:  # the subject craft bakes with its mix
+            return box.mesh, box.part_map
+        return scene_for(model, qname, interpreter=interp)
+
+    from ..diagrams import on_select
+
+    # a craft click changes the subject BEFORE the binding resolves the
+    # click, so the binding finds the new subject scene already showing
+    on_select(diagram, model, _on_craft)
+    _install(first, baked)
     binding = link.bind_config_view(
         diagram,
         viewer,
         model,
-        showing=assembly,
-        decorate=lambda qname, scene: _cone_scene(scene) if qname == assembly else scene,
+        showing=box.craft,
+        scene=_scene,
+        decorate=lambda qname, scene: _cone_scene(scene) if qname == box.craft else scene,
     )
-    from ..diagrams import on_select
-
     on_select(diagram, model, _on_diagram)
+    on_select(diagram, model, _diagram_to_tree)
+    on_select(diagram, model, lambda _elements: _refresh_header())  # visiting or not
+    tree.on_select(_on_tree)
     board.on_select(_on_board)
     elevation.observe(_on_camera, names="value")
     azimuth.observe(_on_camera, names="value")
-    loiter.observe(_on_loiter, names="value")
-    optimize.on_click(_on_optimize)
+    mission_toggle.observe(_on_mission, names="value")
+    _render_knobs()
 
     # -- layout ---------------------------------------------------------------
     # Sizing discipline (the diagram-beside-3D lesson, re-learned in
     # evidence capture):
     # anywidget roots are flex items with min-width:auto, so a wrapper Box
     # does NOT constrain them -- the canvas grows toward the notebook width
-    # and the visible pane clips its empty corner.  Pin width/flex on each
-    # widget's OWN layout instead.
-    viewer.layout = widgets.Layout(width=f"{_VIEWER_PX}px", flex="0 0 auto")
-    board.layout = widgets.Layout(width=f"{_BOARD_PX}px", flex="0 0 auto")
+    # and the visible pane clips its empty corner.  Pin flex and an explicit
+    # min-width on each widget's OWN layout instead.  The tree is fixed.  The
+    # others share the rest from a zero basis (the 3D canvas and the
+    # scoreboard SVG follow their pane's width), and the diagram takes what
+    # the side panes' maximum leaves.  The diagram's floor is lower than the
+    # side panes', so in a narrow output area it gives way first, down to
+    # its own floor.
+    tree.layout = widgets.Layout(width=f"{_TREE_PX}px", height=f"{_ROW1_PX}px", flex="0 0 auto")
+    side = {
+        "width": "auto",
+        "flex": "1 1 0",
+        "min_width": f"{_PANE_MIN_PX}px",
+        "max_width": f"{_PANE_MAX_PX}px",
+        "overflow": "hidden",
+    }
+    viewer.layout = widgets.Layout(**side)
+    board.layout = widgets.Layout(**side)
     diagram.layout.width = "auto"
-    diagram.layout.flex = "1 1 auto"
-    diagram.layout.min_width = "0"
+    diagram.layout.flex = "2 1 0"
+    diagram.layout.min_width = "240px"
     diagram.layout.overflow = "hidden"
-    mission.layout = widgets.Layout(width="100%")
+    flight.layout = widgets.Layout(width="100%")
     row1 = widgets.HBox(
-        [diagram, viewer, board],
+        [tree, diagram, viewer, board],
         layout=widgets.Layout(
             width="100%", height=f"{_ROW1_PX + 8}px", align_items="stretch", overflow="hidden"
         ),
     )
 
-    def _strip_card(title: str, children: list[Any]) -> Any:
-        titled = widgets.HTML(f'<div style="{_TITLE_STYLE}">{title}</div>')
+    def _strip_card(title: Any, children: list[Any], *, flex: str = "1 1 0") -> Any:
+        titled = widgets.HTML(_strip_title(title)) if isinstance(title, str) else title
+        for child in (titled, *children):  # natural height: the card scrolls, no child shrinks
+            child.layout.flex = "0 0 auto"
         card = widgets.VBox(
             [titled, *children],
             layout=widgets.Layout(
-                flex="1 1 0",
+                flex=flex,
                 min_width="0",
                 height=f"{_STRIP_PX}px",
-                overflow="hidden",
+                overflow="hidden auto",  # x clips, y scrolls (a tall knob card)
             ),
         )
         card.add_class("lgn-grand-card")
         return card
 
-    verdicts = widgets.HTML(
-        _verdict_html(
-            f"{station_requirement.split('::')[-1]} at the design point",
-            smt_sat,
-            "".join(
-                _stat(path, f"{smt_sat.witness[path]:.1f}")
-                for path in (loiter_var, station_var)
-                if path in smt_sat.witness
-            ),
-        )
-        + _verdict_html(
-            what_if_label,
-            smt_what_if,
-            "".join(
-                f'<div style="color:{_BAD}; {_NUM}">&#10007; {name}</div>'
-                for name in smt_what_if.core
-                if not name.endswith(".value")
-            )
-            or f'<div style="color:{_DIM}">no conflict core</div>',
-        )
+    subject_pane, camera_pane, sizing_pane, verdict_pane = (
+        _strip_card(
+            "subject (mission, knobs)",
+            [mission_toggle, subject_card, knob_grid, knob_sliders],
+            flex="1.6 1 0",
+        ),
+        _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
+        _strip_card(sizing_title, [sizing_body]),
+        _strip_card(verdict_title, [verdict_body]),
     )
     row2 = widgets.HBox(
-        [
-            _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
-            _strip_card(
-                f"OpenMDAO sizing -- {sizer.split('::')[-1]}", [loiter, sizing_card, optimize]
-            ),
-            _strip_card("Z3 requirement consistency", [verdicts]),
-        ],
+        [subject_pane, camera_pane, sizing_pane, verdict_pane],
         layout=widgets.Layout(width="100%", align_items="stretch", overflow="hidden"),
     )
 
-    box.children = [
-        widgets.HTML(_GRAND_CSS, layout=widgets.Layout(display="none")),
-        header,
-        row1,
-        row2,
-        mission,
-    ]
+    style = widgets.HTML(_GRAND_CSS, layout=widgets.Layout(display="none"))
+    box.children = [style, header, row1, row2, flight]
     box.layout = widgets.Layout(width="100%")
+
+    # docked, a pane fills its panel's width.  The tree, the diagram and the
+    # cards also fill its height; the 3D pane, the scoreboard and the Cesium
+    # stage keep their own aspect or height, and the panel scrolls
+    fill = {"width": "100%", "height": "100%", "flex": "1 1 auto", "min_width": "0"}
+    wide = {"width": "100%", "flex": "0 0 auto", "overflow": "hidden"}
+    card = {**fill, "overflow": "hidden auto"}
+    grand_dock = GrandDock(
+        box,
+        {
+            "tree": ((tree, fill),),
+            "structure": ((diagram, {**fill, "overflow": "hidden"}),),
+            "3d": ((viewer, wide),),
+            "scoreboard": ((board, wide),),
+            "subject": ((header, None), (subject_pane, card)),
+            "camera": ((camera_pane, card),),
+            "sizing": ((sizing_pane, card),),
+            "z3": ((verdict_pane, card),),
+            "mission": ((flight, {"width": "100%"}),),
+        },
+        style=style,
+    )
 
     # -- the automation/testing surface ---------------------------------------
     box.diagram = diagram
+    box.tree = tree
     box.viewer = viewer
     box.board = board
-    box.mission = mission
-    box.track = track
+    box.mission = flight
+    box.mission_toggle = mission_toggle
+    box.subject_card = subject_card
     box.header = header
     box.readout = readout
-    box.sizing_card = sizing_card
-    box.verdicts = verdicts
+    box.sizing_title = sizing_title
+    box.verdict_title = verdict_title
+    box.sizing_contexts = dict(sizing_contexts)
     box.elevation = elevation
     box.azimuth = azimuth
-    box.loiter = loiter
-    box.optimize = optimize
-    box.problem = build
-    box.optimum = optimum
-    box.smt_sat = smt_sat
-    box.smt_what_if = smt_what_if
-    box.mesh = mesh
-    box.part_map = dict(part_map)
-    box.camera = dict(camera0)
     box.values = base_values
     box.config_view = binding
     box.unlink = binding.unbind
+    box.dock = grand_dock.dock
+    box.undock = grand_dock.undock
+    box.panels = grand_dock.panels
 
+    _show_strips(first.mission)
     _on_camera()
-    _on_loiter()
+    if dock:
+        grand_dock.dock()
     return box

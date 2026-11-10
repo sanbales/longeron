@@ -94,6 +94,9 @@ import hashlib
 import importlib
 import pickle
 import re
+import shutil
+import tempfile
+import weakref
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from itertools import product
@@ -123,7 +126,9 @@ if TYPE_CHECKING:
 __all__ = [
     "Fidelity",
     "FileArtifact",
+    "OptimizationHistory",
     "ProblemBuild",
+    "ProblemStructure",
     "add_optimization",
     "apply_flows",
     "artifact_component",
@@ -135,7 +140,10 @@ __all__ = [
     "entity_cases",
     "external_binding",
     "file_artifact",
+    "optimization_bounds",
+    "problem_structure",
     "record_case",
+    "run_optimization",
     "write_artifact",
 ]
 
@@ -171,6 +179,10 @@ class ProblemBuild:
     #: the case being evaluated (``None`` until :func:`record_case` or a
     #: variation point asks -- the design's lazy implicit interpretation)
     interpretation: Interpretation | None = None
+    #: the driver's recorder file (:func:`add_optimization`); ``None`` before
+    recording: Path | None = None
+    #: completed :func:`run_optimization` calls (each one's case prefix)
+    driver_runs: int = 0
     _interp: Interpreter | None = field(default=None, repr=False)
     _target: Any = field(default=None, repr=False)  # M.Definition | M.Usage
 
@@ -1276,7 +1288,14 @@ def add_optimization(
     maximize: bool = False,
     constraints: tuple[str, ...] | None = None,
 ) -> None:
-    """Configure SLSQP over margin constraints; call before ``setup()``."""
+    """Configure SLSQP over margin constraints; call before ``setup()``.
+
+    The driver gets an ``om.SqliteRecorder`` that records the design
+    variables, the objective and the constraints of each driver iteration
+    into a file in a private temporary directory.  The directory goes away
+    with the build.  :func:`run_optimization` runs the driver and reads
+    the recorded iterations back as an :class:`OptimizationHistory`.
+    """
 
     om = _om()
     prob = build.problem
@@ -1289,6 +1308,185 @@ def add_optimization(
     )
     for margin_var in names.values():
         prob.model.add_constraint(margin_var, lower=0.0)
+    folder = tempfile.mkdtemp(prefix="longeron-driver-")
+    weakref.finalize(build, shutil.rmtree, folder, ignore_errors=True)
+    build.recording = Path(folder) / "driver.sql"
+    # viewer data is the N2 payload: problem_structure reads the structure instead
+    prob.driver.add_recorder(om.SqliteRecorder(str(build.recording), record_viewer_data=False))
+
+
+#: a bound of a design variable or a constraint: ``None`` = unbounded side
+Bound = tuple[float | None, float | None]
+
+
+@dataclass(frozen=True)
+class OptimizationHistory:
+    """One driver run of :func:`run_optimization`, iteration by iteration.
+
+    A **driver iteration** is one model evaluation that the driver records
+    (OpenMDAO's ``driver.iter_count``).  An optimizer can evaluate the
+    model more than once per optimizer step, so two consecutive iterations
+    can hold the same point.  The constraint keys are the model's own constraint names
+    (the keys of :attr:`ProblemBuild.constraints`).  The constraint values
+    are the margins, so each constraint has the lower bound 0.
+    """
+
+    objective: str
+    maximize: bool
+    #: the driver's own verdict (``DriverResult.success``)
+    converged: bool
+    objectives: tuple[float, ...]
+    design_vars: Mapping[str, tuple[float, ...]]
+    constraints: Mapping[str, tuple[float, ...]]
+    #: design variable or constraint name -> ``(lower, upper)``
+    bounds: Mapping[str, Bound]
+
+    @property
+    def iterations(self) -> int:
+        return len(self.objectives)
+
+    def active_constraints(self, tol: float = 1e-6) -> tuple[str, ...]:
+        """The design variables and constraints at a bound in the last iteration.
+
+        A value is at a bound when it lies within ``tol`` of the bound,
+        relative to the size of the bound when that size is above 1.
+        """
+
+        final = {name: values[-1] for name, values in self.design_vars.items()}
+        final |= {name: values[-1] for name, values in self.constraints.items()}
+        return tuple(
+            name
+            for name, value in final.items()
+            if any(
+                bound is not None and abs(value - bound) <= tol * max(1.0, abs(bound))
+                for bound in self.bounds[name]
+            )
+        )
+
+
+def optimization_bounds(build: ProblemBuild) -> dict[str, Bound]:
+    """The bounds of the driver's design variables and constraints, unscaled.
+
+    Keys are the design variable names and the model constraint names, in
+    that order.  Call after ``setup()`` of a build that
+    :func:`add_optimization` configured.
+    """
+
+    from openmdao.core.constants import INF_BOUND
+
+    model = build.problem.model
+    names = {margin: name for name, margin in build.constraints.items()}
+
+    def unscaled(meta: Mapping[str, Any]) -> Bound:
+        # the driver stores scaled bounds: physical = scaled / scaler - adder
+        lower, upper = (
+            None
+            if abs(meta[side]) >= INF_BOUND
+            else float(meta[side]) / meta["total_scaler"] - meta["total_adder"]
+            for side in ("lower", "upper")
+        )
+        return lower, upper
+
+    bounds = {name: unscaled(meta) for name, meta in model.get_design_vars(get_sizes=False).items()}
+    bounds |= {
+        names[name]: unscaled(meta) for name, meta in model.get_constraints(get_sizes=False).items()
+    }
+    return bounds
+
+
+def run_optimization(build: ProblemBuild) -> OptimizationHistory:
+    """Run the driver from the current point and return its iteration history.
+
+    The build must come from :func:`add_optimization` and ``setup()``.  Each
+    call records one driver run under its own case prefix (``run1``,
+    ``run2``, ...), and the history holds that run only.  The history
+    comes back through the documented case-reader API of OpenMDAO:
+    ``om.CaseReader`` over the recorder file, ``get_cases("driver")``, and
+    ``Case.get_objectives()``, ``get_design_vars()`` and
+    ``get_constraints()``.
+    """
+
+    if build.recording is None:
+        raise AnalysisError("run_optimization needs a build configured by add_optimization")
+    om = _om()
+    prob = build.problem
+    build.driver_runs += 1
+    prefix = f"run{build.driver_runs}"
+    converged = bool(prob.run_driver(case_prefix=prefix).success)
+    cases = [
+        case
+        for case in om.CaseReader(str(build.recording)).get_cases("driver", recurse=False)
+        if case.name.startswith(f"{prefix}_")
+    ]
+    names = {margin: name for name, margin in build.constraints.items()}
+    (objective, meta), *_ = prob.model.get_objectives().items()
+    return OptimizationHistory(
+        objective=objective,
+        maximize=meta["total_scaler"] < 0.0,
+        converged=converged,
+        objectives=tuple(float(case.get_objectives()[objective][0]) for case in cases),
+        design_vars={
+            name: tuple(float(case.get_design_vars()[name][0]) for case in cases)
+            for name in prob.model.get_design_vars()
+        },
+        constraints={
+            names[margin]: tuple(float(case.get_constraints()[margin][0]) for case in cases)
+            for margin in prob.model.get_constraints()
+        },
+        bounds=optimization_bounds(build),
+    )
+
+
+# ---------------------------------------------------------------------------
+# problem structure (the N2 data: components and their connections)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProblemStructure:
+    """The components of a set-up ``Problem`` and the connections between them.
+
+    Component paths are OpenMDAO pathnames in execution order, so a
+    connection to a later component feeds forward and a connection to an
+    earlier one feeds back.  A connection is ``(source, target)``: the
+    absolute name of an output and the absolute name of the input it
+    feeds.
+    """
+
+    components: tuple[str, ...]
+    inputs: Mapping[str, tuple[str, ...]]
+    outputs: Mapping[str, tuple[str, ...]]
+    connections: tuple[tuple[str, str], ...]
+
+
+def problem_structure(build: ProblemBuild) -> ProblemStructure:
+    """The components, their variables and the connections of a set-up build.
+
+    Reads the set-up problem through public OpenMDAO calls
+    (``System.system_iter``, ``get_io_metadata``, ``get_source``), so the
+    structure is the one that OpenMDAO runs, after its own automatic
+    ordering of each group.
+    """
+
+    from openmdao.core.component import Component
+
+    model = build.problem.model
+    comps = list(model.system_iter(recurse=True, typ=Component))
+
+    def names(comp: Any, io: Literal["input", "output"]) -> tuple[str, ...]:
+        return tuple(comp.get_io_metadata(iotypes=(io,)))
+
+    inputs = {comp.pathname: names(comp, "input") for comp in comps}
+    return ProblemStructure(
+        components=tuple(comp.pathname for comp in comps),
+        inputs=inputs,
+        outputs={comp.pathname: names(comp, "output") for comp in comps},
+        connections=tuple(
+            (model.get_source(f"{path}.{name}"), f"{path}.{name}")
+            for path, ins in inputs.items()
+            for name in ins
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

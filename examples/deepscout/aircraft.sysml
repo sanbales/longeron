@@ -62,9 +62,21 @@ package DeepScout {
         attribute cost : Real;              // USD
         attribute dragArea : Real;          // parasite CdA, m^2 (buildup)
         attribute wingSpan : Real;          // m; 0 = rotor-borne only
-        attribute wingChord : Real;         // m, mean
+        attribute wingChord : Real;         // m, mean: the planform input
         attribute taper : Real;             // tip/root chord ratio
-        attribute wingArea : Real;          // m^2
+        // the planform chain, one formula for every shell: the span, the
+        // MEAN chord and the taper are the inputs.  The area is span x
+        // mean chord, and the root chord follows from the mean chord of
+        // a straight taper, mean = root x (1 + taper) / 2.  The drag
+        // buildups, the stall checks and the drawn mesh all read these
+        // two, so no shell states its area as a second literal.
+        attribute wingArea : Real = wingSpan * wingChord;   // m^2
+        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);   // m
+        // the section's maximum lift coefficient, the stall checks'
+        // input: NOMINAL 1.2 for a cambered section, 1.0 for a reflexed
+        // or symmetric one (the sensitivity study's assumption, no
+        // catalog source), 0 for a rotor-borne shell that never stalls
+        attribute clMax : Real;
         attribute oswald : Real;            // span efficiency e
         attribute tipPropBonus : Real;      // induced-drag recovery, >= 1
         attribute loiterSpeed : Real;       // m/s, on-station speed
@@ -290,6 +302,17 @@ package DeepScout {
             in span : Real;             // m
             in recoveryPerDiskSpan : Real = 2.0;   // NOMINAL slope
             return : Real = 1.0 + recoveryPerDiskSpan * diskDiameter / span;
+        }
+
+        calc def StallSpeed {
+            doc /* Level-flight stall speed: the speed at which the wing at
+                   its maximum lift coefficient carries the weight,
+                   V = sqrt(2 m g / (rho S CLmax)), at sea-level density. */
+            in massKg : Real;
+            in wingArea : Real;         // m^2, the lifting planform
+            in clMax : Real;            // section maximum lift coefficient
+            return : Real = sqrt(2.0 * massKg * 9.81
+                / (1.225 * wingArea * clMax));
         }
     }
 
@@ -1021,11 +1044,17 @@ package DeepScout {
                a deterministic volume-quadrature estimate of the same
                measures otherwise), injected into the scoreboard as
                values= bindings for the unvalued attributes below --
-               see tutorial 7.  The subject is the abstract MultiRotor
-               so any configuration can be measured; the reference CAD
+               see tutorial 7.  The subject is Aircraft, the program
+               root.  So the requirement applies to the MultiRotor
+               build family and to every fleet airframe shell.  Each
+               of these crafts declares a camera part.  A mission
+               architecture (a MissionUAV) is an Aircraft too, and its
+               camera is the camera of its airframe.  The
+               constraints read only the two measured attributes
+               below, never a rotorcraft attribute.  The reference CAD
                build the tutorials measure is the QuadCopter's (the
                satisfy edge in multirotor.sysml). */
-        subject drone : MultiRotor;
+        subject craft : Aircraft;
         attribute occludedFraction : Real;    // measured: airframe volume inside the view cone / cone volume
         attribute discOverlapVolume : Real;   // measured: m^3 of prop-disc overlap with other components
 
@@ -1033,7 +1062,7 @@ package DeepScout {
             doc /* The camera's view cone -- apex at the lens, axis along
                    the boresight, half-angle fieldOfView / 2, reaching one
                    airframe bounding-box diagonal -- shall contain no part
-                   of the drone's own airframe. */
+                   of the craft's own airframe. */
             attribute weight : Real = 2.0;
             attribute utility : String = "smaller-is-better";
             attribute ramp0 : Real = 0.001;
@@ -1165,20 +1194,21 @@ package DeepScout {
         doc /* The go-around sortie's physical binding, stated in the
                model: the Piedmont Park loop as waypoint parts
                (analysis reads lat/lon/alt off the children through
-               model_waypoints) and the mission epoch as an attribute
+               model_waypoints, alt in meters above ground) and the
+               mission epoch as an attribute
                typed Time::Iso8601DateTime -- the standard's own ISO
                8601 form, so the model states WHEN the sortie flies
                (model_epoch reads it; see the time-seam design). */
         attribute epoch : Time::Iso8601DateTime = "2026-06-21T14:30:00Z";
         part wp0 { attribute lat : Real = 33.7813; attribute lon : Real = -84.3833;
-                   attribute alt : Real = 350.0; }
+                   attribute alt : Real = 50.0; }
         part wp1 { attribute lat : Real = 33.7885; attribute lon : Real = -84.3785;
-                   attribute alt : Real = 390.0; }
+                   attribute alt : Real = 90.0; }
         part wp2 { attribute lat : Real = 33.7900; attribute lon : Real = -84.3695;
-                   attribute alt : Real = 380.0; }
+                   attribute alt : Real = 80.0; }
         part wp3 { attribute lat : Real = 33.7838; attribute lon : Real = -84.3690;
-                   attribute alt : Real = 360.0; }
+                   attribute alt : Real = 60.0; }
         part wp4 { attribute lat : Real = 33.7770; attribute lon : Real = -84.3825;
-                   attribute alt : Real = 350.0; }
+                   attribute alt : Real = 50.0; }
     }
 }

@@ -668,6 +668,168 @@ print("fitted Rotorcraft::HexaCopter")
     )
 
 
+def grand_tour_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour's selection hub (``grand.grand_dashboard``).
+
+    Cell 0 builds and displays the grand tour over the DeepScout program
+    (the default subject: the ISR mission with its computed winner).
+    Cell 1 is the checker: one JSON line of the subject, the 3D pane's
+    label and scene digest, the Cesium scene digest, the diagram and tree selections, the header
+    text, the knob names, the scored aggregates of the scoreboard rows,
+    the scoreboard selection, the diagram's resize refit count, the
+    sizing strip title and the loiter slider value.  Cells 2 and 3 are the fit drivers of
+    :func:`config_view_notebook`: the whole-program diagram fits the pane
+    below the label LOD threshold, so a test zooms onto the node it is
+    about to click.
+    """
+
+    return _notebook(
+        """
+import longeron
+from longeron.analysis.grand import grand_dashboard
+
+model = longeron.load("examples/deepscout")
+grand = grand_dashboard(model)
+grand
+""",
+        """
+import hashlib
+import json
+import math
+import re
+
+from longeron.toolbar import AutoFitTool
+
+print(
+    json.dumps(
+        {
+            "mission": grand.subject.mission,
+            "airframe": grand.subject.airframe,
+            "selection": dict(grand.subject.selection),
+            "overrides": dict(grand.subject.overrides),
+            "craft": grand.craft,
+            "current": grand.config_view.current,
+            "label": grand.viewer.label,
+            "mesh": hashlib.sha1(grand.viewer.mesh_json.encode()).hexdigest(),
+            "czml": hashlib.sha1(grand.mission.czml_json.encode()).hexdigest(),
+            "diagram": list(grand.diagram.view.selection.ids),
+            "tree": list(grand.tree.selected),
+            "board": list(grand.board.selected),
+            "refits": next(t.fit_count for t in grand.diagram.tools if isinstance(t, AutoFitTool)),
+            "header": " ".join(re.sub(r"<[^>]+>", " ", grand.header.value).split()),
+            "knobs": sorted(grand.knobs),
+            "scores": {
+                row.qname: None if math.isnan(row.aggregate) else row.aggregate
+                for row in grand.scoreboard.table()
+            },
+            "sizing": " ".join(re.sub(r"<[^>]+>", " ", grand.sizing_title.value).split()),
+            "loiter": None if grand.loiter is None else grand.loiter.value,
+        }
+    )
+)
+""",
+        """
+grand.diagram.view.fit(["FlyingWings::FlyingWingTwin"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted FlyingWings::FlyingWingTwin")
+""",
+        """
+grand.diagram.view.fit(["Rotorcraft::QuadCopter"], animate=False, max_zoom=1.0, padding=24.0)
+print("fitted Rotorcraft::QuadCopter")
+""",
+    )
+
+
+def grand_tour_onboard_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour's Cesium pane in its onboard view mode.
+
+    Cells 0 to 3 are the cells of :func:`grand_tour_notebook`.  Cell 4 is
+    the onboard checker: one JSON line of the Cesium pane's view mode, its
+    onboard camera, its playhead, the camera what-if angles, and the two
+    attitude keyframes (time, heading, pitch) that hold the playhead
+    between them.  Cells 5 to 8 are drivers.  Each driver states
+    absolute values, not steps, so a re-run shows the same state whatever
+    ran before it:
+
+    * cell 5: the declared camera angles, the onboard view, and the
+      playhead at 60 s (the first held heading of the route);
+    * cell 6: the playhead at 90 s (the second held heading);
+    * cell 7: the camera what-if at elevation +30 and azimuth +45;
+    * cell 8: the camera what-if at elevation 0 and azimuth 0 (the
+      boresight on the horizon).
+    """
+
+    cells = [cell["source"] for cell in grand_tour_notebook()["cells"]]
+    return _notebook(
+        *cells,
+        """
+import json
+
+flight = grand.mission
+now = flight.time
+keys = grand.track.attitude()
+print(
+    json.dumps(
+        {
+            "view_mode": flight.view_mode,
+            "camera": dict(flight.onboard_camera),
+            "time": now,
+            "elevation": grand.elevation.value,
+            "azimuth": grand.azimuth.value,
+            "attitude": [
+                max((k for k in keys if k[0] <= now), key=lambda k: k[0]),
+                min((k for k in keys if k[0] >= now), key=lambda k: k[0]),
+            ],
+        }
+    )
+)
+""",
+        """
+grand.elevation.value = grand.camera["elevation"]
+grand.azimuth.value = grand.camera["azimuth"]
+grand.mission.view_mode = "onboard"
+grand.mission.time = 60.0
+print("onboard at 60 s")
+""",
+        """
+grand.mission.time = 90.0
+print("playhead at 90 s")
+""",
+        """
+grand.elevation.value = 30.0
+grand.azimuth.value = 45.0
+print("camera at elevation 30, azimuth 45")
+""",
+        """
+grand.elevation.value = 0.0
+grand.azimuth.value = 0.0
+print("camera at elevation 0, azimuth 0")
+""",
+    )
+
+
+def grand_tour_dock_notebook() -> dict[str, Any]:
+    """Scenario: the grand tour docked in the JupyterLab main area.
+
+    Cells 0 to 3 are the cells of :func:`grand_tour_notebook`.  Cell 4
+    docks the tour (``grand.dock()``) and cell 5 undocks it.  Each prints
+    one JSON line: the docked panes and the number of inline children.
+    Cells 4 and 5 are raw cells, so a run-all does not run them.  The test
+    runs them with ``run_cell``, which sends a cell's source to the kernel.
+    """
+
+    cells = [cell["source"] for cell in grand_tour_notebook()["cells"]]
+    report = """
+import json
+
+print(json.dumps({"panels": sorted(grand.panels), "children": len(grand.children)}))
+"""
+    notebook = _notebook(*cells, "grand.dock()\n" + report, "grand.undock()\n" + report)
+    for cell in notebook["cells"][4:]:
+        cell["cell_type"] = "raw"
+        del cell["execution_count"], cell["outputs"]
+    return notebook
+
+
 def tilt_notebook() -> dict[str, Any]:
     """Scenario: the tilt-rotor conversion affordance (grand.tilt_viewer).
 
@@ -808,7 +970,6 @@ track = mission3d.track_from_timeline(
     timeline,
     waypoints=waypoints,
     phases={"airborne": "route"},
-    ground_alt=300.0,
     epoch=epoch,
     name="go-around sortie",
 )
@@ -1099,6 +1260,9 @@ SCENARIO_NOTEBOOKS = {
     "app_scenario.ipynb": app_notebook,
     "dashboard_scenario.ipynb": dashboard_notebook,
     "config_view_scenario.ipynb": config_view_notebook,
+    "grand_tour_scenario.ipynb": grand_tour_notebook,
+    "grand_tour_onboard_scenario.ipynb": grand_tour_onboard_notebook,
+    "grand_tour_dock_scenario.ipynb": grand_tour_dock_notebook,
     "tilt_scenario.ipynb": tilt_notebook,
     "timeseam_scenario.ipynb": timeseam_notebook,
     "lossy_seam_scenario.ipynb": lossy_seam_notebook,

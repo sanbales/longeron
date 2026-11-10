@@ -22,7 +22,7 @@ Baselines to trust (and assert against):
 | notebook harness | 21/21 |
 | browser tier | 23 tests, 4 CI shards (`ci.yml` matrix), single-run green locally |
 | crossing | **1920** candidates (12 airframes × 4 × 4 × 5 × 2) |
-| declared references (`ScoutMissions`) | 274.6 min / 187.0 kg·km / 66.8 m/s / $9706.5 / 6.89 kg |
+| declared references (`ScoutMissions`) | 274.6 min / 187.0 kg·km / 66.9 m/s / $9706.5 / 6.89 kg |
 | mission winners | ISR: flyingWingSingle · logistics: flyingWingTwinTip · intercept: dartInterceptor |
 
 The fleet is now **twelve airframes**: five multirotors, teardrop dart,

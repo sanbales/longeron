@@ -126,7 +126,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import PurePath
 from typing import Any, Literal, Protocol, TypedDict, cast, get_args, runtime_checkable
 
@@ -531,6 +531,9 @@ function render({ model, el }) {
   input.placeholder = "filter\\u2026";
   input.className = "lgx-tree-search";
   input.setAttribute("aria-label", "Filter the model tree");
+  // a second view of the same tree (a re-display, an undocked grand tour)
+  // shows the live query that its rows already apply
+  input.value = model.get("query") || "";
   // the relationship toggle: a compact icon button beside the search box
   // (two dots joined by a dashed line -- the row chips' dashed idiom);
   // pressed = relationships shown (the default)
@@ -1457,6 +1460,37 @@ def _diagram_node_ids(widget: Any) -> frozenset[str]:
     return frozenset(ids)
 
 
+def _nearest_tree_id(element: M.Element, ids: Mapping[int, str]) -> str | None:
+    """The tree node id of ``element`` or of its nearest ancestor in the tree.
+
+    ``ids`` maps ``id(element)`` to a tree node id (the inverse of the
+    :func:`_tree_data` index).  The walk returns None when no ancestor
+    is in the tree.
+    """
+
+    node: M.Element | None = element
+    while node is not None:
+        node_id = ids.get(id(node))
+        if node_id is not None:
+            return node_id
+        node = node.owner
+    return None
+
+
+def _nearest_drawn(element: M.Element, drawn: frozenset[str]) -> str | None:
+    """The qualified name of ``element`` or of its nearest drawn ancestor.
+
+    ``drawn`` is the set of selectable diagram ids
+    (:func:`_diagram_node_ids`).  The walk returns None when the diagram
+    draws no ancestor.
+    """
+
+    node: M.Element | None = element
+    while node is not None and (node.qualified_name or "") not in drawn:
+        node = node.owner
+    return node.qualified_name if node is not None else None
+
+
 class Explorer(W.HBox):
     """Tree navigator (left) + applicable-kind diagram pane (right).
 
@@ -1843,11 +1877,7 @@ class Explorer(W.HBox):
     def _from_diagram(self, widget: Any, elements: list[M.Element]) -> None:
         if self._syncing or widget is not self.diagram or not elements:
             return
-        node_id = None
-        node: M.Element | None = elements[0]
-        while node is not None and node_id is None:  # nearest tree-known ancestor
-            node_id = self._ids.get(id(node))
-            node = node.owner
+        node_id = _nearest_tree_id(elements[0], self._ids)
         if node_id is None or [node_id] == list(self.tree.selected):
             return  # unknown element, or already selected: the echo stops here
         self._apply_selection(node_id, origin="diagram")
@@ -1989,14 +2019,8 @@ class Explorer(W.HBox):
         drawn = self._diagram_ids[id(widget)]
         want = self._rel_edge_ids.get(id(widget), {}).get(id(element), ())
         if not want:
-            target: M.Element | None = element
-            while target is not None and (target.qualified_name or "") not in drawn:
-                target = target.owner
-            want = (
-                (target.qualified_name,)
-                if target is not None and target.qualified_name is not None
-                else ()
-            )
+            qname = _nearest_drawn(element, drawn)
+            want = (qname,) if qname is not None else ()
         selection = widget.view.selection
         if tuple(selection.ids) != want:
             self._syncing = True

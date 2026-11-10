@@ -336,7 +336,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.78;   attribute cost : Real = 120.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 14.0;
@@ -351,6 +351,20 @@ package Rotorcraft {
         attribute armCount : Integer = 4;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 7 m/s, about half the
+                   14 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 7.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 24.4 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 4.4 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 24.0 }
 
         // the payload bay: an open box slung under the hub plates --
         // cheap volume, but its face pays bluff drag above and the
@@ -367,7 +381,15 @@ package Rotorcraft {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : FlightController;
-        part camera : Camera;
+        part camera : Camera {
+            doc /* The bay-face camera: the slung box bay reaches ahead of
+                   the F450 top-plate mount and fills the lower half of its
+                   view, so the lens rides on the bay's forward face
+                   (bayLength / 2 ahead of the origin, bayHeight / 2 below
+                   the plate), under the forward rotor discs. */
+            attribute :>> x = bayLength / 2;
+            attribute :>> y = -bayHeight / 2;
+        }
     }
 
     part def TeardropQuad :> Airframe {
@@ -389,7 +411,7 @@ package Rotorcraft {
                                             diameter = fuselageDiameter));
         attribute mass : Real = 0.98;   attribute cost : Real = 320.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 18.0;
@@ -441,7 +463,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 0.62;   attribute cost : Real = 260.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 11.0;      // the yaw-authority cap
@@ -456,6 +478,18 @@ package Rotorcraft {
         attribute armCount : Integer = 3;
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 6 m/s, about half the
+                   11 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 6.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 11 m/s, the shell's declared
+                   yaw-authority cap (the cruiseSpeed comment above). */
+            cruiseSpeed <= 11.0 }
 
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.20;
@@ -489,7 +523,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 3.1;    attribute cost : Real = 1450.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 15.0;
@@ -534,7 +568,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.05;   attribute cost : Real = 380.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 16.0;
@@ -549,6 +583,20 @@ package Rotorcraft {
         attribute armCount : Integer = 4;      // four booms, two stations each
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
+
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 8 m/s, about half the
+                   16 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 8.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 28.8 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 6.7 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 28.0 }
 
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.26;
@@ -578,7 +626,7 @@ package Rotorcraft {
             BluffFrameDrag(frontalArea = frameFrontalArea + bayFrontalArea);
         attribute mass : Real = 1.5;    attribute cost : Real = 520.0;
         attribute wingSpan : Real = 0.0;  attribute wingChord : Real = 0.0;
-        attribute taper : Real = 1.0;     attribute wingArea : Real = 0.0;
+        attribute taper : Real = 1.0;     attribute clMax : Real = 0.0;
         attribute oswald : Real = 0.0;    attribute tipPropBonus : Real = 1.0;
         attribute loiterSpeed : Real = 0.0;
         attribute cruiseSpeed : Real = 15.0;
@@ -594,6 +642,20 @@ package Rotorcraft {
         attribute sparRadius : Real = 0.008;   // unused: no wing
         attribute designGrossKg : Real = 0.0;  // no spar to size
 
+        // the cruise range, one constraint per bound: the grand
+        // tour's slider (the ScoutMissions threshold idiom)
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 8 m/s, about half the
+                   15 m/s default.  A hovering craft has no
+                   stall, so the floor is an assumption. */
+            cruiseSpeed >= 8.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 21.1 m/s: MaxCruiseSpeed at the
+                   25 deg maxTiltDeg, the 5.6 kg outbound mass of the
+                   logistics preset and this shell's dragArea.
+                   LogisticsUav::cruiseWithinTilt follows the mass. */
+            cruiseSpeed <= 21.0 }
+
         attribute bayShape : String = "box";
         attribute bayLength : Real = 0.30;
         attribute bayWidth : Real = 0.24;
@@ -605,6 +667,14 @@ package Rotorcraft {
 
         part battery : ScoutParts::Battery;
         part flightController : FlightController;
-        part camera : Camera;
+        part camera : Camera {
+            doc /* The bay-face camera: the slung box bay reaches ahead of
+                   the F450 top-plate mount and fills the lower half of its
+                   view, so the lens rides on the bay's forward face
+                   (bayLength / 2 ahead of the origin, bayHeight / 2 below
+                   the plate), under the forward rotor discs. */
+            attribute :>> x = bayLength / 2;
+            attribute :>> y = -bayHeight / 2;
+        }
     }
 }

@@ -6,6 +6,7 @@ contracts, like tests/test_explorer.py and test_analysis_viewer3d.py.
 
 import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,8 @@ from longeron.analysis.scoreboard import (
 # ---------------------------------------------------------------------------
 # fixture models
 # ---------------------------------------------------------------------------
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
 
 #: a 3-level hierarchy with every utility shape, model-declared weights,
 #: an inherited declaration, and an unmeasured leaf
@@ -652,6 +655,131 @@ class TestScopesAndTable:
         # NaN-safe: the widget payload scrubs NaN to None
         assert a._payload(a.root) == b._payload(b.root)
         assert a.score == b.score
+
+
+#: requirement defs with declared subjects, a nested requirement that
+#: inherits its parent's subject, and a subject-less constant check
+SUBJECT_MODEL = """
+package Fleet {
+    part def Craft {
+        attribute mass : Real = 1.5;
+        attribute span : Real = 2.0;
+    }
+    requirement def Light {
+        subject craft : Craft;
+        require constraint { craft.mass <= 2.0 }
+    }
+    requirement def Wide {
+        subject craft : Craft;
+        requirement wideEnough { require constraint { craft.span >= 2.5 } }
+        requirement notTooWide { require constraint { craft.span <= 3.0 } }
+    }
+    requirement def Never {
+        require constraint { 2 < 1 }
+    }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def fleet():
+    interp = longeron.Interpreter(longeron.loads(SUBJECT_MODEL))
+    reqs = {name: interp.resolver.resolve(f"Fleet::{name}") for name in ("Light", "Wide", "Never")}
+    return reqs, interp.instantiate("Fleet::Craft")
+
+
+class TestRequirementSet:
+    """A sequence target scores a requirement set, ``subjects=`` binds
+    each requirement's subject instance, and a requirement without a
+    subject entry stays unmeasured instead of scoring 0."""
+
+    def test_sequence_aggregates_under_the_synthetic_root(self, fleet):
+        reqs, craft = fleet
+        board = scoreboard(
+            [reqs["Light"], reqs["Wide"]],
+            subjects={"Fleet::Light": craft, "Fleet::Wide": craft},
+        )
+        assert board.root.qname == "~root"
+        assert board.root.name == "requirements"
+        rows = rows_by_name(board)
+        assert rows["Light"].utility == 1.0
+        # the nested leaves inherit Wide's subject: 2.0 >= 2.5 fails
+        assert rows["wideEnough"].utility == 0.0
+        assert rows["notTooWide"].utility == 1.0
+        assert board.score == pytest.approx((1.0 + 0.5) / 2)
+
+    def test_a_single_requirement_is_the_root(self, fleet):
+        reqs, craft = fleet
+        board = scoreboard([reqs["Light"]], subjects={"Fleet::Light": craft})
+        assert board.root.qname == "Fleet::Light"
+        assert board.score == 1.0
+
+    def test_missing_subject_is_unmeasured_not_zero(self, fleet):
+        reqs, craft = fleet
+        target = [reqs["Light"], reqs["Never"]]
+        # without subjects=, the constant check scores 0 as before
+        assert rows_by_name(scoreboard(target))["Never"].utility == 0.0
+        board = scoreboard(target, subjects={"Fleet::Light": craft})
+        never = rows_by_name(board)["Never"]
+        assert never.raw is None and math.isnan(never.utility)
+        assert board.score == 1.0
+
+    def test_empty_subjects_leaves_every_step_leaf_unmeasured(self, fleet):
+        reqs, _ = fleet
+        board = scoreboard([reqs["Light"], reqs["Wide"]], subjects={})
+        assert all(math.isnan(row.aggregate) for row in board.table())
+        assert math.isnan(board.score)
+
+    def test_unknown_subject_key_is_rejected(self, fleet):
+        reqs, craft = fleet
+        with pytest.raises(AnalysisError, match="Fleet::Heavy"):
+            scoreboard([reqs["Light"]], subjects={"Fleet::Heavy": craft})
+
+    def test_bad_sequences_are_rejected(self, fleet):
+        reqs, _ = fleet
+        with pytest.raises(AnalysisError, match="empty"):
+            scoreboard([])
+        with pytest.raises(AnalysisError, match="not a requirement"):
+            scoreboard([reqs["Light"].owner])
+        with pytest.raises(AnalysisError, match="twice"):
+            scoreboard([reqs["Light"], reqs["Light"]])
+        other = longeron.loads(SUBJECT_MODEL).members[0].members[1]
+        with pytest.raises(AnalysisError, match="different models"):
+            scoreboard([reqs["Light"], other])
+
+
+STABILITY = "ScoutMissions::StabilityRequirements"
+
+
+@pytest.fixture(scope="module")
+def tip():
+    interp = longeron.Interpreter(longeron.load(EXAMPLES / "deepscout", cache=False))
+    reqs = [
+        interp.resolver.resolve(f"{STABILITY}::{name}")
+        for name in ("EngineOutYaw", "PitchStability")
+    ]
+    variant = interp.resolver.resolve("ScoutMissions::Catalog::AirframeChoice::flyingWingTwinTip")
+    return reqs, interp.instantiate(variant)
+
+
+class TestDeepScoutSubjects:
+    """The tailless checks scored for the tip twin's airframe instance:
+    the instance the ``airframe`` variation point binds."""
+
+    def test_engine_out_yaw_fails_and_pitch_stability_holds(self, tip):
+        reqs, airframe = tip
+        board = scoreboard(reqs, subjects={req.qualified_name: airframe for req in reqs})
+        rows = rows_by_name(board)
+        assert rows["EngineOutYaw"].utility == 0.0
+        assert rows["PitchStability"].utility == 1.0
+        assert board.score == pytest.approx(0.5)
+
+    def test_a_missing_subject_leaves_the_leaf_unmeasured(self, tip):
+        reqs, airframe = tip
+        board = scoreboard(reqs, subjects={f"{STABILITY}::PitchStability": airframe})
+        engine_out = rows_by_name(board)["EngineOutYaw"]
+        assert engine_out.raw is None and math.isnan(engine_out.utility)
+        assert board.score == 1.0
 
 
 class TestValueFormat:

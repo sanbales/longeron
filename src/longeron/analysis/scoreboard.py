@@ -127,7 +127,7 @@ if TYPE_CHECKING:
 
 from .. import model as M
 from ..errors import MissingExtraError, SysMLError
-from ..interpreter import Interpreter
+from ..interpreter import Instance, Interpreter
 from ._expr import AnalysisError, is_scalar
 
 __all__ = [
@@ -380,17 +380,31 @@ class Scoreboard:
     Build with :func:`scoreboard`.  ``.score`` is the root aggregate,
     :meth:`table` the flat pre-order rows, :meth:`widget` the
     treemap/Voronoi view.  ``str()`` renders an aligned text table.
+
+    The target is a model element, or a requirement set: a sequence of
+    requirement definitions and usages.  A requirement set of two or
+    more requirements aggregates under the synthetic root.
+    ``subjects`` maps a requirement qualified name to the interpreter
+    :class:`~longeron.interpreter.Instance` that the requirement is
+    scored for.  A nested requirement uses the subject of its nearest
+    requirement ancestor that has an entry.  Each ``step`` leaf passes
+    its subject to
+    :meth:`~longeron.interpreter.Interpreter.check_requirement`.  If
+    ``subjects`` is given and a ``step`` leaf has no subject, the leaf
+    is unmeasured, not scored 0.  The subject does not reach a
+    ``measure`` expression or a ``values`` entry for a leaf.
     """
 
     def __init__(
         self,
-        target: M.Model | M.Package | M.Definition | M.Usage,
+        target: M.Model | M.Package | M.Definition | M.Usage | Sequence[M.Definition | M.Usage],
         *,
         values: Mapping[str, Any] | None = None,
         aggregation: Aggregation | Aggregator = "saw",
         weights: Mapping[str, float] | None = None,
         utilities: Mapping[str, UtilityShape | Callable[[Any], float]] | None = None,
         value_format: ValueFormat = "percent",
+        subjects: Mapping[str, Instance] | None = None,
     ) -> None:
         if value_format not in ("percent", "float"):
             raise AnalysisError(f"value_format must be 'percent' or 'float'; not {value_format!r}")
@@ -410,6 +424,8 @@ class Scoreboard:
         self.values: dict[str, Any] = dict(values or {})
         self._weights = dict(weights or {})
         self._utilities = dict(utilities or {})
+        #: None scores without subjects (the constraint checks bind none)
+        self._subjects = None if subjects is None else dict(subjects)
         #: evaluation-frame bindings: plain-name values reach free
         #: references inside measure expressions and constraint bodies
         self._frame = {
@@ -417,22 +433,28 @@ class Scoreboard:
             for key, value in self.values.items()
             if "::" not in key and key.isidentifier()
         }
-        self.interp = Interpreter(_owning_model(target))
+        if isinstance(target, M.Element):
+            self.interp = Interpreter(_owning_model(target))
+            roots = _root_requirements(target)
+            root_name = target.name or "requirements"
+        else:
+            roots = _requirement_set(target)
+            self.interp = Interpreter(_owning_model(roots[0]))
+            root_name = "requirements"
         self._counter = itertools.count()
-        roots = _root_requirements(target)
         if not roots:
             raise AnalysisError(
                 f"{getattr(target, 'label', target)!r} contains no requirement usages "
                 "(pass a requirement definition directly to score it as the root)"
             )
         if len(roots) == 1:
-            self.root = self._build(roots[0], depth=0)
+            self.root = self._build(roots[0], depth=0, subject=None)
         else:
-            children = [self._build(req, depth=1) for req in roots]
+            children = [self._build(req, depth=1, subject=None) for req in roots]
             self.root = _Node(
                 element=None,
                 qname=f"{_SYNTH_PREFIX}root",
-                name=getattr(target, "name", None) or "requirements",
+                name=root_name,
                 depth=0,
                 weight=1.0,
                 children=children,
@@ -442,11 +464,16 @@ class Scoreboard:
         self._index: dict[str, _Node] = {}
         for node in self._walk(self.root):
             self._index[node.qname] = node
+        unknown = sorted(set(self._subjects or {}) - set(self._index))
+        if unknown:
+            raise AnalysisError(f"subjects name no scored requirement: {', '.join(unknown)}")
 
     # -- construction --------------------------------------------------------
 
-    def _build(self, req: M.Definition | M.Usage, depth: int) -> _Node:
+    def _build(self, req: M.Definition | M.Usage, depth: int, subject: Instance | None) -> _Node:
         qname = req.qualified_name or f"{_SYNTH_PREFIX}{next(self._counter)}"
+        if self._subjects is not None:
+            subject = self._subjects.get(qname, subject)
         name = req.name or req.short_name or qname.split("::")[-1]
         declared_unit = self._attr_value(req, UNIT_ATTR)
         node = _Node(
@@ -463,9 +490,9 @@ class Scoreboard:
             if isinstance(member, (M.Definition, M.Usage)) and member.kind == "requirement"
         ]
         if nested:
-            node.children = [self._build(child, depth + 1) for child in nested]
+            node.children = [self._build(child, depth + 1, subject) for child in nested]
             return node
-        self._score_leaf(node, req, qname, name)
+        self._score_leaf(node, req, qname, name, subject)
         return node
 
     def _weight(self, req: M.Definition | M.Usage, qname: str, name: str) -> float:
@@ -479,7 +506,14 @@ class Scoreboard:
             raise AnalysisError(f"{qname}: weight must be a non-negative number, not {weight!r}")
         return weight
 
-    def _score_leaf(self, node: _Node, req: M.Definition | M.Usage, qname: str, name: str) -> None:
+    def _score_leaf(
+        self,
+        node: _Node,
+        req: M.Definition | M.Usage,
+        qname: str,
+        name: str,
+        subject: Instance | None,
+    ) -> None:
         # a declared shape read from the MODEL is an open string here; it is
         # validated against UTILITY_FUNCTIONS below, exactly as before
         shape: UtilityShape | Callable[[Any], float] | str | None = self._utilities.get(
@@ -488,7 +522,7 @@ class Scoreboard:
         if shape is None:
             declared = self._attr_value(req, UTILITY_ATTR)
             shape = str(declared) if declared is not None else "step"
-        raw = self._raw(req, qname, name, shape)
+        raw = self._raw(req, qname, name, shape, subject)
         node.raw = raw
         if callable(shape):
             node.shape = getattr(shape, "__name__", "custom").lstrip("_")
@@ -517,7 +551,14 @@ class Scoreboard:
         node.aggregate = utility
         node.measured = True
 
-    def _raw(self, req: M.Definition | M.Usage, qname: str, name: str, shape: Any) -> Any:
+    def _raw(
+        self,
+        req: M.Definition | M.Usage,
+        qname: str,
+        name: str,
+        shape: Any,
+        subject: Instance | None,
+    ) -> Any:
         if qname in self.values:
             return self.values[qname]
         if name in self.values:
@@ -533,8 +574,13 @@ class Scoreboard:
             # leaf is honestly UNMEASURED until values= injects a reading
             return value if is_scalar(value) or isinstance(value, bool) else None
         if shape == "step":
+            if self._subjects is not None and subject is None:
+                return None  # scored for subjects, but none given: unmeasured, not a fail
+            # the subject rides the keyword frame, so a None subject leaves the
+            # subject-less call (and a values= entry named 'subject') unchanged
+            frame = self._frame if subject is None else {**self._frame, "subject": subject}
             try:
-                result = self.interp.check_requirement(req, **self._frame)
+                result = self.interp.check_requirement(req, **frame)
             except (SysMLError, TypeError, ValueError):
                 return None
             if not result.requirements:  # no require-constraint bodies
@@ -796,13 +842,18 @@ class Scoreboard:
 
 
 def scoreboard(
-    model_or_element: M.Model | M.Package | M.Definition | M.Usage,
+    model_or_element: M.Model
+    | M.Package
+    | M.Definition
+    | M.Usage
+    | Sequence[M.Definition | M.Usage],
     values: Mapping[str, Any] | None = None,
     aggregation: Aggregation | Aggregator = "saw",
     *,
     weights: Mapping[str, float] | None = None,
     utilities: Mapping[str, UtilityShape | Callable[[Any], float]] | None = None,
     value_format: ValueFormat = "percent",
+    subjects: Mapping[str, Instance] | None = None,
 ) -> Scoreboard:
     """MAUT-score the requirement hierarchy under ``model_or_element``.
 
@@ -822,6 +873,18 @@ def scoreboard(
     ``"percent"`` (the default; one decimal, ``61.1%``) or ``"float"``
     (three decimals, ``0.611``).  :meth:`Scoreboard.table` always
     carries the raw floats.
+
+    ``model_or_element`` can also be a requirement set: a sequence of
+    requirement definitions and usages from one model.  ``subjects``
+    maps a requirement qualified name to the
+    :class:`~longeron.interpreter.Instance` that the requirement is
+    scored for (see :class:`Scoreboard`)::
+
+        tip = interp.instantiate("FlyingWings::FlyingWingTwinTip")
+        board = scoreboard(
+            [engine_out_yaw, pitch_stability],
+            subjects={req.qualified_name: tip for req in (engine_out_yaw, pitch_stability)},
+        )
     """
 
     return Scoreboard(
@@ -831,13 +894,12 @@ def scoreboard(
         weights=weights,
         utilities=utilities,
         value_format=value_format,
+        subjects=subjects,
     )
 
 
 def _owning_model(element: M.Element) -> M.Model:
-    node: M.Element = element
-    while node.owner is not None:
-        node = node.owner
+    node = _root_of(element)
     if isinstance(node, M.Model):
         return node
     # a detached fragment: list it under a throwaway root WITHOUT
@@ -845,6 +907,31 @@ def _owning_model(element: M.Element) -> M.Model:
     root = M.Model()
     root.members = [node]
     return root
+
+
+def _root_of(element: M.Element) -> M.Element:
+    while element.owner is not None:
+        element = element.owner
+    return element
+
+
+def _requirement_set(
+    requirements: Sequence[M.Definition | M.Usage],
+) -> list[M.Definition | M.Usage]:
+    """Validate a requirement-set target: distinct requirements of one model."""
+
+    roots = list(requirements)
+    if not roots:
+        raise AnalysisError("the requirement set is empty")
+    for req in roots:
+        if not (isinstance(req, (M.Definition, M.Usage)) and req.kind == "requirement"):
+            label = req.label if isinstance(req, M.Element) else req
+            raise AnalysisError(f"{label!r} is not a requirement")
+    if len({id(req) for req in roots}) < len(roots):
+        raise AnalysisError("the requirement set names a requirement twice")
+    if any(_root_of(req) is not _root_of(roots[0]) for req in roots):
+        raise AnalysisError("the requirement set mixes requirements of different models")
+    return roots
 
 
 def _root_requirements(scope: M.Element) -> list[M.Definition | M.Usage]:

@@ -26,7 +26,17 @@ from typing import assert_type
 
 import longeron.model as M
 from longeron import diagrams, evidence, export, m0, views
-from longeron.analysis import geometry, mdao, scoreboard, smt, surfaces, verify, viz
+from longeron.analysis import (
+    geometry,
+    knobs,
+    mdao,
+    scoreboard,
+    smt,
+    subject,
+    surfaces,
+    verify,
+    viz,
+)
 from longeron.analysis.mission3d import MissionTrack
 from longeron.analysis.trades import Architecture
 from longeron.client import Client
@@ -169,3 +179,15 @@ def evidence_statuses(citation: evidence.Citation) -> None:
     # pre-existing Literal (evidence.Status): bites before and after this pass
     evidence.Verdict(citation, "drifted")
     evidence.Verdict(citation, "stale")  # type: ignore[arg-type]
+
+
+def subject_vocabularies(arch: Architecture) -> None:
+    subject.Subject("ISR", "flyingWingSingle", {})
+    subject.Subject("isr", "flyingWingSingle", {})  # type: ignore[arg-type]
+    subject.Preset(arch, "fewest_violations")
+    subject.Preset(arch, "infeasible")  # type: ignore[arg-type]
+
+
+def knob_vocabularies() -> None:
+    knobs.Skipped("minPayloadKg", "lower_only", 0.5, None)
+    knobs.Skipped("minPayloadKg", "lower", 0.5, None)  # type: ignore[arg-type]

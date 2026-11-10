@@ -2,6 +2,183 @@
 
 ## 0.12.0 (unreleased)
 
+### The DeepScout program
+
+- **The mission thresholds have ranges in the model, and two mission
+  requirements apply to more crafts**. The trade winners and the
+  declared reference values do not change:
+  - `IsrUav`, `LogisticsUav` and `InterceptUav` assert a two-sided
+    range on each of their five tasking floors, one named constraint
+    per bound (`minStationMinutesLow`, `minStationMinutesHigh` and so
+    on). The station floor spans the `isrStation` ramp of
+    `ScoutMissions::scoring`, 25 to 240 min. The target speed spans the
+    `interceptCatch` ramp, 25 to 75 m/s. No ramp scores the payload,
+    the radius or the detection distance alone, so each of these ranges
+    is half to twice its default: 0.5 to 2 kg, 4 to 16 km and 1500 to
+    6000 m
+  - `IsrTasking` no longer assumes `hoverThrustFactor > 0`. Holding
+    station needs no hover, so the requirement now applies to the
+    flying wings, and the ISR winner `flyingWingSingle` passes it
+  - `DeepScout::installation` takes `craft : Aircraft` as its subject
+    in place of `drone : MultiRotor`. The camera occlusion requirement
+    now applies to every craft and to every mission architecture
+- **The wing-borne crafts carry their camera at the nose**. Each shell
+  places the camera lens from its own geometry: the pod nose of the
+  flying wings, the nose tip of `VtolWing` and `DartInterceptor`, and
+  the fuselage apex of `TiltTriWing`. The box-bay rotorcraft
+  `BoxQuad` and `RingOcto` carry it at the forward face of the bay.
+  At the declared boresight, no shell sees its own airframe, so the
+  ISR winner `flyingWingSingle` passes `clearView`
+- **The wing planform is one chain, and the missions check the stall,
+  the tilt cap and the spar mass**. The three trade winners do not
+  change:
+  - `Airframe` derives `wingArea = wingSpan * wingChord` and
+    `rootChord = 2 * wingChord / (1 + taper)`. `wingChord` is the mean
+    chord and the planform input. No shell states its area as a
+    literal. The dart's area falls from 0.179 to 0.1785 m^2, and the
+    twins' area rises from 0.85 to 0.8502 m^2
+  - `Airframe` declares `clMax`, the maximum lift coefficient of the
+    section: 1.2 for a cambered wing, 1.0 for the reflexed flying wings
+    and the symmetric dart wing, and 0 for a rotor-borne shell. These
+    values are NOMINAL. The new calc def `Aerodynamics::StallSpeed`
+    reads it
+  - `IsrUav`, `LogisticsUav` and `InterceptUav` assert a stall margin
+    of at least 1.2 for the speed each mission flies: the loiter, the
+    outbound cruise and the usable dash speed (`loiterAboveStall`,
+    `cruiseAboveStall`, `dashAboveStall`)
+  - `LogisticsUav` caps a rotor-borne cruise at `MaxCruiseSpeed` for
+    the shell's `maxTiltDeg` (`cruiseWithinTilt`). It also asserts that
+    the outbound mass does not exceed the spar's `designGrossKg`
+    (`sparDesignMass`). This check retires 83 logistics mixes, and the
+    `vtolWing` and `tiltTriWing` logistics presets now carry the small
+    parcel. No craft delivers the 4 kg winch parcel any more
+- **The fleet shells bound their design inputs**, one named
+  constraint per bound, and the doc of each bound names the source of
+  its number. `VtolWing` and `TiltTriWing` bound `loiterSpeed`,
+  `cruiseSpeed`, `wingSpan`, `wingChord` and `fuselageDiameter`.
+  `FlyingWingSingle` bounds `loiterSpeed`, `wingSpan` and `wingChord`.
+  `FlyingWingTwin` bounds `loiterSpeed`, `cruiseSpeed`, `wingSpan` and
+  `wingChord`. `BoxQuad`, `OpenTri`, `CoaxOcto` and `RingOcto` bound
+  `cruiseSpeed`. The stall floors use 1.2 times the stall speed at the
+  preset mass, and the span and chord tops are owner assumptions
+
+### The grand tour
+
+- **Grand tour v2: every pane follows one mission architecture**.
+  `grand_dashboard` shows one subject. The subject is a mission
+  architecture: a mission definition, one airframe variant, one variant
+  for each other variation point, and transient overrides. A transient
+  override changes a value for the analysis only and never writes the
+  model:
+  - A containment tree pane, the `ModelTree` of the explorer, opens row
+    1. A tree selection selects the element in the structure diagram, or
+    its nearest drawn ancestor. A diagram selection selects the tree row
+    and reveals it
+  - A mission selector sets the mission. A click on a catalog airframe
+    in the tree or in the diagram makes it the airframe of the subject.
+    Its preset, the best mix of the other variation points for that
+    airframe in that mission, fills the rest. A build configuration such
+    as `Rotorcraft::QuadCopter` only visits the 3D pane
+  - The model supplies the knobs: a dropdown for each variation point,
+    and a slider for each input attribute that constraints bound on both
+    sides. No annotation or Python table declares a knob. A slider shows
+    only if its input reaches the mission metric or a mission
+    constraint, so the ISR subject has no `cruiseSpeed` slider and the
+    logistics subject has no `loiterSpeed` slider
+  - The 3D pane, the camera what-if and the Cesium flight show the
+    subject craft. The scoreboard scores each requirement that applies
+    to the subject, for the mission architecture or for its airframe.
+    The sizing and Z3 strips show the sizing context of the mission of
+    the subject. A mission without a sizing context shows an honest
+    absence. The model supplies the bounds of the loiter and camera
+    sliders
+  - A knob that changes the shape of the craft, for example the span,
+    the mean chord or the hull diameter, also changes the mesh of the 3D
+    pane, the view cone, the occlusion measure and the Cesium model.
+    The mesh reads the same instance of the subject as the metrics
+  - Tutorial 9 tours the subject: the mission, the knobs, the
+    requirement set, the camera what-if, the sizing context and the
+    craft clicks
+  - The sizing strip shows the OpenMDAO process. A history plot shows
+    the objective and each constraint margin for each driver iteration
+    of the last *maximize* run. A table lists the design variables and
+    the constraints with their bounds, current values and active flags.
+    An N2 matrix shows the components of the problem and their
+    connections. The dashboard exposes them as `.sizing_history`,
+    `.sizing_table` and `.sizing_n2`
+- **The grand tour docks in JupyterLab**: `dash.dock()` moves the panes
+  into nine panels of the JupyterLab main area, each with a titled tab:
+  *Tree*, *Structure*, *3D*, *Scoreboard*, *Subject*, *Camera what-if*,
+  *Sizing*, *Z3* and *Mission*. The first view keeps the inline order,
+  and the Cesium pane is a tab beside the notebook. A drag of a split bar
+  resizes two panes, and a drag of a tab moves a pane. The panels hold
+  the same widgets, so every pane still follows the subject.
+  `dash.undock()` shows the dashboard in the notebook again, and
+  `grand_dashboard(..., dock=True)` docks it when it is built. Without a
+  JupyterLab front end, `dock()` prints a note and the layout stays
+  inline. The inline layout stays the default
+- **The analysis API behind the tour**:
+  - `longeron.analysis.mdao`: `add_optimization` attaches an
+    `om.SqliteRecorder` to the driver. `run_optimization` runs the driver
+    and returns an `OptimizationHistory`, the objective, design variables
+    and constraint margins of each driver iteration.
+    `OptimizationHistory.active_constraints` names the bounds that hold
+    with equality at the optimum. `optimization_bounds` returns the
+    unscaled bounds, and `problem_structure` returns a `ProblemStructure`:
+    the components, their variables and the connections
+  - `longeron.analysis.subject`: `Subject`, `preset`, `craft_variant`
+    and `requirement_set`. `requirement_set` also collects the
+    requirement usages that a package owns, for example
+    `DeepScout::installation`
+  - `longeron.analysis.knobs`: `derive_knobs` returns a `KnobSet` of
+    sliders, dropdowns and the skipped inputs. Its `metric=` keyword
+    names the mission metric, and an input that reaches neither the
+    metric nor a constraint of the study is skipped as `"unreachable"`
+  - `TradeStudy.dependents(key, variant)` returns the assembly
+    attributes and constraints that depend on an override key, from the
+    references of the model
+  - `TradeStudy.evaluate(selection, overrides=...)` applies transient
+    overrides, and the new `TradeStudy.instance(selection, overrides=...)`
+    returns the instantiated assembly
+  - `geometry.mission_params` and `geometry.mission_geometry` accept
+    `instance=`, the instance of a mix. The geometry inputs then come
+    from that instance, with its overrides. `winged_vtol_geometry`
+    accepts `fuselage_diameter=`, and the mission bridge draws the
+    declared hull of `VtolWing` (0.12 m) instead of a hull sized to the
+    battery
+  - `scoreboard()` accepts a sequence of requirements, and its
+    `subjects=` keyword scores each requirement for a given instance
+- **`scene_for` stamps the declared camera on every craft family**:
+  `occlusion_report` measures a fleet shell without a `camera=`
+  argument
+- **The Cesium flight can look through the declared camera**:
+  `mission_viewer` has a `view_mode` trait (`ViewMode`: `'free'`,
+  `'follow'` or `'onboard'`) and a mode button for each value in its
+  stage. `'follow'` stays the default. In `'onboard'`, the Cesium camera
+  rides the drone at the placement, boresight and field of view of the
+  `onboard_camera` trait. The grand tour sets `onboard_camera` from the
+  declared camera of the subject and the camera what-if sliders, so the
+  onboard view looks where the occlusion measure looks
+
+- **The Cesium flight flies the flight profile of the subject**.
+  `mission3d.model_flight` reads the profile off the shell. A shell
+  with `wingSpan` 0 is a rotorcraft. A wing with `hoverThrustFactor` 0
+  is a rail-launched wing, and a wing with hover thrust is a VTOL wing:
+  - A rail-launched wing climbs out along the first leg and turns on an
+    arc at each waypoint, banked 30 deg. It orbits in a loiter state
+    and glides to the ground over the last waypoint
+  - A VTOL wing climbs and descends vertically up to 30 m above the
+    ground and flies as a wing between
+  - A rotorcraft flies as before, and its CZML does not change
+  - `track_from_timeline` and `from_replay` take `profile=` and
+    `wing=`, a `WingFlight` with the turn speed, the bank, the climb and
+    glide angles and the transition height. `MissionTrack` records the
+    `profile` and the banked `turns`
+  - `MissionTrack.attitude()` returns `(t, heading, pitch, roll)`
+    keyframes in place of `(t, heading, pitch)`
+  - A state name with loiter, hover, station or orbit maps to the new
+    `loiter` phase. A rotorcraft flies it as a `route` phase
+
 ### Verification and conformance
 
 - **Every z3 `Optimize` query has a time limit, and an independent
@@ -78,6 +255,16 @@
   the pixi environments require ipykernel 7.4. If slider updates lag
   with ipykernel 7.4 and JupyterLab 4.6, set `commsOverSubshells` to
   `disabled` (an ipyelk 3.0 known issue)
+- **`grand_dashboard(assembly=...)` is gone**: pass `mission=` and
+  `airframe=`, a variant name of `AirframeChoice`. The default subject
+  is the ISR winner
+- **`grand_dashboard(sizer=..., station_requirement=...,
+  station_var=...)` are gone**: pass `sizing_contexts={"ISR":
+  (sizer, requirement, station_attribute)}`. The default is
+  `DEFAULT_SIZING_CONTEXTS`. A new `camera_case=` keyword names the
+  analysis case that bounds the camera sliders
+- **The `.mission` attribute of the grand tour is still the Cesium
+  viewer**: the mission selector is `.mission_toggle`
 
 ## 0.11.0 (2026-08-29)
 

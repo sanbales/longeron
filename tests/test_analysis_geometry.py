@@ -1927,6 +1927,69 @@ class TestMissionBridge:
         with pytest.raises(AnalysisError):
             geometry.mission_params(mission_study, arch)
 
+    def test_plain_instance_reads_the_catalog_values(self):
+        """With no override the instance and the variant catalog give the same
+        geometry inputs, for every variant of every point of every mission."""
+
+        from longeron.analysis import trades
+        from longeron.analysis.dashboard import DEFAULT_MISSIONS
+
+        catalog = longeron.load(EXAMPLES / "deepscout", cache=False)
+        checked = 0
+        for assembly, _metric in DEFAULT_MISSIONS.values():
+            study = trades.TradeStudy(catalog, assembly)
+            base = {name: next(iter(p.variants)) for name, p in study.points.items()}
+            for name, point in study.points.items():
+                for variant in point.variants:
+                    mix = {**base, name: variant}
+                    arch = study.evaluate(mix)
+                    with_instance = geometry.mission_params(
+                        study, arch, instance=study.instance(mix)
+                    )
+                    assert with_instance == geometry.mission_params(study, arch), (assembly, mix)
+                    checked += 1
+        # every mission crosses all twelve catalog airframes
+        assert checked >= 3 * 12
+
+    def test_instance_overrides_reach_the_mesh(self, mission_study):
+        """A span, chord or hull what-if on the instance reshapes the mesh, and
+        the derived planform (wingArea, rootChord) follows the interpreter."""
+
+        def build(airframe, overrides):
+            mix = {
+                "airframe": airframe,
+                "motors": "x4112s",
+                "props": "apc11x55",
+                "battery": "tattu10000",
+                "material": "aluminum",
+            }
+            arch = mission_study.evaluate(mix, overrides)
+            instance = mission_study.instance(mix, overrides)
+            mesh = geometry.mission_geometry(mission_study, arch, instance=instance)
+            return mesh, geometry.mission_params(mission_study, arch, instance=instance)
+
+        def extent(mesh, part, axis):
+            lo, hi = geometry._part_aabb(next(p for p in mesh["parts"] if p["name"] == part))
+            return hi[axis] - lo[axis]
+
+        wing0, params0 = build("flyingWingSingle", {})
+        wide, params = build("flyingWingSingle", {"airframe.wingSpan": 2.8})
+        assert params["wing_span"] == 2.8
+        assert params["wing_area"] == pytest.approx(2.8 * 0.32)  # span x mean chord
+        assert extent(wide, "wing", 2) / extent(wing0, "wing", 2) == pytest.approx(2.8 / 2.2)
+        deep, params = build("flyingWingSingle", {"airframe.wingChord": 0.4})
+        assert params["wing_area"] == pytest.approx(2.2 * 0.4)
+        assert params["wing_area"] / params0["wing_area"] == pytest.approx(0.4 / 0.32)
+        assert extent(deep, "wing", 0) > extent(wing0, "wing", 0)  # a deeper root chord
+        assert extent(deep, "wing", 2) == pytest.approx(2.2)
+        # the tail-sitter stands in hover: the hull's diameter spans x and z
+        hull0, _ = build("vtolWing", {})
+        fat, params = build("vtolWing", {"airframe.fuselageDiameter": 0.16})
+        assert params["fuselage_diameter"] == 0.16
+        assert extent(hull0, "frame", 0) == pytest.approx(0.12)  # the declared hull
+        assert extent(fat, "frame", 0) == pytest.approx(0.16)
+        assert extent(fat, "frame", 2) == pytest.approx(0.16)
+
 
 class TestLineup:
     def test_side_by_side_at_true_scale(self):

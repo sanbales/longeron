@@ -150,12 +150,12 @@ class TestStructure:
         texts = " | ".join(label.text for label in envelope.labels)
         assert "subject drone : MultiRotor" in texts
         assert "require hoverMargin" in texts
-        # the installation requirement's subject is the abstract base:
-        # any configuration can be measured (the quad is the satisfy
-        # anchor, over in the Rotorcraft branch)
+        # the installation requirement's subject is the program root:
+        # every craft can be measured (the quad is the satisfy anchor,
+        # over in the Rotorcraft branch)
         install = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::installation")
         install_texts = " | ".join(label.text for label in install.labels)
-        assert "subject drone : MultiRotor" in install_texts
+        assert "subject craft : Aircraft" in install_texts
         # the shared constraints render on the abstract base
         base = next(n for n in _walk(widget.source.value) if n.id == "DeepScout::MultiRotor")
         base_texts = " | ".join(label.text for label in base.labels)

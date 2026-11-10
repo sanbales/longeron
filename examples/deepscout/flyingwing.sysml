@@ -115,6 +115,8 @@ package FlyingWings {
                 formFactor = BodyFormFactor(length = bayLength,
                                             diameter = bayWidth)));
         attribute tipPropBonus : Real = 1.0;     // pushers ride the TE, not the tips
+        // the reflexed section trades lift for its nose-up trim: NOMINAL
+        attribute clMax : Real = 1.0;
         attribute hoverThrustFactor : Real = 0.0;   // catapult-launched: no hover
         attribute hoverOpsSec : Real = 0.0;         // ... and no hover budget
         // the catapult climb-out runs full throttle until the wing is
@@ -154,7 +156,6 @@ package FlyingWings {
         // the declared cgMac into metres aft of the root LE, and the
         // margin and volume calcs read the composed stations -- so one
         // CG feeds every check, whichever composition produced it.
-        attribute rootChord : Real = 2.0 * wingChord / (1.0 + taper);
         attribute tipChord : Real = taper * rootChord;
         attribute mac : Real =
             MeanAeroChord(rootChord = rootChord, taper = taper);
@@ -192,8 +193,8 @@ package FlyingWings {
                of chasing the swept TE outboard (podTeRise 0).  The
                outer panels sweep as before; the crank reshapes the
                DRAWN planform and the S&C composition only -- the
-               declared performance closures (wingArea, wingSpan,
-               oswald) are untouched.
+               performance closures (wingArea, the straight-taper
+               span x mean chord; wingSpan; oswald) are untouched.
                The price of one propeller: its torque has no twin to
                cancel against, so the elevons carry a standing trim
                deflection -- that ride is in the Oswald factor, a
@@ -202,7 +203,7 @@ package FlyingWings {
                an ISR specialist, honestly excluded from the parcel
                trade the way the teardrop is. */
         attribute wingSpan : Real = 2.2;  attribute wingChord : Real = 0.32;
-        attribute taper : Real = 0.45;    attribute wingArea : Real = 0.704;
+        attribute taper : Real = 0.45;
         attribute wingletArea : Real = 0.030;
         attribute mass : Real = 1.15;   attribute cost : Real = 520.0;
 
@@ -290,6 +291,38 @@ package FlyingWings {
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 4.6;  // shell + big pack + gimbal
 
+        // ----- the design ranges: the grand tour's sliders ----------
+        // One constraint per bound (the ScoutMissions threshold idiom);
+        // each doc names the source of its number.  The stall figures
+        // read 1.2 x the stall speed at this shell's clMax and planform.
+        assert constraint loiterSpeedLow {
+            doc /* The loiter is at least 11.5 m/s: 1.2 x the stall
+                   speed at the 4.1 kg ISR preset mass is 11.6 m/s. */
+            loiterSpeed >= 11.5 }
+        assert constraint loiterSpeedHigh {
+            doc /* The loiter is at most 19 m/s, the declared
+                   cruiseSpeed: a loiter is not faster than the transit. */
+            loiterSpeed <= 19.0 }
+        assert constraint wingSpanLow {
+            doc /* The span is at least 1.6 m: below 1.52 m the
+                   14 m/s loiter is under 1.2 x the stall speed at the
+                   ISR preset mass and the 0.32 m chord. */
+            wingSpan >= 1.6 }
+        assert constraint wingSpanHigh {
+            doc /* The span is at most 2.8 m, an OWNER ASSUMPTION
+                   (the sensitivity study's range, under the courier's
+                   3.0 m).  The model declares no span limit. */
+            wingSpan <= 2.8 }
+        assert constraint wingChordLow {
+            doc /* The mean chord is at least 0.26 m, about 80% of
+                   the 0.32 m default (a chord Reynolds number of 2e5 at
+                   the loiter needs only 0.21 m). */
+            wingChord >= 0.26 }
+        assert constraint wingChordHigh {
+            doc /* The mean chord is at most 0.40 m, about 25%
+                   above the default, an OWNER ASSUMPTION. */
+            wingChord <= 0.40 }
+
         // the ISR bay: a sensor-pod ogive under the root, sized so the
         // Zenmuse-class gimbal, the endurance pack, and the avionics
         // stow together; the root cell is the cranked center section's
@@ -301,7 +334,15 @@ package FlyingWings {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera: the lens at the ogive pod's nose tip,
+                   which the mesh places 0.03 m ahead of the root leading
+                   edge (0.25 rootChord ahead of the origin) at the pod's
+                   axis height (its crown at 0.85 of the root half-thickness,
+                   one bayWidth radius above the axis). */
+            attribute :>> x = 0.25 * rootChord + 0.03;
+            attribute :>> y = 0.85 * rootThickness * rootChord / 2 - bayWidth / 2;
+        }
     }
 
     part def FlyingWingTwin :> FlyingWing {
@@ -322,7 +363,7 @@ package FlyingWings {
                mid-size parcel cradle; the winch bay is honestly past
                it. */
         attribute wingSpan : Real = 2.6;  attribute wingChord : Real = 0.327;
-        attribute taper : Real = 0.45;    attribute wingArea : Real = 0.85;
+        attribute taper : Real = 0.45;
         attribute wingletArea : Real = 0.040;
         attribute mass : Real = 1.55;   attribute cost : Real = 780.0;
         // the pushers ride the swept TE either side of the root bay,
@@ -345,6 +386,50 @@ package FlyingWings {
         attribute sparRadius : Real = 0.014;   // fits the 15% root section
         attribute designGrossKg : Real = 7.0;  // parcel + the heavy pack
 
+        // ----- the design ranges: the grand tour's sliders ----------
+        // One constraint per bound (the ScoutMissions threshold idiom);
+        // each doc names the source of its number.  The stall figures
+        // read 1.2 x the stall speed at this shell's clMax and planform.
+        assert constraint loiterSpeedLow {
+            doc /* The loiter is at least 11.5 m/s: 1.2 x the stall
+                   speed at the ISR preset mass is 11.2 m/s (11.4 m/s
+                   for the tip variant). */
+            loiterSpeed >= 11.5 }
+        assert constraint loiterSpeedHigh {
+            doc /* The loiter is at most 22 m/s, the declared
+                   cruiseSpeed: a loiter is not faster than the transit. */
+            loiterSpeed <= 22.0 }
+        assert constraint cruiseSpeedLow {
+            doc /* The cruise is at least 14 m/s: 1.2 x the stall
+                   speed at the logistics preset's outbound mass is
+                   13.5 m/s (13.7 m/s for the tip variant). */
+            cruiseSpeed >= 14.0 }
+        assert constraint cruiseSpeedHigh {
+            doc /* The cruise is at most 25 m/s, the declared
+                   fidelity limit of the fixed-pitch props (pitch speeds
+                   13 to 25 m/s, ScoutMissions::InterceptUav). */
+            cruiseSpeed <= 25.0 }
+        assert constraint wingSpanLow {
+            doc /* The span is at least 2.0 m, the sensitivity
+                   study's floor: the stall floor of the 15 m/s loiter
+                   is 1.46 m (1.51 m for the tip variant), and the
+                   courier stays wider than the ISR single. */
+            wingSpan >= 2.0 }
+        assert constraint wingSpanHigh {
+            doc /* The span is at most 3.0 m, an OWNER ASSUMPTION
+                   (a wing that fits a car).  The model declares no
+                   transport or structural span limit. */
+            wingSpan <= 3.0 }
+        assert constraint wingChordLow {
+            doc /* The mean chord is at least 0.26 m, about 80% of
+                   the 0.327 m default (a chord Reynolds number of 2e5
+                   at the loiter needs only 0.195 m). */
+            wingChord >= 0.26 }
+        assert constraint wingChordHigh {
+            doc /* The mean chord is at most 0.40 m, about 20%
+                   above the default, an OWNER ASSUMPTION. */
+            wingChord <= 0.40 }
+
         // the courier bay: the root cell does the carrying (0.72 m of
         // root span between the pushers, the mid-chord cell of the 15%
         // section), and a slimmer ogive pod fairs the doors and the
@@ -357,7 +442,15 @@ package FlyingWings {
         // the clickable internals: the equipment every variant carries
         part battery : ScoutParts::Battery;
         part flightController : ScoutParts::F450Kit::FlightController;
-        part camera : ScoutParts::F450Kit::Camera;
+        part camera : ScoutParts::F450Kit::Camera {
+            doc /* The nose camera: the lens at the ogive pod's nose tip,
+                   which the mesh places 0.03 m ahead of the root leading
+                   edge (0.25 rootChord ahead of the origin) at the pod's
+                   axis height (its crown at 0.85 of the root half-thickness,
+                   one bayWidth radius above the axis). */
+            attribute :>> x = 0.25 * rootChord + 0.03;
+            attribute :>> y = 0.85 * rootThickness * rootChord / 2 - bayWidth / 2;
+        }
     }
 
     part def FlyingWingTwinTip :> FlyingWingTwin {

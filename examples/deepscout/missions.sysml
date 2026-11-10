@@ -281,6 +281,30 @@ package ScoutMissions {
         assert constraint isrLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
         assert constraint stationReq { stationMinutes >= minStationMinutes }
+
+        // the loiter must stay clear of the stall: the wing-borne families
+        // loiter at loiterSpeed, and the margin is at least 1.2 x the
+        // stall speed at mission mass (NOMINAL, the margin of the grand
+        // tour's sensitivity study).  A rotor-borne shell has no stall:
+        // its margin reads 2.0, above the floor, so the check holds
+        // without a special case.
+        attribute loiterStallMargin : Real = if airframe.wingSpan > 0.0
+            ? airframe.loiterSpeed / StallSpeed(massKg = missionMass,
+                wingArea = airframe.wingArea, clMax = airframe.clMax)
+            else 2.0;
+        assert constraint loiterAboveStall { loiterStallMargin >= 1.2 }
+
+        // the range of the tasking floor, one constraint per bound: the
+        // ends of the isrStation ramp in ScoutMissions::scoring
+        assert constraint minStationMinutesLow {
+            doc /* The tasking floor is at least 25 minutes.  The
+                   isrStation ramp gives zero utility at 25 minutes. */
+            minStationMinutes >= 25.0 }
+        assert constraint minStationMinutesHigh {
+            doc /* The tasking floor is at most 240 minutes, a four-hour
+                   watch.  The isrStation ramp gives full utility at 240
+                   minutes. */
+            minStationMinutes <= 240.0 }
     }
 
     // ----- mission 2: logistics -----------------------------------------------------
@@ -344,6 +368,56 @@ package ScoutMissions {
             maxThrust >= airframe.hoverThrustFactor * outboundMass * 9.81 }
         assert constraint payloadReq { cargo.payloadKg >= minPayloadKg }
         assert constraint radiusReq { deliveryRadiusKm >= minDeliveryRadiusKm }
+
+        // the outbound cruise must stay clear of the stall: the heavier
+        // leg at cruiseSpeed, with the loiter's 1.2 margin (IsrUav).  A
+        // rotor-borne shell has no stall and reads 2.0.
+        attribute cruiseStallMargin : Real = if airframe.wingSpan > 0.0
+            ? airframe.cruiseSpeed / StallSpeed(massKg = outboundMass,
+                wingArea = airframe.wingArea, clMax = airframe.clMax)
+            else 2.0;
+        assert constraint cruiseAboveStall { cruiseStallMargin >= 1.2 }
+        // a rotor-borne shell translates by tilting, so its cruise may
+        // not outrun MaxCruiseSpeed at the shell's tilt cap with the
+        // parcel aboard (InterceptUav's tiltDashCap idiom).  The wing-
+        // borne families read their own cruiseSpeed, so the check holds
+        // without a special case.
+        attribute cruiseTiltCap : Real = if airframe.wingSpan > 0.0
+            ? airframe.cruiseSpeed
+            else MaxCruiseSpeed(tiltDeg = airframe.maxTiltDeg,
+                                massKg = outboundMass,
+                                dragArea = airframe.dragArea);
+        assert constraint cruiseWithinTilt {
+            airframe.cruiseSpeed <= cruiseTiltCap }
+        // the spar is sized for airframe.designGrossKg (MissionUAV's
+        // sparWall), so the outbound leg may not load it past that mass.
+        // A rotor-borne shell has no spar and reads its own design mass
+        // (0), so the check holds without a special case.
+        attribute sparLoadKg : Real = if airframe.wingSpan > 0.0
+            ? outboundMass else airframe.designGrossKg;
+        assert constraint sparDesignMass {
+            sparLoadKg <= airframe.designGrossKg }
+
+        // the ranges of the two tasking floors, one constraint per
+        // bound.  The logisticsWork ramp in ScoutMissions::scoring scores
+        // the product payloadRangeKgKm, so neither floor has a ramp end
+        // of its own.  Each range is half to twice the declared default.
+        assert constraint minPayloadKgLow {
+            doc /* The payload floor is at least 0.5 kg, half the
+                   declared 1 kg.  No ramp scores the payload alone. */
+            minPayloadKg >= 0.5 }
+        assert constraint minPayloadKgHigh {
+            doc /* The payload floor is at most 2 kg, twice the declared
+                   1 kg.  No ramp scores the payload alone. */
+            minPayloadKg <= 2.0 }
+        assert constraint minDeliveryRadiusKmLow {
+            doc /* The radius floor is at least 4 km, half the declared
+                   8 km.  No ramp scores the radius alone. */
+            minDeliveryRadiusKm >= 4.0 }
+        assert constraint minDeliveryRadiusKmHigh {
+            doc /* The radius floor is at most 16 km, twice the declared
+                   8 km.  No ramp scores the radius alone. */
+            minDeliveryRadiusKm <= 16.0 }
     }
 
     // ----- mission 3: high-speed intercept ---------------------------------------------
@@ -438,6 +512,36 @@ package ScoutMissions {
         assert constraint launchLift {
             maxThrust >= airframe.hoverThrustFactor * missionMass * 9.81 }
         assert constraint canCatch { maxTargetSpeed >= targetSpeed }
+
+        // the dash must stay clear of the stall: the usable dash speed
+        // at mission mass, with the loiter's 1.2 margin (IsrUav).  A
+        // rotor-borne shell has no stall and reads 2.0.
+        attribute dashStallMargin : Real = if airframe.wingSpan > 0.0
+            ? usableDashSpeed / StallSpeed(massKg = missionMass,
+                wingArea = airframe.wingArea, clMax = airframe.clMax)
+            else 2.0;
+        assert constraint dashAboveStall { dashStallMargin >= 1.2 }
+
+        // the ranges of the target, one constraint per bound.  The speed
+        // range is the ends of the interceptCatch ramp in
+        // ScoutMissions::scoring.  No ramp scores the detection
+        // distance, so its range is half to twice the declared default.
+        assert constraint targetSpeedLow {
+            doc /* The target speed is at least 25 m/s.  The
+                   interceptCatch ramp gives zero utility at 25 m/s. */
+            targetSpeed >= 25.0 }
+        assert constraint targetSpeedHigh {
+            doc /* The target speed is at most 75 m/s.  The
+                   interceptCatch ramp gives full utility at 75 m/s. */
+            targetSpeed <= 75.0 }
+        assert constraint targetDistanceLow {
+            doc /* The detection distance is at least 1500 m, half the
+                   declared 3000 m.  No ramp scores the distance. */
+            targetDistance >= 1500.0 }
+        assert constraint targetDistanceHigh {
+            doc /* The detection distance is at most 6000 m, twice the
+                   declared 3000 m.  No ramp scores the distance. */
+            targetDistance <= 6000.0 }
     }
 
     // ----- mission requirements (the dashboard's threshold anchors) ---------
@@ -452,9 +556,13 @@ package ScoutMissions {
 
         requirement def IsrTasking {
             doc /* Hold station with a stabilized grade-2+ sensor at
-                   least minStationMinutes. */
+                   least minStationMinutes.  The requirement applies to
+                   every airframe family, because holding station needs
+                   no hover.  An orbiting wing holds station on cruise
+                   power, and stationMinutes models that loiter for the
+                   wing-borne families.  So no assumption excludes the
+                   rail-launched wings. */
             subject uav : IsrUav;
-            assume constraint { uav.airframe.hoverThrustFactor > 0.0 }
             require constraint stationFloor {
                 uav.stationMinutes >= uav.minStationMinutes }
         }
@@ -644,7 +752,7 @@ package ScoutMissions {
     attribute payloadRangeKgKm : Real = 187.0;          // the logistics winner, kg km
                                                         // (the tip twin's recovered span, engine-out honestly busted)
                                                         // (the twin pays its derived-pod drag)
-    attribute maxTargetSpeed : Real = 66.8;             // the dart's catchable crossing, m/s
+    attribute maxTargetSpeed : Real = 66.9;             // the dart's catchable crossing, m/s
                                                         // (riding its own gust placard)
     attribute fleetCost : Real = 9706.5;                // USD: the three winners' invoices
     attribute heaviestBirdKg : Real = 6.89;             // kg: the loaded courier at launch
