@@ -3,47 +3,53 @@
 
     python scripts/record_demo.py
 
-re-records the whole thing after UI changes.  The walkthrough is
-DETERMINISTIC by construction: a purpose-built copy of the tutorial-9
-notebook is generated into a throwaway lab root (the repo's notebooks are
-never touched), the models it loads ship with this checkout
-(the ``examples/deepscout`` program directory), the
-scoreboard's Voronoi seed is fixed inside ``grand_dashboard``,
-``PYTHONHASHSEED=0`` pins kernel hashing, and every camera beat is a
-fixed pause -- so two recordings differ only in sub-second layout-arrival
-jitter plus Cesium imagery-tile streaming (the finale's camera framing is
-CZML ``viewFrom`` tracking and therefore stable; only tile sharpness
-varies with the network).
+re-records the whole thing after UI changes.  The take is deterministic.
+The script generates a copy of tutorial 9 into a throwaway lab root, so
+the notebooks of the repository never change.  The models ship with this
+checkout (``examples/deepscout``), the dashboard fixes the Voronoi seed of
+its scoreboard, and ``PYTHONHASHSEED=0`` fixes kernel hashing.  Every wait
+of the take polls for the reaction that it shows, with the predicates of
+``tests/browser/test_browser_grand_tour.py``.  Two recordings differ only in
+sub-second timing and in the Cesium imagery tiles that the network streams.
 
-The story is ONE LINEAR pass over ONE surface (~70 s), every beat
-motivated, no back-and-forth: open ``09_grand_tour.ipynb`` -> Run All
-Cells -> scroll once to the dashboard and let the composition land ->
-the diagram dives into the ``QuadCopter`` node (the DeepScout program
-is ~18k px of diagram, so the camera frames what it is about to touch:
-an animated kernel-side ``fit``, the same move the toolbar's fit button
-makes) -> click the ``motors : Motor [4]`` row (all four motors flash
-in 3D) -> the frame pulls back one step to the multirotor family -> click
-into the ``HexaCopter`` (its ``motors : Motor [6]`` row) and the 3D
-pane BECOMES that craft, six rotors baked from its own M0 population
-(0.11's config-keyed viewer: ``bind_config_view`` is on by default;
-any selection resolves to its owning craft), then click ``QuadCopter``
-and the home craft returns, view cone and all
--> drag the azimuth slider until the view cone sweeps into the airframe
-(occludedFraction goes red, ``clearView`` flips red on the Voronoi, the
-obstructing parts light up) and drag back to clear (the score recovers
-live) -> drag the loiter slider down to the stall floor (the generated
-OpenMDAO problem re-runs on every step; station time climbs to its
-maximum) -> a cursor pass over the Z3 SAT verdict
-and the what-if's UNSAT conflict core -> double-click the ``endurance``
-cell (the Voronoi zooms to the performance branch) and Esc back -> press
-play on the Cesium timeline and end mid-flight over satellite Atlanta.
-Outputs land in ``build/demo/`` (gitignored):
+The video starts on the finished dashboard.  Before the cut, the take opens
+``09_grand_tour.ipynb`` at 1920x1080, collapses the file browser, and runs
+every cell above the ``dash.dock()`` cell.  It also boots the Cesium pane
+once, and it waits until the dashboard settles.  The **subject** of the
+dashboard is one mission architecture, and the first frame shows the ISR
+winner as the subject.  The storyline then shows one capability per beat
+(about 60 s):
 
-* ``demo.webm``   -- the raw playwright capture (1600x1200)
+a. The cursor rests on the header.  The header names the subject and its
+   requirements score.
+b. The tree filter finds the twin-tip flying wing, and a click on its row
+   makes it the subject.  The 3D pane, the header and the scoreboard follow.
+   The fit button of the diagram toolbar frames the selected node.
+c. A drag of the ``wingSpan`` knob to its maximum re-bakes the 3D pane under
+   the drag.  The 3D pane keeps its camera, so the wing draws wider.
+d. The *Requirements* tab shows the re-scored scoreboard: ``PitchStability``
+   failed at the wider span.  A hover on ``IsrTasking`` shows its tooltip.
+e. On the *Sizing* tab, *maximize station time* runs the OpenMDAO driver.
+   The cursor passes the history plot, the table and the N2 matrix.  The
+   *Z3* tab shows the SAT verdict and the UNSAT core of the what-if.
+f. On the *Mission* tab, the take presses play and switches to the
+   ``onboard`` view for about 5 s.  The wing banks through a turn, and the
+   take switches back to ``follow`` and pauses the clock.
+g. A click in the ``dash.dock()`` cell and Ctrl+Enter run it.  The nine
+   docked panes open in the JupyterLab main area.  The take drags the split
+   bar between the tree and the structure diagram, and the cursor then
+   passes the tabs of the docked panes.
+h. The video ends on the docked layout.
+
+The take prints each beat with its time in the video.  Outputs land in
+``build/demo/`` (gitignored):
+
+* ``demo.webm``   -- the raw playwright capture (1920x1080)
 * ``demo.mp4``    -- h264, crf 20, faststart (the shareable video)
 * ``demo.gif``    -- palette-optimized, <= 10 MB (the GitHub release-asset
   budget; see the publish workflow below)
 * ``frames/*.png``-- five representative stills for quick review
+* ``summary.json``-- the sizes, the trim offset and the beat times
 
 PUBLISH WORKFLOW -- media is NEVER committed to this repo.  The
 maintainer attaches ``demo.gif`` (and ``demo.mp4``) to the GitHub
@@ -58,18 +64,18 @@ The recording rig mirrors ``scripts/capture_widget_snapshots.py`` and
 temp user settings with ``autoStartDefaultKernel`` on, autosave OFF,
 ``windowingMode: none``), driven by headless Chromium.  Unlike those,
 this script performs for a HUMAN camera: a fake cursor overlay follows
-the mouse (playwright records no OS cursor), travel is smoothed with
-``mouse.move(steps=...)``, slider drags are paced segment by segment so
-the kernel repaints stream by on camera, and every action gets a beat to
-breathe.  The models are parse-cached and the three.js/Cesium CDN
-bundles are browser-cached OFF camera, so the on-camera Run All lands in
-seconds.  Record on a quiet machine -- concurrent browser suites steal
-the frames' smoothness.
+the mouse (playwright records no OS cursor), each cursor travel is an
+eased glide of a fixed duration, and slider drags are paced so the
+kernel repaints stream by on camera.  The models are parse-cached and the
+three.js/Cesium CDN bundles are browser-cached before the cut.  On macOS,
+Chromium draws WebGL on the GPU (``GPU_ARGS``).  Record on a quiet
+machine: concurrent browser suites steal the smoothness of the frames.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import shutil
@@ -81,7 +87,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from playwright.sync_api import ViewportSize
 
 REPO = Path(__file__).resolve().parents[1]
 DEMO_DIR = REPO / "build" / "demo"
@@ -91,15 +100,25 @@ MODEL_CACHE = DEMO_DIR / "model-cache"
 FFMPEG = os.environ.get("LONGERON_FFMPEG", "/opt/homebrew/bin/ffmpeg")
 
 NOTEBOOK = "09_grand_tour.ipynb"
-#: the dashboard is ~1010 px tall; 1200 px of viewport leaves it filling
-#: the frame under the Lab chrome after the one scroll to its top
-VIEWPORT = {"width": 1600, "height": 1200}
-#: 2 supersamples the capture on high-DPI text (the video is downscaled
-#: back to the viewport size; stills come out at 3200x2400 and crisp)
-DEVICE_SCALE_FACTOR = 2
+#: the dashboard's layout target (tests/browser/test_browser_grand_tour.py,
+#: scenario 5): with the file browser collapsed, the whole dashboard fits
+#: the notebook's visible output area at 1920x1080
+VIEWPORT: ViewportSize = {"width": 1920, "height": 1080}
+#: 1: the capture renders at the video's own size.  A supersampled page
+#: (2) renders the 3D, Cesium and docked panes at 3840x2160, and the
+#: slower frames then stretch every cursor move and drag of the take
+DEVICE_SCALE_FACTOR = 1
+#: headless Chromium draws WebGL in software (SwiftShader) by default.  The
+#: 3D, Cesium and docked panes then hold the renderer so long that every
+#: cursor step of the take lags; on macOS, ANGLE over Metal draws on the GPU
+GPU_ARGS = (
+    ("--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist")
+    if sys.platform == "darwin"
+    else ()
+)
 #: front-end CDN bundles fetched into the browser HTTP cache OFF camera
 #: (the warm page), so the dashboard's 3D and Cesium panes land fast --
-#: keep in sync with analysis/viewer3d.py and analysis/mission3d.py
+#: keep in sync with widgets/viewer3d.py and widgets/mission3d.py
 CDN_WARM_URLS = (
     "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
     "https://cdn.jsdelivr.net/npm/cesium@1.144.0/Build/Cesium/Cesium.js",
@@ -109,105 +128,63 @@ CDN_WARM_URLS = (
 #: committed), so quality can run high -- but 10 MB is the budget the
 #: README's embed stays friendly under.
 GIF_BUDGET_BYTES = 10 * 1024 * 1024
-#: quality ladder walked until the GIF fits the budget (the Cesium
-#: finale over satellite imagery is entropy-heavy, and the slider sweeps
-#: repaint half the surface -- ~70 s of dashboard lands near the bottom)
+#: quality ladder walked until the GIF fits the budget.  The full 1080p
+#: frame is far over it (about 80 MB), so the ladder starts at 1280 px wide
+#: and 12 fps.  The Cesium flight over satellite imagery is the
+#: entropy-heavy stretch: about 1 MB per second at 1280 px and 12 fps
 GIF_LADDER = (
-    {"fps": 14, "width": 1280, "colors": 192},
+    {"fps": 12, "width": 1280, "colors": 192},
+    {"fps": 10, "width": 1280, "colors": 160},
+    {"fps": 8, "width": 1280, "colors": 160},
     {"fps": 10, "width": 1024, "colors": 128},
-    {"fps": 10, "width": 900, "colors": 112},
+    {"fps": 8, "width": 1024, "colors": 128},
+    {"fps": 8, "width": 960, "colors": 112},
     {"fps": 8, "width": 800, "colors": 96},
-    {"fps": 8, "width": 760, "colors": 96},
-    {"fps": 8, "width": 720, "colors": 96},
-    {"fps": 7, "width": 660, "colors": 96},
 )
 
 # -- camera pacing (ms) -------------------------------------------------------
 
-BEAT_SHORT = 800
-BEAT = 1200
-BEAT_LONG = 1700
-MOVE_STEPS = 45
+#: the human-readable pause after each reaction: every other wait in the
+#: storyline polls for the reaction itself, so the take has no dead time
+BEAT = 800
+#: the onboard flight: the wing banks through its second turn in this window
+ONBOARD_MS = 5200
+#: the closing hold on the docked layout
+END_MS = 2400
+#: one cursor travel: eased, time-based (a renderer that lags slows the
+#: steps, not the glide), slow enough for an eye to follow
+GLIDE_MS = 1000
+#: the slider drag: the 3D pane re-bakes under it, step by step
+DRAG_MS = 2400
+
+# -- the storyline's model facts (examples/deepscout) ---------------------------
+
+#: the catalog craft the tree click makes the subject
+TWIN_TIP = "ScoutMissions::Catalog::AirframeChoice::flyingWingTwinTip"
+ISR_TASKING = "ScoutMissions::MissionRequirements::IsrTasking"
+#: the playhead the Mission beat starts from (mission seconds).  The clock
+#: runs at 4x, and the onboard view opens about 3 s (12 mission seconds)
+#: after play, so it opens 2 s before the track's turn at 70-79 s
+FLIGHT_START_S = 50.0
 
 # -- the demo notebook ---------------------------------------------------------
 
-#: tutorial 9's performance graft, condensed: parsed from SysML text,
-#: grafted into the loaded model, measured through the model's own calcs
-_PERF_CELL = '''\
-program.find("DeepScout").add(
-    longeron.loads("""
-package _Perf {
-    requirement performance {
-        attribute hoverMinutes : Real;      // measured: HoverTime(battery.capacity)
-        attribute thrustToWeight : Real;    // measured: ThrustToWeight(4 rotors, MTOW)
-        requirement endurance {
-            attribute weight : Real = 2.0;
-            attribute utility : String = "larger-is-better";
-            attribute ramp0 : Real = 10.0;
-            attribute ramp1 : Real = 30.0;
-            attribute measure : Real = hoverMinutes;
-            attribute unit : String = "min";
-        }
-        requirement agility {
-            attribute utility : String = "larger-is-better";
-            attribute ramp0 : Real = 1.0;
-            attribute ramp1 : Real = 3.0;
-            attribute measure : Real = thrustToWeight;
-            attribute unit : String = "T/W";
-            require constraint hoverMargin { thrustToWeight >= 1.8 }
-        }
-    }
-}""").find("_Perf::performance")
-)
-
-interp = longeron.Interpreter(program)
-quad = interp.instantiate("Rotorcraft::QuadCopter")
-scope = program.find("DeepScout")
-capacity = quad.slots["battery"].slots["capacity"]
-thrust = 4.0 * quad.slots["thrustPerRotor"]
-mass = quad.slots["totalMass"]
-measured = {
-    "hoverMinutes": interp.evaluate(
-        longeron.parse_expression(f"HoverTime(capacity = {capacity})"), scope
-    ),
-    "thrustToWeight": interp.evaluate(
-        longeron.parse_expression(f"ThrustToWeight(thrust = {thrust}, mass = {mass})"), scope
-    ),
-}
-'''
-
 CELLS: tuple[tuple[str, str], ...] = (
-    (
-        "markdown",
-        "# 9 · The grand tour: one dashboard, every seam\n\n"
-        "Diagram · CAD · occlusion · scoreboard · OpenMDAO · Z3 · Cesium —\n"
-        "one reactive surface, every reaction kernel-side.",
-    ),
+    ("markdown", "# 9. The grand tour: one mission architecture, every pane"),
     (
         "code",
         "import longeron\n"
         "from longeron.analysis.grand import grand_dashboard\n"
         "\n"
-        'program = longeron.load("deepscout")  # the whole DeepScout program: one workspace',
-    ),
-    (
-        "markdown",
-        "A performance branch, grafted from SysML text and measured through\n"
-        "the model's own calcs — then **one call** composes the dashboard.",
-    ),
-    ("code", _PERF_CELL),
-    (
-        "code",
-        "from longeron.analysis import mission3d\n"
-        "from longeron.analysis.grand import ATLANTA_LOOP\n"
-        "\n"
-        "# mission time is analysis: the route legs measured kernel-side,\n"
-        "# priced by the model's own physics -- then one call composes it all\n"
-        "measured |= mission3d.mission_values(interp, ATLANTA_LOOP, ground_alt=300.0)\n"
-        "dash = grand_dashboard(program, values=measured)\n"
+        'program = longeron.load("deepscout")  # the whole DeepScout program: one workspace\n'
+        'dash = grand_dashboard(program)  # mission="ISR", airframe=None: the mission\'s winner\n'
         "dash",
     ),
+    ("code", "dash.dock()  # JupyterLab: nine docked panes in the main area"),
 )
+#: the cell index of ``dash.dock()``: the take runs every cell above it
+#: off camera, and runs this one on camera
+DOCK_CELL = 2
 
 
 def build_lab_root() -> None:
@@ -411,7 +388,7 @@ CURSOR_JS = """
 })();
 """
 
-# -- browser-truth probes -------------------------------------------------------
+# -- browser-truth probes (the predicates of tests/browser/test_browser_grand_tour.py)
 
 #: the dashboard's structure-diagram framing (the one visible sprotty
 #: pane in the notebook output area)
@@ -429,7 +406,6 @@ _VISIBLE_DIAGRAM_JS = r"""() => {
     return {
         shown: 1,
         rendered: content.width > 0,
-        text: g.textContent || '',
         transform,
         scale: zoom ? Number(zoom[1]) : 1,
         fitted: transform !== '' && transform !== 'scale(1) translate(0,0)'
@@ -439,18 +415,148 @@ _VISIBLE_DIAGRAM_JS = r"""() => {
     };
 }"""
 
+#: count the 3D pane's scene rebuilds: the viewer's rebuild() is the only
+#: code that writes the canvas aria-label (a record on every write)
+_ARM_REBUILDS_JS = """() => {
+    const canvas = document.querySelector('.longeron-viewer3d canvas');
+    if (!canvas) return false;
+    window.__lgnRebuilds = 0;
+    new MutationObserver((records) => { window.__lgnRebuilds += records.length; })
+        .observe(canvas, {attributes: true, attributeFilter: ['aria-label']});
+    return true;
+}"""
+
+#: a screen point inside the scoreboard cell whose qname ends with the
+#: argument: the cell's vertex centroid (a Voronoi cell is convex), mapped
+#: to the screen through the SVG's own transform
+_CELL_POINT_JS = """(suffix) => {
+    const path = [...document.querySelectorAll('.lgn-sb-cell')]
+        .find((el) => (el.getAttribute('data-qname') || '').endsWith(suffix));
+    if (!path) return null;
+    const nums = (path.getAttribute('d').match(/-?[0-9.]+(?:e-?[0-9]+)?/g) || []).map(Number);
+    let x = 0, y = 0;
+    for (let i = 0; i + 1 < nums.length; i += 2) { x += nums[i]; y += nums[i + 1]; }
+    const point = path.ownerSVGElement.createSVGPoint();
+    point.x = x / (nums.length / 2);
+    point.y = y / (nums.length / 2);
+    const screen = point.matrixTransform(path.getScreenCTM());
+    return {x: screen.x, y: screen.y, fill: path.getAttribute('fill'),
+            hit: document.elementFromPoint(screen.x, screen.y) === path};
+}"""
+
+#: the Cesium pane: booted with its mission, the clock's playhead, the
+#: active view-mode button and whether the imagery tiles have landed
+_CESIUM_JS = """() => {
+    const stage = document.querySelector('.longeron-mission3d-stage');
+    const viewer = stage && stage.longeronViewer;
+    if (!viewer || !viewer.dataSources.length) return {cesium: false};
+    return {
+        cesium: true,
+        seconds: window.Cesium.JulianDate.secondsDifference(
+            viewer.clock.currentTime, viewer.clock.startTime),
+        animating: viewer.clock.shouldAnimate,
+        tiles: viewer.scene.globe.tilesLoaded,
+        active: [...stage.querySelectorAll('.longeron-mission3d-modes button.active')]
+            .map((button) => button.textContent),
+    };
+}"""
+
+#: the docked panes: one titled tab per pane in the Lab main area
+GRAND_TABS = '#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey^="grand-"]'
+
+#: the width of a docked pane's panel (LabShell writes the panel's DOM id
+#: into its tab's dataset)
+_PANEL_WIDTH_JS = """(key) => {
+    const tab = document.querySelector(
+        `#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="${key}"]`);
+    const panel = tab && document.getElementById(tab.dataset.id);
+    return panel ? panel.getBoundingClientRect().width : null;
+}"""
+
+#: the center of the split bar between the panels of two panes side by side
+_HANDLE_JS = """([leftKey, rightKey]) => {
+    const box = (key) => {
+        const tab = document.querySelector(
+            `#jp-main-dock-panel .lm-TabBar-tab[data-lgxkey="${key}"]`);
+        const panel = tab && document.getElementById(tab.dataset.id);
+        return panel ? panel.getBoundingClientRect() : null;
+    };
+    const a = box(leftKey), b = box(rightKey);
+    if (!a || !b) return null;
+    for (const handle of document.querySelectorAll(
+        '#jp-main-dock-panel > .lm-DockPanel-handle')) {
+        const r = handle.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.x >= a.right - 6 && r.right <= b.left + 6 && r.top <= a.top + 40
+            && r.bottom >= a.top + a.height / 2) {
+            return {x: r.x + r.width / 2, y: a.top + a.height / 2};
+        }
+    }
+    return null;
+}"""
+
+
+def poll(probe: Any, label: str, *, timeout: float = 60.0, every: float = 0.1) -> Any:
+    """Return ``probe()`` as soon as it is truthy (the reaction landed)."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        found = probe()
+        if found:
+            return found
+        time.sleep(every)
+    raise TimeoutError(f"never happened: {label}")
+
 
 class Camera:
     """Human-paced choreography over one playwright page."""
 
     def __init__(self, page: Any) -> None:
         self.page = page
+        #: the cursor position: every move of the take goes through the camera
+        self.x, self.y = VIEWPORT["width"] / 2, VIEWPORT["height"] / 2
         self.frames: list[Path] = []
+        self.beats: list[tuple[float, str]] = []
+        #: set when the take starts: beat times are relative to the cut's t=0
+        self.t0: float | None = None
+
+    def mark(self, label: str) -> None:
+        """Log a beat timestamp relative to the trimmed video's t=0."""
+
+        assert self.t0 is not None, "mark() before the scene starts"
+        at = time.monotonic() - self.t0
+        self.beats.append((round(at, 1), label))
+        print(f"  beat {at:5.1f}s  {label}", flush=True)
 
     def beat(self, ms: int = BEAT) -> None:
         self.page.wait_for_timeout(ms)
 
-    def glide(self, locator: Any, steps: int = MOVE_STEPS) -> tuple[float, float]:
+    def hold(self, since: float, ms: int) -> None:
+        """Wait until ``ms`` have passed since the monotonic time ``since``
+        (a still taken inside the hold costs no extra screen time)."""
+
+        left = since + ms / 1000 - time.monotonic()
+        if left > 0:
+            self.page.wait_for_timeout(left * 1000)
+
+    def jump(self, x: float, y: float) -> None:
+        """Put the cursor at ``(x, y)`` at once (off camera only)."""
+
+        self.page.mouse.move(x, y)
+        self.x, self.y = x, y
+
+    def glide_to(self, x: float, y: float, ms: int = GLIDE_MS) -> None:
+        """Travel to ``(x, y)`` in ``ms``, eased in and out like a hand."""
+
+        x0, y0 = self.x, self.y
+        start = time.monotonic()
+        while (elapsed := (time.monotonic() - start) * 1000) < ms:
+            ease = (1 - math.cos(math.pi * elapsed / ms)) / 2
+            self.page.mouse.move(x0 + (x - x0) * ease, y0 + (y - y0) * ease)
+            self.page.wait_for_timeout(16)
+        self.jump(x, y)
+
+    def glide(self, locator: Any, ms: int = GLIDE_MS) -> tuple[float, float]:
         """Smoothly travel to the center of ``locator``; returns the point."""
 
         locator.scroll_into_view_if_needed()
@@ -459,56 +565,59 @@ class Camera:
             raise RuntimeError(f"no bounding box for {locator}")
         x = box["x"] + box["width"] / 2
         y = box["y"] + box["height"] / 2
-        self.page.mouse.move(x, y, steps=steps)
+        self.glide_to(x, y, ms)
         return x, y
 
-    def click(self, locator: Any, *, settle_ms: int = BEAT_SHORT) -> None:
-        self.glide(locator)
-        self.page.wait_for_timeout(220)
+    def press(self) -> None:
+        """A visible click where the cursor is (the overlay dips red)."""
+
+        self.page.wait_for_timeout(120)
         self.page.mouse.down()
         self.page.wait_for_timeout(90)
         self.page.mouse.up()
-        self.beat(settle_ms)
 
-    def dblclick(self, locator: Any, *, settle_ms: int = BEAT) -> None:
-        x, y = self.glide(locator)
-        self.page.wait_for_timeout(220)
-        self.page.mouse.dblclick(x, y)
-        self.beat(settle_ms)
+    def click(self, locator: Any) -> None:
+        self.glide(locator)
+        self.press()
 
-    def drag_slider(
-        self,
-        slider: Any,
-        value: float,
-        *,
-        minimum: float,
-        maximum: float,
-        segments: int = 40,
-        pace_ms: int = 28,
-    ) -> None:
-        """Drag an ipywidgets slider handle to ``value``, paced for camera.
+    def drag(self, start: tuple[float, float], end: tuple[float, float], ms: int) -> None:
+        """Press at ``start``, travel to ``end`` in ``ms``, release.
 
-        The sweep is segment-by-segment (playwright's ``steps=`` runs at
-        protocol speed, too fast to read as a human drag), so every
-        intermediate value streams through ``continuous_update`` and the
-        dashboard's kernel-side repaints show live under the drag.
-        noUiSlider maps position to value linearly and snaps to the
-        slider's step, which also forgives the handle-center offset.
+        The sweep is paced (playwright's ``steps=`` runs at protocol speed,
+        too fast to read as a human drag), so every intermediate value of a
+        slider streams through ``continuous_update`` and the kernel-side
+        repaints show live under the drag.
         """
 
-        handle = slider.locator(".noUi-handle")
-        x0, y = self.glide(handle)
-        self.page.wait_for_timeout(250)
-        base = slider.locator(".noUi-base").bounding_box()
-        if base is None:
-            raise RuntimeError("slider track has no bounding box")
-        x1 = base["x"] + (value - minimum) / (maximum - minimum) * base["width"]
-        self.page.mouse.down()
-        for i in range(1, segments + 1):
-            self.page.mouse.move(x0 + (x1 - x0) * i / segments, y, steps=2)
-            self.page.wait_for_timeout(pace_ms)
+        self.glide_to(*start)
         self.page.wait_for_timeout(150)
+        self.page.mouse.down()
+        self.glide_to(*end, ms=ms)
+        self.page.wait_for_timeout(120)
         self.page.mouse.up()
+
+    def drag_slider_to_max(self, slider: Any, ms: int = DRAG_MS) -> None:
+        """Drag an ipywidgets slider handle past the right end of its track
+        (noUiSlider clamps to the maximum)."""
+
+        handle = slider.locator(".noUi-handle").first
+        handle.scroll_into_view_if_needed()
+        grip = handle.bounding_box()
+        rail = slider.locator(".noUi-base").first.bounding_box()
+        if grip is None or rail is None:
+            raise RuntimeError("slider has no bounding box")
+        y = grip["y"] + grip["height"] / 2
+        start = (grip["x"] + grip["width"] / 2, y)
+        self.drag(start, (rail["x"] + rail["width"] + 8, y), ms)
+
+    def tab(self, title: str) -> None:
+        """Click the dashboard tab titled ``title`` and wait until it is current."""
+
+        tab = self.page.locator(
+            ".jp-OutputArea-output .lgn-grand-tabs .lm-TabBar-tab", has_text=title
+        ).first
+        self.click(tab)
+        poll(lambda: "lm-mod-current" in (tab.get_attribute("class") or ""), f"{title} tab")
 
     def shot(self, name: str) -> None:
         FRAME_DIR.mkdir(parents=True, exist_ok=True)
@@ -516,38 +625,32 @@ class Camera:
         self.page.screenshot(path=str(path))
         self.frames.append(path)
 
-    # -- waits ------------------------------------------------------------
-
-    def wait_scale(self, minimum: float, maximum: float = 1e9, *, timeout: float = 30.0) -> None:
-        """Wait for the diagram's zoom to land INSIDE ``[minimum, maximum]``
-        and settle (the animated ``fit`` runs client-side; the camera must
-        not click mid-flight, and a zoom-out starts from a scale that may
-        already satisfy a bare minimum -- hence the band)."""
+    def wait_scale(self, minimum: float, *, timeout: float = 30.0) -> None:
+        """Wait for the diagram's zoom to reach ``minimum`` and settle (the
+        animated fit runs client-side; the camera must not move on
+        mid-flight)."""
 
         deadline = time.monotonic() + timeout
         stable: str | None = None
         streak = 0
         while time.monotonic() < deadline:
             state = dict(self.page.evaluate(_VISIBLE_DIAGRAM_JS))
-            if minimum <= state.get("scale", 0) <= maximum:
+            if state.get("scale", 0) >= minimum:
                 streak = streak + 1 if state.get("transform") == stable else 0
                 stable = state.get("transform")
                 if streak >= 2:
                     return
             else:
                 streak, stable = 0, None
-            time.sleep(0.25)
-        raise TimeoutError(f"diagram zoom never settled inside [{minimum}, {maximum}]")
+            time.sleep(0.15)
+        raise TimeoutError(f"diagram zoom never settled at or above {minimum}")
 
-    def wait_diagram(self, marker: str | None, *, timeout: float = 150.0) -> str:
-        """Wait for the dashboard diagram: fitted (and showing ``marker``).
+    def wait_diagram(self, *, timeout: float = 150.0) -> str:
+        """Wait for the dashboard diagram: rendered, fitted, settled.
 
         Framing is part of the contract: the content must sit INSIDE the
-        pane (the autofit lands a beat after the relayout -- the camera
-        must not fire early).  ``marker`` must be ``None`` for overview
-        framings: sprotty CULLS label text below ~5% zoom, and the full
-        DeepScout program autofits near 4%, so at overview the diagram
-        renders boxes only -- the act-2 dive re-checks its own labels.
+        pane (the autofit lands a beat after the relayout), and the fit
+        transform must hold for three polls.
         """
 
         deadline = time.monotonic() + timeout
@@ -556,14 +659,10 @@ class Camera:
         state: dict[str, Any] = {}
         while time.monotonic() < deadline:
             state = dict(self.page.evaluate(_VISIBLE_DIAGRAM_JS))
-            text = state.get("text", "")
             good = (
                 state.get("rendered")
                 and state.get("fitted")
-                and (marker is None or marker in text)
-                # scale(0.01) is the hidden-viewport autofit sentinel: tiny
-                # content has no overflow, so require a real autofit zoom
-                # (the full DeepScout program lands near 0.04)
+                # scale(0.01) is the hidden-viewport autofit sentinel
                 and state.get("scale", 0) > 0.02
                 and state.get("overflowX", 1e9) <= 1.5
                 and state.get("overflowY", 1e9) <= 1.5
@@ -576,8 +675,7 @@ class Camera:
             else:
                 streak, stable = 0, None
             time.sleep(0.5)
-        state.pop("text", None)
-        raise TimeoutError(f"dashboard diagram never settled on {marker!r}; last state: {state}")
+        raise TimeoutError(f"dashboard diagram never settled; last state: {state}")
 
 
 def wait_kernel_idle(page: Any, timeout: float = 300.0) -> None:
@@ -606,18 +704,25 @@ def open_demo_notebook(page: Any, server: LabServer, timeout: float = 120.0) -> 
     wait_kernel_idle(page, timeout)
 
 
+#: the demo notebook's panel, also after dock() makes a docked pane the
+#: main area's current widget
+_NOTEBOOK_PANEL_JS = """const app = window.jupyterapp || window.jupyterlab;
+    const panel = Array.from(app.shell.widgets('main'))
+        .find((widget) => widget.sessionContext && widget.content
+              && widget.content.widgets);"""
+
+
 def kernel_exec(page: Any, code: str, timeout_ms: int = 30_000) -> str:
     """Silently execute ``code`` on the notebook's kernel (no cell, no
-    camera footprint) -- the invisible-cleanup seam for gestures whose
-    mouse form would misread on camera.  Returns the reply status
-    (``ok`` / ``error``), so an ``assert`` makes a kernel-truth probe."""
+    camera footprint).  Returns the reply status (``ok`` / ``error``), so
+    an ``assert`` makes a kernel-truth probe."""
 
     return str(
         page.evaluate(
-            """async ([code, timeout]) => {
-            const app = window.jupyterapp || window.jupyterlab;
-            const kernel = app.shell.currentWidget.sessionContext.session.kernel;
-            const future = kernel.requestExecute(
+            "async ([code, timeout]) => {"
+            + _NOTEBOOK_PANEL_JS
+            + """
+            const future = panel.sessionContext.session.kernel.requestExecute(
                 { code, silent: true, store_history: false });
             const reply = await Promise.race([future.done, new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('kernel_exec timeout')), timeout))]);
@@ -628,20 +733,71 @@ def kernel_exec(page: Any, code: str, timeout_ms: int = 30_000) -> str:
     )
 
 
-def kernel_assert(page: Any, expression: str, timeout: float = 20.0) -> None:
+def kernel_assert(page: Any, expression: str, timeout: float = 30.0) -> None:
     """Poll ``expression`` on the kernel until it holds (kernel truth for
-    state a comm write lands asynchronously, e.g. a diagram click's
-    selection reaching ``bind_config_view``)."""
+    state a comm write lands asynchronously)."""
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if kernel_exec(page, f"assert {expression}") == "ok":
-            return
-        time.sleep(0.5)
-    raise TimeoutError(f"kernel never satisfied: {expression}")
+    poll(
+        lambda: kernel_exec(page, f"assert {expression}") == "ok",
+        f"kernel: {expression}",
+        timeout=timeout,
+        every=0.2,
+    )
 
 
 # -- the scenario ----------------------------------------------------------------
+
+
+def preroll(page: Any, server: LabServer, cam: Camera) -> None:
+    """Off camera: open the notebook, run every cell above ``dash.dock()``,
+    and let the dashboard compose and settle with the ISR winner as its
+    subject.  The cut starts after this returns."""
+
+    open_demo_notebook(page, server)
+    print("  preroll: notebook open, running the cells above dash.dock()", flush=True)
+    page.evaluate("() => { (window.jupyterapp || window.jupyterlab).shell.collapseLeft(); }")
+    # Run All would dock the tour too: run the cells ABOVE the dock cell
+    page.evaluate(
+        "(index) => {"
+        + _NOTEBOOK_PANEL_JS
+        + """
+        panel.content.activeCellIndex = index;
+        void app.commands.execute('notebook:run-all-above');
+    }""",
+        DOCK_CELL,
+    )
+    page.wait_for_selector(".lgn-sb-cell", state="attached", timeout=300_000)
+    page.wait_for_selector(".longeron-viewer3d canvas", timeout=120_000)
+    page.wait_for_selector(".lgx-row", state="attached", timeout=60_000)
+    wait_kernel_idle(page)
+    page.evaluate(
+        "() => document.querySelector('.jp-OutputArea-output:has(.lgn-grand-tour)')"
+        ".scrollIntoView({block: 'start'})"
+    )
+    # the Cesium pane boots on its first reveal: pay the globe and its
+    # imagery tiles here, then show the 3D tab again
+    for title in ("Mission", "3D"):
+        tab = page.locator(
+            ".jp-OutputArea-output .lgn-grand-tabs .lm-TabBar-tab", has_text=title
+        ).first
+        tab.click()
+        poll(lambda tab=tab: "lm-mod-current" in (tab.get_attribute("class") or ""), title)
+        if title == "Mission":
+            poll(lambda: page.evaluate(_CESIUM_JS)["cesium"], "the Cesium globe", timeout=120.0)
+            try:  # best effort: a render-on-demand globe can idle with tiles pending
+                poll(lambda: page.evaluate(_CESIUM_JS)["tiles"], "imagery tiles", timeout=20.0)
+            except TimeoutError:
+                print("  (preroll: Cesium imagery still streaming)", flush=True)
+    cam.wait_diagram()
+    print("  preroll: the dashboard has composed", flush=True)
+    assert page.evaluate(_ARM_REBUILDS_JS), "no 3D canvas to watch"
+    kernel_assert(page, 'dash.subject.mission == "ISR" and dash.subject.overrides == {}')
+    # the cursor waits at the header's right end, clear of every pane
+    header = page.locator(".widget-html", has_text="the grand tour").first
+    box = header.bounding_box()
+    assert box is not None, "no header"
+    cam.jump(box["x"] + box["width"] * 0.78, box["y"] + box["height"] * 0.5)
+    page.wait_for_timeout(1500)  # the last repaint lands before the cut
 
 
 def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
@@ -649,152 +805,182 @@ def perform(page: Any, server: LabServer) -> tuple[float, Camera]:
 
     cam = Camera(page)
     t_page = time.monotonic()
+    preroll(page, server, cam)
+    cam.t0 = time.monotonic()
+    scene_start = cam.t0 - t_page  # the cut: the composed, settled dashboard
 
-    open_demo_notebook(page, server)
-    # a tidy stage: hide the file-browser sidebar, then let layout settle
-    page.evaluate(
-        "() => { void (window.jupyterapp || window.jupyterlab)"
-        ".commands.execute('application:toggle-left-area'); return true; }"
+    def rebuilds() -> int:
+        return int(page.evaluate("() => window.__lgnRebuilds || 0"))
+
+    # -- a) the header names the subject: the ISR mission's winner ---------
+    cam.mark("a) header: the ISR winner is the subject")
+    cam.shot("01-isr-winner")
+    header = page.locator(".widget-html", has_text="the grand tour").first
+    cam.glide(header.locator("b").first)
+    cam.beat()
+    box = header.bounding_box()
+    assert box is not None, "no header"
+    cam.glide_to(box["x"] + box["width"] * 0.9, box["y"] + box["height"] / 2)  # the score
+    cam.beat()
+
+    # -- b) a tree row click: the twin-tip flying wing becomes the subject -
+    cam.mark("b) tree: filter, click flyingWingTwinTip")
+    search = page.locator(".lgx-tree-search").first
+    cam.click(search)
+    page.keyboard.type("TwinTip", delay=110)
+    row = page.locator(f'.lgx-row[data-id="{TWIN_TIP}"]').first
+    row.wait_for(state="visible", timeout=30_000)
+    before = rebuilds()
+    cam.click(row)
+    kernel_assert(page, 'dash.subject.airframe == "flyingWingTwinTip"')
+    poll(lambda: rebuilds() > before, "the 3D pane rebuilt the twin-tip wing")
+    poll(lambda: "flyingWingTwinTip" in (header.text_content() or ""), "the header names it")
+    cam.mark("b) subject changed: 3D, header, scoreboard")
+    cam.glide(header.locator("b").first)
+    cam.beat()
+    # the tree row selected the diagram node too: the toolbar's fit button
+    # (hover-revealed over the diagram) frames the selection
+    diagram = page.locator('.jp-OutputArea div.sprotty[id^="sprotty"]').first
+    cam.glide(diagram)
+    fit = page.locator('.jp-OutputArea button[title^="Fit the diagram to the view"]').first
+    fit.wait_for(state="visible", timeout=10_000)
+    cam.click(fit)
+    cam.wait_scale(0.3)
+    cam.mark("b) diagram framed on the selected craft")
+    cam.beat()
+
+    # -- c) the wingSpan knob to its maximum: the wing widens in 3D --------
+    cam.mark("c) drag airframe.wingSpan to its maximum")
+    span = page.locator(".widget-hslider").filter(has_text="wingSpan").first
+    before = rebuilds()
+    cam.drag_slider_to_max(span)
+    kernel_assert(
+        page,
+        'dash.knobs["airframe.wingSpan"].value == dash.knobs["airframe.wingSpan"].max'
+        ' and dash.subject.overrides.get("airframe.wingSpan") == dash.knobs['
+        '"airframe.wingSpan"].max',
     )
-    page.wait_for_timeout(1500)
-    page.mouse.move(VIEWPORT["width"] / 2, VIEWPORT["height"] / 2, steps=10)
-    page.wait_for_timeout(500)
-
-    scene_start = time.monotonic() - t_page  # trim the boot right here
-
-    def mark(label: str) -> None:
-        """Log a beat timestamp relative to the trimmed video's t=0."""
-
-        print(f"  beat {time.monotonic() - t_page - scene_start:5.1f}s  {label}", flush=True)
-
-    cam.beat(BEAT_SHORT)
-
-    # -- act 1: Run All Cells, scroll ONCE to the dashboard ----------------
-    mark("act 1: Run All Cells")
-    cam.click(page.locator('.lm-MenuBar-itemLabel:text-is("Run")'), settle_ms=400)
-    cam.click(page.locator('.lm-Menu-itemLabel:text-is("Run All Cells")'), settle_ms=300)
-    # the dashboard output exists as soon as the last cell displays it;
-    # scroll to it while the panes are still landing (that IS the shot)
-    page.wait_for_selector(".lgn-sb-cell", state="attached", timeout=240_000)
-    page.evaluate(
-        "() => document.querySelector('.jp-Notebook .jp-CodeCell:last-child .jp-OutputArea')"
-        ".scrollIntoView({block: 'start', behavior: 'smooth'})"
-    )
-    # park the cursor in the left gutter while the composition lands
-    page.mouse.move(VIEWPORT["width"] * 0.05, VIEWPORT["height"] * 0.58, steps=25)
-    page.wait_for_selector(".longeron-mission3d .cesium-viewer", timeout=240_000)
-    cam.wait_diagram(None)  # overview: boxes only, labels culled at ~4% zoom
+    poll(lambda: rebuilds() > before, "the 3D pane rebuilt the wider wing")
     wait_kernel_idle(page)
-    mark("act 1: dashboard landed")
-    cam.beat(BEAT_LONG)
-    cam.shot("01-dashboard-landed")
+    cam.glide(page.locator(".longeron-viewer3d canvas").first)
+    since = time.monotonic()
+    cam.shot("02-span-max-3d")
+    cam.hold(since, BEAT)
 
-    # -- act 2: the diagram is the selection hub -- click a part ----------
-    # the full DeepScout program autofits near scale 0.04 (a smudge), so
-    # the camera FRAMES what it touches first: an animated kernel-side
-    # fit to the QuadCopter node (the toolbar fit button's own move)
-    mark("act 2: frame the quad, click motors -> 3D flash")
-    diagram_pane = page.locator('.jp-OutputArea div.sprotty[id^="sprotty"]')
-    cam.glide(diagram_pane.first)
-    kernel_exec(
-        page,
-        'dash.diagram.view.fit(model_ids=["Rotorcraft::QuadCopter"], animate=True, padding=24)',
+    # -- d) the scoreboard: the re-scored leaf, then the IsrTasking tooltip -
+    cam.mark("d) Requirements tab: the re-scored board")
+    cam.tab("Requirements")
+    poll(lambda: page.evaluate(_CELL_POINT_JS, "::PitchStability"), "the scoreboard cells")
+    tip = page.locator(".lgn-sb-tip").first
+    for leaf in ("::PitchStability", "::IsrTasking"):
+        point = page.evaluate(_CELL_POINT_JS, leaf)
+        cam.glide_to(point["x"], point["y"])
+        name = leaf.removeprefix("::")
+        poll(lambda name=name: tip.is_visible() and name in (tip.text_content() or ""), name)
+        since = time.monotonic()
+        if name == "IsrTasking":
+            cam.mark("d) IsrTasking tooltip")
+            cam.shot("03-requirements-tooltip")
+        cam.hold(since, BEAT)
+
+    # -- e) the Sizing tab: maximize station time, the driver history ------
+    cam.mark("e) Sizing tab: maximize station time")
+    cam.tab("Sizing")
+    cam.click(page.locator('button:text-is("maximize station time")').first)
+    kernel_assert(page, "dash.loiter.value == 11.0")
+    history = page.locator('svg[aria-label="driver iteration history"]').first
+    history.wait_for(state="visible", timeout=60_000)
+    cam.mark("e) driver history drawn")
+    sizing = page.locator(".lgn-grand-card", has_text="OpenMDAO sizing").first
+    for rendering in (
+        history,
+        sizing.locator("table").first,
+        sizing.locator('svg[aria-label="N2 matrix"]').first,
+    ):
+        cam.glide(rendering)
+        cam.beat()
+
+    # -- e2) the Z3 tab: the design point is SAT, the what-if UNSAT --------
+    cam.mark("e2) Z3 tab: SAT, and the UNSAT core")
+    cam.tab("Z3")
+    verdicts = page.locator(".lgn-grand-card", has_text="at the design point").first
+    for line in ("at the design point", "aboveStall"):
+        cam.glide(verdicts.get_by_text(line).first)
+        cam.beat()
+
+    # -- f) the Mission tab: play, ride onboard through a turn, follow -----
+    # the playhead goes to the turn while the pane is hidden (no visible jump)
+    assert kernel_exec(page, f"dash.mission.time = {FLIGHT_START_S}") == "ok"
+    cam.mark("f) Mission tab: play")
+    cam.tab("Mission")
+    poll(
+        lambda: (lambda s: s["cesium"] and abs(s["seconds"] - FLIGHT_START_S) < 0.5)(
+            page.evaluate(_CESIUM_JS)
+        ),
+        "the Cesium clock at the turn",
     )
-    cam.wait_scale(0.9, 2.0)  # the dive lands: the node fills the pane, readable
-    cam.beat(BEAT_SHORT)
-    motors = diagram_pane.locator('text.elklabel:text-is("motors : Motor [4]")')
-    cam.click(motors.first, settle_ms=BEAT_SHORT)
-    cam.beat(BEAT)  # all four motors pop in 3D, the rest of the craft dims
-    cam.shot("02-diagram-3d-link")
-    cam.beat(BEAT_SHORT)
-    # release the selection invisibly (a background click would read as a
-    # misfire on camera; the next beat repaints the highlight anyway)
-    kernel_exec(page, "dash.diagram.view.selection.ids = []")
+    dial = page.locator(".cesium-animation-rectButton")
+    cam.click(dial.filter(has_text="Play Forward").first)
+    poll(lambda: page.evaluate(_CESIUM_JS)["animating"], "the clock animates")
+    cam.beat(2 * BEAT)  # the follow view: the wing flies the track
+    modes = page.locator(".longeron-mission3d-modes")
+    cam.click(modes.locator('button:text-is("onboard")').first)
+    poll(lambda: page.evaluate(_CESIUM_JS)["active"] == ["onboard"], "the onboard view")
+    since = time.monotonic()
+    cam.mark("f) onboard: through the mission camera")
+    cam.glide_to(*_offstage(page), ms=600)  # the view, not the cursor
+    cam.hold(since, ONBOARD_MS // 2)
+    cam.shot("04-onboard-turn")
+    cam.hold(since, ONBOARD_MS)
+    cam.click(modes.locator('button:text-is("follow")').first)
+    poll(lambda: page.evaluate(_CESIUM_JS)["active"] == ["follow"], "the follow view")
+    cam.mark("f) follow")
+    cam.beat()
+    # pause: the docked layout below then holds a still globe
+    cam.click(dial.filter(has_text="Pause").first)
+    poll(lambda: not page.evaluate(_CESIUM_JS)["animating"], "the clock paused")
 
-    # -- act 3: the config click -- the 3D pane BECOMES the clicked craft -
-    # 0.11's headliner: bind_config_view is on by default, so a click
-    # anywhere inside ANOTHER craft resolves to that craft and swaps the
-    # viewer to it.  The frame pulls back one step to the multirotor
-    # family first (the hexa sits one node above the quad; the teardrop
-    # shell lives ~4k px away across the fleet branch -- a second cut's
-    # beat, not this one).  The click target is the hexa's motors row:
-    # mid-pane, well clear of the hover-revealed toolbar strip that sits
-    # over the node titles at the pane's top edge.
-    mark("act 3: config click (HexaCopter)")
-    kernel_exec(
-        page,
-        "dash.diagram.view.fit(model_ids="
-        '["Rotorcraft::QuadCopter", "Rotorcraft::HexaCopter"], animate=True, padding=24)',
+    # -- g) a cell runs dash.dock(): nine Lab tabs; drag one split bar -----
+    cam.mark("g) run the dash.dock() cell")
+    cell = page.locator(".jp-Notebook .jp-Cell").nth(DOCK_CELL)
+    cam.click(cell.locator(".jp-InputArea-editor").first)
+    page.keyboard.press("Control+Enter")
+    poll(lambda: page.locator(GRAND_TABS).count() == 9, "nine docked panes", timeout=90.0)
+    page.wait_for_selector(".lgn-grand-pane .longeron-viewer3d canvas", timeout=120_000)
+    page.wait_for_selector(".lgn-grand-pane .lgx-row", timeout=60_000)
+    handle = poll(
+        lambda: page.evaluate(_HANDLE_JS, ["grand-tree", "grand-structure"]),
+        "the split bar between the tree and the diagram",
     )
-    cam.wait_scale(0.35, 0.8)  # both craft in frame (pulled back from ~1.15)
-    cam.beat(BEAT_SHORT)
-    cam.click(diagram_pane.locator('text.elklabel:text-is("motors : Motor [6]")').first)
-    kernel_assert(page, 'dash.config_view.current == "Rotorcraft::HexaCopter"')
-    cam.beat(BEAT_LONG)  # six rotors: the hexa bakes from its own M0 population
-    cam.shot("03-config-swap-hexa")
-    cam.beat(BEAT_SHORT)
-    # ...and home again: the quad returns WITH its view cone, one write
-    cam.click(diagram_pane.locator('text.elklabel:text-is("QuadCopter")').first)
-    kernel_assert(page, 'dash.config_view.current == "Rotorcraft::QuadCopter"')
-    mark("act 3: home again")
-    cam.beat(BEAT)
-    kernel_exec(page, "dash.diagram.view.selection.ids = []")
+    cam.mark("g) docked: nine tabs")
+    cam.beat()
+    # the split bar first: the resize also makes the docked diagram refit
+    width = page.evaluate(_PANEL_WIDTH_JS, "grand-tree")
+    cam.drag((handle["x"], handle["y"]), (handle["x"] + 180, handle["y"]), ms=1600)
+    poll(
+        lambda: (page.evaluate(_PANEL_WIDTH_JS, "grand-tree") or 0) > width + 100,
+        "the tree pane widened",
+    )
+    cam.mark("g) split bar dragged")
+    for key in ("tree", "structure", "3d", "scoreboard", "subject", "mission"):
+        cam.glide(page.locator(f'{GRAND_TABS}[data-lgxkey="grand-{key}"]').first, ms=500)
 
-    # -- act 4: the money shot -- swing the view cone into the airframe ---
-    mark("act 4: azimuth sweep (occlusion)")
-    azimuth = page.locator('.widget-hslider:has(.widget-label:text-is("azimuth"))')
-    cam.drag_slider(azimuth, 180.0, minimum=-180.0, maximum=180.0)
-    # browser truth: the readout card lists the obstructing parts red
-    page.wait_for_selector('text="view cone clear of the airframe"', state="hidden", timeout=20_000)
-    cam.beat(BEAT_LONG)  # occludedFraction red, clearView red, parts lit
-    cam.shot("04-occlusion-red")
-    cam.beat(BEAT_SHORT)
-    cam.drag_slider(azimuth, 0.0, minimum=-180.0, maximum=180.0)
-    page.wait_for_selector('text="view cone clear of the airframe"', timeout=20_000)
-    mark("act 4: recovered")
-    cam.beat(BEAT)  # ...and the score recovers: live, both directions
-
-    # -- act 5: the OpenMDAO sizing strip -- maximize station time -------
-    mark("act 5: loiter drag (OpenMDAO)")
-    # NOT the driver button: the strip card's fixed height clips it out of
-    # view in the browser (QA note for the dashboard).  The slider is the
-    # same seam -- every step re-runs the generated Problem kernel-side,
-    # and dragging to the stall floor IS maximizing station time.
-    loiter = page.locator('.widget-hslider:has(.widget-label:text-is("loiter m/s"))')
-    cam.drag_slider(loiter, 11.0, minimum=11.0, maximum=24.0, segments=30)
-    loiter.locator('.widget-readout:text-is("11.0")').wait_for(timeout=30_000)
-    cam.beat(BEAT_LONG)  # stationMinutes climbed to the stall-floor optimum
-
-    # -- act 6: the Z3 verdicts (static cards -- a cursor pass) ------------
-    mark("act 6: Z3 verdict pass")
-    cam.glide(page.locator('span:text-is("SAT")').first)
-    cam.beat(BEAT_SHORT)
-    cam.glide(page.locator("div", has_text="aboveStall").last, steps=30)
-    cam.beat(BEAT)
-
-    # -- act 7: the scoreboard zooms -- double-click, Esc back -------------
-    mark("act 7: scoreboard zoom")
-    endurance = page.locator('.lgn-sb-cell[data-qname$="::endurance"]')
-    cam.dblclick(endurance, settle_ms=BEAT_SHORT)
-    # the dblclick word-selects whatever text sits under the pointer --
-    # drop the selection, it reads as a glitch
-    page.evaluate("() => window.getSelection().removeAllRanges()")
-    page.wait_for_selector(".lgn-sb-crumbs", state="visible", timeout=20_000)
-    cam.beat(BEAT_LONG)  # the performance branch fills the canvas
-    page.keyboard.press("Escape")  # one level back out
-    page.wait_for_selector(".lgn-sb-crumbs", state="hidden", timeout=20_000)
-    kernel_exec(page, "dash.board.selected = []")  # drop the click-selection ring
-    cam.beat(BEAT)
-
-    # -- act 8: the Cesium finale -- fly the mission ----------------------
-    mark("act 8: Cesium play")
-    play = page.locator(".cesium-animation-rectButton", has_text="Play Forward")
-    cam.click(play.first, settle_ms=400)
-    cam.beat(3500)  # the drone banks over Piedmont Park...
-    cam.shot("05-mission-finale")
-    cam.beat(3500)  # ...and we cut mid-flight
-    mark("cut")
+    # -- h) end on the docked layout ---------------------------------------
+    since = time.monotonic()
+    cam.glide_to(*_offstage(page), ms=600)
+    cam.shot("05-docked")
+    cam.hold(since, END_MS)
+    cam.mark("h) cut")
     return scene_start, cam
+
+
+def _offstage(page: Any) -> tuple[float, float]:
+    """A cursor rest point on the Lab's status bar, clear of every pane."""
+
+    bar = page.locator("#jp-main-statusbar").bounding_box()
+    if bar is None:
+        return VIEWPORT["width"] * 0.5, VIEWPORT["height"] - 10
+    return bar["x"] + bar["width"] * 0.5, bar["y"] + bar["height"] * 0.5
 
 
 # -- post-production ---------------------------------------------------------------
@@ -848,10 +1034,14 @@ def encode_outputs(webm: Path, trim_s: float) -> dict[str, Any]:
     gif = DEMO_DIR / "demo.gif"
     rung_used: dict[str, Any] = {}
     for rung in GIF_LADDER:
+        # the capture's VP8 noise changes every frame: a temporal denoise and
+        # a drop of the near-duplicate frames let the GIF encode only the
+        # rectangle that changed (about half the size of a plain encode)
         filters = (
             f"fps={rung['fps']},scale={rung['width']}:-1:flags=lanczos,"
-            f"split[s0][s1];[s0]palettegen=max_colors={rung['colors']}[p];"
-            "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+            "hqdn3d=0:0:8:8,mpdecimate,"
+            f"split[s0][s1];[s0]palettegen=max_colors={rung['colors']}:stats_mode=diff[p];"
+            "[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
         )
         _run(
             [
@@ -863,6 +1053,8 @@ def encode_outputs(webm: Path, trim_s: float) -> dict[str, Any]:
                 str(webm),
                 "-filter_complex",
                 filters,
+                "-fps_mode",
+                "vfr",
                 str(gif),
             ]
         )
@@ -890,7 +1082,7 @@ def main() -> int:
     webm = DEMO_DIR / "demo.webm"
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(args=["--disable-dev-shm-usage"])
+            browser = playwright.chromium.launch(args=["--disable-dev-shm-usage", *GPU_ARGS])
             context = browser.new_context(
                 viewport=VIEWPORT,
                 device_scale_factor=DEVICE_SCALE_FACTOR,
@@ -914,6 +1106,9 @@ def main() -> int:
             page = context.new_page()
             try:
                 trim_s, cam = perform(page, server)
+            except Exception:
+                page.screenshot(path=str(DEMO_DIR / "failure.png"))
+                raise
             finally:
                 video = page.video
                 page.close()
@@ -934,6 +1129,8 @@ def main() -> int:
     outputs = encode_outputs(webm, trim_s)
     outputs["webm"] = {"path": str(webm), "bytes": webm.stat().st_size}
     outputs["frames"] = [str(path) for path in cam.frames]
+    outputs["beats"] = cam.beats
+    outputs["trim_s"] = round(trim_s, 2)
     (DEMO_DIR / "summary.json").write_text(json.dumps(outputs, indent=1), encoding="utf-8")
 
     print(f"webm : {webm}  ({webm.stat().st_size / 1e6:.1f} MB)")

@@ -35,11 +35,11 @@ gaps tracked as strict xfails (design: `docs/design/conformance.md`).
 
 ## Demo
 
-![A 70-second tour of the grand-tour dashboard: the structure diagram
-dives into the QuadCopter, motor clicks light up the linked 3D craft,
-a camera what-if recolors the requirements scoreboard live, an
-OpenMDAO slider re-sizes the loiter, Z3 renders its verdicts, and the
-Cesium mission replay flies](https://github.com/sanbales/longeron/releases/latest/download/demo.gif)
+![A one-minute tour of the grand-tour dashboard at 1080p: a tree click
+makes the twin-tip flying wing the subject, the wingSpan knob widens the
+wing in 3D and re-scores the requirements scoreboard, OpenMDAO maximizes
+station time, Z3 shows its verdicts, the Cesium mission flies through
+the onboard camera, and dash.dock() opens nine resizable JupyterLab panes](https://github.com/sanbales/longeron/releases/latest/download/demo.gif)
 
 Re-recorded each release with `python scripts/record_demo.py`
 (deterministic playwright choreography; an mp4 rides the same
