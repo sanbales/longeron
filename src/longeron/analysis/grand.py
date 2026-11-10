@@ -255,6 +255,8 @@ _OK = "var(--jp-success-color0,#1b7d2c)"
 _BAD = "var(--jp-error-color0,#b0413e)"
 _DIM = "var(--jp-ui-font-color2,#6b7078)"
 _NUM = "font-variant-numeric:tabular-nums"
+#: one text line that ends in an ellipsis when it is wider than its box
+_ELLIPSIS = "white-space:nowrap; overflow:hidden; text-overflow:ellipsis"
 
 #: chrome for the widget-backed strip cards (ipywidgets ``Layout`` has no
 #: border-radius trait) -- injected once per dashboard as a zero-size
@@ -267,6 +269,14 @@ _GRAND_CSS = (
     # the tab bodies are the panes' frame: a thin padding, no scroll bar
     ".jupyter-widgets.lgn-grand-tabs > .widget-tab-contents { padding: 6px; overflow: hidden; }"
     ".lgn-grand-strip button { padding: 0; }"
+    # a sizing rendering is a column inside its flex item: the text lines
+    # keep their height and the SVG shrinks into the rest.  A label or a
+    # table cell too long for its box ends in an ellipsis
+    ".lgn-grand-render > .widget-html-content { display: flex; flex-direction: column; "
+    "min-width: 0; min-height: 0; overflow: hidden; }"
+    ".lgn-grand-render span, .lgn-grand-render td, .lgn-grand-render th "
+    "{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }"
+    ".lgn-grand-render span + span { flex: none; }"  # a stat's value never shrinks
     "</style>"
 )
 
@@ -731,7 +741,7 @@ def _sizing_html(problem: Any, station_var: str, margin_vars: Mapping[str, str])
         rows.append(
             _stat(name.split("::")[-1], f"{margin:+.1f}", color=_OK if margin >= 0.0 else _BAD),
         )
-    return "".join(rows)
+    return _compact("".join(rows))
 
 
 #: line colors of the constraint margins and the N2 groups, in order of first use
@@ -759,10 +769,26 @@ def _polyline(points: list[tuple[float, float]]) -> str:
     return " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
 
 
-def _compact(html: str) -> str:
-    """``html`` at a text line height: an HTML widget sets 28 px per line."""
+#: an SVG at its rendering's width that shrinks into the rest of the
+#: column's height: the viewBox keeps the drawing's own units, so its text
+#: scales with it
+_FILL = (
+    'width="100%" preserveAspectRatio="xMinYMin meet" '
+    'style="display:block; flex:0 1 auto; height:auto; min-height:0'
+)
 
-    return f'<div style="line-height:1.35">{html}</div>'
+
+def _compact(html: str) -> str:
+    """``html`` as a column that fills its sizing rendering, at a text line height.
+
+    An HTML widget sets 28 px per line.  The column's text lines keep
+    their height, and its SVG shrinks into the rest (:data:`_FILL`).
+    """
+
+    return (
+        '<div style="display:flex; flex-direction:column; flex:1 1 0; min-width:0; '
+        f'min-height:0; overflow:hidden; line-height:1.35">{html}</div>'
+    )
 
 
 def _legend(entries: Sequence[str]) -> str:
@@ -824,8 +850,7 @@ def _history_html(history: OptimizationHistory | None) -> str:
         if n <= 12 or i in (0, n - 1)
     ]
     svg = (
-        f'<svg viewBox="0 0 {width:.0f} 124" width="100%" style="display:block; '
-        f'max-width:{width:.0f}px; font-size:8px; fill:{_DIM}" role="img" '
+        f'<svg viewBox="0 0 {width:.0f} 124" {_FILL}; font-size:8px; fill:{_DIM}" role="img" '
         'aria-label="driver iteration history">'
         f"{''.join(parts)}</svg>"
     )
@@ -850,11 +875,12 @@ def _driver_table_html(
     """
 
     active = set(history.active_constraints()) if history is not None else set()
-    cell = 'style="text-align:right; padding:1px 3px"'
+    cell = 'style="text-align:right; padding:1px 2px"'
+    head = 'style="text-align:right; padding:1px 2px; font-weight:400"'
     rows = [
-        f'<tr style="color:{_DIM}"><th style="text-align:left; font-weight:600">name</th>'
-        f"<th {cell}>lower</th><th {cell}>value</th><th {cell}>upper</th>"
-        f'<th {cell} title="at a bound at the driver\'s optimum">active</th></tr>'
+        f'<tr style="color:{_DIM}"><th style="text-align:left; font-weight:400">name</th>'
+        f"<th {head}>lower</th><th {head}>value</th><th {head}>upper</th>"
+        f'<th {head} title="at a bound at the driver\'s optimum">active</th></tr>'
     ]
     for name, (lower, upper) in bounds.items():
         value = float(problem.get_val(margin_vars.get(name, name))[0])
@@ -870,10 +896,15 @@ def _driver_table_html(
         if history is None
         else f"active: at a bound at the optimum of {history.iterations} driver iterations"
     )
+    # the columns share the rendering's width (a fixed table layout), so
+    # the font sets no width.  More rows than the height holds scroll
+    # inside the table box only
+    columns = "".join(f'<col style="width:{share}%">' for share in (30, 16, 20, 16, 18))
     return _compact(
-        f'<table style="width:100%; border-collapse:collapse; font-size:11px; {_NUM}; '
-        f'margin-top:4px">{"".join(rows)}</table>'
-        f'<div style="color:{_DIM}; font-size:10px">{note}</div>'
+        '<div style="flex:0 1 auto; min-height:0; overflow:hidden auto">'
+        '<table style="width:100%; table-layout:fixed; border-collapse:collapse; '
+        f'font-size:11px; {_NUM}; margin-top:4px">{columns}{"".join(rows)}</table></div>'
+        f'<div style="color:{_DIM}; font-size:10px; {_ELLIPSIS}" title="{note}">{note}</div>'
     )
 
 
@@ -917,14 +948,15 @@ def _n2_html(structure: ProblemStructure) -> str:
             f"{comps[i]} -&gt; {comps[j]}</title></rect>"
         )
     width, height = left + len(comps) * size, len(comps) * size
+    title = f"N2 matrix, {len(comps)} components: a row feeds a column"
     legend = [
         f'<span style="color:{tint[group]}">&#9632; {group}</span>' for group in groups if group
     ]
     return _compact(
-        f'<div style="color:{_DIM}; font-size:10px; margin-top:6px">N2 matrix: a row feeds a '
-        f"column ({len(comps)} components)</div>"
-        f'<svg viewBox="0 0 {width:.0f} {height:.0f}" width="100%" style="display:block; '
-        f'font-size:8.5px; max-width:{width:.0f}px" role="img" aria-label="N2 matrix">'
+        f'<div style="color:{_DIM}; font-size:10px; margin-top:6px; {_ELLIPSIS}" '
+        f'title="{title}">{title}</div>'
+        f'<svg viewBox="0 0 {width:.0f} {height:.0f}" {_FILL}; font-size:8.5px" role="img" '
+        'aria-label="N2 matrix">'
         f'<g stroke="var(--jp-border-color2,#e0e0e0)" stroke-width="0.5">'
         + "".join(
             f'<line x1="{left}" y1="{k * size}" x2="{width}" y2="{k * size}"/>'
@@ -1718,24 +1750,37 @@ def grand_dashboard(
             step=knob.step,
             description="loiter m/s",
             readout_format=".1f",
-            **{**slider_kw, "layout": widgets.Layout(flex="1 1 0", min_width="0")},
+            **{
+                **slider_kw,
+                "style": {"description_width": "initial"},  # the label at its text width
+                "layout": widgets.Layout(flex="1 1 0", min_width="0"),
+            },
         )
         optimize = widgets.Button(
             description="maximize station time",
             tooltip="run the OpenMDAO driver and snap the slider to the optimum",
             layout=widgets.Layout(width="220px", flex="0 0 auto"),
         )
-        # the four renderings share one line of a wide card: a flex basis each,
-        # the table at its natural width
-        sizing_card = widgets.HTML(layout=widgets.Layout(flex="1 1 170px", min_width="150px"))
-        sizing_history = widgets.HTML(
-            _history_html(None), layout=widgets.Layout(flex="1 1 200px", max_width="260px")
-        )
-        sizing_table = widgets.HTML(layout=widgets.Layout(flex="0 0 auto"))
-        sizing_n2 = widgets.HTML(
-            _n2_html(mdao.problem_structure(build)),
-            layout=widgets.Layout(flex="1 1 160px", min_width="150px", max_width="260px"),
-        )
+
+        # the four renderings share one line of the card in any font:
+        # the readout at its text width, the other three in shares of the
+        # rest (the table a larger one) down to a readable minimum.  Each one
+        # fits its box (see _GRAND_CSS), so no text metric adds a line or a
+        # row.  A card narrower than the minimums scrolls the line in x
+        def _rendering(value: str = "", *, flex: str = "1 1 0", min_width: str = "150px") -> Any:
+            html = widgets.HTML(
+                value,
+                layout=widgets.Layout(
+                    flex=flex, min_width=min_width, min_height="0", overflow="hidden"
+                ),
+            )
+            html.add_class("lgn-grand-render")
+            return html
+
+        sizing_card = _rendering(flex="0 0 auto", min_width="0")
+        sizing_history = _rendering(_history_html(None))
+        sizing_table = _rendering(flex="1.5 1 0", min_width="200px")
+        sizing_n2 = _rendering(_n2_html(mdao.problem_structure(build)))
         verdicts = widgets.HTML(
             '<div style="display:flex; flex-wrap:wrap; gap:4px 24px">'
             '<div style="flex:1 1 240px">'
@@ -1796,19 +1841,27 @@ def grand_dashboard(
             "sizing_n2": sizing_n2,
             "verdicts": verdicts,
             # the slider and the button share the strip's first line, and the
-            # renderings sit side by side below them (they wrap in a narrow card)
-            "controls": widgets.HBox([loiter, optimize], layout=widgets.Layout(width="100%")),
+            # renderings sit side by side in the rest of the card's height
+            "controls": widgets.HBox(
+                [loiter, optimize], layout=widgets.Layout(width="100%", flex="0 0 auto")
+            ),
             "renderings": widgets.Box(
                 [sizing_card, sizing_history, sizing_table, sizing_n2],
                 layout=widgets.Layout(
-                    width="100%", flex_flow="row wrap", align_items="flex-start", grid_gap="12px"
+                    width="100%",
+                    flex="1 1 0",
+                    min_height="0",
+                    flex_flow="row nowrap",
+                    align_items="stretch",
+                    grid_gap="12px",
+                    overflow="auto hidden",
                 ),
             ),
         }
 
     sizing_title = widgets.HTML()
     verdict_title = widgets.HTML()
-    sizing_body = widgets.VBox(layout=widgets.Layout(width="100%"))
+    sizing_body = widgets.VBox(layout=widgets.Layout(width="100%", min_height="0"))
     verdict_body = widgets.VBox(layout=widgets.Layout(width="100%"))
 
     def _show_strips(name: MissionName) -> None:
@@ -2025,6 +2078,7 @@ def grand_dashboard(
         _strip_card(sizing_title, [sizing_body]),
         _strip_card(verdict_title, [verdict_body]),
     )
+    sizing_body.layout.flex = "1 1 0"  # the renderings take the card's height below the title
 
     def _tabs(children: list[Any], titles: Sequence[str], **layout: str) -> Any:
         tabs = widgets.Tab(children=children, layout=widgets.Layout(**layout))

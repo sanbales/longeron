@@ -30,6 +30,9 @@ The scenarios, each on a fresh kernel:
    diagram one refit.  The Cesium globe renders at its full size after
    its first reveal, and a click on the scaled scoreboard SVG selects the
    clicked requirement.
+5b. the same fit holds in a wider font (Verdana, or DejaVu Sans, the
+   Linux default font) at 100 % and with the page's font sizes at 115 %,
+   before and after a *maximize* run.
 6. the mission starts and ends on the drawn surface: at the first and
    the last instant of the Cesium clock, the drone model sits less than
    2 m above the globe under it (the track heights are above ground).
@@ -843,6 +846,120 @@ def test_the_dashboard_fits_a_1080p_screen(lab1080: Any) -> None:
     # a satellite tile that the imagery server refuses (seen on the Mission
     # tab visits) is a network condition: the globe draws the tiles that
     # load.  Every other console error counts
+    errors = [
+        message
+        for message in lab.console_errors()
+        if "arcgisonline.com" not in message and "net::ERR_FAILED" not in message
+    ]
+    assert errors == [], errors
+    assert lab.page_errors == [], lab.page_errors
+
+
+#: a wider font on the dashboard and larger font sizes on the page.  The
+#: font is Verdana, or DejaVu Sans where Verdana is absent.  DejaVu Sans
+#: is the Linux CI default font, whose wider glyphs wrapped the sizing
+#: renderings to a second line.  The body and JupyterLab's font-size
+#: variables go to ``scale``.  Returns the width of one sizing label in
+#: the dashboard's font and in Helvetica, so the record shows that the
+#: font took effect
+_FONT_STRESS_JS = """(scale) => {
+    document.body.style.fontSize = `${100 * scale}%`;
+    const root = document.documentElement;
+    const names = ['--jp-ui-font-size0', '--jp-ui-font-size1', '--jp-ui-font-size2',
+                   '--jp-ui-font-size3', '--jp-content-font-size1', '--jp-code-font-size',
+                   '--jp-widgets-font-size'];
+    root.lgnFontBase = root.lgnFontBase || Object.fromEntries(names.map(
+        (name) => [name, parseFloat(getComputedStyle(root).getPropertyValue(name))]));
+    for (const name of names) {
+        if (root.lgnFontBase[name]) {
+            root.style.setProperty(name, `${root.lgnFontBase[name] * scale}px`);
+        }
+    }
+    let face = document.getElementById('lgn-font-stress');
+    if (!face) {
+        face = document.createElement('style');
+        face.id = 'lgn-font-stress';
+        face.textContent = '.lgn-grand-tour, .lgn-grand-tour *:not(i) '  // i: the icon font
+            + '{ font-family: Verdana, "DejaVu Sans", sans-serif !important; }';
+        document.head.appendChild(face);
+    }
+    const width = (parent, family) => {
+        const probe = document.createElement('span');
+        probe.textContent = 'stationMinutes 200.4 min';
+        probe.style.cssText = `position:absolute; visibility:hidden; font-size:12px; ${family}`;
+        parent.appendChild(probe);
+        const px = probe.getBoundingClientRect().width;
+        probe.remove();
+        return px;
+    };
+    return {dashboard: width(document.querySelector('.lgn-grand-tour'), ''),
+            helvetica: width(document.body, 'font-family:Helvetica,Arial,sans-serif')};
+}"""
+
+#: the Analysis and the Views tab titles, and the element each Views pane draws in
+_ANALYSIS_TABS = ("Camera what-if", "Sizing", "Z3", "Subject & knobs")
+_VIEWS_TABS = (("3D", "canvas"), ("Requirements", "svg"), ("Mission", "canvas"))
+
+
+def test_the_dashboard_fits_in_a_wider_larger_font(lab1080: Any) -> None:
+    """The 1080p fit holds in a wider font at 100 % and at 115 % (scenario 5b).
+
+    Linux Chromium draws the dashboard in DejaVu Sans, which is wider than
+    the macOS font.  In the wider font (Verdana, or DejaVu Sans where
+    Verdana is absent), at 100 % and with the body and JupyterLab's font
+    sizes at 115 %, no element scrolls and no control is clipped at any
+    Analysis or Views tab, before and after a *maximize* run fills the
+    sizing renderings.  The measurements go to
+    ``build/evidence/grand_tour_font_fit.json``.
+    """
+
+    lab = lab1080
+    _open(lab)
+    output = lab.page.locator(".jp-OutputArea-output", has=lab.page.locator(".lgn-grand-tour"))
+    output.first.evaluate("(el) => el.scrollIntoView({block: 'start'})")
+    record: dict[str, Any] = {}
+
+    def _check(scale: float, tabs: tuple[str, ...]) -> None:
+        probe = lab.evaluate(_FONT_STRESS_JS, scale, label=f"the font at {scale:.0%}")
+        record[f"probe width {scale:.0%}"] = probe
+        for title in tabs:
+            _tab(lab, title)
+            label = f"{title} at {scale:.0%}"
+            record[label] = fit = _fit(lab, label)
+            _assert_fits(fit, label)
+            if title == "Sizing":
+                card = lab.page.locator(".lgn-grand-card", has_text="OpenMDAO sizing").first
+                card.screenshot(path=str(EVIDENCE / f"grand_font_sizing_{scale * 100:.0f}.png"))
+
+    for scale in (1.0, 1.15):
+        _check(scale, _ANALYSIS_TABS)
+        for title, inner in _VIEWS_TABS:
+            _tab(lab, title)
+            lab.wait_until(
+                lambda _s, title=title, inner=inner: (
+                    (_fit(lab, title)["tabs"][1][inner] or {}).get("height", 0) >= _TAB_MIN_PX
+                ),
+                timeout=60,
+                label=f"the {title} tab fills its body",
+            )
+            label = f"{title} at {scale:.0%}"
+            record[label] = fit = _fit(lab, label)
+            _assert_fits(fit, label)
+        lab.page.screenshot(path=str(EVIDENCE / f"grand_font_{scale * 100:.0f}.png"))
+
+    # -- maximize fills the history plot and the active flags ----------------
+    _tab(lab, "Sizing")
+    lab.page.locator('button:text-is("maximize station time")').first.click()
+    _poll_checker(lab, lambda s: s["loiter"] == 11.0)  # the stall floor binds
+    lab.page.locator(_RENDERINGS["history"]).first.wait_for(state="attached", timeout=60_000)
+    for scale in (1.15, 1.0):
+        lab.evaluate(_FONT_STRESS_JS, scale, label=f"the font at {scale:.0%}")
+        label = f"Sizing after maximize at {scale:.0%}"
+        record[label] = fit = _fit(lab, label)
+        card = lab.page.locator(".lgn-grand-card", has_text="OpenMDAO sizing").first
+        card.screenshot(path=str(EVIDENCE / f"grand_font_maximized_{scale * 100:.0f}.png"))
+        _assert_fits(fit, label)
+    (EVIDENCE / "grand_tour_font_fit.json").write_text(json.dumps(record, indent=1))
     errors = [
         message
         for message in lab.console_errors()

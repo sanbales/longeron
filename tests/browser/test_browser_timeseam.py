@@ -134,6 +134,18 @@ def _wait_state(lab, predicate, *, timeout: float = 15.0, label: str = "state") 
     raise TimeoutError(f"{label} not reached within {timeout}s; last: {state}")
 
 
+def _wait_checker(lab, predicate, *, timeout: float = 10.0) -> dict:
+    """Poll the kernel's checker cell until ``predicate`` holds or the
+    timeout ends; return the last reading (the caller asserts on it)."""
+
+    deadline = time.monotonic() + timeout
+    checker = lab.run_cell_json(index=-1)
+    while not predicate(checker) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        checker = lab.run_cell_json(index=-1)
+    return checker
+
+
 def _evidence(lab, name: str) -> None:
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     lab.page.screenshot(path=str(EVIDENCE / name), full_page=True)
@@ -203,14 +215,25 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
 
     # ---- pause from the scrubber: exact convergence -------------------
     lab.page.click(".lgn-scrub-btn")
-    time.sleep(1.0)
-    state = dict(lab.page.evaluate(_STATE_JS))
-    assert state["animating"] is False, state
-    checker = lab.run_cell_json(index=-1)
+    # the pause rides click -> kernel -> globe traits: poll, never a fixed
+    # sleep (a loaded runner can outlast any fixed sleep)
+    _wait_state(lab, lambda s: s["animating"] is False, label="the globe pausing")
+    checker = _wait_checker(
+        lab,
+        lambda c: (
+            not c["playing"]
+            and abs(c["scrub_time"] - c["clock_t"]) <= 1e-3
+            and abs(c["globe_time"] - c["clock_t"]) <= 1e-3
+        ),
+    )
     assert checker["playing"] is False
     assert checker["scrub_time"] == pytest.approx(checker["clock_t"], abs=1e-3)
     assert checker["globe_time"] == pytest.approx(checker["clock_t"], abs=1e-3)
-    assert abs(state["seconds"] - checker["clock_t"]) <= 2e-3, (state, checker)
+    _wait_state(
+        lab,
+        lambda s: abs(s["seconds"] - checker["clock_t"]) <= 2e-3,
+        label=f"the Cesium clock converging on t={checker['clock_t']}",
+    )
 
     # ---- the Cesium-dial drive: the scrubber follows, no fighting ----
     before = dict(lab.page.evaluate(_STATE_JS))
@@ -262,11 +285,7 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
     drift = [abs(s["scrub"] - s["cesium"]) for s in engaged]
     assert drift and max(drift) <= 0.8, f"drift bound violated: {samples}"
     # the dial pause rides the 250 ms watcher + a comm hop: poll for it
-    deadline = time.monotonic() + 10.0
-    checker = lab.run_cell_json(index=-1)
-    while checker["playing"] and time.monotonic() < deadline:
-        time.sleep(0.5)
-        checker = lab.run_cell_json(index=-1)
+    checker = _wait_checker(lab, lambda c: not c["playing"])
     assert checker["playing"] is False, checker  # the dial pause reached the clock
     _evidence(lab, "03-cesium-dial-drive.png")
     EVIDENCE.mkdir(parents=True, exist_ok=True)
@@ -276,34 +295,29 @@ def test_one_clock_scrubs_the_diagram_the_globe_and_the_scrubber(lab):
     )
 
     # dial pause converged exactly (the watcher reports the final t)
-    time.sleep(0.6)
-    state = dict(lab.page.evaluate(_STATE_JS))
-    checker = lab.run_cell_json(index=-1)
+    checker = _wait_checker(lab, lambda c: abs(c["scrub_time"] - c["clock_t"]) <= 1e-3)
     assert checker["scrub_time"] == pytest.approx(checker["clock_t"], abs=1e-3)
-    assert abs(state["seconds"] - checker["clock_t"]) <= 2e-3, (state, checker)
+    _wait_state(
+        lab,
+        lambda s: abs(s["seconds"] - checker["clock_t"]) <= 2e-3,
+        label=f"the Cesium clock converging on t={checker['clock_t']}",
+    )
 
     # ---- the replay subscription: a seam seek stops its playback -----
     lab.page.click(".longeron-replay-bar button")  # the player's own play
-    time.sleep(0.6)
-    state = dict(lab.page.evaluate(_STATE_JS))
-    assert state["playerButton"] == "\u275a\u275a", state  # playing
+    # the relabel rides click -> kernel -> trait -> view: poll for it
+    _wait_state(lab, lambda s: s["playerButton"] == "\u275a\u275a", label="the player playing")
     # the throttle survives the seam: ~4 Hz of clock fan-out, not a storm
     events_before = lab.run_cell_json(index=-1)["events"]
     time.sleep(2.0)
     events_after = lab.run_cell_json(index=-1)["events"]
     assert 1 <= events_after - events_before <= 14, (events_before, events_after)
     lab.page.evaluate(_SCRUB_JS, 20.0)  # a scrub while the player runs
-    time.sleep(0.6)
-    state = dict(lab.page.evaluate(_STATE_JS))
-    assert state["playerButton"] == "\u25b6", state  # the kernel seek stopped it
-    # the seek rides scrub -> clock -> player traits; on a starved runner
-    # the ripple outlives the 0.6s pause that proved the stop, so poll the
-    # kernel to the POSTCONDITION instead of reading mid-ripple
-    deadline = time.monotonic() + 10.0
-    checker = lab.run_cell_json(index=-1)
-    while abs(checker["player_time"] - 20.0) > 0.5 and time.monotonic() < deadline:
-        time.sleep(0.5)
-        checker = lab.run_cell_json(index=-1)
+    # the kernel seek stops the player (the relabel rides the same round trip)
+    _wait_state(lab, lambda s: s["playerButton"] == "\u25b6", label="the seek stopping the player")
+    # the seek rides scrub -> clock -> player traits: poll the kernel to
+    # the POSTCONDITION instead of reading mid-ripple
+    checker = _wait_checker(lab, lambda c: abs(c["player_time"] - 20.0) <= 0.5)
     assert checker["player_time"] == pytest.approx(20.0, abs=0.5)  # slider step quantum
     assert checker["clock_t"] == pytest.approx(checker["player_time"], abs=1e-3)
 

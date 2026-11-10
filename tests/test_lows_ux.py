@@ -441,6 +441,35 @@ class TestHoverAttribution:
         assert "mouseoverElement: target.id" not in source
 
 
+class TestBrowserShards:
+    """The CI browser job runs each browser test file in exactly one shard
+    of its matrix, and the grand tour in a shard of its own (in a shared
+    shard its scenarios starved the time-seam round trips).  A plain-text
+    parse, like the pyproject checks above."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+    #: browser files that no shard lists yet (open question: they have
+    #: never run on a CI runner)
+    NOT_IN_CI = ("tests/browser/test_browser_tilt.py",)
+
+    def test_each_browser_file_is_in_one_shard(self):
+        import re
+
+        text = (self.ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        blocks = re.findall(
+            r"- name: ([\w-]+)\n\s+files: >-\n((?:[ \t]+tests/browser/\S+\n)+)", text
+        )
+        shards = {name: block.split() for name, block in blocks}
+        listed = sorted(path for paths in shards.values() for path in paths)
+        on_disk = sorted(
+            path.relative_to(self.ROOT).as_posix()
+            for path in (self.ROOT / "tests" / "browser").glob("test_*.py")
+        )
+        assert listed == sorted(set(on_disk) - set(self.NOT_IN_CI))
+        assert len(shards) == 5, sorted(shards)
+        assert shards["grand-tour"] == ["tests/browser/test_browser_grand_tour.py"]
+
+
 class TestClientValidateStrictImports:
     """U6: Client.validate can express the server's strict_imports knob."""
 
