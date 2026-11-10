@@ -70,10 +70,19 @@
   for each other variation point, and transient overrides. A transient
   override changes a value for the analysis only and never writes the
   model:
-  - A containment tree pane, the `ModelTree` of the explorer, opens row
-    1. A tree selection selects the element in the structure diagram, or
-    its nearest drawn ancestor. A diagram selection selects the tree row
-    and reveals it
+  - The layout fits one 1080p screen. Below the header, the containment
+    tree takes the full height at the left, and its button collapses it
+    to a thin strip. The structure diagram sits over the *Analysis* tab
+    group: *Subject & knobs*, *Camera what-if*, *Sizing* and *Z3*. The
+    *Views* tab group at the right shows *3D*, *Requirements* or
+    *Mission* at a near-square size. A tab group shows one pane at a
+    time, so a slider and the pane that it repaints show side by side.
+    The dashboard exposes the tab groups as `.views` and `.analysis`, and
+    the collapse button as `.tree_toggle`
+  - The containment tree pane is the `ModelTree` of the explorer. A tree
+    selection selects the element in the structure diagram, or its
+    nearest drawn ancestor. A diagram selection selects the tree row and
+    reveals it
   - A mission selector sets the mission. A click on a catalog airframe
     in the tree or in the diagram makes it the airframe of the subject.
     Its preset, the best mix of the other variation points for that
@@ -109,8 +118,9 @@
 - **The grand tour docks in JupyterLab**: `dash.dock()` moves the panes
   into nine panels of the JupyterLab main area, each with a titled tab:
   *Tree*, *Structure*, *3D*, *Scoreboard*, *Subject*, *Camera what-if*,
-  *Sizing*, *Z3* and *Mission*. The first view keeps the inline order,
-  and the Cesium pane is a tab beside the notebook. A drag of a split bar
+  *Sizing*, *Z3* and *Mission*. The first view shows each pane in its
+  own panel, and the Cesium pane is a tab beside the notebook.
+  `dash.undock()` puts each pane back into its inline tab group. A drag of a split bar
   resizes two panes, and a drag of a tab moves a pane. The panels hold
   the same widgets, so every pane still follows the subject.
   `dash.undock()` shows the dashboard in the notebook again, and

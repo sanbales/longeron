@@ -49,13 +49,15 @@ jobs:
     # headless Chromium -- catches what kernel-side tests cannot (stale
     # bundles, marker paint, layout-error starvation, auto-fit). Runs in
     # parallel with the matrix; one Python (the locked browser env).
-    # SHARDED four ways: the 2-core runner cannot carry all 22 scenarios
+    # SHARDED five ways: the 2-core runner cannot carry all the scenarios
     # in one session without starving the widget comm channel (observed
     # as dropped trait updates and parked render pipelines -- six
     # consecutive runs each failed a different load-marginal beat while
     # local single-runs stayed green). Each shard boots its own lab
-    # server and carries a quarter of the load; the heavy files
-    # (dashboard, gallery, app) anchor separate shards.
+    # server and carries a fifth of the load; the heavy files
+    # (dashboard, gallery, app, grand tour) anchor separate shards. The
+    # grand tour has its own: in tutorials-time its 11 scenarios pushed
+    # the shard to 13 min and starved the time-seam round trips.
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +88,8 @@ jobs:
               tests/browser/test_browser_timeseam.py
               tests/browser/test_browser_lossy_seam.py
               tests/browser/test_browser_replay.py
+          - name: grand-tour
+            files: >-
               tests/browser/test_browser_grand_tour.py
     runs-on: ubuntu-latest
     # cold runners pay env-solve + chromium download before the ~8 min of

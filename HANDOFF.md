@@ -20,7 +20,7 @@ Baselines to trust (and assert against):
 | non-browser suite, pixi lane (has cadquery; CI-equivalent) | **3228 passed** / 5 skipped / 2 xfailed |
 | non-browser suite, .venv lane | **3205 passed** / 28 skipped / 2 xfailed |
 | notebook harness | 21/21 |
-| browser tier | 23 tests, 4 CI shards (`ci.yml` matrix), single-run green locally |
+| browser tier | 5 CI shards (`ci.yml` matrix; the grand tour has its own), single-run green locally |
 | crossing | **1920** candidates (12 airframes × 4 × 4 × 5 × 2) |
 | declared references (`ScoutMissions`) | 274.6 min / 187.0 kg·km / 66.9 m/s / $9706.5 / 6.89 kg |
 | mission winners | ISR: flyingWingSingle · logistics: flyingWingTwinTip · intercept: dartInterceptor |

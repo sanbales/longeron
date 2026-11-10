@@ -21,24 +21,39 @@ dash = grand_dashboard(program, mission="logistics", airframe="flyingWingTwinTip
 
 ## Layout and exposed pieces
 
+The layout fits one 1080p screen. A **tab group** is a set of panes that
+share one place, and its tab bar shows one pane at a time. Below the
+header, one row holds three columns:
+
+- The **tree column** at the left is as tall as the row. Its button
+  (`.tree_toggle`) collapses the column to a thin strip, and the structure
+  diagram takes the width. A click on the strip expands the column again.
+- The centre column holds the structure diagram over the **Analysis
+  tabs** (`.analysis`), a tab group.
+- The **Views tabs** (`.views`) at the right are a tab group.
+
+Each pane of one tab group shows beside each pane of the other. For
+example, the *Subject & knobs* tab shows the sliders beside the 3D pane
+or the scoreboard that they repaint.
+
 The returned `VBox` exposes each pane as an attribute, for scripts and
 tests:
 
 | Place | Pane | Attributes |
 |---|---|---|
 | top | header | `.header` |
-| row 1 | containment tree | `.tree` (a {class}`~longeron.widgets.explorer.ModelTree`) |
-| row 1 | structure diagram | `.diagram` |
-| row 1 | 3D pane | `.viewer`, `.config_view`, `.unlink`, `.mesh`, `.part_map`, `.camera` |
-| row 1 | requirements scoreboard | `.board`, `.scoreboard`, `.requirements` |
-| row 2 | subject card | `.mission_toggle`, `.subject_card`, `.knobs`, `.knob_set` |
-| row 2 | camera what-if | `.elevation`, `.azimuth`, `.readout`, `.report` |
-| row 2 | OpenMDAO sizing strip | `.sizing_title`, `.loiter`, `.optimize`, `.problem`, `.optimum`, `.sizing_card` |
-| row 2 | driver history (in the sizing strip) | `.sizing_history` |
-| row 2 | design variable and constraint table (in the sizing strip) | `.sizing_table` |
-| row 2 | N2 matrix (in the sizing strip) | `.sizing_n2` |
-| row 2 | Z3 verdict strip | `.verdict_title`, `.smt_sat`, `.smt_what_if`, `.verdicts` |
-| bottom | Cesium pane | `.mission`, `.track` |
+| tree column | containment tree | `.tree` (a {class}`~longeron.widgets.explorer.ModelTree`), `.tree_toggle` |
+| centre column | structure diagram | `.diagram` |
+| Views tabs: *3D* | 3D pane | `.viewer`, `.config_view`, `.unlink`, `.mesh`, `.part_map`, `.camera` |
+| Views tabs: *Requirements* | requirements scoreboard | `.board`, `.scoreboard`, `.requirements` |
+| Views tabs: *Mission* | Cesium pane | `.mission`, `.track` |
+| Analysis tabs: *Subject & knobs* | subject card | `.mission_toggle`, `.subject_card`, `.knobs`, `.knob_set` |
+| Analysis tabs: *Camera what-if* | camera what-if | `.elevation`, `.azimuth`, `.readout`, `.report` |
+| Analysis tabs: *Sizing* | OpenMDAO sizing strip | `.sizing_title`, `.loiter`, `.optimize`, `.problem`, `.optimum`, `.sizing_card` |
+| Analysis tabs: *Sizing* | driver history | `.sizing_history` |
+| Analysis tabs: *Sizing* | design variable and constraint table | `.sizing_table` |
+| Analysis tabs: *Sizing* | N2 matrix | `.sizing_n2` |
+| Analysis tabs: *Z3* | Z3 verdict strip | `.verdict_title`, `.smt_sat`, `.smt_what_if`, `.verdicts` |
 | JupyterLab main area | docked panes | `.dock`, `.undock`, `.panels` |
 
 The subject state is `.subject`, `.architecture` (the trade-study
@@ -69,8 +84,9 @@ split bar resizes the two panes, and a drag of a tab moves a pane.
 | Z3 | the Z3 verdict strip | `grand-z3` |
 | Mission | `.mission` | `grand-mission` |
 
-The first view keeps the inline order. The first four tabs make the top
-row, and the four cards make the next row. The *Mission* tab is the
+The first view shows each pane in its own panel. The first four tabs make
+the top row, and the four cards make the next row. The inline tab groups
+do not dock. `dash.undock()` puts each pane back into its tab group. The *Mission* tab is the
 current tab of the notebook's tab area, at the bottom. `.panels` maps each
 pane name to its panel while the tour is docked, and it is empty while
 the tour is inline.

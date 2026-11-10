@@ -208,7 +208,7 @@ class TestViewConePart:
 
 class TestComposition:
     def test_panes_present(self, dash):
-        assert len(dash.children) == 5  # css + header + linked row + strips + mission
+        assert len(dash.children) == 3  # css + header + body
         assert dash.header is dash.children[1]
         assert [type(w).__name__ for w in (dash.diagram, dash.viewer, dash.board)] == [
             "Diagram",
@@ -217,23 +217,57 @@ class TestComposition:
         ]
         assert type(dash.mission).__name__ == "MissionViewer"
         assert type(dash.tree).__name__ == "ModelTree"
-        row1 = dash.children[2]
-        assert list(row1.children) == [dash.tree, dash.diagram, dash.viewer, dash.board]
-        assert dash.tree.layout.width == "240px"  # fixed
-        # the rest is shared 2 : 1 : 1 from a zero basis.  The side panes keep
-        # their aspect, so their width is bounded on both sides
-        bounds = [
-            (w.layout.flex, w.layout.min_width, w.layout.max_width) for w in row1.children[1:]
-        ]
-        assert bounds == [
-            ("2 1 0", "240px", None),
-            ("1 1 0", "280px", "300px"),
-            ("1 1 0", "280px", "300px"),
-        ]
-        # the side panes draw at 1:1 at their floor: the 3D aspect, the viewBox
-        assert (dash.viewer.width_px, dash.board.width_px) == (280, 280)
         assert dash.track.duration > 0
-        assert json.loads(dash.mission.czml_json)  # the finale pane is baked
+        assert json.loads(dash.mission.czml_json)  # the Cesium pane is baked
+
+    def test_the_body_is_the_tree_the_centre_and_the_views(self, dash):
+        body = dash.children[2]
+        column, centre, views = body.children
+        # the tree column spans the body height: the toggle over the tree
+        assert column.children[0] is dash.tree_toggle
+        assert list(column.children[1].children) == [dash.tree]
+        assert column.layout.height == centre.layout.height == views.layout.height == "770px"
+        assert column.layout.width == "240px"
+        # the centre column: the structure diagram over the Analysis tabs
+        assert list(centre.children) == [dash.diagram, dash.analysis]
+        assert (centre.layout.flex, centre.layout.min_width) == ("1 1 560px", "420px")
+        assert dash.diagram.layout.height == "444px"  # the body minus the Analysis tabs
+        assert dash.analysis.layout.height == "320px"
+        # the Views tabs keep their design width and shrink to their minimum
+        assert views is dash.views
+        assert (views.layout.width, views.layout.min_width) == ("640px", "400px")
+
+    def test_tabs_group_the_views_and_the_analysis_cards(self, dash):
+        assert list(dash.views.children) == [dash.viewer, dash.board, dash.mission]
+        assert dash.views.titles == ("3D", "Requirements", "Mission")
+        assert dash.analysis.titles == ("Subject & knobs", "Camera what-if", "Sizing", "Z3")
+        subject, camera, sizing, z3 = dash.analysis.children
+        assert dash.mission_toggle in subject.children[1].children[0].children
+        assert dash.elevation in camera.children and dash.azimuth in camera.children
+        assert sizing.children[0] is dash.sizing_title and z3.children[0] is dash.verdict_title
+        assert {dash.views.selected_index, dash.analysis.selected_index} == {0}
+        # the tab body sizes the panes: they set no width or height, and the
+        # 3D aspect and the scoreboard viewBox are the design tab body's
+        for pane in dash.views.children:
+            assert (pane.layout.width, pane.layout.height) == (None, None)
+        assert (dash.viewer.width_px, dash.viewer.height_px) == (626, 706)
+        assert (dash.board.width_px, dash.board.height_px) == (626, 706)
+        assert dash.mission.height_px == 706
+
+    def test_the_tree_column_collapses_to_a_strip(self, dash):
+        column = dash.children[2].children[0]
+        holder = column.children[1]
+        try:
+            dash.tree_toggle.value = True
+            assert column.layout.width == "28px"
+            assert holder.layout.display == "none"  # the tree view stays alive
+            assert dash.tree.layout.display is None  # the tree's own layout is untouched
+            assert dash.tree_toggle.icon == "angle-double-right"
+            assert dash.tree_toggle.layout.flex == "1 1 0"  # the whole strip expands it
+        finally:
+            dash.tree_toggle.value = False
+        assert column.layout.width == "240px" and holder.layout.display is None
+        assert dash.tree_toggle.layout.height == "28px"
 
     def test_defaults_are_the_demo_mission(self, dash):
         assert dash.camera["elevation"] == -15.0  # the subject's declared camera
@@ -925,8 +959,8 @@ class TestDock:
             assert dash.panels["scoreboard"].children[0] is dash.board
             assert dash.panels["mission"].children[0] is dash.mission
             assert dash.panels["subject"].children[0] is dash.header
-            row2 = inline[3].children
-            for pane, card in zip(("subject", "camera", "sizing", "z3"), row2, strict=True):
+            cards = dash.analysis.children
+            for pane, card in zip(("subject", "camera", "sizing", "z3"), cards, strict=True):
                 assert card in dash.panels[pane].children
                 assert card.layout.height == "100%"  # a docked card fills its panel
             assert dash.tree.layout.height == "100%"
@@ -950,6 +984,9 @@ class TestDock:
         assert list(dash.children) == inline
         assert [w.layout for w in moved] == layouts
         assert dash.panels == {}
+        # the leaves are back in their inline containers, the tabs included
+        assert list(dash.views.children) == [dash.viewer, dash.board, dash.mission]
+        assert dash.diagram in dash.children[2].children[1].children
 
     def test_redock_replaces_every_panel(self, dash, shell):
         try:
