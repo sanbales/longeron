@@ -12,20 +12,35 @@ mission's ``airframe`` variation point, one variant for each other
 variation point, and transient overrides.  A transient override replaces
 a model value for the analysis only and never writes the model.  A
 **visiting craft** is a craft that the 3D pane shows but that is not the
-subject.  The layout has a header, two rows of panes and the Cesium
-pane at the bottom.  The panes, in layout order:
+subject.
+
+The layout fits one 1080p screen.  A header line names the subject.  A
+**tab group** is a set of panes that share one place.  Its tab bar
+shows one pane at a time.  Below the header, one row holds three columns:
+
+* the **tree column** at the left, as tall as the row.  Its button
+  collapses the column to a thin strip, and the structure diagram takes
+  the width.  A click on the strip expands the column again;
+* the centre column: the structure diagram over the **Analysis tabs**,
+  a tab group;
+* the **Views tabs** at the right, a tab group.
+
+The Views tabs hold the 3D pane, the requirements scoreboard and the
+Cesium pane.  The Analysis tabs hold the subject card, the camera
+what-if, the sizing strip and the Z3 strip.  Thus each pane of one tab
+group shows beside each pane of the other.  The panes, in layout order:
 
 * a **header** that names the subject's mission, airframe and selection,
   shows the requirements score, and says when the 3D pane shows a
   visiting craft;
-* row 1: a **containment tree** pane
+* the tree column: a **containment tree** pane
   (:class:`longeron.widgets.explorer.ModelTree`, the model explorer's
   tree).  The containment tree lists every package, definition, usage
   and relationship by ownership;
-* row 1: a **structure diagram** pane
+* the centre column: a **structure diagram** pane
   (:func:`longeron.diagrams.structure_diagram`, compact toolbar on) --
   the linked-selection hub;
-* row 1: a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
+* the Views tabs (*3D*): a **3D CAD** pane (:func:`longeron.widgets.viewer3d.mesh_viewer`),
   config-keyed through :func:`longeron.analysis.link.bind_config_view`
   (tutorial 7's seam, promoted).  It shows the subject craft, baked from
   the subject's mix (:func:`longeron.analysis.geometry.mission_geometry`)
@@ -36,25 +51,25 @@ pane at the bottom.  The panes, in layout order:
   visiting craft.  Selections inside the shown craft highlight per M0
   individual.  A translucent **view cone** follows the camera what-if
   sliders over the subject craft;
-* row 1: a **requirements scoreboard** pane
+* the Views tabs (*Requirements*): a **requirements scoreboard** pane
   (:func:`longeron.analysis.scoreboard.scoreboard`, Voronoi tessellation)
   scoring the subject's requirement set
   (:func:`longeron.analysis.subject.requirement_set`).  Each requirement
   scores for the subject instance where it applies: the mission
   architecture, or its airframe.  The board repaints live as the subject
   and the measured geometry change;
-* row 2: a **subject card** -- a mission selector, the subject's mission
-  metric and verdict, and the **knobs**
+* the Analysis tabs (*Subject & knobs*): a **subject card** -- a mission
+  selector, the subject's mission metric and verdict, and the **knobs**
   (:func:`longeron.analysis.knobs.derive_knobs`): a dropdown per
   variation point other than the airframe, and a slider per input attribute that the model bounds on
   both sides;
-* row 2: a **camera what-if** card -- elevation/azimuth sliders that
+* the Analysis tabs (*Camera what-if*): a **camera what-if** card -- elevation/azimuth sliders that
   re-run the CAD-native occlusion measure
   (:func:`longeron.analysis.geometry.occlusion_report`, deterministic
   mesh engine) on the subject craft's declared camera on every move.  The assume constraints of the
   ``camera_case`` analysis case bound the sliders.  A craft that
   declares no camera shows an honest absence;
-* row 2: an **OpenMDAO sizing** strip -- the generated ``Problem``
+* the Analysis tabs (*Sizing*): an **OpenMDAO sizing** strip -- the generated ``Problem``
   (:func:`longeron.analysis.mdao.build_problem`) of the mission's
   **sizing context**, a frozen sizing part such as
   ``ScoutSizing::IsrPrime``.  A loiter-speed slider re-runs it live, and
@@ -66,12 +81,13 @@ pane at the bottom.  The panes, in layout order:
   flags, and an N2 matrix of the problem's components and connections
   (:func:`~longeron.analysis.mdao.problem_structure`).  The strip title
   names the sizing context;
-* row 2: a **Z3 verdict** strip -- requirement-consistency cards
+* the Analysis tabs (*Z3*): a **Z3 verdict** strip -- requirement-consistency cards
   (:func:`longeron.analysis.smt.to_smt`) for the same sizing context: the
   design point's SAT witness beside an impossible what-if's UNSAT
   conflict core.  A mission without a sizing context shows an honest
   absence in both strips;
-* a **Cesium mission** pane (:mod:`longeron.widgets.mission3d`) flying
+* the Views tabs (*Mission*): a **Cesium mission** pane
+  (:mod:`longeron.widgets.mission3d`) flying
   the subject's geometry through the recorded execution of the shared
   ``FlightStates`` machine over the shared route, at satellite imagery
   (offline front-ends degrade to a printed note; the dashboard composes
@@ -202,19 +218,27 @@ DEFAULT_SIZING_CONTEXTS: dict[MissionName, tuple[str, str, str]] = {
 #: the 30.5 mm stack heuristic -- the demo model carries no ESC part
 _ESC_MASS = 0.012
 
-# -- layout constants (explicit heights: the composed surface must fit a
-# ~1600x900 recording viewport together with the notebook chrome) --------
-_ROW1_PX = 430  # tree / diagram / 3D / scoreboard
-_TREE_PX = 240  # fixed containment tree pane width
-# the diagram, the 3D pane and the scoreboard share the rest of row 1,
-# 2 : 1 : 1.  The 3D pane and the scoreboard stay between these widths.
-# The minimum is also their model width (the 3D aspect, the scoreboard
-# viewBox), so both draw at 1:1 there.  Both keep that aspect, so above
-# the maximum they would outgrow the row height
-_PANE_MIN_PX = 280
-_PANE_MAX_PX = 300
-_STRIP_PX = 200  # what-if / sizing / verdict cards
-_MISSION_PX = 330  # the Cesium finale
+# -- layout constants: the inline layout fits a 1920x1080 screen together
+# with the browser and JupyterLab chrome, an output area of about
+# 1700 x 860 px ----------------------------------------------------------
+_BODY_PX = 770  # the tree column, the centre column and the Views tabs
+_TREE_PX = 240  # the containment tree column, expanded
+_TREE_STRIP_PX = 28  # the containment tree column, collapsed
+_ANALYSIS_PX = 320  # the Analysis tabs, under the structure diagram
+# the centre column and the Views tabs share a narrow output area from
+# these bases, down to their minimums.  Above the sum of the bases, the
+# centre column takes the rest
+_CENTRE_PX = 560
+_CENTRE_MIN_PX = 420
+# the Views tabs keep their design width and shrink to the minimum in a
+# narrow output area.  The 3D pane and the scoreboard keep the aspect of
+# the design tab body, so a narrower tab body draws them shorter
+_VIEWS_PX = 640
+_VIEWS_MIN_PX = 400
+_TAB_BAR_PX = 40  # the tab bar and the tab body's border and padding
+_VIEW_PX = _VIEWS_PX - 14  # the design width of a Views tab body
+_TOGGLE_PX = 28  # the tree column's collapse button, expanded
+_CAPTION_PX = 24  # the caption line under the 3D canvas and the Cesium stage
 
 _FONT = "font-family:var(--jp-ui-font-family,Helvetica,Arial,sans-serif)"
 _CARD_STYLE = (
@@ -240,6 +264,9 @@ _GRAND_CSS = (
     ".lgn-grand-card { border: 1px solid var(--jp-border-color2,#e0e0e0); "
     "border-radius: 8px; padding: 8px 12px; box-sizing: border-box; "
     "background: var(--jp-layout-color1,#ffffff); }"
+    # the tab bodies are the panes' frame: a thin padding, no scroll bar
+    ".jupyter-widgets.lgn-grand-tabs > .widget-tab-contents { padding: 6px; overflow: hidden; }"
+    ".lgn-grand-strip button { padding: 0; }"
     "</style>"
 )
 
@@ -1028,12 +1055,14 @@ class GrandDock:
     def dock(self) -> None:
         """Move the panes into the JupyterLab main area, nine panels.
 
-        The first view follows the inline layout: the tree, the structure
-        diagram, the 3D pane and the scoreboard in the top row, and the
-        subject, camera what-if, sizing and Z3 cards in the next row.  The
+        The first view shows each pane in its own panel: the tree, the
+        structure diagram, the 3D pane and the scoreboard in the top row, and
+        the subject, camera what-if, sizing and Z3 cards in the next row.  The
         Cesium pane is the current tab of the notebook's tab area, below the
-        cards, and the notebook tab stays beside it.  The inline layout shows
-        a note in place of the panes.
+        cards, and the notebook tab stays beside it.  The inline tab groups
+        do not dock: the panes leave them, and :meth:`undock` puts each pane
+        back into its tab group.  The inline layout shows a note in place of
+        the panes.
 
         A second ``dock()`` closes the open panels and docks all nine
         panes again in the first view.  Thus ``dock()`` also re-opens a
@@ -1204,7 +1233,10 @@ def grand_dashboard(
     such as ``minStationMinutes`` its slider), ``.knob_set`` (the
     :class:`~longeron.analysis.knobs.KnobSet` behind them), ``.diagram``,
     ``.tree`` (the containment tree, a
-    :class:`~longeron.widgets.explorer.ModelTree`), ``.viewer``,
+    :class:`~longeron.widgets.explorer.ModelTree`), ``.tree_toggle`` (the
+    tree column's collapse button: ``True`` collapses the column),
+    ``.views`` and ``.analysis`` (the two ``ipywidgets.Tab`` tab groups),
+    ``.viewer``,
     ``.board`` (+ ``.scoreboard``, the current
     :class:`~longeron.analysis.scoreboard.Scoreboard`),
     ``.elevation`` / ``.azimuth`` / ``.readout`` / ``.report``,
@@ -1345,7 +1377,7 @@ def grand_dashboard(
     baked = _bake(first)
 
     # -- panes ---------------------------------------------------------------
-    diagram = structure_diagram(model, height=f"{_ROW1_PX}px")
+    diagram = structure_diagram(model, height=f"{_BODY_PX - _ANALYSIS_PX - 6}px")
     drawn = _diagram_node_ids(diagram)
     tree_nodes, tree_index = _tree_data(model)
     tree_ids = {id(element): node_id for node_id, element in tree_index.items()}
@@ -1353,11 +1385,13 @@ def grand_dashboard(
     viewer = viewer3d.mesh_viewer(
         baked["mesh"],
         label=f"{baked['craft']} -- the {mission} subject",
-        width_px=_PANE_MIN_PX,
-        height_px=_ROW1_PX - 46,  # the caption line still fits at _PANE_MAX_PX
+        width_px=_VIEW_PX,  # the design tab body, the caption line under the canvas
+        height_px=_BODY_PX - _TAB_BAR_PX - _CAPTION_PX,
     )
     board_score = _subject_board(baked["requirements"], base_values)
-    board = board_score.widget("voronoi", width_px=_PANE_MIN_PX, height_px=_ROW1_PX - 26, seed=42)
+    board = board_score.widget(
+        "voronoi", width_px=_VIEW_PX, height_px=_BODY_PX - _TAB_BAR_PX - _CAPTION_PX, seed=42
+    )
     board_qnames = {row.qname for row in board_score.table()}
 
     # -- Cesium: the state machine's recorded execution over the route -------
@@ -1381,7 +1415,7 @@ def grand_dashboard(
         _track(baked),
         mesh=baked["mesh"],
         label=f"{states} replay -- the subject's own geometry over {imagery} imagery",
-        height_px=_MISSION_PX,
+        height_px=_BODY_PX - _TAB_BAR_PX - _CAPTION_PX,
         imagery=imagery,
     )
 
@@ -1426,8 +1460,12 @@ def grand_dashboard(
     )
     readout = widgets.HTML()
     subject_card = widgets.HTML()
-    knob_grid = widgets.GridBox(
-        layout=widgets.Layout(width="98%", grid_template_columns="1fr 1fr", grid_gap="0 6px")
+    knob_grid = widgets.GridBox(  # as many dropdown columns as the card width holds
+        layout=widgets.Layout(
+            width="98%",
+            grid_template_columns="repeat(auto-fill, minmax(180px, 1fr))",
+            grid_gap="0 6px",
+        )
     )
     knob_sliders = widgets.VBox(layout=widgets.Layout(width="100%"))
     header = widgets.HTML()
@@ -1680,19 +1718,28 @@ def grand_dashboard(
             step=knob.step,
             description="loiter m/s",
             readout_format=".1f",
-            **slider_kw,
+            **{**slider_kw, "layout": widgets.Layout(flex="1 1 0", min_width="0")},
         )
         optimize = widgets.Button(
             description="maximize station time",
             tooltip="run the OpenMDAO driver and snap the slider to the optimum",
-            layout=widgets.Layout(width="98%"),
+            layout=widgets.Layout(width="220px", flex="0 0 auto"),
         )
-        sizing_card = widgets.HTML()
-        sizing_history = widgets.HTML(_history_html(None))
-        sizing_table = widgets.HTML()
-        sizing_n2 = widgets.HTML(_n2_html(mdao.problem_structure(build)))
+        # the four renderings share one line of a wide card: a flex basis each,
+        # the table at its natural width
+        sizing_card = widgets.HTML(layout=widgets.Layout(flex="1 1 170px", min_width="150px"))
+        sizing_history = widgets.HTML(
+            _history_html(None), layout=widgets.Layout(flex="1 1 200px", max_width="260px")
+        )
+        sizing_table = widgets.HTML(layout=widgets.Layout(flex="0 0 auto"))
+        sizing_n2 = widgets.HTML(
+            _n2_html(mdao.problem_structure(build)),
+            layout=widgets.Layout(flex="1 1 160px", min_width="150px", max_width="260px"),
+        )
         verdicts = widgets.HTML(
-            _verdict_html(
+            '<div style="display:flex; flex-wrap:wrap; gap:4px 24px">'
+            '<div style="flex:1 1 240px">'
+            + _verdict_html(
                 f"{requirement.split('::')[-1]} at the design point",
                 smt_sat,
                 "".join(
@@ -1701,6 +1748,7 @@ def grand_dashboard(
                     if path in smt_sat.witness
                 ),
             )
+            + '</div><div style="flex:1 1 240px">'
             + _verdict_html(
                 what_if_label,
                 smt_what_if,
@@ -1711,6 +1759,7 @@ def grand_dashboard(
                 )
                 or f'<div style="color:{_DIM}">no conflict core</div>',
             )
+            + "</div></div>"
         )
 
         def _on_loiter(_change: Any = None) -> None:
@@ -1746,6 +1795,15 @@ def grand_dashboard(
             "sizing_table": sizing_table,
             "sizing_n2": sizing_n2,
             "verdicts": verdicts,
+            # the slider and the button share the strip's first line, and the
+            # renderings sit side by side below them (they wrap in a narrow card)
+            "controls": widgets.HBox([loiter, optimize], layout=widgets.Layout(width="100%")),
+            "renderings": widgets.Box(
+                [sizing_card, sizing_history, sizing_table, sizing_n2],
+                layout=widgets.Layout(
+                    width="100%", flex_flow="row wrap", align_items="flex-start", grid_gap="12px"
+                ),
+            ),
         }
 
     sizing_title = widgets.HTML()
@@ -1790,17 +1848,7 @@ def grand_dashboard(
             f"OpenMDAO sizing -- {strip['sizer']}, the {name} context"
         )
         verdict_title.value = _strip_title(f"Z3 requirement consistency -- {strip['requirement']}")
-        sizing_body.children = [
-            strip[key]
-            for key in (
-                "loiter",
-                "sizing_card",
-                "optimize",
-                "sizing_history",
-                "sizing_table",
-                "sizing_n2",
-            )
-        ]
+        sizing_body.children = [strip["controls"], strip["renderings"]]
         verdict_body.children = [strip["verdicts"]]
 
     syncing = {"active": False}  # reentrancy guard: diagram <-> scoreboard
@@ -1893,77 +1941,134 @@ def grand_dashboard(
     _render_knobs()
 
     # -- layout ---------------------------------------------------------------
-    # Sizing discipline (the diagram-beside-3D lesson, re-learned in
-    # evidence capture):
-    # anywidget roots are flex items with min-width:auto, so a wrapper Box
-    # does NOT constrain them -- the canvas grows toward the notebook width
-    # and the visible pane clips its empty corner.  Pin flex and an explicit
-    # min-width on each widget's OWN layout instead.  The tree is fixed.  The
-    # others share the rest from a zero basis (the 3D canvas and the
-    # scoreboard SVG follow their pane's width), and the diagram takes what
-    # the side panes' maximum leaves.  The diagram's floor is lower than the
-    # side panes', so in a narrow output area it gives way first, down to
-    # its own floor.
-    tree.layout = widgets.Layout(width=f"{_TREE_PX}px", height=f"{_ROW1_PX}px", flex="0 0 auto")
-    side = {
-        "width": "auto",
-        "flex": "1 1 0",
-        "min_width": f"{_PANE_MIN_PX}px",
-        "max_width": f"{_PANE_MAX_PX}px",
-        "overflow": "hidden",
-    }
-    viewer.layout = widgets.Layout(**side)
-    board.layout = widgets.Layout(**side)
-    diagram.layout.width = "auto"
-    diagram.layout.flex = "2 1 0"
-    diagram.layout.min_width = "240px"
-    diagram.layout.overflow = "hidden"
-    flight.layout = widgets.Layout(width="100%")
-    row1 = widgets.HBox(
-        [tree, diagram, viewer, board],
+    # One body row under the header: the containment tree column, the
+    # centre column (the structure diagram over the Analysis tabs) and the
+    # Views tabs.  Every height is explicit, so the body is one screen
+    # tall.  Sizing discipline (the diagram-beside-3D lesson): anywidget
+    # roots are flex items with min-width:auto, so a wrapper Box does NOT
+    # constrain them -- pin flex and an explicit min-width on each widget's
+    # OWN layout.  A tab body sizes its pane itself (a Lumino stacked
+    # panel), so the panes inside the tabs set no width or height: the 3D
+    # canvas, the scoreboard SVG and the Cesium stage follow the body.
+    tree.layout = widgets.Layout(width="100%", flex="1 1 0", min_height="0")
+    # the holder hides the tree on collapse.  The tree keeps its own layout
+    # (dock() swaps it) and its front-end view (the expanded rows, the filter)
+    tree_holder = widgets.VBox(
+        [tree], layout=widgets.Layout(width="100%", flex="1 1 0", min_height="0")
+    )
+    tree_toggle = widgets.ToggleButton(
+        value=False,
+        icon="angle-double-left",
+        tooltip="collapse the containment tree",
+        layout=widgets.Layout(width="100%", height=f"{_TOGGLE_PX}px", flex="0 0 auto"),
+    )
+    tree_column = widgets.VBox(
+        [tree_toggle, tree_holder],
         layout=widgets.Layout(
-            width="100%", height=f"{_ROW1_PX + 8}px", align_items="stretch", overflow="hidden"
+            width=f"{_TREE_PX}px", height=f"{_BODY_PX}px", flex="0 0 auto", overflow="hidden"
         ),
     )
+    tree_column.add_class("lgn-grand-strip")
 
-    def _strip_card(title: Any, children: list[Any], *, flex: str = "1 1 0") -> Any:
+    def _on_tree_toggle(_change: Any = None) -> None:
+        """Collapse the tree column to a strip (the whole strip expands it again)."""
+
+        collapsed = bool(tree_toggle.value)
+        tree_toggle.icon = "angle-double-right" if collapsed else "angle-double-left"
+        tree_toggle.tooltip = (
+            "show the containment tree" if collapsed else "collapse the containment tree"
+        )
+        # collapsed, the button is the whole strip
+        tree_toggle.layout.height = None if collapsed else f"{_TOGGLE_PX}px"
+        tree_toggle.layout.flex = "1 1 0" if collapsed else "0 0 auto"
+        tree_holder.layout.display = "none" if collapsed else None
+        tree_column.layout.width = f"{_TREE_STRIP_PX if collapsed else _TREE_PX}px"
+
+    tree_toggle.observe(_on_tree_toggle, names="value")
+    diagram.layout.width = "100%"
+    diagram.layout.flex = "0 0 auto"
+    diagram.layout.min_width = "0"
+    diagram.layout.overflow = "hidden"
+    for pane in (viewer, board, flight):
+        pane.layout = widgets.Layout(overflow="hidden")
+
+    def _strip_card(title: Any, children: list[Any]) -> Any:
         titled = widgets.HTML(_strip_title(title)) if isinstance(title, str) else title
-        for child in (titled, *children):  # natural height: the card scrolls, no child shrinks
+        for child in (titled, *children):  # natural height, no child shrinks
             child.layout.flex = "0 0 auto"
         card = widgets.VBox(
             [titled, *children],
-            layout=widgets.Layout(
-                flex=flex,
-                min_width="0",
-                height=f"{_STRIP_PX}px",
-                overflow="hidden auto",  # x clips, y scrolls (a tall knob card)
-            ),
+            # the card fills its tab body.  x clips, y scrolls as a last resort
+            layout=widgets.Layout(width="100%", height="100%", overflow="hidden auto"),
         )
         card.add_class("lgn-grand-card")
         return card
 
+    # the subject card: the mission and its verdict left, the knobs right.
+    # In a narrow card the knobs wrap below, so the sliders keep a long track
+    subject_columns = widgets.HBox(
+        [
+            widgets.VBox(
+                [mission_toggle, subject_card],
+                layout=widgets.Layout(flex="1 1 240px", min_width="240px", max_width="300px"),
+            ),
+            widgets.VBox(
+                [knob_grid, knob_sliders],
+                layout=widgets.Layout(flex="1 1 360px", min_width="0"),
+            ),
+        ],
+        layout=widgets.Layout(width="100%", flex_flow="row wrap", grid_gap="0 12px"),
+    )
     subject_pane, camera_pane, sizing_pane, verdict_pane = (
-        _strip_card(
-            "subject (mission, knobs)",
-            [mission_toggle, subject_card, knob_grid, knob_sliders],
-            flex="1.6 1 0",
-        ),
+        _strip_card("subject (mission, knobs)", [subject_columns]),
         _strip_card("camera what-if (occlusion, mesh engine)", [elevation, azimuth, readout]),
         _strip_card(sizing_title, [sizing_body]),
         _strip_card(verdict_title, [verdict_body]),
     )
-    row2 = widgets.HBox(
+
+    def _tabs(children: list[Any], titles: Sequence[str], **layout: str) -> Any:
+        tabs = widgets.Tab(children=children, layout=widgets.Layout(**layout))
+        for index, title in enumerate(titles):
+            tabs.set_title(index, title)
+        tabs.add_class("lgn-grand-tabs")
+        return tabs
+
+    analysis = _tabs(
         [subject_pane, camera_pane, sizing_pane, verdict_pane],
-        layout=widgets.Layout(width="100%", align_items="stretch", overflow="hidden"),
+        ("Subject & knobs", "Camera what-if", "Sizing", "Z3"),
+        width="100%",
+        height=f"{_ANALYSIS_PX}px",
+        flex="0 0 auto",
+    )
+    views = _tabs(
+        [viewer, board, flight],
+        ("3D", "Requirements", "Mission"),
+        width=f"{_VIEWS_PX}px",
+        min_width=f"{_VIEWS_MIN_PX}px",
+        height=f"{_BODY_PX}px",
+        flex=f"0 1 {_VIEWS_PX}px",
+    )
+    centre = widgets.VBox(
+        [diagram, analysis],
+        layout=widgets.Layout(
+            flex=f"1 1 {_CENTRE_PX}px", min_width=f"{_CENTRE_MIN_PX}px", height=f"{_BODY_PX}px"
+        ),
+    )
+    body = widgets.HBox(  # an output area too narrow for the minimums scrolls in x
+        [tree_column, centre, views],
+        layout=widgets.Layout(width="100%", align_items="stretch", overflow="auto hidden"),
     )
 
     style = widgets.HTML(_GRAND_CSS, layout=widgets.Layout(display="none"))
-    box.children = [style, header, row1, row2, flight]
+    box.children = [style, header, body]
     box.layout = widgets.Layout(width="100%")
+    box.add_class("lgn-grand-tour")
 
     # docked, a pane fills its panel's width.  The tree, the diagram and the
     # cards also fill its height; the 3D pane, the scoreboard and the Cesium
-    # stage keep their own aspect or height, and the panel scrolls
+    # stage keep their own aspect or height, and the panel scrolls.  The
+    # docked panes are the leaf widgets: undock() puts them back into their
+    # inline containers, the tabs included
     fill = {"width": "100%", "height": "100%", "flex": "1 1 auto", "min_width": "0"}
     wide = {"width": "100%", "flex": "0 0 auto", "overflow": "hidden"}
     card = {**fill, "overflow": "hidden auto"}
@@ -1986,6 +2091,9 @@ def grand_dashboard(
     # -- the automation/testing surface ---------------------------------------
     box.diagram = diagram
     box.tree = tree
+    box.tree_toggle = tree_toggle
+    box.views = views
+    box.analysis = analysis
     box.viewer = viewer
     box.board = board
     box.mission = flight

@@ -21,13 +21,15 @@ The scenarios, each on a fresh kernel:
    draws wider, and a catalog craft click re-fits the camera;
 4. the mission toggle to logistics shows the honest-absence card in the
    sizing strip and swaps the knob card;
-5. row 1 shares its width: after the 240 px tree, the diagram, the 3D
-   pane and the scoreboard take 2 : 1 : 1 of the rest, and the 3D pane
-   and the scoreboard stay between 280 and 300 px wide.  The scenario
-   measures the panes with the left sidebar open, collapsed, and on a
-   1900 px page.  The 3D canvas and the scoreboard SVG fill their panes
-   and do not hang below the row, one re-share costs the diagram one
-   refit, and a click on the scaled SVG selects the clicked requirement.
+5. the dashboard fits a 1080p screen: on a 1920x1080 page, the whole
+   dashboard is no taller than the visible output area of a 1080p
+   browser window (860 px).  No element scrolls and no control is
+   clipped at any tab of the two tab groups, and each Views tab shows
+   its pane at least 500 px on each side.  The tree column spans the
+   dashboard below the header and collapses to a strip, which costs the
+   diagram one refit.  The Cesium globe renders at its full size after
+   its first reveal, and a click on the scaled scoreboard SVG selects the
+   clicked requirement.
 6. the mission starts and ends on the drawn surface: at the first and
    the last instant of the Cesium clock, the drone model sits less than
    2 m above the globe under it (the track heights are above ground).
@@ -55,11 +57,12 @@ The scenarios, each on a fresh kernel:
    click still changes the subject, and ``undock()`` closes the panels
    and shows the inline layout again.
 
-Scenarios 1, 2, 4 and 6 collapse JupyterLab's left sidebar first.  At the
-harness viewport (1500 px) the open file browser leaves the output area
-about 1070 px wide, and the diagram then gets about 270 px.  Scenarios 3
-and 4 also record the layout (row-1 pane widths, and whether a row-2
-card's content is taller than the card) in
+Every scenario but 3 collapses JupyterLab's left sidebar first.  A
+scenario selects the tab of a pane before it clicks or measures the pane,
+for example the *Requirements* tab before a scoreboard cell or the
+*Mission* tab before the Cesium stage.  Scenarios 3 and 4 also record
+the layout (the widths of the three body columns, and whether an
+Analysis card's content is taller than the card) in
 ``build/evidence/grand_tour_layout_<state>.json``.  Those values are a
 record.  Scenario 5 is the only one that asserts geometry.  Each stage
 saves a PNG under ``build/evidence/``.
@@ -75,7 +78,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import REPO, scroll_into_view
+from .conftest import REPO, _lab_page, scroll_into_view
 
 pytestmark = pytest.mark.browser
 
@@ -97,12 +100,14 @@ _ARM_REBUILDS_JS = """() => {
     return true;
 }"""
 
-#: row-1 pane boxes, and each row-2 card's content height against its own
+#: the body row's column boxes (the tree column, the centre column and the
+#: Views tabs), and each Analysis card's content height against its own
 #: height (a card scrolls vertically when its content is taller)
 _LAYOUT_JS = """() => {
+    const dash = document.querySelector('.jp-OutputArea-output .lgn-grand-tour');
+    const row = dash ? dash.children[2] : null;
     const viewer = document.querySelector('.longeron-viewer3d');
-    const row = viewer ? viewer.closest('.widget-hbox') : null;
-    const names = ['tree', 'diagram', '3D', 'scoreboard'];
+    const names = ['tree', 'centre', 'views'];
     const box = (el) => {
         const r = el.getBoundingClientRect();
         return {width: Math.round(r.width), height: Math.round(r.height)};
@@ -111,8 +116,8 @@ _LAYOUT_JS = """() => {
     return {
         viewport: {width: window.innerWidth, height: window.innerHeight},
         output_width: output ? Math.round(output.getBoundingClientRect().width) : null,
-        row1_width: row ? Math.round(row.getBoundingClientRect().width) : null,
-        row1: row ? Object.fromEntries(
+        body_width: row ? Math.round(row.getBoundingClientRect().width) : null,
+        body: row ? Object.fromEntries(
             [...row.children].map((el, i) => [names[i] || String(i), box(el)])) : null,
         cards: [...document.querySelectorAll('.lgn-grand-card')].map((card) => ({
             title: (card.firstElementChild ? card.firstElementChild.textContent : '')
@@ -150,6 +155,20 @@ _COLLAPSE_LEFT_JS = """() => {
 
 def _collapse_sidebar(lab: Any) -> None:
     assert lab.evaluate(_COLLAPSE_LEFT_JS, label="collapse the left sidebar")
+
+
+def _tab(lab: Any, title: str) -> None:
+    """Click the dashboard tab titled ``title`` (a Views or an Analysis tab)."""
+
+    tab = lab.page.locator(
+        ".jp-OutputArea-output .lgn-grand-tabs .lm-TabBar-tab", has_text=title
+    ).first
+    tab.click()
+    lab.wait_until(
+        lambda _s: "lm-mod-current" in (tab.get_attribute("class") or ""),
+        timeout=30,
+        label=f"the {title} tab is current",
+    )
 
 
 def _open(lab: Any, *, collapse_sidebar: bool = True, notebook: str = NOTEBOOK) -> dict[str, Any]:
@@ -389,14 +408,12 @@ def test_knob_changes_repaint_the_3d_pane_and_rescore_the_board(lab: Any) -> Non
 
     # the harness page as it opens (file browser shown), then collapsed
     state = _open(lab, collapse_sidebar=False)
-    narrow = _record_layout(lab, "ISR_sidebar_open")["row1"]["diagram"]["width"]
+    narrow = _record_layout(lab, "ISR_sidebar_open")["body_width"]
     _collapse_sidebar(lab)
     lab.wait_until(
-        lambda _s: (
-            lab.evaluate(_LAYOUT_JS, label="diagram widens")["row1"]["diagram"]["width"] > narrow
-        ),
+        lambda _s: lab.evaluate(_LAYOUT_JS, label="body widens")["body_width"] > narrow,
         timeout=60,
-        label="the diagram widened after the sidebar collapsed",
+        label="the body row widened after the sidebar collapsed",
     )
     _record_layout(lab, "ISR")
     battery = state["selection"]["battery"]
@@ -413,6 +430,7 @@ def test_knob_changes_repaint_the_3d_pane_and_rescore_the_board(lab: Any) -> Non
     lab.page.screenshot(path=str(EVIDENCE / "grand_knob_battery.png"), full_page=True)
 
     # -- the station-time floor slider: the IsrTasking leaf re-scores -------
+    _tab(lab, "Requirements")  # the scoreboard beside the knob card
     before_score = state["scores"][ISR_TASKING]
     before_fill = _cell_fill(lab, ISR_TASKING)
     assert before_score == 1.0, state  # today's ISR winner holds station for 25 min
@@ -581,31 +599,12 @@ def test_mission_toggle_shows_absence_and_swaps_the_knobs(lab: Any) -> None:
         label="the knob card swapped sensor for cargo",
     )
     _record_layout(lab, "logistics")
+    _tab(lab, "Sizing")
     scroll_into_view(absence.first)
     lab.page.screenshot(path=str(EVIDENCE / "grand_mission_logistics.png"), full_page=True)
 
     lab.assert_no_errors()
 
-
-#: row-1 pane widths, the 3D canvas and the scoreboard SVG against their
-#: panes, and the SVG's scale (its rendered width over its viewBox width)
-_PANES_JS = """() => {
-    const viewer = document.querySelector('.longeron-viewer3d');
-    const row = viewer.closest('.widget-hbox');
-    const width = (el) => el ? el.getBoundingClientRect().width : null;
-    const [tree, diagram, view, board] = [...row.children];
-    const svg = board.querySelector('.lgn-sb-wrap svg');
-    const bottom = (el) => Math.round(el.getBoundingClientRect().bottom);
-    return {
-        row: width(row), tree: width(tree), diagram: width(diagram),
-        viewer: width(view), board: width(board),
-        canvas: width(view.querySelector('canvas')), svg: width(svg),
-        svg_scale: width(svg) / svg.viewBox.baseVal.width,
-        // nothing of the side panes may hang below the row (it clips)
-        overhang: Math.max(bottom(view.querySelector('.longeron-viewer3d-captions')),
-                           bottom(svg)) - bottom(row),
-    };
-}"""
 
 #: a screen point inside a scoreboard cell: the cell's vertex centroid (a
 #: Voronoi cell is convex) in viewBox units, mapped to the screen through
@@ -625,84 +624,239 @@ _CELL_POINT_JS = """(qname) => {
             hit: document.elementFromPoint(screen.x, screen.y) === path};
 }"""
 
-#: the tree's width, and the bounds of the 3D pane and the scoreboard
-#: (grand._TREE_PX, grand._PANE_MIN_PX, grand._PANE_MAX_PX)
-_TREE, _SIDE_MIN, _SIDE_MAX = 240, 280, 300
+#: the dashboard's fit at the current tab selection: the dashboard, the
+#: header, the tree column, the notebook panel and each tab body with its
+#: shown pane (and the canvas or the SVG inside it); every element that
+#: scrolls (its content is taller than its box) except the tree's own rows
+#: and Cesium's internals; and every visible control that is not inside
+#: the dashboard and inside its tab body
+_FIT_JS = """() => {
+    const dash = document.querySelector('.jp-OutputArea-output .lgn-grand-tour');
+    if (!dash) return null;
+    const box = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return {x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom, right: r.right};
+    };
+    const outer = dash.getBoundingClientRect();
+    const bodies = [...dash.querySelectorAll('.lgn-grand-tabs > .widget-tab-contents')];
+    const shown = (body) => [...body.children].find((c) => c.offsetParent !== null) || null;
+    const scrolls = [...dash.querySelectorAll('*')].filter((el) => {
+        if (el.closest('.lgx-tree') || el.closest('[class*="cesium"]')) return false;
+        const overflow = getComputedStyle(el).overflowY;
+        return el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 1
+            && /(auto|scroll|hidden)/.test(overflow);
+    }).map((el) => ({cls: String(el.className).slice(0, 80),
+                     client: el.clientHeight, scroll: el.scrollHeight}));
+    const clipped = [...dash.querySelectorAll('button, select, input, .widget-hslider')]
+        .filter((el) => el.offsetParent !== null && !el.closest('.lgx-tree')
+                && !el.closest('.longeron-mission3d-stage'))
+        .filter((el) => {
+            const r = el.getBoundingClientRect();
+            const body = el.closest('.widget-tab-contents');
+            const frame = body ? body.getBoundingClientRect() : outer;
+            return r.top < frame.top - 1 || r.bottom > frame.bottom + 1
+                || r.left < frame.left - 1 || r.right > frame.right + 1;
+        }).map((el) => (el.textContent || el.className).trim().slice(0, 40));
+    const panel = document.querySelector('.jp-NotebookPanel .jp-WindowedPanel-outer');
+    return {
+        viewport: {width: window.innerWidth, height: window.innerHeight},
+        notebook: box(panel),
+        dash: box(dash), header: box(dash.children[1]),
+        tree: box(dash.querySelector('.lgn-grand-strip')),
+        centre: box(dash.children[2].children[1]),
+        tabs: bodies.map((body) => {
+            const pane = shown(body);
+            return {body: box(body), pane: box(pane),
+                    canvas: box(pane && pane.querySelector('canvas')),
+                    svg: box(pane && pane.querySelector('.lgn-sb-wrap svg'))};
+        }),
+        scrolls, clipped,
+    };
+}"""
+
+#: the luma spread of a PNG, decoded by the page: a blank (one-colour)
+#: render has none
+_SPREAD_JS = """async (b64) => {
+    const img = new Image();
+    img.src = 'data:image/png;base64,' + b64;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let n = 0, sum = 0, sq = 0;
+    for (let i = 0; i < d.length; i += 16) {
+        const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        n++; sum += luma; sq += luma * luma;
+    }
+    return Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2));
+}"""
+
+#: the visible output height at a 1920x1080 browser WINDOW: the screen
+#: minus the browser chrome (about 100 px) and the JupyterLab chrome
+#: (menu, tab bar, notebook toolbar and status bar, about 120 px)
+_OUTPUT_PX = 860
+#: the smallest tab body side that shows a pane at a readable size
+_TAB_MIN_PX = 500
 
 
-def _panes(lab: Any) -> dict[str, float]:
-    return dict(lab.evaluate(_PANES_JS, label="row-1 pane widths"))
+@pytest.fixture()
+def lab1080(browser: Any, lab_server: Any, request: pytest.FixtureRequest) -> Any:
+    """A 1920x1080 page: the fit contract is stated at 1080p."""
+
+    yield from _lab_page(browser, lab_server, request, {"width": 1920, "height": 1080})
 
 
-def _assert_shares(panes: dict[str, float]) -> None:
-    """Row 1 shares 2 : 1 : 1 after the tree, within the side panes' bounds."""
-
-    rest = panes["row"] - _TREE
-    side = min(_SIDE_MAX, max(_SIDE_MIN, rest / 4))
-    assert abs(panes["tree"] - _TREE) <= 1, panes
-    assert abs(panes["viewer"] - side) <= 2 and abs(panes["board"] - side) <= 2, panes
-    assert abs(panes["diagram"] - (rest - 2 * side)) <= 3, panes
-    # the panes follow their containers: the canvas and the SVG fill them
-    assert abs(panes["canvas"] - panes["viewer"]) <= 2, panes
-    assert abs(panes["svg"] - panes["board"]) <= 2, panes
-    assert panes["overhang"] <= 0, panes
+def _fit(lab: Any, label: str) -> dict[str, Any]:
+    return dict(lab.evaluate(_FIT_JS, label=f"the dashboard fit ({label})"))
 
 
-def _wait_panes(lab: Any, predicate: Any, label: str) -> dict[str, float]:
-    lab.wait_until(lambda _s: predicate(_panes(lab)), timeout=60, label=label)
-    return _panes(lab)
+def _assert_fits(fit: dict[str, Any], label: str) -> None:
+    """One screen holds the dashboard: no scroll bar, no clipped control."""
+
+    dash, header, tree = fit["dash"], fit["header"], fit["tree"]
+    assert dash["height"] <= _OUTPUT_PX, (label, fit)
+    assert dash["bottom"] <= fit["notebook"]["bottom"] + 1, (label, fit)  # on screen
+    # the tree column spans the dashboard below the header
+    assert tree["y"] - header["bottom"] <= 4 and dash["bottom"] - tree["bottom"] <= 6, (label, fit)
+    assert fit["scrolls"] == [], (label, fit)
+    assert fit["clipped"] == [], (label, fit)
 
 
-def test_row1_shares_its_width_and_the_panes_follow(lab: Any) -> None:
-    """Sidebar open, collapsed, then a wide page: the shares and one refit (scenario 5)."""
+def _spread(lab: Any, locator: Any, name: str) -> float:
+    png = locator.screenshot(path=str(EVIDENCE / name))
+    return float(lab.evaluate(_SPREAD_JS, base64.b64encode(png).decode(), label=name))
 
-    # -- the harness page as it opens: the file browser takes ~430 px -------
-    _open(lab, collapse_sidebar=False)
-    started = time.monotonic()
-    narrow = _wait_panes(lab, lambda p: p["canvas"] <= p["viewer"] + 2, "3D canvas fits")
-    _assert_shares(narrow)
-    assert narrow["diagram"] >= 240, narrow  # never the 28 px of the fixed panes
+
+def test_the_dashboard_fits_a_1080p_screen(lab1080: Any) -> None:
+    """Header, tree column, diagram and two tab groups on one screen (scenario 5).
+
+    At 1920x1080 with the left sidebar collapsed, the whole dashboard is
+    no taller than the visible output area of a 1080p browser window.  No
+    element scrolls and no control is clipped, at every tab of the Views
+    and Analysis tab groups and with the logistics knob card.  Each Views
+    tab shows its pane at least 500 px on each side, and the Cesium globe
+    renders at its full size after a tab switch.  The tree column
+    collapses to a strip, and the diagram takes the width with one refit.
+    A click on the scaled scoreboard SVG selects the clicked requirement.
+    The measurements go to ``build/evidence/grand_tour_1080p_fit.json``.
+    """
+
+    lab = lab1080
+    _open(lab)
+    output = lab.page.locator(".jp-OutputArea-output", has=lab.page.locator(".lgn-grand-tour"))
+    output.first.evaluate("(el) => el.scrollIntoView({block: 'start'})")
+    record: dict[str, Any] = {}
+
+    # -- the Analysis tabs over the 3D pane, then the logistics knob card ---
+    for title in ("Camera what-if", "Sizing", "Z3", "Subject & knobs"):
+        _tab(lab, title)
+        record[title] = fit = _fit(lab, title)
+        _assert_fits(fit, title)
+    toggle = lab.page.locator('button.widget-toggle-button:text-is("logistics")').first
+    toggle.click()
+    _poll_checker(lab, lambda s: s["mission"] == "logistics")
+    lab.wait_until(
+        lambda _s: _dropdown(lab, "cargo").count() == 1,
+        timeout=60,
+        label="the logistics knob card",
+    )
+    record["logistics"] = fit = _fit(lab, "logistics")
+    _assert_fits(fit, "logistics")
+    assert lab.page.locator(".lgn-grand-card .widget-hslider").count() >= 4, "knob sliders"
+    lab.page.screenshot(path=str(EVIDENCE / "grand_1080p_logistics.png"))
+    lab.page.locator('button.widget-toggle-button:text-is("ISR")').first.click()
+    _poll_checker(lab, lambda s: s["mission"] == "ISR")
+
+    # -- each Views tab shows its pane at a readable size -------------------
+    for title, inner in (("3D", "canvas"), ("Requirements", "svg"), ("Mission", "canvas")):
+        _tab(lab, title)
+        lab.wait_until(
+            lambda _s, title=title, inner=inner: (
+                (_fit(lab, title)["tabs"][1][inner] or {}).get("height", 0) >= _TAB_MIN_PX
+            ),
+            timeout=60,
+            label=f"the {title} tab fills its body",
+        )
+        record[title] = fit = _fit(lab, title)
+        _assert_fits(fit, title)
+        views = fit["tabs"][1]
+        assert min(views["body"]["width"], views["body"]["height"]) >= _TAB_MIN_PX, fit
+        assert views[inner]["width"] >= _TAB_MIN_PX and views[inner]["height"] >= _TAB_MIN_PX, fit
+        lab.page.screenshot(path=str(EVIDENCE / f"grand_1080p_{title.lower()}.png"))
+        if title == "Requirements":
+            # a cell click on the scaled SVG still selects that requirement
+            point = lab.evaluate(_CELL_POINT_JS, ISR_TASKING, label="IsrTasking cell point")
+            assert point and point["inside"] and point["hit"], point
+            lab.page.mouse.click(point["x"], point["y"])
+            state = _poll_checker(lab, lambda s: s["board"] == [ISR_TASKING])
+            assert state["diagram"] == [ISR_TASKING], state
+    _tab(lab, "3D")
+
+    # -- the tree column collapses: the diagram takes the width, one refit --
     refits = _poll_checker(lab, lambda _s: True)["refits"]
-
-    # -- collapsed: the diagram takes the freed width, the side panes keep 280
-    _collapse_sidebar(lab)
-    wide = _wait_panes(lab, lambda p: p["row"] > narrow["row"] + 100, "row 1 re-shared")
-    wide = _wait_panes(lab, lambda p: abs(p["canvas"] - p["viewer"]) <= 2, "3D canvas follows")
-    _assert_shares(wide)
-    assert wide["diagram"] > narrow["diagram"] + 100, (narrow, wide)
-    # one re-share is one AutoFit refit (the resize reporter debounces), not a loop
+    open_centre = record["3D"]["centre"]["width"]
+    strip = lab.page.locator(".lgn-grand-strip button").first
+    strip.click()
+    lab.wait_until(
+        lambda _s: _fit(lab, "collapsed")["centre"]["width"] > open_centre + 200,
+        timeout=60,
+        label="the centre column takes the tree's width",
+    )
+    record["collapsed"] = fit = _fit(lab, "collapsed")
+    _assert_fits(fit, "collapsed")
+    assert fit["tree"]["width"] <= 30, fit
     after = _poll_checker(lab, lambda s: s["refits"] > refits, timeout=30)["refits"]
     time.sleep(3.0)
     assert _poll_checker(lab, lambda _s: True)["refits"] == after == refits + 1
-    _record_layout(lab, "row1_collapsed")
+    lab.page.screenshot(path=str(EVIDENCE / "grand_1080p_tree_collapsed.png"))
+    strip.click()
+    lab.wait_until(
+        lambda _s: _fit(lab, "expanded")["tree"]["width"] >= 239,
+        timeout=60,
+        label="the tree column expands again",
+    )
+    (EVIDENCE / "grand_tour_1080p_fit.json").write_text(json.dumps(record, indent=1))
 
-    # -- a wide page: the side panes stop at their maximum, the SVG scales --
-    lab.page.set_viewport_size({"width": 1900, "height": 1100})
-    big = _wait_panes(lab, lambda p: p["board"] >= _SIDE_MAX - 1, "the side panes grew")
-    big = _wait_panes(lab, lambda p: abs(p["canvas"] - p["viewer"]) <= 2, "3D canvas follows")
-    _assert_shares(big)
-    assert big["svg_scale"] > 1.05, big
-    # a cell click on the scaled SVG still selects that requirement
-    scroll_into_view(lab.page.locator(f'.lgn-sb-cell[data-qname="{ISR_TASKING}"]').first)
-    point = lab.evaluate(_CELL_POINT_JS, ISR_TASKING, label="IsrTasking cell point")
-    assert point and point["inside"] and point["hit"], point
-    lab.page.mouse.click(point["x"], point["y"])
-    state = _poll_checker(lab, lambda s: s["board"] == [ISR_TASKING])
-    assert state["diagram"] == [ISR_TASKING], state
-    selected = f'.lgn-sb-cell.lgn-sb-selected[data-qname="{ISR_TASKING}"]'
-    lab.page.locator(selected).first.wait_for(state="attached", timeout=60_000)
-    lab.page.screenshot(path=str(EVIDENCE / "grand_row1_wide.png"), full_page=True)
-    record = {"open": narrow, "collapsed": wide, "wide_1900": big, "refits": [refits, after]}
-    record["seconds"] = round(time.monotonic() - started, 1)
-    (EVIDENCE / "grand_tour_row1_shares.json").write_text(json.dumps(record, indent=1))
-
-    lab.assert_no_errors()
+    # -- the Cesium globe renders after its first reveal (last: CDN skip) ---
+    _tab(lab, "Mission")
+    _wait_for_cesium(lab)
+    stage = lab.page.locator(".longeron-mission3d-stage").first
+    lab.wait_until(
+        lambda _s: _spread(lab, stage, "grand_1080p_mission_stage.png") > 8.0,
+        timeout=60,
+        label="the Cesium stage draws the globe",
+    )
+    sized = lab.evaluate(
+        """() => {
+            const stage = document.querySelector('.longeron-mission3d-stage');
+            const canvas = stage.longeronViewer.canvas;
+            return {stage: stage.clientWidth, canvas: canvas.clientWidth,
+                    buffer: canvas.width / devicePixelRatio};
+        }""",
+        label="the Cesium canvas size",
+    )
+    assert abs(sized["canvas"] - sized["stage"]) <= 2, sized
+    assert abs(sized["buffer"] - sized["canvas"]) <= 2, sized  # the drawing buffer follows
+    # a satellite tile that the imagery server refuses (seen on the Mission
+    # tab visits) is a network condition: the globe draws the tiles that
+    # load.  Every other console error counts
+    errors = [
+        message
+        for message in lab.console_errors()
+        if "arcgisonline.com" not in message and "net::ERR_FAILED" not in message
+    ]
+    assert errors == [], errors
+    assert lab.page_errors == [], lab.page_errors
 
 
 def test_the_mission_starts_and_ends_on_the_drawn_surface(lab: Any) -> None:
     """Takeoff and landing sit on the globe, not in the air (scenario 6)."""
 
     _open(lab)
+    _tab(lab, "Mission")
     stage = lab.page.locator(".longeron-mission3d-stage").first
     scroll_into_view(stage)
     _wait_for_cesium(lab)
@@ -846,6 +1000,7 @@ def test_onboard_view_rides_the_declared_camera(lab: Any) -> None:
     """Kernel onboard switch -> the camera rides the drone; free -> the user's (scenario 6)."""
 
     _open(lab, notebook=ONBOARD_NOTEBOOK)
+    _tab(lab, "Mission")
     record: list[dict[str, Any]] = []
     stage = lab.page.locator(".longeron-mission3d-stage").first
     scroll_into_view(stage)
@@ -938,6 +1093,7 @@ def test_maximize_draws_the_driver_history(lab: Any) -> None:
     """Maximize -> the history plot, the active flags, the N2 matrix (scenario 6)."""
 
     _open(lab)
+    _tab(lab, "Sizing")
     button = lab.page.locator('button:text-is("maximize station time")').first
     scroll_into_view(button)
     button.click()
@@ -1112,7 +1268,7 @@ def test_dock_resizes_and_rearranges_the_panes(lab: Any) -> None:
 
     # undock: the panels close and the inline layout comes back
     undocked = lab._extract_json(lab.run_cell(5))
-    assert undocked == {"panels": [], "children": 5}, undocked
+    assert undocked == {"panels": [], "children": 3}, undocked
     lab.wait_until(
         lambda _s: lab.page.locator(GRAND_TABS).count() == 0,
         timeout=60,
