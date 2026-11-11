@@ -1935,7 +1935,20 @@ class TestBrowserPipelineFixpoint:
 
         from ipyelk.elements.serialization import to_json
 
-        return json_module.dumps(to_json(widget.source.value, None), sort_keys=True)
+        def class_sets(data):
+            # shortcut: ipyelk's VisibilityPipe re-joins each port and edge class list
+            # from a set, so the order follows the hash seed. Compare sorted classes
+            # until ipyelk's add_class/remove_class keep the order (ipyelk issue TBD).
+            properties = data.get("properties") or {}
+            if properties.get("cssClasses"):
+                properties["cssClasses"] = " ".join(sorted(properties["cssClasses"].split()))
+            for key in ("children", "ports", "labels", "edges"):
+                for sub in data.get(key) or []:
+                    class_sets(sub)
+            return data
+
+        tree = class_sets(to_json(widget.source.value, None))
+        return json_module.dumps(tree, sort_keys=True)
 
     def _settled(self, widget):
         """After a settle NOTHING may be dirty: flow is spent, pipes clean."""
