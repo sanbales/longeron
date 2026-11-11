@@ -1,63 +1,44 @@
-# Handoff — wave 5 (DecisionAnalysis) and the 0.12.0 release train
+# Handoff — wave 5 (DecisionAnalysis) after the 0.12.0 release
 
-Written 2026-09-01 at `a448c13` (main, pushed, both suite lanes green).
-This document stands alone; the local-only session ledger
+Written 2026-11-10 on the 0.12.0 release commit (parent `209ba2d`,
+main). This document stands alone; the local-only session ledger
 (`.handoff/CURRENT-2026-08-30.md`, gitignored) has the full campaign
 narrative if this machine is available.
 
 ## Where things stand
 
-Main is at `a448c13`. Everything ratified for 0.12.0 is BUILT and LANDED
-except **wave 5** (below), which is fully specified and is the last arc
-before the release train. CI was fully green at `715c653` (first green
-board since `d47a27a`); every push since has passed the local pre-push
-battery, and the shard/seam/gate fixes have held.
+**0.12.0 is released** from the commit that carries this file: tag
+`v0.12.0`, wheel + sdist on PyPI (`release.yml`), and the GitHub
+Release with the re-recorded demo (`demo.gif`, `demo.mp4`; the README
+links `releases/latest/download/demo.gif`). `docs/release-notes.md`
+`## 0.12.0 (2026-11-10)` records what 0.12 shipped.
 
-Baselines to trust (and assert against):
+Next: **wave 5** (below), the last arc before 0.13, then the 0.13
+slate (Open threads).
+
+Baselines to trust (and assert against), measured on the release
+commit:
 
 | thing | value |
 |---|---|
-| non-browser suite, pixi lane (has cadquery; CI-equivalent) | **3228 passed** / 5 skipped / 2 xfailed |
-| non-browser suite, .venv lane | **3205 passed** / 28 skipped / 2 xfailed |
-| notebook harness | 21/21 |
-| browser tier | 5 CI shards (`ci.yml` matrix; the grand tour has its own), single-run green locally |
-| crossing | **1920** candidates (12 airframes × 4 × 4 × 5 × 2) |
+| non-browser suite, pixi lane (has cadquery; CI-equivalent) | **3394 passed** / 5 skipped / 2 xfailed (37 browser deselected) |
+| non-browser suite, .venv lane | **3377 passed** / 22 skipped / 2 xfailed (37 browser deselected) |
+| notebook harness (`tests/test_notebooks.py`) | 21/21 |
+| browser tier | 5 CI shards (`ci.yml` matrix; the grand tour has its own); not re-run locally on the release commit |
+| crossing | **1920** platform mixes (12 airframes × 4 motors × 4 props × 5 batteries × 2 materials); ISR and logistics cross 3 payloads each, 5760 |
 | declared references (`ScoutMissions`) | 274.6 min / 187.0 kg·km / 66.9 m/s / $9706.5 / 6.89 kg |
 | mission winners | ISR: flyingWingSingle · logistics: flyingWingTwinTip · intercept: dartInterceptor |
 
-The fleet is now **twelve airframes**: five multirotors, teardrop dart,
-vtolWing, flyingWingSingle, flyingWingTwin, flyingWingTwinTip,
-dartInterceptor's bench kin, and the new `TiltRotors::TiltTriWing`
-(`examples/deepscout/tilttri.sysml`).
+The declared references reproduce from the live winners: 274.567 min,
+186.986 kg·km, 66.927 m/s; fleet cost = the three winners'
+`missionCost` (5965.93 + 1910.47 + 1830.07 = 9706.47); heaviest bird =
+the logistics winner's `outboundMass` 6.885 kg.
 
-## What landed this session (for release-notes mining)
-
-Commit messages are the source material; each carries its full story.
-
-- `d47a27a`..`6a322d8` — the 0.12 punch list (flying wings, widget moves,
-  typing/Literal pass, rdf self-loop fix, browser-harness watchdog).
-- `981f648` — flying-wing stability & control (StabilityControl calcs,
-  static margin, plank-busts proof, swept/washed/reflexed mesh).
-- `88d67fd` — cranked planform + clearance-derived pods + the fleet
-  prop-disc interference gate (Möller–Trumbore, oracle-teeth proof).
-- `1231e7e` — the loss-tolerant widget seam (`widgets/_seam.py`):
-  generation stamps, stale-report rejection, user-intent override,
-  loss-injection browser test. The state split needed NO drops.
-- `67fbe22` — CI browser tier sharded 4 ways; `test-browser-shard` task.
-- `205a30f` — volumetric bays fleet-wide, FIT requirements, clickable
-  battery/fc/camera, multirotor gussets. References followed live
-  winners (283.3→274.6, →184.7 then →187.0 at the tip-crown landing).
-- `715c653` — the geometry API stops inventing flight controllers
-  (fc_mass None-default; model-driven callers; the cadquery-lane gate
-  gap closed).
-- `920657a` — the pre-push hook (see Protocols).
-- `b14ae41` — wave 3: gust placard (dart wins riding it, 72.9→66.8),
-  fleet tilt cap, tip-prop axis (11th airframe, derived recovery,
-  engine-out busted 14.9× in the open, maintainer-ratified crown),
-  vtolwing retrofit (IsrPrime thawed 208.7→200.4 + 6 downstream pins).
-- `a448c13` — wave 4: TiltTriWing (wing-shadow download from the
-  planform, tilt mechanism mass, centerline cruise engine-out PASS,
-  rotatable rotors + tilt slider, tilt-swept interference gate).
+The fleet is **twelve airframes**: six rotorcraft (`boxQuad`,
+`teardropQuad`, `openTri`, `hexLifter`, `coaxOcto`, `ringOcto`),
+`vtolWing`, `dartInterceptor`, three flying wings (`flyingWingSingle`,
+`flyingWingTwin`, `flyingWingTwinTip`) and `tiltTriWing`
+(`TiltRotors::TiltTriWing`, `examples/deepscout/tilttri.sysml`).
 
 ## Wave 5 — the enlarged DecisionAnalysis arc (ratified, unbuilt)
 
@@ -145,20 +126,40 @@ engine-out is a COST, not a safety constraint — nobody is aboard):
 - The dashboards' **cost axis becomes acquisition + attrition reserve +
   operating** — every constant cited, every input model-derived.
 
-## Then: the 0.12.0 release train
+## The next release train (0.13.0)
 
-1. Release-notes agent (commit messages `d47a27a..HEAD` are the source;
-   `docs/release-notes.md` follows the 0.11 entry's shape).
-2. Version bump — **REMEMBER npm/package.json + the jlpm labextension
-   rebuild** (the 0.11 lesson; a parity test catches it on every lane,
-   but do it right the first time).
-3. `pixi lock` if pyproject changed (the lock pins the local manifest
-   hash — twice bitten).
-4. CI green on the EXACT commit, then tag, then PyPI (wheel + sdist),
-   then the GitHub Release. Demo media decision with the maintainer
-   (the grand tour now has the config click, the time seam, the tilt
-   slider, and the tip-crown toggle to show off; media stages in
-   `~/workplace/longeron-demo-media/`, never enters the repo).
+The 0.12.0 train ran in this order; repeat it.
+
+1. Release notes: the lanes add bullets under `## <next> (unreleased)`
+   as they land; at the train, date the header and read the section
+   once as a newcomer (duplicated lane bullets, internal notes, terms
+   undefined at first use). Check the section against
+   `git log v<previous>..HEAD`: every user-visible commit since the last
+   tag needs a bullet (the 0.12 section had missed the 31 commits that
+   landed before the grand tour v2 lanes).
+2. Version bump: `pyproject.toml`, `src/longeron/__init__.py`,
+   `npm/package.json`, then the jlpm labextension rebuild
+   (`pixi run -- bash -c 'cd npm && jlpm install && jlpm build'`).
+   The rebuild renames `remoteEntry.<hash>.js` (the old file is
+   deleted, the new one added: stage both) and rewrites the manifest's
+   `version` and `load` path; the JS changes only by the version string
+   and a webpack module id. `test_extension_version_matches_the_wheel`
+   catches a missed step.
+3. `pixi lock`: the lock pins the local manifest hash, so only the
+   `longeron` entry moves (version + sha256). Any other package moving
+   is a red flag.
+4. Dist check BEFORE the tag, as `release.yml` does: `python -m build`,
+   `twine check dist/*`, and the fresh-venv wheel smoke, plus both
+   suite lanes (the .venv lane caught the OpenMDAO 3.45.2 break in the
+   0.12 train). setuptools
+   warns that the `project.license` TOML table and the license
+   classifier are deprecated (unsupported after 2027-02-18): move to an
+   SPDX `license = "Apache-2.0"` string (it needs `setuptools>=77` in
+   `[build-system]`; today `>=68`) before then.
+5. CI green on the EXACT commit, then tag, then PyPI, then the GitHub
+   Release with the demo media. `scripts/record_demo.py` records the
+   demo; media stages in `~/workplace/longeron-demo-media/<version>/`
+   and never enters the repo.
 
 ## Protocols (all mechanically or maintainer-enforced — restate in briefs)
 
@@ -176,7 +177,10 @@ engine-out is a COST, not a safety constraint — nobody is aboard):
   Change-scoped gates (notebook harness, docs −W, impacted browser
   files, captures) remain procedural — the hook is the floor.
 - **Both suite lanes at every landing** — the .venv lane silently skips
-  cadquery-gated tests; the pixi default env is the CI-equivalent.
+  cadquery-gated tests; the pixi default env is the CI-equivalent. The
+  .venv lane resolves the LATEST PyPI releases, so it is the only lane
+  that sees upstream drift that `pixi.lock` pins away (the 0.12.0 train:
+  OpenMDAO 3.45.2 broke `run_optimization` while the lock held 3.45.0).
 - **Browser tier**: ONE customer at a time
   (`pgrep -f 'envs/browser.*pytest|capture_widget'` must be empty);
   explicit `--timeout` always; process kills PID-SCOPED only (verify

@@ -405,6 +405,28 @@ class TestOptimizationHistory:
         assert run.bounds["IsrStation::stationFloor"] == (0.0, None)
         assert mdao.optimization_bounds(build) == run.bounds
 
+    def test_an_unset_bound_reads_none_on_every_openmdao(self, history, monkeypatch):
+        # OpenMDAO >= 3.45.2 reports an unset bound as None, earlier ones as 1e30
+        build, run = history
+        model = build.problem.model
+        real = model.get_constraints
+
+        def none_for_unset(**kwargs):
+            return {
+                name: {
+                    **meta,
+                    **{
+                        side: None
+                        for side in ("lower", "upper")
+                        if meta[side] is None or abs(meta[side]) >= 1e30
+                    },
+                }
+                for name, meta in real(**kwargs).items()
+            }
+
+        monkeypatch.setattr(model, "get_constraints", none_for_unset)
+        assert mdao.optimization_bounds(build) == run.bounds
+
     def test_the_stall_bound_is_active_at_the_optimum(self, history):
         _build, run = history
         # aboveStall { loiterSpeed >= 11.0 }: the bound the optimum snaps to

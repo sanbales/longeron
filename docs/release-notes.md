@@ -1,12 +1,83 @@
 # Release notes
 
-## 0.12.0 (unreleased)
+## 0.12.0 (2026-11-10)
+
+### Provenance
+
+- **Models cite their sources, and longeron checks the citations**
+  (`longeron.evidence`, the `evidence` extra). A citation is a
+  `SourceEvidence` metadata usage of the `Evidence` library. It names
+  a document, its sha256 and a quote, and a page or a box can locate
+  the quote:
+  - `attach()` extracts the text of the document (PDF, HTML or plain
+    text) and refuses a quote that the document does not contain. The
+    refusal names the closest match, and a refused attach changes
+    nothing
+  - `verify()` returns one of four verdicts for each citation:
+    intact, drifted (the hash changed), lost (the hash matches but the
+    quote is gone) or unreachable
+  - `coverage()` counts the stated values that carry a citation.
+    Derived values and library content do not count
+  - `longeron lint` warns on `evidence-drift` by default, offline and
+    from the cache. `unevidenced-value` is an opt-in warning
+  - `longeron evidence init` writes the git LFS stanza for owned
+    documents, and `longeron evidence verify` exits with the count of
+    drifted and lost citations
+  - Four DeepScout figures cite live manufacturer pages: the mass,
+    pitch and diameter of the APC propeller and the kV of the EMAX
+    motor
 
 ### The DeepScout program
 
+- **The fleet grows to twelve airframes, and each new airframe lands
+  in its own file**. Each airframe is a shell: a concrete `Airframe`
+  definition of the fleet, for example `VtolWing`:
+  - `flyingwing.sysml`: `FlyingWingSingle`, with one pusher, and
+    `FlyingWingTwin`, with two counter-rotating pushers. The single
+    has a cranked planform: a center section with a straight trailing
+    edge clears the disc of its pusher. The pod length of the twin
+    follows from the clearance of its disc, and the drag buildup
+    charges for it
+  - `FlyingWingTwinTip`: the twin with wingtip pushers. The tip
+    recovery is derived (1 + 2d/b), and the spar doublers cost
+    0.172 kg. The tip twin beats `FlyingWingTwin`, with its pushers at
+    the root, on logistics. With one tip engine dead, it fails
+    `EngineOutYaw`
+  - `tilttri.sysml`: `TiltRotors::TiltTriWing`. Two wingtip pushers
+    tilt down for hover, and a nose tractor tilts up. The tilt
+    mechanism costs 0.198 kg. In hover, the rotor wash of each tip disc
+    pushes down on the wing below it, and the hover thrust pays for this
+    download. In cruise, the nose tractor
+    alone holds the mission if a tip engine fails (`CruiseEngineOut`)
+  - The crossing grows from 1280 to 1920 platform mixes
+    (12 airframes x 4 motors x 4 props x 5 batteries x 2 materials). A
+    mix is one variant for each variation point of the trade
+- **The flying wings trim, and the model checks it**:
+  `DeepScout::StabilityControl` computes the mean aerodynamic chord,
+  the swept-wing neutral point, the static margin and the elevon and
+  winglet volume coefficients. `PitchStability` (a margin of 0.05 to
+  0.15 of the chord), `PitchRollAuthority` and `YawStability` apply to
+  every tailless shell. The 3D mesh draws the declared sweep,
+  washout and reflexed section
+- **Every airframe carries a bay, and the payload must fit**. The
+  catalog parts declare their volumes, and each airframe declares a
+  bay with a usable-volume fraction. A fit requirement refuses a
+  payload that fits by mass but not by volume. The battery, the
+  flight controller and the camera are part usages on every family,
+  so they show in the tree and the inspector, and a click in the 3D
+  pane selects them
+- **A gust placard caps every wing-borne dash**: a placard is the
+  highest speed at which the wing carries a FAR 23.341-style gust
+  load. The intercept mission caps each wing at its placard and each
+  rotor shell at the cruise speed of its maximum tilt. The dart still
+  wins intercept, at the speed of its own placard
+- **A fleet-wide interference test**: every prop disc is checked
+  against every part of every shell and build configuration by exact
+  mesh intersection. The discs of `TiltTriWing` are checked at every
+  15 deg of the tilt from hover to cruise
 - **The mission thresholds have ranges in the model, and two mission
-  requirements apply to more crafts**. The trade winners and the
-  declared reference values do not change:
+  requirements apply to more crafts**. This change moves no trade
+  winner and no declared reference value:
   - `IsrUav`, `LogisticsUav` and `InterceptUav` assert a two-sided
     range on each of their five tasking floors, one named constraint
     per bound (`minStationMinutesLow`, `minStationMinutesHigh` and so
@@ -30,8 +101,8 @@
   At the declared boresight, no shell sees its own airframe, so the
   ISR winner `flyingWingSingle` passes `clearView`
 - **The wing planform is one chain, and the missions check the stall,
-  the tilt cap and the spar mass**. The three trade winners do not
-  change:
+  the tilt cap and the spar mass**. This change moves none of the
+  three trade winners:
   - `Airframe` derives `wingArea = wingSpan * wingChord` and
     `rootChord = 2 * wingChord / (1 + taper)`. `wingChord` is the mean
     chord and the planform input. No shell states its area as a
@@ -49,9 +120,9 @@
   - `LogisticsUav` caps a rotor-borne cruise at `MaxCruiseSpeed` for
     the shell's `maxTiltDeg` (`cruiseWithinTilt`). It also asserts that
     the outbound mass does not exceed the spar's `designGrossKg`
-    (`sparDesignMass`). This check retires 83 logistics mixes, and the
-    `vtolWing` and `tiltTriWing` logistics presets now carry the small
-    parcel. No craft delivers the 4 kg winch parcel any more
+    (`sparDesignMass`). This check makes 83 logistics mixes infeasible.
+    The `vtolWing` and `tiltTriWing` logistics presets now carry the
+    small parcel. No craft delivers the 4 kg winch parcel any more
 - **The fleet shells bound their design inputs**, one named
   constraint per bound, and the doc of each bound names the source of
   its number. `VtolWing` and `TiltTriWing` bound `loiterSpeed`,
@@ -60,7 +131,69 @@
   `FlyingWingTwin` bounds `loiterSpeed`, `cruiseSpeed`, `wingSpan` and
   `wingChord`. `BoxQuad`, `OpenTri`, `CoaxOcto` and `RingOcto` bound
   `cruiseSpeed`. The stall floors use 1.2 times the stall speed at the
-  preset mass, and the span and chord tops are owner assumptions
+  preset mass. The upper bounds of the span and the chord are assumed
+  values, and their docs mark them OWNER ASSUMPTION
+- **Against 0.11, the mission winners and the declared references
+  changed**. The flying wings win ISR (`flyingWingSingle`) and
+  logistics (`flyingWingTwinTip`), and `dartInterceptor` keeps
+  intercept. The five `ScoutMissions` references (`stationMinutes`,
+  `payloadRangeKgKm`, `maxTargetSpeed`, `fleetCost` and
+  `heaviestBirdKg`) move from 208.7 min / 163.4 kg km / 72.9 m/s /
+  $10837.0 / 9.4 kg to 274.6 min / 187.0 kg km / 66.9 m/s / $9706.5 /
+  6.89 kg
+
+### The time seam
+
+- **One clock drives every time-aware view** (`longeron.widgets.time`):
+  - `Clock` holds the time, the play state, the rate and the span. It
+    has no kernel timer, and a negative rate plays backwards
+  - `Timebase` aligns the views on one axis. A timed trace maps one to
+    one. A step trace takes a duration per step: one number, a
+    sequence, or a mapping. A duration that the model states reads as
+    real, and the scrubber stripes only the synthesized gaps
+  - `link_time` connects any view with a time trait to a clock. Each
+    view gets its own unlink handle
+  - `time_scrubber` draws a transport bar with ticks at the fired
+    transitions, bands for the mission phases and a telemetry readout
+  - The replay player follows the clock. `mission3d` gains
+    `track_from_timeline` and `model_epoch`, and the go-around sortie
+    states its epoch and its waypoints
+  - The Cesium flight integrates the shared rate locally and
+    reconciles with the clock at 4 Hz. It converges exactly on pause
+  - Tutorial 7 adds the synchronized replay: the state diagram, the
+    player, the scrubber and the globe show the same instant
+- **The time seam survives lost messages and stale echoes**
+  (`widgets/_seam.py`). Each state push from the kernel carries a
+  generation stamp, a counter. A front end that finds a gap in the
+  counter asks for the full state again. The kernel rejects a stale
+  automatic report from a view and pushes the full state again.
+  User intent (a scrub, a click, a dial drag) wins over a push that
+  raced it. The replay, the scrubber and the globe use the seam
+
+### Analysis surfaces
+
+- **A view usage declares a dashboard** (`longeron.analysis.surfaces`,
+  phase 1). `surface(model, view, subject=..., ranges=...)` derives a
+  composed widget from a standard SysML view usage:
+  - The `expose` of the view selects the subject and the cases. Each
+    nested view usage is one panel, and its `render` reference picks
+    the widget through the rendering registry
+  - The in-parameters of an analysis case become sliders. The model's
+    own constraints supply each range, and each slider shows where
+    its range came from: a named constraint, the `ranges=` argument of
+    the caller, or a fallback
+  - Verification cases become verdict panels that the interpreter
+    evaluates
+  - A result reaches an attribute only through the explicit binding
+    `:>> attr = case.result`. The wiring map of the surface lists each
+    unbound result
+  - `@ToolExecution` names the engine of each case. The
+    `AnalysisTooling` and `TradeStudies` libraries are vendored from
+    the OMG corpus, and `LongeronSurfaces` holds the rendering
+    vocabulary
+  - One declaration, `ScoutSurfaces::scoutSurface`, derives for two
+    subjects. For a subject that a case does not apply to, its panel
+    says so
 
 ### The grand tour
 
@@ -98,9 +231,9 @@
     subject craft. The scoreboard scores each requirement that applies
     to the subject, for the mission architecture or for its airframe.
     The sizing and Z3 strips show the sizing context of the mission of
-    the subject. A mission without a sizing context shows an honest
-    absence. The model supplies the bounds of the loiter and camera
-    sliders
+    the subject. If a mission has no sizing context, both strips show
+    the note "no sizing context" in place of a result. The model
+    supplies the bounds of the loiter and camera sliders
   - A knob that changes the shape of the craft, for example the span,
     the mean chord or the hull diameter, also changes the mesh of the 3D
     pane, the view cone, the occlusion measure and the Cesium model.
@@ -120,13 +253,13 @@
   *Tree*, *Structure*, *3D*, *Scoreboard*, *Subject*, *Camera what-if*,
   *Sizing*, *Z3* and *Mission*. The first view shows each pane in its
   own panel, and the Cesium pane is a tab beside the notebook.
-  `dash.undock()` puts each pane back into its inline tab group. A drag of a split bar
+  `dash.undock()` puts each pane back into its inline tab group and
+  shows the dashboard in the notebook again. A drag of a split bar
   resizes two panes, and a drag of a tab moves a pane. The panels hold
   the same widgets, so every pane still follows the subject.
-  `dash.undock()` shows the dashboard in the notebook again, and
-  `grand_dashboard(..., dock=True)` docks it when it is built. Without a
-  JupyterLab front end, `dock()` prints a note and the layout stays
-  inline. The inline layout stays the default
+  `grand_dashboard(..., dock=True)` docks the dashboard when it is
+  built. Without a JupyterLab front end, `dock()` prints a note and the
+  layout stays inline. The inline layout stays the default
 - **The analysis API behind the tour**:
   - `longeron.analysis.mdao`: `add_optimization` attaches an
     `om.SqliteRecorder` to the driver. `run_optimization` runs the driver
@@ -169,7 +302,6 @@
   `onboard_camera` trait. The grand tour sets `onboard_camera` from the
   declared camera of the subject and the camera what-if sliders, so the
   onboard view looks where the occlusion measure looks
-
 - **The Cesium flight flies the flight profile of the subject**.
   `mission3d.model_flight` reads the profile off the shell. A shell
   with `wingSpan` 0 is a rotorcraft. A wing with `hoverThrustFactor` 0
@@ -188,6 +320,13 @@
     keyframes in place of `(t, heading, pitch)`
   - A state name with loiter, hover, station or orbit maps to the new
     `loiter` phase. A rotorcraft flies it as a `route` phase
+- **A new demo video**: the README demo is a one-minute tour of the
+  grand tour at 1080p. A tree click sets the subject, and the `wingSpan`
+  knob widens the wing and re-scores the scoreboard. Then OpenMDAO
+  maximizes the station time, Z3 shows its verdicts, the Cesium flight
+  plays through the onboard camera, and `dash.dock()` docks the panes.
+  `scripts/record_demo.py` records the video. The GitHub Release
+  carries it as a GIF and as an mp4
 
 ### Verification and conformance
 
@@ -203,6 +342,19 @@
 
 ### Diagrams and platform
 
+- **Definition and usage nodes draw the compartments of the
+  specification**: labeled sections in the order of the specification
+  (attributes, parts, ports, actions, states, constraints,
+  requirements and the rest). `structure_diagram(parts='rows')` draws
+  the parts as `name : Type` rows in place of nested boxes. A click on
+  a row selects its element in the tree and opens it in the inspector
+
+- **Each node collapses in three levels**: the toolbar collapse button
+  cycles the selected node through expanded, partial (children as
+  rows) and collapsed. Each compartment header has its own chevron
+  that folds one section. `level()` and `fold()` drive both from a
+  notebook, and `save_view` keeps them
+
 - **ipyelk 3 from PyPI**: the interactive diagrams run on the released
   ipyelk 3.0 (`ipyelk>=3.0,<4`). The new `diagrams` extra installs it
   from PyPI, and the `ui` and `dev` extras include it. Longeron no
@@ -217,15 +369,13 @@
   - The compartment headers set `LabelProperties(separator=True)`, and
     ipyelk draws the separator rule above each header. The rule has the
     ipyelk class `elkseparator`. The longeron stylesheet colors it per
-    kind and on selection and hover.
+    kind and on selection and hover
   - The routing, direction and collapse tools record their change
     reports with `Tool.record_reports()` and refresh through
-    `Diagram.refresh()`.
+    `Diagram.refresh()`
   - The builders link the children and ports of each finished tree to
     their parent. ipyelk 3.0 finds the root of a tree through these
-    links, and a tree with more than one root fails its first layout.
-  - The tests use `Document` and `model_dump()` in place of the
-    deprecated `Registry` and `.dict()`.
+    links, and a tree with more than one root fails its first layout
 
 - **The headless renderer runs elkjs 0.12.0**, the version that ipyelk
   3.0 bundles for the browser. The deepscout headless layouts are
@@ -243,8 +393,37 @@
   and zoom limit, so it does not enlarge a small diagram past its
   natural size
 
+- **The widget modules moved to `longeron.widgets`**: `explorer`,
+  `inspector`, `app`, `viewer3d`, the widget half of `replay` and the
+  viewer half of `analysis.mission3d`. The old import paths still
+  work and warn once (see the upgrade notes)
+
+- **Closed vocabularies are `Literal` aliases**: 27 exported aliases,
+  for example `PartsMode`, `NodeLevel`, `CompartmentSection`,
+  `LayoutDirection`, `Aggregation` and `VerdictKind`. mypy now refuses
+  a wrong literal in a call
+
+- **The RDF projection resolves self-shadowing redefinitions**: the
+  shorthand `attribute rotorCount :>> rotorCount` now projects a
+  redefinition edge to the redefined feature, not a self-loop. The
+  projection counts an unresolvable target and emits nothing for it
+
 ### Upgrade notes
 
+- **Import the widgets from `longeron.widgets`**: `longeron.explorer`,
+  `longeron.inspector`, `longeron.app` and the moved names of
+  `longeron.replay`, `longeron.analysis.viewer3d` and
+  `longeron.analysis.mission3d` are deprecation aliases. Each alias
+  emits one `DeprecationWarning` that names the new module
+- **`fc_mass` has no default**: `drone_geometry` and `to_cadquery`
+  draw a flight-controller board only when the caller passes
+  `fc_mass`. In 0.11, the default 0.039 kg added a board to every
+  craft. `scene_for` and the mission bridge read the mass from the
+  model
+- **Code that pins the DeepScout numbers must follow the new
+  references** (see the DeepScout program above): the winners, the
+  five `ScoutMissions` references and the 1920-mix crossing all
+  changed
 - **Install the diagrams with the `diagrams` extra**:
   `pip install "longeron[diagrams]"` replaces
   `pip install -e vendor/ipyelk`. The pixi environments install ipyelk
