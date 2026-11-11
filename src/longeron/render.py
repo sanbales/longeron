@@ -968,6 +968,17 @@ def _measure(text: str, css: str = "") -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 
+def _canonical_classes(css: str | None) -> str:
+    """Return a ``cssClasses`` string in canonical order: sorted, each class once.
+
+    ipyelk 3.0 rebuilds the class strings from a set each time its pipeline runs
+    (https://github.com/jupyrdf/ipyelk/issues/262).  The order on the tree then
+    follows the hash seed, but the order in the ELK JSON does not.
+    """
+
+    return " ".join(sorted(set((css or "").split())))
+
+
 def _to_elk_json(root: Any) -> dict:
     counter = itertools.count()
     generated: dict[int, str] = {}
@@ -984,7 +995,7 @@ def _to_elk_json(root: Any) -> dict:
         labels = []
         for index, label in enumerate(edge.labels or []):
             text = label.text or ""
-            css = label.properties.cssClasses or ""
+            css = _canonical_classes(label.properties.cssClasses)
             width, height = _measure(text, css)
             data = {
                 "id": f"{owner}.l{index}",
@@ -1000,7 +1011,7 @@ def _to_elk_json(root: Any) -> dict:
 
     def convert(node: Any, run_transposed: bool = False, inherited_separate: bool = False) -> dict:
         identifier = node_id(node)
-        css = node.properties.cssClasses or ""
+        css = _canonical_classes(node.properties.cssClasses)
         is_marker = any(name in css for name in _GLYPH_NODE_CLASSES)
         has_children = bool(node.children)
         # nodes with DRAWN ports (css-bearing squares/proxy dots) are sized
@@ -1008,7 +1019,8 @@ def _to_elk_json(root: Any) -> dict:
         # (spec Ports figures), so the box must grow around them
         # (PORT_LABELS) -- a snug pre-sized leaf cannot know that width
         drawn_ports = any(
-            (port.properties.cssClasses or "") for port in getattr(node, "ports", None) or []
+            _canonical_classes(port.properties.cssClasses)
+            for port in getattr(node, "ports", None) or []
         )
         elk_sized = has_children or drawn_ports
 
@@ -1019,7 +1031,7 @@ def _to_elk_json(root: Any) -> dict:
         measured = []
         for label in node.labels or []:
             text = label.text or ""
-            label_css = label.properties.cssClasses or ""
+            label_css = _canonical_classes(label.properties.cssClasses)
             shape = label.properties.shape
             pre_sized = "sysml-badge" in label_css or "sysml-tab" in label_css
             if pre_sized and shape is not None and shape.width:
@@ -1140,13 +1152,13 @@ def _to_elk_json(root: Any) -> dict:
             # carry css + pre-sized labels; the invisible convergence
             # anchors keep their bare three-key form (byte-identical ELK
             # JSON for diagrams without drawn ports)
-            port_css = port.properties.cssClasses or ""
+            port_css = _canonical_classes(port.properties.cssClasses)
             if port_css:
                 port_data["properties"] = {"cssClasses": port_css}
             port_labels = []
             for lindex, label in enumerate(port.labels or []):
                 text = label.text or ""
-                label_css = label.properties.cssClasses or ""
+                label_css = _canonical_classes(label.properties.cssClasses)
                 width, height = _measure(text, label_css)
                 port_labels.append(
                     {
@@ -1223,7 +1235,7 @@ def _to_elk_json(root: Any) -> dict:
                     "targets": [target_anchor],
                     "labels": convert_edge_labels(edge, edge_id),
                     "properties": {
-                        "cssClasses": edge.properties.cssClasses or "",
+                        "cssClasses": _canonical_classes(edge.properties.cssClasses),
                         "event": getattr(edge.metadata, "event", None) or "",
                         "sourceNode": source_node,
                         "targetNode": target_node,

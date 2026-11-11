@@ -1909,6 +1909,7 @@ class TestBrowserPipelineFixpoint:
                 await asyncio.sleep(0)
             assert widget.pipe.status.exception is None
 
+        before = cls._class_lists(widget)
         with pytest.MonkeyPatch.context() as patch:
             for pipe in widget.pipe.pipes:
                 if isinstance(pipe, BrowserTextSizer):
@@ -1919,7 +1920,41 @@ class TestBrowserPipelineFixpoint:
                     stage = kernel_stage(pipe, pipe.run)
                 patch.setattr(pipe, "run", stage)
             asyncio.run(refresh())
+        cls._assert_classes_kept(before, cls._class_lists(widget))
         return ran
+
+    @staticmethod
+    def _class_lists(widget):
+        """Every element's class list, keyed by element id, in the tree's own order."""
+
+        from ipyelk.elements.serialization import to_json
+
+        found: dict = {}
+
+        def walk(data):
+            assert data.get("id") not in found, data.get("id")  # ids must be unique keys
+            found[data.get("id")] = ((data.get("properties") or {}).get("cssClasses") or "").split()
+            for key in ("children", "ports", "labels", "edges"):
+                for sub in data.get(key) or []:
+                    walk(sub)
+
+        walk(to_json(widget.source.value, None))
+        return found
+
+    @staticmethod
+    def _assert_classes_kept(before, after):
+        """A refresh may reorder an element's classes (ipyelk #262) but must keep each class.
+
+        The fixpoint compare sorts the classes and compares two refreshes with each
+        other.  It does not see a class that the first refresh loses or doubles.
+        This check compares each refresh with the tree before it.
+        """
+
+        assert after.keys() == before.keys()
+        for element, classes in after.items():
+            assert len(classes) == len(set(classes)), (element, classes)  # no duplicates
+            assert len(classes) == len(before[element]), (element, before[element], classes)
+            assert sorted(classes) == sorted(before[element]), (element, before[element], classes)
 
     @staticmethod
     def _relaid_out_only(ran):
@@ -1936,12 +1971,15 @@ class TestBrowserPipelineFixpoint:
         from ipyelk.elements.serialization import to_json
 
         def class_sets(data):
-            # shortcut: ipyelk's VisibilityPipe re-joins each port and edge class list
-            # from a set, so the order follows the hash seed. Compare sorted classes
-            # until ipyelk's add_class/remove_class keep the order (ipyelk issue TBD).
+            # shortcut: ipyelk 3.0's VisibilityPipe re-joins each port and edge class
+            # list from a set (https://github.com/jupyrdf/ipyelk/issues/262), so the
+            # order follows the hash seed.  Compare sorted classes until the tripwire
+            # in tests/test_determinism.py reports that the installed ipyelk keeps it.
             properties = data.get("properties") or {}
-            if properties.get("cssClasses"):
-                properties["cssClasses"] = " ".join(sorted(properties["cssClasses"].split()))
+            classes = (properties.get("cssClasses") or "").split()
+            assert len(classes) == len(set(classes)), classes  # sorting must not hide one
+            if classes:
+                properties["cssClasses"] = " ".join(sorted(classes))
             for key in ("children", "ports", "labels", "edges"):
                 for sub in data.get(key) or []:
                     class_sets(sub)
